@@ -87,6 +87,10 @@ export const LEGACY_STATUS_ADOPTION: Readonly<Record<string, LegacyAdoptionActio
   after a restart). Preserve it: the status is self-resuming — triage picks it up as-is.
   */
   "needs-replan": { kind: "preserve", note: "live graph replan signal — triage todo-rediscovery consumes it" },
+  /* FNXC:WorkspaceReviewRecovery 2026-08-21-19:39: this live status holds an idle task while
+   * the merge bridge conditionally seeds its single Code Review continuation; legacy adoption
+   * must preserve it rather than erase the recovery owner after restart. */
+  "workspace-review-required": { kind: "preserve", note: "live workspace review re-entry signal — merge bridge seeds Code Review" },
   // ── Scheduler / dispatch states — queued has live writers → preserve ──────
   "queued": { kind: "preserve", note: "live scheduler capacity/dependency marker — scheduler re-evaluates each poll" },
   "triaged": { kind: "resume-graph", note: "scheduler re-pickup" },
@@ -203,9 +207,25 @@ export interface LegacyAdoptionPlan {
 /** The subset of a task the planner needs. Keeps the planner storage-agnostic. */
 export interface LegacyAdoptionCandidate {
   status?: string | null;
+  /** The persisted board lane is needed to avoid retroactive merge gates. */
+  column?: string | null;
   reviewLevel?: number | null;
   enabledWorkflowSteps?: string[] | null;
   legacyAdoptedAt?: string | null;
+}
+
+/*
+FNXC:LegacyAdoption 2026-08-23-18:00:
+DELIBERATE-LITERAL — compare the persisted pre-cutover physical lane IDs
+(`in-review`/`done`/`archived`). Those are the values old rows actually carry.
+Resolving the current workflow's review/complete/archived lanes would skip rows
+that still sit on the historical names, which is the population FN-158's
+reviewLevel-backfill withhold exists to protect. This planner is also
+storage-agnostic by design (no workflow IR) so both store-open and the
+self-healing startup sweep share one decision.
+*/
+function isAtOrPastReviewLane(column: string | null | undefined): boolean {
+  return column === "in-review" || column === "done" || column === "archived";
 }
 
 /**
@@ -226,7 +246,19 @@ export function planLegacyAdoption(
   }
 
   const statusAction = resolveLegacyStatusAdoption(task.status);
-  const backfill = resolveReviewLevelBackfill(task);
+  let backfill = resolveReviewLevelBackfill(task);
+
+  /*
+  FNXC:LegacyAdoption 2026-08-22-22:49:
+  FN-158's merge door blocks an enabled pre-merge group that has no result. A legacy
+  reviewLevel backfill must therefore not add groups after a task has reached review,
+  completion, or archive: those lanes can legitimately predate workflow-step results.
+  Withhold only that metadata patch: status adoption still runs, because suppressing the
+  whole plan would strand a row that also carries a migratable legacy status.
+  */
+  if (backfill.kind === "backfill" && isAtOrPastReviewLane(task.column)) {
+    backfill = { kind: "no-op" };
+  }
 
   // A preserve gate is untouchable, but a reviewLevel backfill is orthogonal metadata and
   // is still safe to land on it.

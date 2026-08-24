@@ -49,7 +49,7 @@ export class SandboxExecBackend implements SandboxBackend {
       id: "sandbox-exec",
       supportsNetworkPolicy: true,
       supportsFilesystemPolicy: true,
-      supportsStreaming: false,
+      supportsStreaming: true,
       platform: ["darwin"],
     };
   }
@@ -107,6 +107,22 @@ export class SandboxExecBackend implements SandboxBackend {
     };
 
     log.log("[event:sandbox:prepare] backend=sandbox-exec");
+  }
+
+  wrapCommand(command: string, _options: Pick<SandboxRunOptions, "cwd" | "env">) {
+    if (this.useNativeFallback) return null;
+    const ctx = this.ctx ?? {
+      worktreePath: process.cwd(),
+      repoRootPath: process.cwd(),
+      pnpmStorePath: path.join(os.homedir(), "Library/pnpm/store"),
+      nodeBinPath: process.execPath,
+      homeDir: os.homedir(),
+      tmpDirOverride: os.tmpdir(),
+    };
+    const basePolicy = this.currentPolicy.allowedWritePaths || this.currentPolicy.allowedReadPaths
+      ? this.currentPolicy
+      : fusionWorktreePreset(ctx);
+    return { command: "sandbox-exec", args: ["-p", policyToSbplProfile(basePolicy, ctx), "/bin/sh", "-c", command] };
   }
 
   async run(command: string, options: SandboxRunOptions): Promise<SandboxRunResult> {
@@ -183,7 +199,32 @@ export class SandboxExecBackend implements SandboxBackend {
   }
 
   async runStreaming(command: string, options: SandboxRunStreamingOptions): Promise<SandboxStreamingResult> {
-    return this.nativeBackend.runStreaming(command, options);
+    if (this.useNativeFallback) return this.nativeBackend.runStreaming(command, options);
+
+    if (!this.ctx) {
+      this.ctx = {
+        worktreePath: options.cwd,
+        repoRootPath: options.cwd,
+        pnpmStorePath: path.join(os.homedir(), "Library/pnpm/store"),
+        nodeBinPath: process.execPath,
+        homeDir: os.homedir(),
+        tmpDirOverride: os.tmpdir(),
+      };
+    }
+    const basePolicy = this.currentPolicy.allowedWritePaths || this.currentPolicy.allowedReadPaths
+      ? this.currentPolicy
+      : fusionWorktreePreset(this.ctx);
+    const profile = policyToSbplProfile(basePolicy, this.ctx);
+    /*
+    FNXC:WorkspaceSandbox 2026-08-22-21:44:
+    FN-158 routes streaming verification through Seatbelt. Native streaming
+    still owns timeout and process-group reaping, but its group leader is now
+    sandbox-exec rather than the uncontained command shell.
+    */
+    return this.nativeBackend.runStreaming(
+      `sandbox-exec -p ${shEscape(profile)} /bin/sh -c ${shEscape(command)}`,
+      options,
+    );
   }
 
   async dispose(): Promise<void> {

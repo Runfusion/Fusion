@@ -28,6 +28,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
+import { ThinkingTrace } from "./ThinkingTrace";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
@@ -497,7 +498,7 @@ export function MilestoneSliceInterviewModal({
                 </button>
                 {showThinking && streamingOutput && (
                   <div className="planning-thinking-output">
-                    <pre>{streamingOutput}</pre>
+                    <ThinkingTrace text={streamingOutput} format="plain" />
                   </div>
                 )}
               </div>

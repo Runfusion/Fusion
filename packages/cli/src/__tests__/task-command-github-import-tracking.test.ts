@@ -64,6 +64,11 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
+  // FNXC:TestInfrastructure 2026-08-20-03:16: Keep this engine barrel mock complete when task merge adds stamp-recovery dependencies.
+  clearOwnedMergeStamp: vi.fn(),
+  reconcileUnownedStaleMergeStamp: vi.fn(),
+  // FNXC:TestInfrastructure 2026-08-22-00:57: Keep the isolated engine barrel mock complete after exporting the workspace merge dispatch lease.
+  withWorkspaceMergeDispatchLease: vi.fn(),
   // FNXC:TestInfrastructure 2026-07-13-10:25: extension.ts named-imports this from @fusion/engine.
   isInReviewMissingWorktreeSessionStartFailure: vi.fn(),
 }));

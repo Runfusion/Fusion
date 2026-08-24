@@ -12,7 +12,7 @@ import type { Settings, Task, TaskDetail, TaskStore } from "@fusion/core";
 import { type RunCommandResult, type WorkspaceConfig } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, createRunAuditor, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
+import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
 import { captureBaseCommitSha } from "./worktree-git-refs.js";
 import { runContextForTotal } from "./run-context-for.js";
 import { createConfiguredCommandAbortError } from "./task-predicates.js";
@@ -58,9 +58,6 @@ export async function ensureGraphCustomNodeWorktree(
   refreshStaleBase = false,
 ): Promise<TaskDetail> {
   const workspaceConfig = await resolveWorkspaceConfigOnce(deps);
-  if (workspaceConfig && (workspaceConfig.repos.length ?? 0) > 0) {
-    return task;
-  }
 
   const syntheticRunId = generateSyntheticRunId("workflow-node-worktree", task.id);
   const audit = createRunAuditor(deps.store, {
@@ -78,6 +75,50 @@ export async function ensureGraphCustomNodeWorktree(
       undefined,
       deps.runContextFor(task.id),
     );
+
+    /*
+    FNXC:WorkspaceWorktree 2026-08-22-22:42:
+    FN-158 acquires only the planner-confirmed repository scope. Callers reach
+    this seam solely for write-capable nodes; read-only planning never creates a
+    branch, lease, or worktree before it can declare its scope.
+    */
+    if (workspaceConfig) {
+      if (task.repositoryScope?.state !== "confirmed") {
+        throw new Error("Workspace acquisition requires a confirmed ## Repository Scope");
+      }
+      const workspace = await acquireWorkspaceTaskWorktrees({
+        workspaceConfig,
+        workspaceRootDir: deps.rootDir,
+        repoRelPaths: task.repositoryScope.repositories,
+        task,
+        store: deps.store,
+        settings,
+        logger: executorLog,
+        secretsStore: deps.secretsStore,
+        audit,
+        runContext: deps.getRunContextFor(task.id),
+        runConfiguredCommand: (command, cwd, timeoutMs, env) =>
+          deps.runConfiguredCommand(
+            command,
+            cwd,
+            timeoutMs,
+            env,
+            audit,
+            commandAbortController.signal,
+          ).then((result) => {
+            if (commandAbortController.signal.aborted) {
+              throw createConfiguredCommandAbortError(task.id, command);
+            }
+            return result;
+          }),
+        taskEnv: process.env,
+        addActiveWorktree: deps.addActiveWorktree,
+      });
+      deps.onStart?.(workspace.task, workspace.taskWorktreeDir);
+      executorLog.debug(`${task.id}: workflow node '${nodeId}' using workspace task directory ${workspace.taskWorktreeDir}`);
+      return { ...task, ...workspace.task } as TaskDetail;
+    }
+
     const acquisition = await acquireTaskWorktree({
       task,
       rootDir: deps.rootDir,

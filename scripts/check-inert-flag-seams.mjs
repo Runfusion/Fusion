@@ -91,23 +91,7 @@ export function effectiveArgCount(args) {
 const PREFILTER = /(olumnFlags|ifecycleColumns|eviewColumns|erminalColumns|lannerLanes|isplayColumnOptions)/;
 
 /** Known-unsupplied seams, each with why it is tolerated. Shrink this list; never grow it casually. */
-const ALLOWED = new Map([
-  /*
-  TEMPORARY — real offenders in packages owned by other batches, reported to them rather than edited
-  from outside. Remove each entry when that batch wires or deletes the parameter; the check will then
-  start guarding those files too. All three are the same shape this check exists to catch.
-  */
-  [
-    "isRecoverableMissingWorktreeReviewFailure",
-    "No production caller; 5 test call sites. The previous entry blamed the scanner for excluding "
-      + "__tests__ — that reason was wrong, the scan now reads tests and the count is real. The two "
-      + "SIBLINGS it delegates to (`...WithProgress` / `...NoProgress`) are the live pair, called from "
-      + "self-healing.ts and both supplying `reviewColumns`. This is the convenience wrapper over them, "
-      + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
-  ],
-
-
-]);
+const ALLOWED = new Map([]);
 
 /*
 PARTIAL-SUPPLY exemptions are keyed by CALL SITE, not by function name.

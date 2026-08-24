@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
-import { deriveRepoForPath, deriveRepoScopeSubset, UNSCOPED_REPO } from "../worktree/workspace-paths.js";
+import { resolveRepoDeclaredScope } from "../worktree/workspace-paths.js";
 import { createCommitRangeFilesReader, enforceSquashFileScopeInvariant, FileScopeViolationError } from "./merger-file-scope.js";
 import type { RunAuditor } from "../util/run-audit.js";
 
@@ -10,13 +10,10 @@ const execFileAsync = promisify(execFile);
 export function resolveRepoDeclaredScopeTransform({ repoRel, repoKeys }: { repoRel: string; repoKeys: readonly string[] }) {
   return {
     transform(scope: string[]): string[] {
-      const subset = deriveRepoScopeSubset(scope, repoRel);
-      if (subset.length) return subset;
-      return scope.some((entry) => deriveRepoForPath(entry, repoKeys) !== UNSCOPED_REPO) ? [] : scope;
+      return resolveRepoDeclaredScope(scope, repoRel, repoKeys).scope;
     },
     describe(scope: string[]): "repo-subset" | "unprefixed-fallback" | "foreign-repo-only" {
-      if (deriveRepoScopeSubset(scope, repoRel).length) return "repo-subset";
-      return scope.some((entry) => deriveRepoForPath(entry, repoKeys) !== UNSCOPED_REPO) ? "foreign-repo-only" : "unprefixed-fallback";
+      return resolveRepoDeclaredScope(scope, repoRel, repoKeys).source;
     },
   };
 }
@@ -57,6 +54,21 @@ export async function enforceAiMergeSquashGates(params: { store: TaskStore; task
     */
     await execFileAsync("git", ["reset", "--hard", params.tipSha], { cwd: params.mergeRoot });
     await execFileAsync("git", ["clean", "-fd"], { cwd: params.mergeRoot });
+    /*
+    FNXC:AIMergeReviewReconciliation 2026-08-23-22:05:
+    Resetting the clean room is no longer enough to stop a retry re-selecting the rejected squash.
+    FN-090 made `aiMergeReviewReconciliation` a SECOND selector: `mergeAndReview` skips its merge
+    agent entirely while the record still carries a `candidateSha`, and pre-existing clean-room
+    recovery admits that same twice-confirmed candidate. A file-scope violation is a verdict on the
+    candidate itself, so the durable record must be dropped with the commit — otherwise every retry
+    re-enters the gate on a squash the invariant already rejected and never re-merges.
+    Best effort: the violation is the caller's answer and must not be masked by a store failure.
+    */
+    try {
+      await params.store.updateTask(params.taskId, { aiMergeReviewReconciliation: null });
+    } catch {
+      // The clean-room reset already removed the HEAD-based selector; report the violation.
+    }
     throw error;
   }
 }

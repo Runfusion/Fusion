@@ -19,6 +19,7 @@ export type {
   SandboxRunResult,
   SandboxRunStreamingOptions,
   SandboxStreamingResult,
+  SandboxWrappedCommand,
 } from "./types.js";
 
 let sandboxBackendOverrideForTests: SandboxBackend | null = null;

@@ -28,7 +28,6 @@ const AI_SESSION_FLOW_MODULES = [
   "planning.ts",
   "mission-interview.ts",
   "milestone-slice-interview.ts",
-  "subtask-breakdown.ts",
   "agent-generation.ts",
   "ai-session-store.ts",
 ] as const;

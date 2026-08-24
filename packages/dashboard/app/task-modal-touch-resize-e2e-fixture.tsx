@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import type { Task } from "@fusion/core";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider, initReactI18next, useTranslation } from "react-i18next";
 import "./styles.css";
 import "./components/TaskDetailModal.css";
 import "./components/FloatingWindow.css";
@@ -22,6 +22,7 @@ import { ConfirmDialogProvider } from "./hooks/useConfirm";
 const params = new URLSearchParams(window.location.search);
 const surface = params.get("surface") ?? "new-task";
 const titleMode = params.get("titleMode") ?? "overflow";
+const boardCardClickSurface = surface === "board-card-click-app";
 if (params.has("reset")) localStorage.clear();
 
 /*
@@ -58,7 +59,18 @@ window.fetch = async (input) => {
   const payload = url.includes("/projects/across-nodes")
     ? [{ id: "fixture", name: "Fixture", path: "/fixture", status: "active" }]
     : url.includes("/tasks/board-workflows")
-      ? { flagEnabled: true, defaultWorkflowId: "fixture-workflow", taskWorkflowIds: { [fixtureTask.id]: "fixture-workflow" }, workflows: [{ id: "fixture-workflow", name: "Fixture", columns: [{ id: "todo", name: "Todo", flags: {} }] }] }
+      ? { flagEnabled: true, defaultWorkflowId: "fixture-workflow", taskWorkflowIds: { [fixtureTask.id]: "fixture-workflow" }, workflows: [{ id: "fixture-workflow", name: "Fixture", columns: boardCardClickSurface ? [
+        /*
+        FNXC:BoardNavigation 2026-08-21-18:57:
+        FN-115's production-App Chromium fixture needs measured horizontal overflow at desktop and
+        tablet widths, so it supplies enough canonical workflow columns to exercise Board panning.
+        */
+        { id: "todo", name: "Todo", flags: {} },
+        { id: "in-progress", name: "In progress", flags: {} },
+        { id: "in-review", name: "In review", flags: {} },
+        { id: "verify", name: "Verify", flags: {} },
+        { id: "done", name: "Done", flags: {} },
+      ] : [{ id: "todo", name: "Todo", flags: {} }, { id: "in-progress", name: "In progress", flags: {} }, { id: "in-review", name: "In review", flags: {} }] }] }
       : url.includes(`/tasks/${fixtureTask.id}/prompt`)
         ? { id: fixtureTask.id, prompt: "" }
         : pathname === `/api/tasks/${fixtureTask.id}`
@@ -75,7 +87,7 @@ window.fetch = async (input) => {
                   ? { goals: [] }
         : url.includes("/models")
           ? { models: [], favoriteProviders: [], favoriteModels: [] }
-          : url.includes("/settings") ? { taskPopupsBoardListOnly: false }
+          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true" }
             : url.includes("/agents") || url.includes("/nodes") ? []
               : [];
   return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
@@ -108,7 +120,7 @@ The App pop-out browser route hydrates the same project and task caches used aft
 session, so its board card exists on App's first render. This removes timing retries from the
 fixture while App still revalidates the stable mocked API data through its production hooks.
 */
-if (surface === "task-detail-title-app-floating") {
+if (surface === "task-detail-title-app-floating" || surface === "board-card-click-app") {
   const savedAt = Date.now();
   localStorage.setItem("kb-dashboard-projects-cache", JSON.stringify({ savedAt, data: [{ id: "fixture", name: "Fixture", path: "/fixture", status: "active" }] }));
   localStorage.setItem("kb-dashboard-current-project-cache", JSON.stringify({ savedAt, data: "fixture" }));
@@ -151,7 +163,7 @@ function TaskDetailTitleModalHarness() {
     openNewTaskWithDescription: noop,
     openWorkflowEditor: noop,
   };
-  return <div data-testid="title-host-modal"><NavigationHistoryProvider value={{ pushNav: noop, replaceCurrent: noop, removeNav: noop }}><AppModals projectId="fixture" tasks={[fixtureTask]} projects={[]} currentProject={null} addToast={noop} toasts={[]} removeToast={noop} modalManager={modalManager as never} projectActions={{} as never} taskHandlers={{} as never} taskOperations={{ moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, archiveTask: asyncTask, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask }} deepLink={{ handleDetailClose: noop }} settings={{ prAuthAvailable: false, autoMerge: true, taskDetailChatFirst: false, themeMode: "system", colorTheme: "default", dashboardFontScalePct: 100, shadcnCustomColors: {}, resolvedThemeMode: "light", setThemeMode: noop, setColorTheme: noop, setDashboardFontScalePct: noop, setShadcnCustomColors: noop, setQuickChatButtonModeImmediate: noop, setMobileNavPrimaryItemsImmediate: noop }} /></NavigationHistoryProvider></div>;
+  return <div data-testid="title-host-modal"><NavigationHistoryProvider value={{ pushNav: noop, replaceCurrent: noop, removeNav: noop }}><AppModals projectId="fixture" tasks={[fixtureTask]} projects={[]} currentProject={null} addToast={noop} toasts={[]} removeToast={noop} modalManager={modalManager as never} projectActions={{} as never} taskHandlers={{} as never} taskOperations={{ moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, archiveTask: asyncTask, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask }} deepLink={{ handleDetailClose: noop }} settings={{ prAuthAvailable: false, autoMerge: true, openTasksInRightSidebar: false, openMobileTasksInPopup: false, taskPopupsBoardListOnly: true, showCostBadgeOnCards: false, taskDetailChatFirst: false, chatMessageLayout: "bubbles", themeMode: "system", colorTheme: "default", dashboardFontScalePct: 100, shadcnCustomColors: {}, resolvedThemeMode: "light", setThemeMode: noop, setColorTheme: noop, setDashboardFontScalePct: noop, setShadcnCustomColors: noop, setQuickChatButtonModeImmediate: noop, setChatMessageLayoutImmediate: noop, setOpenTasksInRightSidebarImmediate: noop, setOpenMobileTasksInPopupImmediate: noop, setTaskPopupsBoardListOnlyImmediate: noop, setShowCostBadgeOnCardsImmediate: noop, setTaskDetailChatFirstImmediate: noop, setMobileNavPrimaryItemsImmediate: noop }} /></NavigationHistoryProvider></div>;
 }
 
 function TaskDetailTitleMainPanelHarness() {
@@ -190,9 +202,10 @@ function TaskDetailTitleEmbeddedHarness() {
 }
 
 function TaskDetailResizeHarness() {
+  const { t } = useTranslation("app");
   return <FloatingWindow
     windowKey="task-detail-fixture"
-    title="Task detail"
+    title={t("fixture.taskDetail", "Task detail")}
     onClose={() => undefined}
     hideHeader
     dragHandleSelector=".task-detail-content--embedded > .modal-header"
@@ -205,16 +218,17 @@ function TaskDetailResizeHarness() {
     testId="task-detail-modal-overlay"
   >
     <div className="task-detail-content task-detail-content--embedded">
-      <div className="modal-header">Task detail</div>
-      <div className="modal-body">Task detail body</div>
+      <div className="modal-header">{t("fixture.taskDetail", "Task detail")}</div>
+      <div className="modal-body">{t("fixture.taskDetailBody", "Task detail body")}</div>
     </div>
   </FloatingWindow>;
 }
 
 function FloatingWindowHarness() {
+  const { t } = useTranslation("app");
   return <FloatingWindow
     windowKey="fn-8605-floating"
-    title="Floating task detail"
+    title={t("fixture.floatingTaskDetail", "Floating task detail")}
     onClose={() => undefined}
     className="floating-window--task-detail"
     defaultSize={{ width: 560, height: 480 }}
@@ -223,11 +237,12 @@ function FloatingWindowHarness() {
     persistGeometryKey="fusion:fn-8605-floating"
     suspendGeometryPersistenceOnMobile
   >
-    <div>Floating task detail body</div>
+    <div>{t("fixture.floatingTaskDetailBody", "Floating task detail body")}</div>
   </FloatingWindow>;
 }
 
 function HeaderlessFloatingWindowHarness() {
+  const { t } = useTranslation("app");
   const [actionCount, setActionCount] = useState(0);
   return <FloatingWindow
     windowKey="fn-8605-headerless-floating"
@@ -242,11 +257,11 @@ function HeaderlessFloatingWindowHarness() {
     persistGeometryKey="fusion:fn-8605-headerless-floating"
     suspendGeometryPersistenceOnMobile
   >
-    <div className="fn-8605-delegated-drag-handle">Headerless task detail
-      <button type="button" data-testid="fn-8605-header-action" onClick={() => setActionCount((count) => count + 1)}>Header action</button>
+    <div className="fn-8605-delegated-drag-handle">{t("fixture.headerlessTaskDetail", "Headerless task detail")}
+      <button type="button" data-testid="fn-8605-header-action" onClick={() => setActionCount((count) => count + 1)}>{t("fixture.headerAction", "Header action")}</button>
       <output data-testid="fn-8605-header-action-count">{actionCount}</output>
     </div>
-    <div>Floating task detail body</div>
+    <div>{t("fixture.floatingTaskDetailBody", "Floating task detail body")}</div>
   </FloatingWindow>;
 }
 
@@ -257,9 +272,10 @@ FloatingWindow consumer. It must retain the shared 44px layout target while task
 its target out of flow.
 */
 function GenericFloatingWindowHarness() {
+  const { t } = useTranslation("app");
   return <FloatingWindow
     windowKey="fn-8612-generic-floating"
-    title="Generic floating window"
+    title={t("fixture.genericFloatingWindow", "Generic floating window")}
     onClose={() => undefined}
     hideHeader
     dragHandleSelector=".fn-8612-generic-drag-handle"
@@ -269,15 +285,15 @@ function GenericFloatingWindowHarness() {
     persistGeometryKey="fusion:fn-8612-generic-floating"
     suspendGeometryPersistenceOnMobile
   >
-    <div className="fn-8612-generic-drag-handle">Generic window header</div>
-    <div>Generic floating window body</div>
+    <div className="fn-8612-generic-drag-handle">{t("fixture.genericWindowHeader", "Generic window header")}</div>
+    <div>{t("fixture.genericFloatingWindowBody", "Generic floating window body")}</div>
   </FloatingWindow>;
 }
 
 function Fixture() {
   return <I18nextProvider i18n={i18n}>
     <ConfirmDialogProvider skipConfirmations>
-      {surface === "task-detail-title-app-floating" ? <TaskDetailTitleAppFloatingHarness /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-floating" ? <TaskDetailTitleFloatingHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
+      {surface === "task-detail-title-app-floating" || surface === "board-card-click-app" ? <TaskDetailTitleAppFloatingHarness /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-floating" ? <TaskDetailTitleFloatingHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
         isOpen
         tasks={[]}
         onClose={() => undefined}

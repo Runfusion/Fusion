@@ -46,7 +46,14 @@ export async function routeRetryableRemediationGraphFailureToPreMergeFix(
   if (!target) return false;
   const budget = await deps.resolveFailedPreMergeWorkflowStepBudget(live, target);
   if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
-  if (!budget.unbounded && budget.attempts >= budget.max) return false;
+  /*
+  FNXC:ReviewConvergence 2026-08-22-06:03:
+  This router has an independent budget guard, so it must delegate exhaustion to the
+  recovery requester rather than parking before FN-149's shared convergence ladder runs.
+  */
+  if (!budget.unbounded && budget.attempts >= budget.max) {
+    return deps.recoverFailedPreMergeWorkflowStep(live);
+  }
 
   const nextCount = budget.attempts + 1;
   const totalFixCount = (live.postReviewFixCount ?? 0) + 1;

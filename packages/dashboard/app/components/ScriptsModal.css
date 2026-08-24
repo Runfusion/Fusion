@@ -1824,6 +1824,22 @@ queries already apply (the container-query rule above also fires and produces th
   border-color: var(--text-dim);
 }
 
+/* FNXC:ActivityLogTaskSearch 2026-08-20-04:17: task search is always inline so modal and dock use the same durable-filter affordance. */
+.activity-log-task-search-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  flex: 0 0 auto;
+}
+
+.activity-log-task-search {
+  flex: 1 1 var(--space-2xl);
+  min-width: 0;
+}
+
+.activity-log-task-search:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
 /* Project filter variant */
 .activity-log-filter--project {
   min-width: 140px;
@@ -2012,6 +2028,11 @@ queries already apply (the container-query rule above also fires and produces th
 
   .activity-log-clear-filters {
     margin-left: 0;
+  }
+
+  .activity-log-task-search {
+    flex-basis: 100%;
+    min-width: 0;
   }
 
   /*

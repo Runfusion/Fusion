@@ -1,7 +1,9 @@
 import type { WorkflowReviewFinding, WorkflowReviewFindingResolution, WorkflowReviewFindingSeverity, WorkflowStepResult } from "../types.js";
 
 export const WORKFLOW_REVIEW_FINDING_SEVERITIES = ["low", "medium", "high", "critical"] as const;
-export const WORKFLOW_REVIEW_FINDING_RESOLUTIONS = ["open", "resolved-in-review", "superseded"] as const;
+export const WORKFLOW_REVIEW_FINDING_RESOLUTIONS = ["open", "resolved-in-review", "superseded", "dispute-upheld"] as const;
+/** Values an untrusted reviewer response may assign; automatic dispute closure is Fusion-owned. */
+export const MODEL_ASSIGNABLE_WORKFLOW_REVIEW_FINDING_RESOLUTIONS = ["resolved-in-review", "superseded"] as const;
 export const MAX_WORKFLOW_REVIEW_FINDINGS = 20;
 const MAX_FINDING_ID_LENGTH = 128;
 const MAX_FINDING_TITLE_LENGTH = 240;
@@ -34,10 +36,11 @@ export function normalizeWorkflowReviewFindings(raw: unknown): WorkflowReviewFin
       ? Math.floor(value.line)
       : undefined;
     const severity = isWorkflowReviewFindingSeverity(value.severity) ? value.severity : undefined;
-    const resolution = isWorkflowReviewFindingResolution(value.resolution) && value.resolution !== "open"
+    const resolution = isModelAssignableWorkflowReviewFindingResolution(value.resolution)
       ? value.resolution
       : undefined;
-    normalized.push({ id, title, body, ...(filePath ? { filePath } : {}), ...(line ? { line } : {}), ...(severity ? { severity } : {}), ...(resolution ? { resolution } : {}) });
+    const rebutsDisputedFindingId = boundedTrimmedString(value.rebutsDisputedFindingId, MAX_FINDING_ID_LENGTH);
+    normalized.push({ id, title, body, ...(filePath ? { filePath } : {}), ...(line ? { line } : {}), ...(severity ? { severity } : {}), ...(resolution ? { resolution } : {}), ...(rebutsDisputedFindingId ? { rebutsDisputedFindingId } : {}) });
   }
   return normalized.length > 0 ? normalized : undefined;
 }
@@ -54,6 +57,10 @@ export function isWorkflowReviewFindingSeverity(value: unknown): value is Workfl
 
 export function isWorkflowReviewFindingResolution(value: unknown): value is WorkflowReviewFindingResolution {
   return typeof value === "string" && (WORKFLOW_REVIEW_FINDING_RESOLUTIONS as readonly string[]).includes(value);
+}
+
+export function isModelAssignableWorkflowReviewFindingResolution(value: unknown): value is Exclude<WorkflowReviewFindingResolution, "open" | "dispute-upheld"> {
+  return typeof value === "string" && (MODEL_ASSIGNABLE_WORKFLOW_REVIEW_FINDING_RESOLUTIONS as readonly string[]).includes(value);
 }
 
 /** Historical findings and explicit `open` findings remain actionable. */
@@ -98,6 +105,84 @@ export function applySupersededFindingIds(
   return changed ? next : results;
 }
 
+/** Resolve same-gate findings stored in archived attempts without changing their step state. */
+export function applySupersededPriorAttemptFindingIds(
+  results: WorkflowStepResult[] | undefined,
+  options: { workflowStepId: string; findingIds: string[] },
+): WorkflowStepResult[] | undefined {
+  if (!results || options.findingIds.length === 0) return results;
+  const claimed = new Set(options.findingIds);
+  let changed = false;
+  const next = results.map((result) => {
+    if (result.workflowStepId !== options.workflowStepId || !result.priorAttempts?.length) return result;
+    let resultChanged = false;
+    const priorAttempts = result.priorAttempts.map((attempt) => {
+      if (!attempt.findings?.length) return attempt;
+      let findingsChanged = false;
+      const findings = attempt.findings.map((finding) => {
+        if (!claimed.has(finding.id) || !isOpenWorkflowReviewFinding(finding)) return finding;
+        findingsChanged = true;
+        return { ...finding, resolution: "superseded" as const };
+      });
+      if (!findingsChanged) return attempt;
+      changed = true;
+      resultChanged = true;
+      return { ...attempt, findings };
+    });
+    return resultChanged ? { ...result, priorAttempts } : result;
+  });
+  return changed ? next : results;
+}
+
+export function collectDisputedFindings(
+  results: WorkflowStepResult[] | undefined,
+  options: { revisionKey: string },
+): WorkflowReviewFinding[] {
+  const result = results?.find((entry) => entry.workflowStepId === options.revisionKey);
+  return (result?.priorAttempts ?? []).flatMap((attempt) => attempt.findings ?? [])
+    .filter((finding) => finding.disputedAt != null && isOpenWorkflowReviewFinding(finding));
+}
+
+/*
+FNXC:ReviewConvergence 2026-08-22-05:20:
+FN-149 permits automatic dispute closure only after a terminal verdict for the same gate. Pending
+lease writes share this persistence sink, so closing there would uphold the implementer before a
+reviewer can rebut it.
+*/
+export function closeUnrebuttedDisputedFindings(
+  existing: WorkflowStepResult[] | undefined,
+  incoming: WorkflowStepResult,
+  options: { revisionKey: string; workflowStepId: string },
+  now: string = new Date().toISOString(),
+): WorkflowStepResult[] | undefined {
+  if (incoming.workflowStepId !== options.workflowStepId || incoming.workflowStepId !== options.revisionKey
+    || !isTerminalStepResult(incoming) || !incoming.verdict || !existing) return existing;
+  const superseded = new Set(incoming.supersededFindingIds ?? []);
+  const rebutted = new Set((incoming.findings ?? []).map((finding) => finding.rebutsDisputedFindingId).filter((id): id is string => Boolean(id)));
+  let changed = false;
+  const next = existing.map((result) => {
+    if (result.workflowStepId !== options.workflowStepId || !result.priorAttempts?.length) return result;
+    let resultChanged = false;
+    const priorAttempts = result.priorAttempts.map((attempt) => {
+      if (!attempt.findings?.length) return attempt;
+      let attemptChanged = false;
+      const findings = attempt.findings.map((finding) => {
+        if (!finding.disputedAt || !isOpenWorkflowReviewFinding(finding)) return finding;
+        if (rebutted.has(finding.id)) {
+          attemptChanged = resultChanged = changed = true;
+          return { ...finding, disputeRebuttedAt: now };
+        }
+        if (superseded.has(finding.id)) return finding;
+        attemptChanged = resultChanged = changed = true;
+        return { ...finding, resolution: "dispute-upheld" as const };
+      });
+      return attemptChanged ? { ...attempt, findings } : attempt;
+    });
+    return resultChanged ? { ...result, priorAttempts } : result;
+  });
+  return changed ? next : existing;
+}
+
 /*
 FNXC:WorkflowStepResults 2026-07-09-00:20:
 FN-7727: both engine `WorkflowStepResult` recorders (the executor graph adapter's
@@ -137,10 +222,102 @@ function isSupersededPlanningEvidence(result: WorkflowStepResult): boolean {
  * Strip a result down to a single-level history snapshot: its own
  * `priorAttempts` are dropped so nesting never grows beyond one level deep.
  */
-function toSnapshot(result: WorkflowStepResult): WorkflowStepResult {
+export function toSnapshot(result: WorkflowStepResult): WorkflowStepResult {
   if (!result.priorAttempts || result.priorAttempts.length === 0) return result;
   const { priorAttempts: _drop, ...rest } = result;
   return rest as WorkflowStepResult;
+}
+
+/**
+ * FNXC:ReviewConvergence 2026-08-22-05:00:
+ * Automatic remediation must retain the failed review ledger while explicit operator retry keeps
+ * its clean-slate contract. A skipped carrier is non-blocking but hands a single-level snapshot to
+ * the next upsert; this blanket helper is intentionally incapable of writing arbitration metadata.
+ */
+export function archiveTerminalWorkflowStepFailures(
+  results: WorkflowStepResult[] | undefined,
+  archivedAt: string = new Date().toISOString(),
+): WorkflowStepResult[] | undefined {
+  if (!results?.some(isTerminalFailure)) return results;
+  return results.map((result) => {
+    if (!isTerminalFailure(result)) return result;
+    const snapshot = toSnapshot(result);
+    const priorAttempts = [snapshot, ...(result.priorAttempts ?? [])].slice(0, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS);
+    const {
+      output: _output, notes: _notes, verdict: _verdict, findings: _findings,
+      leaseOwner: _leaseOwner, leaseNodeId: _leaseNodeId, priorAttempts: _priorAttempts,
+      bypassedBy: _bypassedBy, bypassedAt: _bypassedAt, bypassReason: _bypassReason,
+      bypassedFromStatus: _bypassedFromStatus, bypassedFromVerdict: _bypassedFromVerdict,
+      arbitrationDecision: _arbitrationDecision, arbitrationBindingFindingCount: _arbitrationBindingFindingCount,
+      arbitratedAttemptAt: _arbitratedAttemptAt, arbitratedAt: _arbitratedAt, arbitrationNotes: _arbitrationNotes,
+      ...carrier
+    } = result;
+    return {
+      ...carrier,
+      status: "skipped" as const,
+      remediationArchivedAt: archivedAt,
+      remediationArchivedFromStatus: result.status,
+      priorAttempts,
+    };
+  });
+}
+
+export function isArchivedRemediationCarrier(result: WorkflowStepResult): boolean {
+  return result.remediationArchivedAt != null;
+}
+
+export type ArbitrationFailureFence = {
+  workflowStepId: string;
+  expectedStartedAt?: string;
+  expectedCompletedAt?: string;
+  expectedVerdict?: WorkflowStepResult["verdict"];
+  expectedReviewInputFingerprint?: string;
+  decision: "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
+  bindingFindingCount: number;
+  arbitratedAt: string;
+  arbitrationNotes: string;
+};
+
+/** Fenced arbitration can release only the exact failed gate the arbiter read. */
+export function archiveArbitratedWorkflowStepFailure(
+  results: WorkflowStepResult[] | undefined,
+  fence: ArbitrationFailureFence,
+): { results: WorkflowStepResult[] | undefined; applied: true } | { results: WorkflowStepResult[] | undefined; applied: false; reason: "gate-missing" | "not-failed" | "attempt-changed" | "superseded" | "binding-findings-survive" } {
+  const index = results?.findIndex((result) => result.workflowStepId === fence.workflowStepId) ?? -1;
+  if (index < 0 || !results) return { results, applied: false, reason: "gate-missing" };
+  const current = results[index];
+  if (current.status !== "failed") return { results, applied: false, reason: "not-failed" };
+  if (current.supersededAt != null) return { results, applied: false, reason: "superseded" };
+  if (current.startedAt !== fence.expectedStartedAt || current.completedAt !== fence.expectedCompletedAt
+    || current.verdict !== fence.expectedVerdict
+    || (fence.expectedReviewInputFingerprint !== undefined && current.reviewInputFingerprint !== fence.expectedReviewInputFingerprint)) {
+    return { results, applied: false, reason: "attempt-changed" };
+  }
+  if (fence.bindingFindingCount > 0) return { results, applied: false, reason: "binding-findings-survive" };
+  /*
+  FNXC:ReviewConvergence 2026-08-22-05:33:
+  FN-149 permits automatic release only when arbitration upholds the implementer, or when a SPLIT
+  leaves no binding finding. An UPHOLD_REVIEW verdict is never gate-opening, even if a malformed
+  arbiter payload reports zero bindings.
+  */
+  if (fence.decision !== "UPHOLD_IMPLEMENTER" && fence.decision !== "SPLIT") {
+    return { results, applied: false, reason: "binding-findings-survive" };
+  }
+  const archivedResults = archiveTerminalWorkflowStepFailures([current], fence.arbitratedAt);
+  // `current` is failed, so the archival helper must produce exactly one carrier; retain a
+  // defensive refusal if that invariant changes rather than releasing a malformed gate.
+  const archived = archivedResults?.[0];
+  if (!archived) return { results, applied: false, reason: "not-failed" };
+  const next = [...results];
+  next[index] = {
+    ...archived,
+    arbitrationDecision: fence.decision,
+    arbitrationBindingFindingCount: fence.bindingFindingCount,
+    arbitratedAttemptAt: current.completedAt ?? current.startedAt,
+    arbitratedAt: fence.arbitratedAt,
+    arbitrationNotes: fence.arbitrationNotes,
+  };
+  return { results: next, applied: true };
 }
 
 /**

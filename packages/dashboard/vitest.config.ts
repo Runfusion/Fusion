@@ -243,10 +243,21 @@ velocity). Mirror the SettingsModal split: these 3 files live ONLY here (not in
 qualityAppComponentTests), so they must be spread into backfillAppExclude too — otherwise
 the broad `app/**` backfill glob re-collects them and they run in BOTH projects.
 */
+/*
+FNXC:ChatNavigation 2026-08-19-21:10:
+FN-054 requires the focused Chat lane to collect every suite that protects shared list-to-detail navigation. Keep responsive, history, creation, and mount contracts together so the task command cannot silently omit stale selector or split-pane assertions.
+*/
 const qualityAppChatOnlyTests = [
+  "app/components/__tests__/ChatView.content-search.test.tsx",
   "app/components/__tests__/ChatView.core.test.tsx",
-  "app/components/__tests__/ChatView.sessions-rooms.test.tsx",
+  "app/components/__tests__/ChatView.core-contracts.test.tsx",
+  "app/components/__tests__/ChatView.context-window.test.tsx",
   "app/components/__tests__/ChatView.mobile.test.tsx",
+  "app/components/__tests__/ChatView.mobile-render.test.tsx",
+  "app/components/__tests__/ChatView.new-chat-default.test.tsx",
+  "app/components/__tests__/ChatView.sessions-rooms.test.tsx",
+  "app/components/__tests__/ChatView.swipe-back.test.tsx",
+  "app/components/__tests__/overflowViewRegistry.chat.test.tsx",
   // FNXC:DashboardTests 2026-06-29-14:14: Task-detail chat typography regressions must run in the same chat quality lane as the required FN-7240 targeted command, so CSS-content assertions cannot fall through to broad backfill only.
   "app/components/__tests__/TaskChatTab.test.tsx",
 ];
@@ -545,7 +556,6 @@ export default defineConfig({
       "@fusion/dashboard/app/api/tasks/task-content": resolve(__dirname, "app/api/tasks/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
       "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
-      "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),
       "@fusion-plugin-examples/droid-runtime/probe": resolve(
         __dirname,
         "../../plugins/fusion-plugin-droid-runtime/src/probe.ts",

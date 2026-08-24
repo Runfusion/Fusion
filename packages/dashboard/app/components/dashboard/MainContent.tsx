@@ -60,6 +60,12 @@ export function MainContent({
   setShadcnCustomColors,
   resolvedThemeMode,
   setQuickChatButtonModeImmediate,
+  setChatMessageLayoutImmediate,
+  setOpenTasksInRightSidebarImmediate,
+  setOpenMobileTasksInPopupImmediate,
+  setTaskPopupsBoardListOnlyImmediate,
+  setShowCostBadgeOnCardsImmediate,
+  setTaskDetailChatFirstImmediate,
   setMobileNavPrimaryItemsImmediate,
   reopenOnboardingWithNav,
   viewMode,
@@ -86,12 +92,17 @@ export function MainContent({
   mergeStrategy,
   planAutoApproveEnabled,
   settingsLoaded,
+  openTasksInRightSidebar,
   openMobileTasksInPopup,
+  taskPopupsBoardListOnly,
+  showCostBadgeOnCards,
   taskDetailChatFirst,
+  chatMessageLayout,
   skillsEnabled,
   experimentalFeatures,
   setQuickChatOpen,
   chatComposerPrefill,
+  onOpenSessionInNewWindow,
   mailComposerPrefill,
   onSendAsReport,
   onOpenChatWithPrefill,
@@ -130,6 +141,7 @@ export function MainContent({
   mainPanelDetailTask,
   filteredBoardTasks,
   maxConcurrent,
+  effectiveMaxConcurrent,
   showWorktreeGrouping,
   moveTask,
   pauseTask,
@@ -138,8 +150,6 @@ export function MainContent({
   openGroupModalWithNav,
   handleBoardQuickCreate,
   openNewTaskWithNav,
-  subtaskBreakdownEnabled,
-  openSubtaskBreakdownWithNav,
   toggleAutoMerge,
   togglePlanAutoApprove,
   globalPaused,
@@ -152,6 +162,8 @@ export function MainContent({
   archiveAllDone,
   loadArchivedTasks,
   loadMoreArchivedTasks,
+  changeArchivedSortMode,
+  archivedSortMode,
   archivedHasMore,
   archivedLoadingMore,
   searchQuery,
@@ -326,6 +338,18 @@ export function MainContent({
             onDashboardFontScaleChange={setDashboardFontScalePct}
             onShadcnCustomColorsChange={setShadcnCustomColors}
             onQuickChatButtonModeChange={setQuickChatButtonModeImmediate}
+            chatMessageLayout={chatMessageLayout}
+            onChatMessageLayoutChange={setChatMessageLayoutImmediate}
+            openTasksInRightSidebar={openTasksInRightSidebar}
+            onOpenTasksInRightSidebarChange={setOpenTasksInRightSidebarImmediate}
+            openMobileTasksInPopup={openMobileTasksInPopup}
+            onOpenMobileTasksInPopupChange={setOpenMobileTasksInPopupImmediate}
+            taskPopupsBoardListOnly={taskPopupsBoardListOnly}
+            onTaskPopupsBoardListOnlyChange={setTaskPopupsBoardListOnlyImmediate}
+            showCostBadgeOnCards={showCostBadgeOnCards}
+            onShowCostBadgeOnCardsChange={setShowCostBadgeOnCardsImmediate}
+            taskDetailChatFirst={taskDetailChatFirst}
+            onTaskDetailChatFirstChange={setTaskDetailChatFirstImmediate}
             onMobileNavPrimaryItemsChange={setMobileNavPrimaryItemsImmediate}
             onReopenOnboarding={reopenOnboardingWithNav}
             onOpenApprovals={() => handleChangeTaskView("mailbox")}
@@ -423,7 +447,6 @@ export function MainContent({
                 projectId={currentProject?.id}
                 onOpenDetail={openPluginTaskDetail}
                 addToast={addToast}
-                disableDrag={true}
                 prAuthAvailable={prAuthAvailable}
                 autoMergeEnabled={autoMerge}
                 nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
@@ -484,6 +507,7 @@ export function MainContent({
             initialComposerDraft={chatComposerPrefill?.text}
             initialComposerDraftNonce={chatComposerPrefill?.nonce}
             onPopOut={() => setQuickChatOpen(true)}
+            onOpenSessionInNewWindow={onOpenSessionInNewWindow}
             onSendAsReport={onSendAsReport}
           />
         </Suspense>
@@ -864,6 +888,7 @@ export function MainContent({
             tasks={filteredBoardTasks}
             projectId={currentProject?.id}
             maxConcurrent={maxConcurrent}
+            effectiveMaxConcurrent={effectiveMaxConcurrent}
             showWorktreeGrouping={showWorktreeGrouping}
             onMoveTask={moveTask}
             onPauseTask={pauseTask}
@@ -874,7 +899,6 @@ export function MainContent({
             onQuickCreate={handleBoardQuickCreate}
             onNewTask={openNewTaskWithNav}
             onPlanningMode={openPlanningWithInitialPlanWithNav}
-            onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
             autoMerge={autoMerge}
             mergeStrategy={mergeStrategy}
             onToggleAutoMerge={toggleAutoMerge}
@@ -895,6 +919,8 @@ export function MainContent({
             onArchiveAllDone={archiveAllDone}
             onLoadArchivedTasks={loadArchivedTasks}
             onLoadMoreArchivedTasks={loadMoreArchivedTasks}
+            archivedSortMode={archivedSortMode}
+            onArchivedSortModeChange={changeArchivedSortMode}
             archivedHasMore={archivedHasMore}
             archivedLoadingMore={archivedLoadingMore}
             searchQuery={searchQuery}
@@ -956,6 +982,7 @@ export function MainContent({
               The full-panel task-detail must dismiss back to the board when a destructive/terminal action (delete/merge/archive/retry/reset/duplicate) fires, mirroring the modal path. Without onRequestClose the panel kept showing a ghost of the just-acted-on task.
               */
               onRequestClose={closeTaskDetailMainPanel}
+              onRefinementCreated={(task) => ingestCreatedTasks([task])}
               onTaskUpdated={(updatedTask) => {
                 setMainPanelDetailTask((previous) => {
                   if (!previous || (updatedTask.id !== undefined && updatedTask.id !== previous.id)) return previous;
@@ -983,6 +1010,7 @@ export function MainContent({
           tasks={filteredBoardTasks}
           projectId={currentProject?.id}
           maxConcurrent={maxConcurrent}
+          effectiveMaxConcurrent={effectiveMaxConcurrent}
           showWorktreeGrouping={showWorktreeGrouping}
           onMoveTask={moveTask}
           onPauseTask={pauseTask}
@@ -993,7 +1021,6 @@ export function MainContent({
           onQuickCreate={handleBoardQuickCreate}
           onNewTask={openNewTaskWithNav}
           onPlanningMode={openPlanningWithInitialPlanWithNav}
-          onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
           autoMerge={autoMerge}
           mergeStrategy={mergeStrategy}
           onToggleAutoMerge={toggleAutoMerge}
@@ -1014,6 +1041,8 @@ export function MainContent({
           onArchiveAllDone={archiveAllDone}
           onLoadArchivedTasks={loadArchivedTasks}
           onLoadMoreArchivedTasks={loadMoreArchivedTasks}
+          archivedSortMode={archivedSortMode}
+          onArchivedSortModeChange={changeArchivedSortMode}
           archivedHasMore={archivedHasMore}
           archivedLoadingMore={archivedLoadingMore}
           searchQuery={searchQuery}
@@ -1052,6 +1081,7 @@ export function MainContent({
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
+        onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
         onPopOut={popOutTaskDetail}
         addToast={addToast}
@@ -1059,7 +1089,6 @@ export function MainContent({
         onNewTask={openNewTaskWithNav}
         onQuickCreate={handleBoardQuickCreate}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
-        onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
         availableModels={availableModels}
         favoriteProviders={favoriteProviders}
         favoriteModels={favoriteModels}

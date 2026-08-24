@@ -11,7 +11,7 @@ The mock records each TaskCard mount so tests can assert row identity stability:
 const { taskCardMountLog } = vi.hoisted(() => ({ taskCardMountLog: [] as string[] }));
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, taskColumnFlags, onOpenDetail, onDeleteTask, onReviseTask, disableDrag }: { task: Task | TaskDetail; taskColumnFlags?: { complete?: boolean }; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; onReviseTask?: (task: Task) => void; disableDrag?: boolean }) => {
+  TaskCard: ({ task, taskColumnFlags, onOpenDetail, onDeleteTask, onReviseTask }: { task: Task | TaskDetail; taskColumnFlags?: { complete?: boolean }; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; onReviseTask?: (task: Task) => void }) => {
     useEffect(() => {
       taskCardMountLog.push(task.id);
     }, []);
@@ -19,7 +19,6 @@ vi.mock("../TaskCard", () => ({
       <button
         type="button"
         data-testid={`mock-task-card-${task.id}`}
-        data-disable-drag={String(disableDrag)}
         data-has-delete={String(Boolean(onDeleteTask))}
         data-complete={String(taskColumnFlags?.complete === true)}
         onClick={() => onOpenDetail(task)}
@@ -100,8 +99,6 @@ describe("DockTaskList", () => {
     expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
     expect(screen.getByTestId("dock-task-list-row-FN-1")).toBeInTheDocument();
     expect(screen.getByTestId("dock-task-list-row-FN-2")).toBeInTheDocument();
-    expect(screen.getByTestId("mock-task-card-FN-1")).toHaveAttribute("data-disable-drag", "true");
-
     fireEvent.click(screen.getByTestId("mock-task-card-FN-2"));
     expect(onOpenTask).toHaveBeenCalledTimes(1);
     expect(onOpenTask).toHaveBeenCalledWith(second);

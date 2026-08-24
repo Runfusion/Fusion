@@ -75,8 +75,9 @@ vi.mock("../Column", () => ({
     defaultWorkflowId,
     canDropTask,
     onPlanningMode,
-    onSubtaskBreakdown,
     taskWorkflowBadges,
+    onOpenDetail,
+    onMoveTask,
   }: {
     column: string;
     tasks: Task[];
@@ -101,12 +102,13 @@ vi.mock("../Column", () => ({
     defaultWorkflowId?: string | null;
     canDropTask?: unknown;
     onPlanningMode?: unknown;
-    onSubtaskBreakdown?: unknown;
     taskWorkflowBadges?: ReadonlyMap<string, { workflowId: string; workflowName: string }>;
+    onOpenDetail?: (task: Task) => void;
+    onMoveTask?: (id: string, column: string) => Promise<Task>;
   }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-workflow-badges={JSON.stringify(Object.fromEntries(taskWorkflowBadges ?? new Map()))} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-plan-auto-approve-toggle={onTogglePlanAutoApprove ? "yes" : "no"} data-plan-auto-approve-enabled={planAutoApproveEnabled ? "true" : "false"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"} data-workflow-id={workflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((workflow) => workflow.id))} data-default-workflow-id={defaultWorkflowId ?? ""} data-column-display-name={columnDisplayName ?? ""} data-has-can-drop={canDropTask ? "yes" : "no"} data-has-planning={onPlanningMode ? "yes" : "no"} data-has-subtask={onSubtaskBreakdown ? "yes" : "no"}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-workflow-badges={JSON.stringify(Object.fromEntries(taskWorkflowBadges ?? new Map()))} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-plan-auto-approve-toggle={onTogglePlanAutoApprove ? "yes" : "no"} data-plan-auto-approve-enabled={planAutoApproveEnabled ? "true" : "false"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"} data-workflow-id={workflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((workflow) => workflow.id))} data-default-workflow-id={defaultWorkflowId ?? ""} data-column-display-name={columnDisplayName ?? ""} data-has-can-drop={canDropTask ? "yes" : "no"} data-has-planning={onPlanningMode ? "yes" : "no"}>
         {onQuickCreate ? (
           <button type="button" data-testid={`mock-quick-create-${column}`} onClick={() => void (onQuickCreate as (input: { description: string; column?: string; workflowId?: string }) => Promise<unknown>)({ description: `Create from ${column}`, column, workflowId: "wf-custom" })}>
             quick-create-{column}
@@ -117,9 +119,12 @@ vi.mock("../Column", () => ({
             new-task-{column}
           </button>
         ) : null}
+        {tasks.length === 0 ? <div className="empty-column">No tasks</div> : null}
         {tasks.map((task) => (
-          <article key={task.id} data-testid={`board-task-card-${task.id}`}>
-            {task.title ?? task.description ?? task.id}
+          <article key={task.id} className="card" data-id={task.id} data-testid={`board-task-card-${task.id}`} onClick={() => onOpenDetail?.(task)}>
+            <span data-testid={`board-task-card-title-${task.id}`}>{task.title ?? task.description ?? task.id}</span>
+            <button type="button" data-testid={`board-task-card-control-${task.id}`} onClick={(event) => event.stopPropagation()}>card control</button>
+            <span data-has-move-task={String(Boolean(onMoveTask))} />
           </article>
         ))}
         {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
@@ -239,6 +244,22 @@ function createBoardProps(overrides = {}) {
 
 function renderBoard(props = {}) {
   return render(<Board {...createBoardProps(props)} />);
+}
+
+function makeBoardHorizontallyScrollable(board: HTMLElement, scrollLeft = 100) {
+  Object.defineProperty(board, "clientWidth", { configurable: true, value: 200 });
+  Object.defineProperty(board, "scrollWidth", { configurable: true, value: 600 });
+  // FNXC:BoardNavigation 2026-08-21-18:50: jsdom has no native pointer capture; Chromium covers its delivery semantics.
+  Object.defineProperty(board, "setPointerCapture", { configurable: true, value: vi.fn() });
+  board.scrollLeft = scrollLeft;
+}
+
+function dispatchMouseDrag(target: HTMLElement, pointerId = 1) {
+  fireEvent.pointerDown(target, { button: 0, clientX: 100, clientY: 50, pointerId, pointerType: "mouse" });
+  fireEvent.pointerMove(target, { clientX: 140, clientY: 50, pointerId, pointerType: "mouse" });
+  // FNXC:BoardNavigation 2026-08-19-19:10: Continuing toward the edge covers the former scripted edgeward pan path.
+  fireEvent.pointerMove(target, { clientX: 190, clientY: 50, pointerId, pointerType: "mouse" });
+  fireEvent.pointerUp(target, { pointerId, pointerType: "mouse" });
 }
 
 function installMobileBoardStabilizationHarness() {
@@ -771,13 +792,32 @@ describe("Board", () => {
         expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
         expect(readIds("done")).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
         expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
-        expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "no");
+        expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "yes");
 
-        fireEvent.click(screen.getByRole("button", { name: "sort-done-by-id" }));
+        fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
 
         expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
         expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);
         expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+      });
+
+      it("keeps independent sort modes for each Board lane", () => {
+        const tasks: Task[] = [
+          createTask({ id: "FN-10", description: "Older todo", column: "todo", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
+          createTask({ id: "FN-2", description: "Newer todo", column: "todo", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
+          createTask({ id: "FN-20", description: "Older done", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
+          createTask({ id: "FN-3", description: "Newer done", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
+        ];
+        renderBoard({ tasks });
+        const readIds = (column: string) => (JSON.parse(screen.getByTestId(`column-${column}`).getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
+
+        expect(readIds("todo")).toEqual(["FN-2", "FN-10"]);
+        expect(readIds("done")).toEqual(["FN-3", "FN-20"]);
+        fireEvent.click(within(screen.getByTestId("column-todo")).getByRole("button", { name: "sort-todo-by-id" }));
+        expect(readIds("todo")).toEqual(["FN-10", "FN-2"]);
+        expect(readIds("done")).toEqual(["FN-3", "FN-20"]);
+        fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
+        expect(readIds("done")).toEqual(["FN-20", "FN-3"]);
       });
 
       it("passes Done sort state to an empty legacy Done column", () => {
@@ -788,7 +828,7 @@ describe("Board", () => {
         expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
       });
 
-      it("orders todo by priority before age", () => {
+      it("orders todo by arrival timestamp before task ID", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-003",
@@ -824,10 +864,10 @@ describe("Board", () => {
 
         const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
         expect(todoTasks).toHaveLength(4);
-        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-001", "FN-002", "FN-003", "FN-004"]);
       });
 
-      it("orders same-priority todo tasks by oldest createdAt first", () => {
+      it("orders same-column arrivals newest first", () => {
         const tasks: Task[] = [
           createTask({ id: "FN-020", description: "Newest", column: "todo", priority: "high", createdAt: "2024-01-01T12:00:00.000Z" }),
           createTask({ id: "FN-021", description: "Oldest", column: "todo", priority: "high", createdAt: "2024-01-01T09:00:00.000Z" }),
@@ -837,7 +877,7 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
-        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-021", "FN-022", "FN-020"]);
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-020", "FN-021", "FN-022"]);
       });
 
       it("uses task ID as deterministic tie-breaker when todo createdAt matches", () => {
@@ -853,7 +893,7 @@ describe("Board", () => {
         expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-010", "FN-030", "FN-050"]);
       });
 
-      it("keeps non-todo columns on priority then task ID ordering", () => {
+      it("uses arrival order in non-todo columns", () => {
         const tasks: Task[] = [
           createTask({ id: "FN-050", description: "Fifty", column: "in-progress", priority: "normal", createdAt: "2024-01-01T12:00:00.000Z" }),
           createTask({ id: "FN-010", description: "Ten", column: "in-progress", priority: "normal", createdAt: "2024-01-01T09:00:00.000Z" }),
@@ -885,9 +925,8 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
-        // FN-060 (missing), FN-059 (legacy invalid), and FN-061 (explicit normal) normalize to normal,
-        // so they sort by numeric ID ascending after urgent tasks.
-        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-062", "FN-059", "FN-060", "FN-061"]);
+        // Explicit lane sorting ignores priority and uses the shared arrival/ID comparator.
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-059", "FN-060", "FN-061", "FN-062"]);
       });
 
       it("uses localeCompare fallback for non-numeric task IDs", () => {
@@ -905,7 +944,7 @@ describe("Board", () => {
     });
 
     describe("column default ordering merging pinning", () => {
-      it("pins merging tasks to top of in-review even when newer non-merging tasks exist", () => {
+      it("uses arrival order for merging and non-merging in-review tasks", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-010",
@@ -924,10 +963,10 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-010", "FN-011"]);
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-011", "FN-010"]);
       });
 
-      it("pins merging-pr tasks to top of in-review even when newer non-merging tasks exist", () => {
+      it("uses arrival order for merging-pr and review-ready tasks", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-020",
@@ -946,10 +985,10 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-020", "FN-021"]);
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-021", "FN-020"]);
       });
 
-      it("pins merging-fix tasks to top of in-review even when newer non-merging tasks exist", () => {
+      it("uses arrival order for merging-fix and review-ready tasks", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-060",
@@ -968,10 +1007,10 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-060", "FN-061"]);
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-061", "FN-060"]);
       });
 
-      it("sorts multiple merging tasks by priority then task ID within the pinned group", () => {
+      it("sorts same-arrival tasks by numeric task ID", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-030",
@@ -996,12 +1035,11 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        // Pinned group (merging): FN-031 urgent, FN-030 high — sorted by priority desc
-        // Non-pinned group: FN-032 urgent
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-031", "FN-030", "FN-032"]);
+        // All rows use the explicit arrival mode; equal timestamps use numeric task ID.
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-030", "FN-031", "FN-032"]);
       });
 
-      it("sorts non-in-review columns by priority then task ID regardless of status", () => {
+      it("sorts non-in-review columns by arrival regardless of status", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-040",
@@ -1026,12 +1064,11 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
-        // No merge-pinning outside in-review, so pure priority-then-ID sort
-        // FN-041 urgent, then FN-040 and FN-042 both high (sorted by ID asc)
-        expect(todoTasks.map((task) => task.id)).toEqual(["FN-041", "FN-040", "FN-042"]);
+        // Explicit arrival mode is shared across statuses and roles.
+        expect(todoTasks.map((task) => task.id)).toEqual(["FN-040", "FN-041", "FN-042"]);
       });
 
-      it("sorts tasks without status by priority then task ID in in-review", () => {
+      it("sorts tasks without status by arrival in in-review", () => {
         const statuslessTask = createTask({
           id: "FN-050",
           column: "in-review",
@@ -1052,8 +1089,8 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        // Neither is merging, so sort by priority: FN-051 urgent > FN-050 normal
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-051", "FN-050"]);
+        // Missing arrival timestamps fall back to createdAt, then numeric ID.
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-050", "FN-051"]);
       });
     });
 
@@ -1292,6 +1329,28 @@ describe("Board", () => {
       expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual(["FN-1"]);
       expect(JSON.parse(screen.getByTestId("column-in-progress").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual(["FN-2"]);
       expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("Coding");
+    });
+
+    it("keeps an explicitly disabled Coding lane out of the Board selector", async () => {
+      const quickFix = { ...DEFAULT_WORKFLOW, id: "builtin:quick-fix", name: "Quick Fix" };
+      const review = { ...DEFAULT_WORKFLOW, id: "builtin:review-heavy", name: "Review Heavy" };
+      fetchBoardWorkflowsMock.mockResolvedValue({
+        flagEnabled: true,
+        defaultWorkflowId: quickFix.id,
+        workflows: [
+          { ...DEFAULT_WORKFLOW, selectable: false },
+          { ...quickFix, selectable: true },
+          { ...review, selectable: true },
+        ],
+        taskWorkflowIds: { "FN-1": DEFAULT_WORKFLOW.id },
+      });
+      renderBoard({ tasks: [mkTask({ id: "FN-1" })] });
+
+      const selector = await screen.findByTestId("workflow-switcher");
+      fireEvent.click(selector);
+      expect(screen.queryByTestId("workflow-switcher-option-builtin:coding")).toBeNull();
+      expect(screen.getByTestId("workflow-switcher-option-builtin:quick-fix")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-switcher-option-builtin:review-heavy")).toBeInTheDocument();
     });
 
     it("puts create controls on the workflow intake column instead of the first visible column", async () => {
@@ -1681,40 +1740,6 @@ describe("Board", () => {
       expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
     });
 
-    it("selects and persists the all-workflows aggregate view", async () => {
-      const projectId = "project-board-all-workflows";
-      enableFlag(
-        { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
-        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
-      );
-      renderBoard({
-        projectId,
-        tasks: [mkTask({ id: "FN-1", column: "todo" }), mkTask({ id: "FN-2", column: "intake" })],
-        onPlanningMode: vi.fn(),
-        onSubtaskBreakdown: vi.fn(),
-      });
-
-      await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
-
-      expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows");
-      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-tasks", expect.stringContaining("FN-1"));
-      expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
-      expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-workflow-badges") || "{}")).toMatchObject({
-        "FN-1": { workflowId: "builtin:coding", workflowName: "Coding" },
-      });
-      expect(JSON.parse(screen.getByTestId("column-intake").getAttribute("data-workflow-badges") || "{}")).toMatchObject({
-        "FN-2": { workflowId: "wf-custom", workflowName: "Custom Flow" },
-      });
-      expect(screen.getByTestId("column-triage")).toHaveAttribute("data-workflow-id", "builtin:coding");
-      expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-can-drop", "no");
-      expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-planning", "yes");
-      expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-subtask", "yes");
-      expect(window.localStorage.getItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId))).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
-
-      fireEvent.click(screen.getByTestId("workflow-switcher"));
-      expect(screen.queryByTestId("workflow-switcher-edit-__all_workflows__")).toBeNull();
-    });
-
     it("passes workflow options and the selected workflow default to per-workflow quick-add", async () => {
       enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
       renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })] });
@@ -1735,6 +1760,23 @@ describe("Board", () => {
       fireEvent.click(screen.getByTestId("mock-new-task-intake"));
 
       expect(onNewTask).toHaveBeenCalledWith(CUSTOM_WORKFLOW.id);
+    });
+
+    it("keeps intake quick entry while omitting its full task button on mobile", async () => {
+      const mobile = installMobileBoardStabilizationHarness();
+      try {
+        const onNewTask = vi.fn();
+        enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+        renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })], onNewTask });
+
+        await selectWorkflow(CUSTOM_WORKFLOW.id);
+        const intakeColumn = screen.getByTestId("column-intake");
+        expect(intakeColumn).toHaveAttribute("data-has-quick-create", "yes");
+        expect(intakeColumn).toHaveAttribute("data-has-new-task", "no");
+        expect(screen.queryByTestId("mock-new-task-intake")).toBeNull();
+      } finally {
+        mobile.restore();
+      }
     });
 
     it("defaults All workflows quick-add to the default workflow and resolves selected workflow columns", async () => {
@@ -1887,37 +1929,6 @@ describe("Board", () => {
       expect(screen.getByRole("main").lastElementChild).toBe(screen.getByTestId("column-cold-storage"));
     });
 
-    it("creates aggregate tasks only from a real workflow intake column", async () => {
-      const customDefaultWorkflow = {
-        id: "wf-custom-default",
-        name: "Custom Default",
-        columns: [
-          { id: "inbox", name: "Inbox", flags: { intake: true } },
-          { id: "active", name: "Active", flags: { countsTowardWip: true } },
-          { id: "finished", name: "Finished", flags: { complete: true } },
-        ],
-      };
-      fetchBoardWorkflowsMock.mockResolvedValue({
-        flagEnabled: true,
-        defaultWorkflowId: "wf-custom-default",
-        workflows: [customDefaultWorkflow, DEFAULT_WORKFLOW],
-        taskWorkflowIds: { "FN-custom-default": "wf-custom-default" },
-      });
-      renderBoard({
-        tasks: [mkTask({ id: "FN-custom-default", column: "inbox" })],
-        onPlanningMode: vi.fn(),
-        onSubtaskBreakdown: vi.fn(),
-      });
-
-      await selectWorkflow("__all_workflows__");
-
-      expect(screen.getByTestId("column-inbox")).toHaveAttribute("data-has-quick-create", "yes");
-      expect(screen.getByTestId("column-inbox")).toHaveAttribute("data-workflow-id", "wf-custom-default");
-      expect(screen.getByTestId("column-inbox")).toHaveAttribute("data-has-planning", "yes");
-      expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-quick-create", "no");
-      expect(screen.getByTestId("column-triage")).toHaveAttribute("data-workflow-id", "");
-    });
-
     it("uses default workflow column labels and flags for duplicate aggregate column ids", async () => {
       const duplicateNameWorkflow = {
         id: "wf-duplicate",
@@ -1988,6 +1999,166 @@ describe("Board", () => {
       ]);
     });
 
+    it("restores safe empty-column descendant panning in selected and All-workflows Boards", async () => {
+      enableFlag(
+        { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
+        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+      );
+      renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })] });
+
+      const selectedBoard = screen.getByRole("main") as HTMLElement;
+      makeBoardHorizontallyScrollable(selectedBoard);
+      const selectedEmptyText = within(selectedBoard).getAllByText("No tasks")[0];
+      fireEvent.pointerDown(selectedEmptyText, { button: 0, clientX: 100, clientY: 50, pointerId: 1, pointerType: "mouse" });
+      fireEvent.pointerMove(selectedEmptyText, { clientX: 40, clientY: 50, pointerId: 1, pointerType: "mouse" });
+      expect(selectedBoard.scrollLeft).toBe(160);
+      expect(selectedBoard).toHaveClass("is-mouse-panning");
+      fireEvent.pointerUp(selectedEmptyText, { pointerId: 1, pointerType: "mouse" });
+      expect(selectedBoard).not.toHaveClass("is-mouse-panning");
+      expect(selectedBoard.scrollLeft).toBe(160);
+
+      await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
+      const aggregateBoard = screen.getByRole("main") as HTMLElement;
+      makeBoardHorizontallyScrollable(aggregateBoard);
+      const aggregateEmptyText = within(aggregateBoard).getAllByText("No tasks")[0];
+      fireEvent.pointerDown(aggregateEmptyText, { button: 0, clientX: 100, clientY: 50, pointerId: 2, pointerType: "mouse" });
+      fireEvent.pointerMove(aggregateEmptyText, { clientX: 40, clientY: 50, pointerId: 2, pointerType: "mouse" });
+      expect(aggregateBoard.scrollLeft).toBe(160);
+      fireEvent.pointerUp(aggregateEmptyText, { pointerId: 2, pointerType: "mouse" });
+      expect(aggregateBoard).not.toHaveClass("is-mouse-panning");
+    });
+
+    it("keeps non-overflow Boards and stationary edgeward pointers outside continued panning", () => {
+      enableFlag({});
+      renderBoard();
+      const board = screen.getByRole("main") as HTMLElement;
+      makeBoardHorizontallyScrollable(board);
+
+      fireEvent.pointerDown(within(board).getAllByText("No tasks")[0], { button: 0, clientX: 100, clientY: 50, pointerId: 1, pointerType: "mouse" });
+      fireEvent.pointerMove(board, { clientX: 190, clientY: 50, pointerId: 1, pointerType: "mouse" });
+      const scrollAfterPointerMove = board.scrollLeft;
+      fireEvent.pointerUp(board, { pointerId: 1, pointerType: "mouse" });
+      expect(board.scrollLeft).toBe(scrollAfterPointerMove);
+
+      Object.defineProperty(board, "scrollWidth", { configurable: true, value: 200 });
+      dispatchMouseDrag(board, 2);
+      expect(board.scrollLeft).toBe(scrollAfterPointerMove);
+    });
+
+    it("pans from task-card bodies in selected and All-workflows Boards without moving or opening tasks", async () => {
+      const onQuickCreate = vi.fn().mockResolvedValue({});
+      const onOpenDetail = vi.fn();
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      enableFlag({ "FN-1": "builtin:coding", "FN-2": "wf-custom" }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })], onQuickCreate, onOpenDetail, onMoveTask });
+
+      const selectedBoard = screen.getByRole("main") as HTMLElement;
+      makeBoardHorizontallyScrollable(selectedBoard);
+      const selectedCard = screen.getByTestId("board-task-card-FN-1");
+      /*
+      FNXC:BoardNavigation 2026-08-21-18:12:
+      FN-115 requires a complete stationary pointer sequence to retain the card's native detail
+      activation. Only the horizontal drag path captures the Board and consumes its next click;
+      controls remain native and task movement stays menu-only.
+      */
+      expect(selectedCard).not.toHaveAttribute("draggable");
+      const selectedCapture = vi.fn();
+      Object.defineProperty(selectedBoard, "setPointerCapture", { configurable: true, value: selectedCapture });
+      fireEvent.pointerDown(selectedCard, { button: 0, clientX: 100, clientY: 50, pointerId: 1, pointerType: "mouse" });
+      fireEvent.pointerUp(selectedCard, { pointerId: 1, pointerType: "mouse" });
+      fireEvent.click(selectedCard);
+      expect(selectedCapture).not.toHaveBeenCalled();
+      expect(onOpenDetail).toHaveBeenCalledTimes(1);
+
+      fireEvent.pointerDown(selectedCard, { button: 0, clientX: 100, clientY: 50, pointerId: 2, pointerType: "mouse" });
+      fireEvent.pointerMove(selectedCard, { clientX: 40, clientY: 50, pointerId: 2, pointerType: "mouse" });
+      expect(selectedCapture).toHaveBeenCalledWith(2);
+      expect(selectedBoard.scrollLeft).toBe(160);
+      expect(selectedBoard).toHaveClass("is-mouse-panning");
+      fireEvent.pointerUp(selectedCard, { pointerId: 2, pointerType: "mouse" });
+      expect(selectedBoard).not.toHaveClass("is-mouse-panning");
+      fireEvent.click(selectedCard);
+      expect(onOpenDetail).toHaveBeenCalledTimes(1);
+      expect(onMoveTask).not.toHaveBeenCalled();
+      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-tasks", expect.stringContaining("FN-1"));
+
+      fireEvent.click(selectedCard);
+      expect(onOpenDetail).toHaveBeenCalledTimes(2);
+      const selectedControl = screen.getByTestId("board-task-card-control-FN-1");
+      selectedBoard.scrollLeft = 100;
+      fireEvent.pointerDown(selectedControl, { button: 0, clientX: 100, clientY: 50, pointerId: 2, pointerType: "mouse" });
+      fireEvent.pointerMove(selectedControl, { clientX: 40, clientY: 50, pointerId: 2, pointerType: "mouse" });
+      fireEvent.pointerUp(selectedControl, { pointerId: 2, pointerType: "mouse" });
+      fireEvent.click(selectedControl);
+      expect(selectedBoard.scrollLeft).toBe(100);
+      expect(onOpenDetail).toHaveBeenCalledTimes(2);
+
+      await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
+      const aggregateBoard = screen.getByRole("main") as HTMLElement;
+      makeBoardHorizontallyScrollable(aggregateBoard);
+      const aggregateTitle = screen.getByTestId("board-task-card-title-FN-1");
+      fireEvent.pointerDown(aggregateTitle, { button: 0, clientX: 100, clientY: 50, pointerId: 3, pointerType: "mouse" });
+      fireEvent.pointerUp(aggregateTitle, { pointerId: 3, pointerType: "mouse" });
+      fireEvent.click(aggregateTitle);
+      expect(onOpenDetail).toHaveBeenCalledTimes(3);
+
+      fireEvent.pointerDown(aggregateTitle, { button: 0, clientX: 100, clientY: 50, pointerId: 4, pointerType: "mouse" });
+      fireEvent.pointerMove(aggregateTitle, { clientX: 40, clientY: 50, pointerId: 4, pointerType: "mouse" });
+      expect(aggregateBoard.scrollLeft).toBe(160);
+      fireEvent.pointerUp(aggregateTitle, { pointerId: 4, pointerType: "mouse" });
+      expect(aggregateBoard).not.toHaveClass("is-mouse-panning");
+      fireEvent.click(aggregateTitle);
+      expect(onOpenDetail).toHaveBeenCalledTimes(3);
+      expect(onMoveTask).not.toHaveBeenCalled();
+
+      fireEvent.click(aggregateTitle);
+      expect(onOpenDetail).toHaveBeenCalledTimes(4);
+
+      const quickCreate = screen.getByTestId("mock-quick-create-triage");
+      fireEvent.pointerDown(quickCreate, { button: 0, clientX: 100, clientY: 50, pointerId: 5, pointerType: "mouse" });
+      fireEvent.pointerMove(quickCreate, { clientX: 40, clientY: 50, pointerId: 5, pointerType: "mouse" });
+      fireEvent.pointerUp(quickCreate, { pointerId: 5, pointerType: "mouse" });
+      fireEvent.click(quickCreate);
+      expect(onQuickCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps touch input outside the desktop card-origin pan owner", () => {
+      enableFlag({ "FN-1": "builtin:coding" });
+      renderBoard({ tasks: [mkTask({ id: "FN-1" })] });
+      const board = screen.getByRole("main") as HTMLElement;
+      makeBoardHorizontallyScrollable(board);
+      const card = screen.getByTestId("board-task-card-FN-1");
+
+      fireEvent.pointerDown(card, { button: 0, clientX: 100, clientY: 50, pointerId: 1, pointerType: "touch" });
+      fireEvent.pointerMove(card, { clientX: 40, clientY: 50, pointerId: 1, pointerType: "touch" });
+      fireEvent.pointerUp(card, { pointerId: 1, pointerType: "touch" });
+      expect(board.scrollLeft).toBe(100);
+      expect(board).toHaveClass("board", "board-workflow-columns");
+    });
+
+    it("disables desktop mouse panning at the mobile viewport without changing touch ownership", () => {
+      const harness = installMobileBoardStabilizationHarness();
+      try {
+        enableFlag({});
+        renderBoard();
+        const board = screen.getByRole("main") as HTMLElement;
+        makeBoardHorizontallyScrollable(board);
+        const emptyText = within(board).getAllByText("No tasks")[0];
+
+        fireEvent.pointerDown(emptyText, { button: 0, clientX: 100, clientY: 50, pointerId: 1, pointerType: "mouse" });
+        fireEvent.pointerMove(emptyText, { clientX: 40, clientY: 50, pointerId: 1, pointerType: "mouse" });
+        fireEvent.pointerUp(emptyText, { pointerId: 1, pointerType: "mouse" });
+        fireEvent.pointerDown(emptyText, { button: 0, clientX: 100, clientY: 50, pointerId: 2, pointerType: "touch" });
+        fireEvent.pointerMove(emptyText, { clientX: 40, clientY: 50, pointerId: 2, pointerType: "touch" });
+        fireEvent.pointerUp(emptyText, { pointerId: 2, pointerType: "touch" });
+
+        expect(board.scrollLeft).toBe(100);
+        expect(board).not.toHaveClass("is-mouse-panning");
+      } finally {
+        harness.restore();
+      }
+    });
+
     it("preserves all-workflows board scroll during mobile visualViewport refresh stabilization", async () => {
       const harness = installMobileBoardStabilizationHarness();
       try {
@@ -2052,9 +2223,9 @@ describe("Board", () => {
       await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
       expect(readIds("done")).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
       expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
-      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "no");
+      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "yes");
 
-      fireEvent.click(screen.getByRole("button", { name: "sort-done-by-id" }));
+      fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
 
       expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
       expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);

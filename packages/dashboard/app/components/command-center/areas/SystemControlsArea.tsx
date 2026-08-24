@@ -37,6 +37,7 @@ import {
   type UpdateCheckResponse,
 } from "../../../api/legacy";
 import { subscribeSse } from "../../../sse-bus";
+import { pendingUpdateInstallState, usePendingUpdateInstall } from "../../../hooks/usePendingUpdateInstall";
 import type { ReportActionType } from "@fusion/core";
 import type { ToastType } from "../../../hooks/useToast";
 import { ReportActionMenu } from "../../ReportActionMenu";
@@ -160,6 +161,8 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   const logFollowingRef = useRef(true);
 
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResponse | null>(null);
+  // The global update hook hydrates; this panel also records its explicit refresh result.
+  const pendingInstall = usePendingUpdateInstall({ hydrate: false });
 
   /*
   FNXC:SystemPanel 2026-07-18-16:12:
@@ -544,9 +547,14 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
     () =>
       runAction("check-updates", async () => {
         const result = await refreshUpdateCheck();
+        pendingUpdateInstallState.record(result.pendingInstall);
         setUpdateCheckResult(result);
         if (result.error) {
           toast(result.error, "error");
+          return;
+        }
+        if (result.externallyManaged) {
+          toast(t("systemControls.updatesExternallyManaged", "Updates are managed by this deployment"), "warning");
           return;
         }
         if (result.disabled) {
@@ -940,22 +948,26 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           </div>
         ) : null}
 
-        {updateCheckResult && !updateCheckResult.error ? (
+        {(pendingInstall || (updateCheckResult && !updateCheckResult.error)) ? (
           <div
-            className={`cc-syscontrols-banner ${updateCheckResult.updateAvailable ? "cc-syscontrols-banner--back" : ""}`}
+            className={`cc-syscontrols-banner ${pendingInstall || updateCheckResult?.updateAvailable ? "cc-syscontrols-banner--back" : ""}`}
             role="status"
             data-testid="cc-system-update-check-result"
           >
             <span>
-              {updateCheckResult.disabled
-                ? t("systemControls.updatesDisabled", "Update checks are disabled in global settings")
-                : updateCheckResult.updateAvailable && updateCheckResult.latestVersion
+              {pendingInstall
+                ? t("updateBanner.updateSuccess", "Updated to v{{version}} — restart Fusion to apply", { version: pendingInstall.latestVersion })
+                : updateCheckResult?.externallyManaged
+                  ? t("systemControls.updatesExternallyManaged", "Updates are managed by this deployment")
+                : updateCheckResult?.disabled
+                  ? t("systemControls.updatesDisabled", "Update checks are disabled in global settings")
+                : updateCheckResult?.updateAvailable && updateCheckResult.latestVersion
                   ? t("systemControls.updateAvailable", "Update available: v{{version}} (current: v{{current}})", {
                       version: updateCheckResult.latestVersion,
                       current: updateCheckResult.currentVersion,
                     })
                   : t("systemControls.upToDate", "You're up to date (v{{version}})", {
-                      version: updateCheckResult.currentVersion,
+                      version: updateCheckResult?.currentVersion,
                     })}
             </span>
           </div>

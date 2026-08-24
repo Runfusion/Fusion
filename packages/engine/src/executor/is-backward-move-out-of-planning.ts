@@ -1,8 +1,11 @@
 /**
  * FNXC:CodeOrganization 2026-08-04-06:20:
  * Host for isBackwardMoveOutOfPlanning requirement history (U4). The method body stays on
- * TaskExecutor so `check-inert-sync-lanes` keeps counting the two resolvePlannerLanes guards
- * in executor.ts — do not free-peel that body without re-proving the inert-sync baseline.
+ * TaskExecutor and consumes only task:moved payload/cache lanes; it must never resolve lanes synchronously.
+ *
+ * FNXC:WorkflowResolvedColumns 2026-08-22-00:13:
+ * Measurement showed the PostgreSQL sync reader returns exactly the legacy defaults, so its fallback
+ * bought no renamed-board correctness. The listener now tiers payload, TaskLaneCache, then literals.
  *
  * FNXC:WorkflowLifecycleColumns 2026-07-30-16:55 (PR #2628 review, greptile P1):
  * THE FORWARD EXCLUSIONS MUST RESOLVE TOO, and leaving them literal made this branch WORSE

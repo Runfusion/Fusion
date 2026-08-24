@@ -718,7 +718,23 @@ export function SessionTerminal({
           return;
         }
         switch (msg.type) {
-          case "scrollback":
+          case "scrollback": {
+            if (typeof msg.data !== "string") return;
+            /*
+            FNXC:TerminalSharing 2026-08-19-04:00:
+            Clear before replaying. The server sends scrollback as its own frame precisely so the
+            client can (see cli-session-ws.ts), but this handler used to treat it exactly like
+            `data` and append. That is safe only because every reattach path here rebuilds a fresh
+            xterm via reattachEpoch — the moment anyone adds an in-place reconnect, appending a full
+            replay onto a terminal that still shows that history duplicates it, which is precisely
+            the duplicated-prompt bug fixed in the PTY terminal.
+            */
+            term.reset();
+            const text = decodeBase64ToString(msg.data);
+            const byteLen = text.length;
+            term.write(text, () => ackBytes(byteLen));
+            break;
+          }
           case "data": {
             if (typeof msg.data !== "string") return;
             const text = decodeBase64ToString(msg.data);

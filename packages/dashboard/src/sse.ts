@@ -850,6 +850,9 @@ export function createSSE(
     const onFeatureLinked = (data: unknown) => {
       send(`event: feature:linked\ndata: ${JSON.stringify(data)}\n\n`);
     };
+    const onFeatureUnlinked = (data: unknown) => {
+      send(`event: feature:unlinked\ndata: ${JSON.stringify(data)}\n\n`);
+    };
     const onAssertionCreated = (data: unknown) => {
       send(`event: assertion:created\ndata: ${JSON.stringify(data)}\n\n`);
     };
@@ -1113,6 +1116,7 @@ export function createSSE(
         missionStore.off("feature:updated", onFeatureUpdated);
         missionStore.off("feature:deleted", onFeatureDeleted);
         missionStore.off("feature:linked", onFeatureLinked);
+        missionStore.off("feature:unlinked", onFeatureUnlinked);
         missionStore.off("assertion:created", onAssertionCreated);
         missionStore.off("assertion:updated", onAssertionUpdated);
         missionStore.off("assertion:deleted", onAssertionDeleted);
@@ -1235,6 +1239,7 @@ export function createSSE(
       missionStore.on("feature:updated", onFeatureUpdated);
       missionStore.on("feature:deleted", onFeatureDeleted);
       missionStore.on("feature:linked", onFeatureLinked);
+      missionStore.on("feature:unlinked", onFeatureUnlinked);
       missionStore.on("assertion:created", onAssertionCreated);
       missionStore.on("assertion:updated", onAssertionUpdated);
       missionStore.on("assertion:deleted", onAssertionDeleted);

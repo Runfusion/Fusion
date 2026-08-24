@@ -275,6 +275,51 @@ describe("workflow selection across dashboard surfaces", () => {
     expect(within(graphTasks).queryByTestId("graph-task-FN-graph")).toBeNull();
   });
 
+  it("omits disabled Coding from Header and Graph while repairing a stale selection", async () => {
+    const quickFix: BoardWorkflowDefinition = { id: "builtin:quick-fix", name: "Quick Fix", columns: [], selectable: true };
+    const review: BoardWorkflowDefinition = { id: "builtin:review-heavy", name: "Review Heavy", columns: [], selectable: true };
+    const coding: BoardWorkflowDefinition = { ...DEFAULT_WORKFLOW, selectable: false };
+    localStorage.setItem("kb:project-disabled-coding:kb-dashboard-board-workflow-selection", coding.id);
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({
+      defaultWorkflowId: quickFix.id,
+      workflows: [coding, quickFix, review],
+      taskWorkflowIds: { "FN-default": coding.id },
+    }));
+
+    render(<CrossSurfaceHarness projectId="project-disabled-coding" />);
+
+    const switchers = await screen.findAllByTestId("workflow-switcher");
+    await waitFor(() => {
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(quickFix.id);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(quickFix.id);
+      expect(localStorage.getItem("kb:project-disabled-coding:kb-dashboard-board-workflow-selection")).toBe(quickFix.id);
+    });
+    fireEvent.click(switchers[0]);
+    expect(screen.queryByTestId("workflow-switcher-option-builtin:coding")).toBeNull();
+    expect(screen.getByTestId("workflow-switcher-option-builtin:quick-fix")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-switcher-option-builtin:review-heavy")).toBeInTheDocument();
+    expect(within(screen.getByTestId("graph-tasks")).queryByTestId("graph-task-FN-default")).toBeNull();
+  });
+
+  it("keeps an explicitly disabled workflow task visible in the All workflows context without a selector row", async () => {
+    localStorage.setItem("kb:project-disabled-task:kb-dashboard-board-workflow-selection", ALL_WORKFLOWS_BOARD_VIEW_ID);
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({
+      defaultWorkflowId: "builtin:quick-fix",
+      workflows: [
+        { ...DEFAULT_WORKFLOW, selectable: false },
+        { id: "builtin:quick-fix", name: "Quick Fix", columns: [], selectable: true },
+      ],
+      taskWorkflowIds: { "FN-default": DEFAULT_WORKFLOW.id },
+    }));
+
+    render(<CrossSurfaceHarness projectId="project-disabled-task" />);
+
+    await waitFor(() => expect(screen.getByTestId("header-selection")).toHaveTextContent(ALL_WORKFLOWS_BOARD_VIEW_ID));
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+    expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("graph-tasks")).toBeInTheDocument();
+  });
+
   it("preserves boundary behavior for disabled, empty, and single-workflow payloads", async () => {
     localStorage.setItem("kb:project-disabled:kb-dashboard-board-workflow-selection", GRAPH_WORKFLOW.id);
     fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ flagEnabled: false, workflows: [] }));

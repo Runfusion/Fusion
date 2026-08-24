@@ -24,7 +24,8 @@ export type WorkflowLifecycleWarningCode =
   | "missing-merge-region"
   | "unsafe-terminal-before-merge"
   | "optional-group-after-execution"
-  | "review-gate-without-failure-route";
+  | "review-gate-without-failure-route"
+  | "write-capable-node-after-code-review";
 
 export interface WorkflowLifecycleWarning {
   code: WorkflowLifecycleWarningCode;
@@ -46,6 +47,19 @@ function isMergeNode(node: WorkflowIrNode): boolean {
 
 function isExecutionNode(node: WorkflowIrNode): boolean {
   return node.config?.seam === "execute" || node.kind === "foreach" || node.kind === "parse-steps";
+}
+
+function isCodeReviewNode(node: WorkflowIrNode): boolean {
+  const name = typeof node.config?.name === "string" ? node.config.name : "";
+  return node.id === "code-review" || node.config?.reviewKind === "code" || /code review/i.test(name);
+}
+
+function isWriteCapableNode(node: WorkflowIrNode): boolean {
+  const config = node.config ?? {};
+  const executor = typeof config.executor === "string" ? config.executor : "model";
+  return node.kind === "code" || node.kind === "script" || config.toolMode === "coding"
+    || executor === "cli-agent" || (executor === "cli" && typeof config.cliCommand === "string" && config.cliCommand.trim().length > 0)
+    || (typeof config.scriptName === "string" && config.scriptName.trim().length > 0);
 }
 
 function buildOutgoing(edges: readonly WorkflowIrEdge[]): Map<string, WorkflowIrEdge[]> {
@@ -161,6 +175,18 @@ export function analyzeWorkflowLifecycle(
         code: "review-gate-without-failure-route",
         nodeId: node.id,
         message: `Review gate '${node.id}' should declare a failure/remediation route so blocking findings cannot fall through silently.`,
+      });
+    }
+  }
+
+  for (const reviewNode of nodes.filter(isCodeReviewNode)) {
+    const afterReview = reachableBefore(reviewNode.id, "__never__", outgoing);
+    for (const node of nodes.filter(isWriteCapableNode)) {
+      if (node.id === reviewNode.id || !afterReview.has(node.id)) continue;
+      warnings.push({
+        code: "write-capable-node-after-code-review",
+        nodeId: node.id,
+        message: `Write-capable node '${node.id}' follows Code Review '${reviewNode.id}'. Move it before review or add an explicit re-review route.`,
       });
     }
   }

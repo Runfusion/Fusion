@@ -62,8 +62,14 @@ function mkMergeTask(overrides: Partial<Task> = {}): Task {
   } as unknown as Task;
 }
 
-function buildApp(input: { task: Task; activeMergeTaskId?: string | null; staleMergingStatusMinAgeMs?: number }) {
-  const updateTask = vi.fn(async () => input.task);
+function buildApp(input: {
+  task: Task;
+  activeMergeTaskId?: string | null;
+  staleMergingStatusMinAgeMs?: number;
+  settings?: { autoMerge?: boolean };
+  engine?: { isMergePending: ReturnType<typeof vi.fn>; enqueueMerge: ReturnType<typeof vi.fn> };
+}) {
+  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(input.task, patch));
   const moveTask = vi.fn(async () => input.task);
   const logEntry = vi.fn(async () => {});
   const store = {
@@ -72,8 +78,8 @@ function buildApp(input: { task: Task; activeMergeTaskId?: string | null; staleM
     updateTask,
     moveTask,
     logEntry,
-    getSettings: async () => ({}),
-    getSettingsFast: async () => ({}),
+    getSettings: async () => ({ autoMerge: true, ...input.settings }),
+    getSettingsFast: async () => ({ autoMerge: true, ...input.settings }),
     getRootDir: () => "/tmp/does-not-exist",
     listTasks: async () => [input.task],
     // FNXC:TaskWedgeNotifications 2026-08-15-05:10: dashboard Retry now clears the spent generic-terminal auto-recovery budget before mutating task state; the fixture must expose the seam or every retry 500s.
@@ -91,7 +97,7 @@ function buildApp(input: { task: Task; activeMergeTaskId?: string | null; staleM
     chatLogger: runtimeLogger as never,
     getProjectIdFromRequest: () => undefined,
     getScopedStore: async () => store,
-    getProjectContext: async () => ({ store, engine: undefined as never, projectId: "p-1" }),
+    getProjectContext: async () => ({ store, engine: input.engine as never, projectId: "p-1" }),
     prioritizeProjectsForCurrentDirectory: (projects: unknown) => projects,
     emitRemoteRouteDiagnostic: () => {},
     emitAuthSyncAuditLog: () => {},
@@ -135,6 +141,34 @@ function buildApp(input: { task: Task; activeMergeTaskId?: string | null; staleM
   });
   return { app, updateTask, moveTask, logEntry };
 }
+
+/** The reported zero-land workspace lease-loss state, with completed execution progress. */
+function mkFailedWorkspaceTask(overrides: Partial<Task> = {}): Task {
+  return mkMergeTask({
+    id: "MRG-040",
+    status: "failed",
+    error: "Workspace partial land for MRG-040: 0 repo(s) landed, 1 failed — Merge: Workspace lease is no longer valid",
+    workspaceWorktrees: {
+      Merge: { worktreePath: "/workspace/Merge/.worktrees/fast-olive", branch: "fusion/mrg-040" },
+      "Merge-Auth": { worktreePath: "/workspace/Merge-Auth/.worktrees/swift-eagle", branch: "fusion/mrg-040" },
+    },
+    ...overrides,
+  } as Partial<Task>);
+}
+
+type WorkspaceRetryGateInput = {
+  pending?: boolean;
+  settings?: { autoMerge?: boolean };
+  task?: Partial<Task>;
+  probeError?: Error;
+};
+
+const workspaceRetrySafetyCases: Array<[string, WorkspaceRetryGateInput]> = [
+  ["a pending local or remote merge owner", { pending: true }],
+  ["an effective auto-merge hold", { settings: { autoMerge: false } }],
+  ["a user-controlled pause", { task: { userPaused: true } }],
+  ["an unreadable pending-owner probe", { probeError: new Error("remote lease unavailable") }],
+];
 
 describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)", () => {
   it("retries a task stranded in 'landing' by a killed merger", async () => {
@@ -208,5 +242,71 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
       UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("promptly queues a failed zero-land workspace retry after a clear pending-owner probe", async () => {
+    const task = mkFailedWorkspaceTask();
+    const workspaceWorktrees = task.workspaceWorktrees;
+    const engine = { isMergePending: vi.fn().mockResolvedValue(false), enqueueMerge: vi.fn().mockReturnValue(true) };
+    const { app, updateTask, moveTask } = buildApp({ task, engine });
+
+    const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(updateTask).toHaveBeenCalledWith("MRG-040", expect.objectContaining({ status: null, error: null, mergeRetries: 0 }));
+    expect(task.column).toBe("in-review");
+    expect(task.steps.every((step) => step.status === "done")).toBe(true);
+    expect(task.workspaceWorktrees).toBe(workspaceWorktrees);
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(engine.isMergePending).toHaveBeenCalledOnce();
+    expect(engine.isMergePending).toHaveBeenCalledWith("MRG-040");
+    expect(engine.enqueueMerge).toHaveBeenCalledOnce();
+    expect(engine.enqueueMerge).toHaveBeenCalledWith("MRG-040");
+  });
+
+  it("keeps a workspace retry successful when no engine is available", async () => {
+    const task = mkFailedWorkspaceTask();
+    const workspaceWorktrees = task.workspaceWorktrees;
+    const { app, moveTask } = buildApp({ task });
+
+    const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(task.status).toBeNull();
+    expect(task.workspaceWorktrees).toBe(workspaceWorktrees);
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does not send a non-workspace merge retry through the workspace queue", async () => {
+    const engine = { isMergePending: vi.fn().mockResolvedValue(false), enqueueMerge: vi.fn().mockReturnValue(true) };
+    const { app } = buildApp({ task: mkMergeTask({ status: "failed" }), engine });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-8004/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(engine.isMergePending).not.toHaveBeenCalled();
+    expect(engine.enqueueMerge).not.toHaveBeenCalled();
+  });
+
+  it.each(workspaceRetrySafetyCases)("does not double-dispatch a workspace retry with %s", async (_label, input) => {
+    const engine = {
+      isMergePending: input.probeError ? vi.fn().mockRejectedValue(input.probeError) : vi.fn().mockResolvedValue(input.pending === true),
+      enqueueMerge: vi.fn().mockReturnValue(true),
+    };
+    const task = mkFailedWorkspaceTask(input.task);
+    const workspaceWorktrees = task.workspaceWorktrees;
+    const { app, moveTask } = buildApp({ task, engine, settings: input.settings });
+
+    const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(task.status).toBeNull();
+    expect(task.error).toBeNull();
+    expect(task.column).toBe("in-review");
+    expect(task.workspaceWorktrees).toBe(workspaceWorktrees);
+    expect(moveTask).not.toHaveBeenCalled();
+    if (input.settings || input.task) expect(engine.isMergePending).not.toHaveBeenCalled();
+    else expect(engine.isMergePending).toHaveBeenCalledOnce();
+    expect(engine.enqueueMerge).not.toHaveBeenCalled();
   });
 });

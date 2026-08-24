@@ -44,16 +44,12 @@ import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { isContextLimitError } from "../errors/context-limit-detector.js";
 import { checkSessionError, isUsageLimitError } from "../errors/usage-limit-detector.js";
 import {
-  createDelegateTaskTool,
   createTaskAssignTool,
   createListAgentsTool,
   createMemoryTools,
   createWebFetchTool,
   createReadMessagesTool,
   createSendMessageTool,
-  createTaskCreateTool,
-  isAgentTaskCreateToolAvailable,
-  isAgentDelegateTaskToolAvailable,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
@@ -1065,6 +1061,24 @@ export class StepSessionExecutor {
    * Safe to call multiple times (idempotent). Call this in a `finally` block
    * after `executeAll()`.
    */
+  /**
+   * FNXC:StepParallelWorktrees 2026-08-23-21:40:
+   * `parallelBranches` holds only branches THIS executor created in `createStepWorktree`
+   * (`fusion/step-<idx>-<worktree-name>`), so their provenance is known here rather than inferred.
+   * FN-9161's `isFusionDeletableBranch` answers by NAME and reads anything that is not
+   * `fusion/<task-id>...` as operator-supplied, so applying it here silently skipped every
+   * step branch and leaked one ref per parallel step. Protect what an operator can actually own —
+   * the task's working branch and its explicit override — and dispose of the rest.
+   */
+  private isDisposableStepBranch(branchName: string): boolean {
+    const task = this.options.taskDetail as { branch?: string; branchContext?: { branchOverride?: { branch?: string } } };
+    const operatorOwned = [task.branch, task.branchContext?.branchOverride?.branch]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim());
+    // Callers pass only branches recorded in `parallelBranches`, i.e. ones this executor created.
+    return !operatorOwned.includes(branchName.trim());
+  }
+
   async cleanup(): Promise<void> {
     // Terminate any remaining sessions
     if (this.activeSessions.size > 0) {
@@ -1096,6 +1110,7 @@ export class StepSessionExecutor {
     // Delete branches created for parallel worktrees
     for (const [stepIdx, branchName] of this.parallelBranches) {
       try {
+        if (!this.isDisposableStepBranch(branchName)) continue;
         await execAsync(`git branch -D "${branchName}"`, {
           cwd: this.options.rootDir,
         });
@@ -1384,7 +1399,12 @@ export class StepSessionExecutor {
               ]
             : [];
           const webFetchTool = createWebFetchTool();
-          const memoryTools = createMemoryTools(this.options.rootDir, settings);
+          // FNXC:MemoryFocusEngine 2026-08-13-16:35 (RUFU-068): a workflow
+          // step-execution lane has no per-conversation /focus topic (unless the
+          // task/session carries one) → whole-project scope today. The optional
+          // MemoryToolOptions.focus seam is wired explicitly so a step session bound
+          // to a topic-scoped conversation can scope fn_memory_search.
+          const memoryTools = createMemoryTools(this.options.rootDir, settings, { focus: undefined });
 
           // Task log and create tools — task context for step sessions.
           const taskLogTool = this.options.store
@@ -1401,9 +1421,9 @@ export class StepSessionExecutor {
           execution session: an ephemeral step worker under `deny` is never handed
           fn_task_create, rather than being handed a tool that only refuses on call.
           */
-          const taskCreateTool = this.options.store && isAgentTaskCreateToolAvailable(settings, this.options.callerIsEphemeral)
-            ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir, callerIsEphemeral: this.options.callerIsEphemeral, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, messageStore: this.options.messageStore })]
-            : [];
+          // FNXC:TaskExecutionTaskCreation 2026-08-21-23:16: model-node
+          // task sessions are marked and structurally withheld from task creation.
+          const taskCreateTool: never[] = [];
 
           /*
           FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
@@ -1415,9 +1435,7 @@ export class StepSessionExecutor {
           const delegationTools = this.options.agentStore
             ? [
                 createListAgentsTool(this.options.agentStore),
-                ...(isAgentDelegateTaskToolAvailable(settings, this.options.callerIsEphemeral)
-                  ? [createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, callerIsEphemeral: this.options.callerIsEphemeral })]
-                  : []),
+                // FN-125: delegation creates board tasks and is unavailable in this lane.
                 createTaskAssignTool(this.options.agentStore, this.options.store!, mutationContextForAgent(this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor")),
               ]
             : [];
@@ -1463,6 +1481,7 @@ export class StepSessionExecutor {
           } else {
             const createResult = await createResolvedAgentSession({
               sessionPurpose: "executor",
+            taskExecutionSession: true,
               runtimeHint: this.options.runtimeHint,
               pluginRunner: this.options.pluginRunner,
               cwd: worktreePath,
@@ -1852,7 +1871,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             });
           }
           const branch = this.parallelBranches.get(stepIdx);
-          if (branch) {
+          if (branch && this.isDisposableStepBranch(branch)) {
             await execAsync(`git branch -D "${branch}"`, {
               cwd: this.options.rootDir,
             });
@@ -1911,6 +1930,7 @@ Follow instructions precisely and avoid unrelated changes.`,
       await installTaskWorktreeIdentityGuard({
         worktreePath,
         taskId: this.options.taskDetail.id,
+        expectedBranch: branchName,
         commitMsgHookEnabled: settings.commitMsgHookEnabled,
         taskPrefix: settings.taskPrefix,
         taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],

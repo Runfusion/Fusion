@@ -11,6 +11,24 @@ Settings modal so account controls stay reachable without introducing a second c
 .auth-pending-instance-label { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; }
 .auth-instance-row > span { flex: 1; min-width: 0; }
 
+.auth-model-refresh {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+.auth-model-refresh-feedback {
+  flex: 1 1 var(--space-2xl);
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.auth-model-refresh-feedback--success { color: var(--color-success); }
+.auth-model-refresh-feedback--warning { color: var(--color-warning); }
+.auth-model-refresh-feedback--error { color: var(--color-error); }
+
 /*
 FNXC:ProviderAuth 2026-08-15-22:08:
 OAuth loginError is a durable card banner, not an inline hint. A wrapping block
@@ -42,4 +60,6 @@ Inset matches .auth-provider-header so Login and the banner share one edge.
   .auth-instance-row > .btn, .auth-instance-pending > .btn { flex: 1; }
   .auth-pending-instance-field { flex-basis: 100%; }
   .auth-provider-login-error { margin-inline: var(--space-sm); }
+  .auth-model-refresh { align-items: stretch; }
+  .auth-model-refresh > .btn { flex: 1 1 100%; }
 }

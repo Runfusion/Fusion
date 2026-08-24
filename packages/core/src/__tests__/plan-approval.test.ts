@@ -69,6 +69,27 @@ describe("isPlanReviewSatisfied", () => {
     })).toBe(false);
   });
 
+  /*
+   * FNXC:ReviewConvergenceEvidence 2026-08-22-17:13:
+   * FN-149 permits an automatic Plan Review release only when the archived failed
+   * attempt carries complete single-gate arbitration provenance. A skipped carrier
+   * without every fence remains unable to open the planning gate.
+   */
+  it("accepts only a fully fenced arbitration release for a failed Plan Review", () => {
+    const release = {
+      workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "skipped" as const,
+      remediationArchivedFromStatus: "failed" as const, arbitrationDecision: "UPHOLD_IMPLEMENTER" as const,
+      arbitratedAttemptAt: "2026-08-22T17:00:00.000Z", arbitratedAt: "2026-08-22T17:01:00.000Z",
+      arbitrationNotes: "The implementation satisfies the requested invariant.", arbitrationBindingFindingCount: 0,
+    };
+    expect(isPlanReviewSatisfied(release)).toBe(true);
+    expect(isPlanReviewSatisfied({ ...release, arbitrationBindingFindingCount: 1 })).toBe(false);
+    expect(isPlanReviewSatisfied({ ...release, arbitrationDecision: "SPLIT", arbitrationBindingFindingCount: 1 })).toBe(false);
+    expect(isPlanReviewSatisfied({ ...release, arbitratedAt: undefined })).toBe(false);
+    expect(isPlanReviewSatisfied({ ...release, supersededAt: "2026-08-22T17:02:00.000Z" })).toBe(false);
+    expect(isPlanReviewSatisfied({ ...release, remediationArchivedFromStatus: undefined })).toBe(false);
+  });
+
   it("rejects a historical pass or bypass superseded by a later planning episode", () => {
     expect(isPlanReviewSatisfied({
       workflowStepId: "plan-review",

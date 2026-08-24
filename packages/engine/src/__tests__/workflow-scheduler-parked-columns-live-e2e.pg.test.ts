@@ -129,8 +129,18 @@ pgDescribe("scheduler parked-column resolution against a live store", () => {
        the default board), and the reconciliation re-checks `dependent.column === hold` before
        clearing `blockedBy` — so the control fails for a fixture reason that looks exactly like the
        defect under test. Block first, then place. */
+    /*
+    FNXC:DependencyIntegrity 2026-08-23-21:58:
+    The dependent carries `blockedBy` WITHOUT a matching `dependencies` edge, and that is the only
+    shape this suite can still express. FN-073 (`archive-lifecycle-2.ts`) made `deleteTask` REFUSE a
+    blocker that a live task lists in `dependencies` unless `removeDependencyReferences: true` — and
+    that forced path clears the dependent's `blockedBy` inside the delete transaction itself, which
+    would make both arms below pass without the scheduler ever running. A listed edge therefore
+    yields either a thrown delete or a vacuous assertion; a bare `blockedBy` is the reachable
+    production shape (`task:deleted` accepts it via `currentlyBlockedByDeletedTask`) and keeps the
+    hold-column lookup — the actual subject — as the only thing that decides the outcome.
+    */
     await store.updateTask(dependent.id, {
-      dependencies: [blocker.id],
       blockedBy: blocker.id,
       status: "queued",
     });
@@ -145,8 +155,10 @@ pgDescribe("scheduler parked-column resolution against a live store", () => {
     const scheduler = new Scheduler(store, {} as never);
     void scheduler;
 
-    /* `removeDependencyReferences` is required: `deleteTask` refuses a blocker that a live task
-       still lists, and the dependent listing it is the whole subject here. */
+    /* `removeDependencyReferences: false` deliberately: the dependent holds no `dependencies` edge
+       (see above), so the FN-073 guard does not fire and the reconciliation under test is the ONLY
+       thing that can clear `blockedBy`. Forcing removal here would clear it in the delete
+       transaction and void both arms. */
     await store.deleteTask(blocker.id, { removeDependencyReferences: false, allowResurrection: false });
 
     const deadline = Date.now() + SETTLE_MS;

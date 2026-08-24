@@ -8,12 +8,12 @@
 
 /**
  * Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning.
- * Includes extra-high for maximum-effort requests on reasoning-capable models.
+ * The ordered tuple is the single persisted/runtime vocabulary; model-specific capability maps decide which entries a selector offers.
  *
- * FNXC:Settings-ThinkingLevel 2026-06-19-14:55:
- * The central thinking-level enum must expose `xhigh` so UI settings and API validation can pass maximum reasoning requests through to CLI adapters. Runtime adapters map `xhigh` to `high` for non-Opus models and `max` for Opus models.
+ * FNXC:Settings-ThinkingLevel 2026-08-18-23:38:
+ * The central vocabulary includes both opt-in extended levels, `xhigh` and `max`. Pi documents that providers may support either level, both, or neither through a model-level thinkingLevelMap, so validation must accept both without guessing from provider or model names while model-bound controls filter to advertised support.
  */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**

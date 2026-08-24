@@ -45,6 +45,7 @@ import {acquireTaskAdvisoryXactLock} from "./task-advisory-lock.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {getTaskMergeBlocker} from "../merge/task-merge.js";
+import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "./async/async-persistence.js";
 import {disposeTaskBeforeMove} from "../tasks/task-move-disposer.js";
@@ -86,20 +87,27 @@ precisely the R1 sentinel defect in a new costume: gate and counter talking abou
 different pools, so a finite limit cannot bind. One read in, both derived from it.
 */
 async function resolveWorkflowIrForSelectedWorkflowId(store: TaskStore, workflowId: string | undefined): Promise<WorkflowIr> {
+  /*
+  FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+  Move policy resolution is a no-selection path too. Read the store's effective
+  project default before falling back to the catalog Coding identity, so a task
+  without an explicit selection cannot be evaluated against a disabled workflow.
+  */
+  const effectiveWorkflowId = workflowId ?? await store.getDefaultWorkflowId();
   /* FNXC:WorkflowBuiltins 2026-07-19-10:24: every no-selection/unresolvable fallback goes through resolveDefaultWorkflowIr() so this resolver and prepareWorkflowMovePolicyPreflightImpl agree on the default IR (see the helper's note on the "preflight is stale" drift). */
-  if (!workflowId) {
+  if (!effectiveWorkflowId) {
     return store.applyBuiltInPromptOverridesAsync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
   }
-  if (isBuiltinWorkflowId(workflowId)) {
-    const builtin = getBuiltinWorkflow(workflowId);
+  if (isBuiltinWorkflowId(effectiveWorkflowId)) {
+    const builtin = getBuiltinWorkflow(effectiveWorkflowId);
     const ir = builtin?.ir;
     return store.applyBuiltInPromptOverridesAsync(
-      workflowId,
+      effectiveWorkflowId,
       ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir,
     );
   }
   try {
-    const def = await store.getWorkflowDefinition(workflowId);
+    const def = await store.getWorkflowDefinition(effectiveWorkflowId);
     return def ? parseWorkflowIr(def.ir) : resolveDefaultWorkflowIr();
   } catch {
     return resolveDefaultWorkflowIr();
@@ -748,7 +756,10 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         const toFacts = resolveTransitionColumnFacts(workflowIr, toColumn);
         const mergeBlockerReason =
           !bypassGuards && toFacts.flags.complete && fromFacts.flags.mergeBlocker === true
-            ? (getTaskMergeBlocker(task, { skipColumnIdentityCheck: true }) ?? null)
+            ? (getTaskMergeBlocker(task, {
+              skipColumnIdentityCheck: true,
+              requiredPreMergeStepIds: resolveRequiredPreMergeStepIds(workflowIr, task.enabledWorkflowSteps),
+            }) ?? null)
             : null;
         const decision = evaluateTransitionInvariants({
           taskId: id,
@@ -922,9 +933,10 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         validated as legal and then rejected by its own guard. Passing the resolved lane is what makes
         the outer and inner questions the same question.
         */
-        const mergeBlocker = getTaskMergeBlocker(task, moveLifecycle?.review
-          ? { reviewColumns: new Set([moveLifecycle.review]) }
-          : {});
+        const mergeBlocker = getTaskMergeBlocker(task, {
+          reviewColumns: moveLifecycle?.review ? new Set([moveLifecycle.review]) : undefined,
+          requiredPreMergeStepIds: resolveRequiredPreMergeStepIds(workflowIr, task.enabledWorkflowSteps),
+        });
         if (mergeBlocker) {
           throw new Error(`Cannot move ${id} to done: ${mergeBlocker}`);
         }
@@ -1519,7 +1531,8 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       "legacy" — so a listener keeps its own fallback rather than being handed a wrong answer.
       */
       const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
-      store.laneCache.set(task.id, lanes);
+      /* FNXC:WorkflowEvents 2026-08-22-00:13: an unresolved payload is unknown; retain a warm real cache answer until its TTL expires. */
+      if (lanes) store.laneCache.set(task.id, lanes);
       store.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource, lanes });
       /*
       FNXC:WorkflowEvents 2026-07-27-11:45 (U3 / R5, R6):

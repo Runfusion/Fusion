@@ -5,7 +5,7 @@ U1 session-cwd scenarios that require driving the real TaskExecutor.execute() to
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
+import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
 import type { WorkspaceConfig } from "@fusion/core";
 import {
   createMockStore,
@@ -16,10 +16,15 @@ import {
 
 vi.mock("../worktree/worktree-acquisition.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../worktree/worktree-acquisition.js")>();
-  return { ...actual, acquireTaskWorktree: vi.fn(actual.acquireTaskWorktree) };
+  return {
+    ...actual,
+    acquireTaskWorktree: vi.fn(actual.acquireTaskWorktree),
+    acquireWorkspaceTaskWorktrees: vi.fn(actual.acquireWorkspaceTaskWorktrees),
+  };
 });
 
 const mockedAcquireTaskWorktree = vi.mocked(acquireTaskWorktree);
+const mockedAcquireWorkspaceTaskWorktrees = vi.mocked(acquireWorkspaceTaskWorktrees);
 
 const ROOT = "/tmp/workspace-root";
 
@@ -39,7 +44,7 @@ function inProgressTask(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-describe("U1 KTD1 — session cwd is the browse-only workspace root", () => {
+describe("FN-158 — workspace sessions use one task directory", () => {
   beforeEach(() => {
     resetExecutorMocks();
     // Make any accidental git invocation observable: empty stdout keeps real-git
@@ -48,8 +53,23 @@ describe("U1 KTD1 — session cwd is the browse-only workspace root", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("skips root acquireTaskWorktree and creates every session (initial + retry) with cwd === rootDir", async () => {
+  it("skips root acquireTaskWorktree and creates every session in the task directory", async () => {
     const store = createMockStore();
+    const scopedTask = inProgressTask({
+      worktree: null,
+      repositoryScope: { state: "confirmed", revision: 1, repositories: ["repo-a", "repo-b"] },
+    });
+    (store.getTask as any).mockResolvedValue(scopedTask);
+    mockedAcquireWorkspaceTaskWorktrees.mockResolvedValue({
+      task: inProgressTask({
+        repositoryScope: { state: "confirmed", revision: 1, repositories: ["repo-a", "repo-b"] },
+        workspaceWorktrees: {
+          "repo-a": { worktreePath: "/tmp/workspace-root/.fusion/worktrees/fn-001/repo-a", branch: "fusion/fn-001" },
+          "repo-b": { worktreePath: "/tmp/workspace-root/.fusion/worktrees/fn-001/repo-b", branch: "fusion/fn-001" },
+        },
+      }),
+      taskWorktreeDir: "/tmp/workspace-root/.fusion/worktrees/fn-001",
+    });
     const mockPrompt = vi.fn().mockResolvedValue(undefined); // no fn_task_done → drives retries too
     mockedCreateFnAgent.mockResolvedValue({
       session: { prompt: mockPrompt, dispose: vi.fn() },
@@ -60,16 +80,23 @@ describe("U1 KTD1 — session cwd is the browse-only workspace root", () => {
     // Drive the genuine workspace gate (loadWorkspaceConfig is covered elsewhere).
     (executor as any).workspaceConfig = { repos: ["repo-a", "repo-b"] } as WorkspaceConfig;
 
-    await executor.execute(inProgressTask({ worktree: null }));
+    await executor.execute(scopedTask);
 
-    // KTD1: the non-git root is never acquired as a worktree.
+    // The workspace root is never acquired as a task worktree.
     expect(mockedAcquireTaskWorktree).not.toHaveBeenCalled();
+    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalled();
 
-    // Every agent session (initial + the retries fired because fn_task_done was
-    // never called) is rooted at the workspace root.
-    expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // The execution session is rooted at the task directory containing every repository.
+    const taskDirectory = "/tmp/workspace-root/.fusion/worktrees/fn-001";
+    expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThan(0);
     for (const call of mockedCreateFnAgent.mock.calls) {
-      expect((call[0] as any).cwd).toBe(ROOT);
+      expect((call[0] as any).cwd).toBe(taskDirectory);
+      expect((call[0] as any).cwd).not.toBe(ROOT);
+      expect((call[0] as any).sessionBoundary).toMatchObject({
+        kind: "workspace-task-dir",
+        writableRoot: taskDirectory,
+        projectRoot: ROOT,
+      });
     }
 
     // task.worktree is never set in workspace mode.
@@ -77,6 +104,43 @@ describe("U1 KTD1 — session cwd is the browse-only workspace root", () => {
       (c: any[]) => c[1] && Object.prototype.hasOwnProperty.call(c[1], "worktree") && c[1].worktree,
     );
     expect(worktreeWrites).toHaveLength(0);
+  });
+
+  it("passes a current-scope later repository REVISE to normal executor acquisition", async () => {
+    const store = createMockStore();
+    mockedAcquireWorkspaceTaskWorktrees.mockResolvedValue({
+      task: inProgressTask({
+        workspaceWorktrees: {
+          "repo-a": { worktreePath: "/tmp/workspace-root/.fusion/worktrees/fn-001/repo-a", branch: "fusion/fn-001" },
+          "repo-b": { worktreePath: "/tmp/workspace-root/.fusion/worktrees/fn-001/repo-b", branch: "fusion/fn-001" },
+        },
+      }),
+      taskWorktreeDir: "/tmp/workspace-root/.fusion/worktrees/fn-001",
+    });
+    mockedCreateFnAgent.mockResolvedValue({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() },
+      sessionFile: "/tmp/sessions/ws-remediation.jsonl",
+    } as any);
+    const task = inProgressTask({
+      repositoryScope: {
+        state: "confirmed",
+        revision: 4,
+        repositories: ["repo-a", "repo-b"],
+        reviewRemediation: { scopeRevision: 4, repository: "repo-b", inputSignature: "review" },
+      },
+    });
+    (store.getTask as any).mockResolvedValue(task);
+    const executor = new TaskExecutor(store, ROOT);
+    (executor as any).workspaceConfig = { repos: ["repo-a", "repo-b"] } as WorkspaceConfig;
+
+    await executor.execute(task);
+
+    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRootDir: ROOT,
+    }));
+    expect(mockedCreateFnAgent.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      cwd: "/tmp/workspace-root/.fusion/worktrees/fn-001",
+    }));
   });
 });
 

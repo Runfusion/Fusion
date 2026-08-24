@@ -55,7 +55,7 @@ describe("ai-summarize", () => {
     });
 
     it("should have correct length limits", () => {
-      expect(MIN_DESCRIPTION_LENGTH).toBe(201);
+      expect(MIN_DESCRIPTION_LENGTH).toBe(1);
       expect(MAX_DESCRIPTION_LENGTH).toBe(2000);
       expect(MAX_TITLE_SUMMARIZE_INPUT_LENGTH).toBe(4000);
       expect(MAX_TITLE_LENGTH).toBe(60);
@@ -69,8 +69,7 @@ describe("ai-summarize", () => {
   // ── Validation ─────────────────────────────────────────────────────────────
 
   describe("validateDescription", () => {
-    it("should accept valid description length", () => {
-      const desc = "a".repeat(201);
+    it.each(["a", "a".repeat(200), "a".repeat(201), "a".repeat(4001)])("accepts any non-empty description (%s)", (desc) => {
       expect(validateDescription(desc)).toBe(desc);
     });
 
@@ -88,15 +87,9 @@ describe("ai-summarize", () => {
       expect(() => validateDescription(123)).toThrow("description must be a string");
     });
 
-    it("should throw for description too short", () => {
-      const desc = "a".repeat(100);
+    it.each(["", "   ", "\n\t"]) ("should reject empty or whitespace-only descriptions", (desc) => {
       expect(() => validateDescription(desc)).toThrow(ValidationError);
-      expect(() => validateDescription(desc)).toThrow("at least 201 characters");
-    });
-
-    it("should accept description at minimum boundary", () => {
-      const desc = "a".repeat(201);
-      expect(validateDescription(desc)).toBe(desc);
+      expect(() => validateDescription(desc)).toThrow("description must not be empty");
     });
 
     it("should accept description at historical maximum boundary", () => {
@@ -166,9 +159,40 @@ describe("ai-summarize", () => {
   // ── summarizeTitle ─────────────────────────────────────────────────────────
 
   describe("summarizeTitle", () => {
-    it("should return null for descriptions <= 200 characters", async () => {
-      const result = await summarizeTitle("Short description", "/tmp");
-      expect(result).toBeNull();
+    it.each([1, 200, 201, 4001])("accepts a non-empty description of length %i", async (length) => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() => Promise.resolve({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Generated task title" }] },
+        },
+      }));
+
+      await expect(summarizeTitle("a".repeat(length), "/tmp")).resolves.toBe("Generated task title");
+      expect(getFnAgentMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["English", { mode: "english", locale: "en", instruction: "English" }, "Write the title in English."],
+      ["interface", { mode: "interface", locale: "fr", instruction: "French" }, "Write the title in Français (fr)."],
+      ["input", { mode: "input", locale: "es", instruction: "input language" }, "SAME language as the task description"],
+    ] as const)("honors the resolved %s output target", async (_mode, target, expectedInstruction) => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() => Promise.resolve({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Generated task title" }] },
+        },
+      }));
+
+      await expect(summarizeTitle("Necesitamos mejorar la creación de tareas.", "/tmp", undefined, undefined, target)).resolves.toBe("Generated task title");
+      expect(prompt.mock.calls[0][0]).toContain(expectedInstruction);
+    });
+
+    it.each(["", "   ", "\n\t"]) ("rejects invalid %j before creating an agent", async (description) => {
+      await expect(summarizeTitle(description, "/tmp")).rejects.toThrow(ValidationError);
       expect(getFnAgentMock).not.toHaveBeenCalled();
     });
 

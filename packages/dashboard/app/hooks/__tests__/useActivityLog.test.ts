@@ -102,6 +102,41 @@ describe("useActivityLog", () => {
     });
   });
 
+  it("forwards task ID on project and central refreshes", async () => {
+    renderHook(() => useActivityLog({ taskId: "FN-066" }));
+    await waitFor(() => expect(mockFetchActivityLog).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-066" })));
+
+    renderHook(() => useActivityLog({ taskId: "FN-066", useCentralFeed: true }));
+    await waitFor(() => expect(mockFetchActivityFeed).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-066" })));
+  });
+
+  it("pages task-filtered project and central histories with an older-than cursor", async () => {
+    const projectPage = createFeedEntries(2).map((entry, index) => ({ ...entry, id: `project-${index}`, taskId: "FN-066" }));
+    const projectOlderPage = createFeedEntries(1).map((entry) => ({ ...entry, id: "project-older", taskId: "FN-066" }));
+    mockFetchActivityLog.mockResolvedValueOnce(projectPage).mockResolvedValueOnce(projectOlderPage);
+
+    const project = renderHook(() => useActivityLog({ limit: 2, taskId: "FN-066", autoRefresh: false }));
+    await waitFor(() => expect(project.result.current.entries).toHaveLength(2));
+    await act(async () => { await project.result.current.loadMore(); });
+    expect(mockFetchActivityLog).toHaveBeenLastCalledWith(expect.objectContaining({
+      taskId: "FN-066",
+      since: projectPage[1]?.timestamp,
+    }));
+    expect(project.result.current.entries.map((entry) => entry.id)).toEqual(["project-0", "project-1", "project-older"]);
+
+    const centralPage = createFeedEntries(2).map((entry, index) => ({ ...entry, id: `central-${index}`, taskId: "FN-066" }));
+    const centralOlderPage = createFeedEntries(1).map((entry) => ({ ...entry, id: "central-older", taskId: "FN-066" }));
+    mockFetchActivityFeed.mockResolvedValueOnce(centralPage).mockResolvedValueOnce(centralOlderPage);
+    const central = renderHook(() => useActivityLog({ limit: 2, taskId: "FN-066", autoRefresh: false, useCentralFeed: true }));
+    await waitFor(() => expect(central.result.current.entries).toHaveLength(2));
+    await act(async () => { await central.result.current.loadMore(); });
+    expect(mockFetchActivityFeed).toHaveBeenLastCalledWith(expect.objectContaining({
+      taskId: "FN-066",
+      since: centralPage[1]?.timestamp,
+    }));
+    expect(central.result.current.entries.map((entry) => entry.id)).toEqual(["central-0", "central-1", "central-older"]);
+  });
+
   it("respects custom limit via per-project log", async () => {
     mockFetchActivityLog.mockResolvedValue([]);
 

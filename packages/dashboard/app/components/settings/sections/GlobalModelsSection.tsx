@@ -49,10 +49,18 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
     const selectedValue = form.defaultProvider && form.defaultModelId
         ? `${form.defaultProvider}/${form.defaultModelId}`
         : "";
+    const selectedDefaultModel = availableModels.find((model) => model.provider === form.defaultProvider && model.id === form.defaultModelId);
+    const defaultThinkingLevels = selectedDefaultModel?.supportedThinkingLevels ?? THINKING_LEVELS;
     return (<>
 
-      {/* --- Default Model --- */}
-      <h4 className="settings-section-heading">{t("settings.globalModels.defaultModel", "Default Model")}</h4>
+      {/*
+      FNXC:SettingsModels 2026-08-18-06:41:
+      Global and project model-override surfaces share one heading vocabulary so operators recognize the same configuration structure in both scopes. Keep the default, fallback, thinking, and role lanes contiguous; sync and pricing controls remain separate.
+      */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.globalModels.modelOverrides", "Model Overrides")}</h4>
+        <SettingsHelpTip settingKey="global-model-overrides">{t("settings.globalModels.globalBaselineModelsForEachAIRoleProject", " Global baseline models for each AI role. Project settings can override these per-project. ")}</SettingsHelpTip>
+      </div>
       {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.models.loadingModels", "Loading available models…")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">
           {t("settings.models.noModels", "No models available. Configure authentication first.")}
         </div>) : (<>
@@ -109,11 +117,11 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
           </div>
         </>)}
       {(() => {
-            const selectedModel = availableModels.find((m) => m.provider === form.defaultProvider && m.id === form.defaultModelId);
+            const selectedModel = selectedDefaultModel;
             if (selectedModel && !selectedModel.reasoning)
                 return null;
             return (
-            /* FNXC:Settings-ThinkingLevel 2026-06-19-14:55: This global selector renders the canonical THINKING_LEVELS list so newly added `xhigh` stays available anywhere the default reasoning effort is configured. */
+            /* FNXC:Settings-ThinkingLevel 2026-08-18-23:38: The global fallback selector renders the canonical THINKING_LEVELS list, including `max`; a selected model-bound picker narrows options separately from this broad persisted default. */
             <SettingsSelectRow
               descriptor={{
                 key: "defaultThinkingLevel",
@@ -126,7 +134,7 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                 */
                 options: [
                   { value: "", label: t("settings.globalModels.default", "Default") },
-                  ...THINKING_LEVELS.map((level) => ({
+                  ...defaultThinkingLevels.map((level) => ({
                     value: level,
                     label: level.charAt(0).toUpperCase() + level.slice(1),
                   })),
@@ -138,8 +146,6 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
         })()}
 
       {availableModels.length > 0 && (<>
-          <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.globalModels.modelLanes", "Model Lanes")}</h4>
-          <p className="settings-description">{t("settings.globalModels.globalBaselineModelsForEachAIRoleProject", " Global baseline models for each AI role. Project settings can override these per-project. ")}</p>
           {globalModelLanes.map((lane) => {
                 const provider = form[lane.globalProviderKey as keyof Settings] as string | undefined;
                 const model = form[lane.globalModelKey as keyof Settings] as string | undefined;
@@ -177,8 +183,6 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
             })}
         </>)}
 
-      <ModelPricingSection form={form} setForm={setForm} addToast={addToast} projectId={projectId}/>
-
       {/* --- Startup Model Sync --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.globalModels.startupModelSync", "Startup Model Sync")}</h4>
       {/*
@@ -194,6 +198,16 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
         }}
         value={form.openrouterModelSync !== false}
         onChange={(v) => setForm((f) => ({ ...f, openrouterModelSync: v === true }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
+          key: "orcarouterModelSync",
+          label: t("settings.globalModels.syncOrcaRouterModelListAtStartup", " Sync OrcaRouter model list at startup "),
+          help: t("settings.globalModels.whenEnabledStartupFetchesTheLatestOrcaRouterModels", " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. "),
+          scope: "global",
+        }}
+        value={form.orcarouterModelSync !== false}
+        onChange={(v) => setForm((f) => ({ ...f, orcarouterModelSync: v === true }))}
       />
       {/*
       FNXC:SettingsStyling 2026-07-15-17:35:
@@ -417,6 +431,8 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
         }))}
         />
       </details>
+
+      <ModelPricingSection form={form} setForm={setForm} addToast={addToast} projectId={projectId}/>
     </>);
 }
 export default GlobalModelsSection;

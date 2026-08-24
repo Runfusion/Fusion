@@ -1017,11 +1017,11 @@ export function MailboxView({
             )}
             {selectedMessage.archived ? (
               <button className="btn btn-sm btn-secondary" onClick={() => handleUnarchiveMessage(selectedMessage.id)} data-testid="mailbox-unarchive">
-                <Archive size={14} /><span>Restore</span>
+                <Archive size={14} /><span>{t("mailbox.restore", "Restore")}</span>
               </button>
             ) : (
               <button className="btn btn-sm btn-secondary" onClick={() => handleArchiveMessage(selectedMessage.id)} data-testid="mailbox-archive">
-                <Archive size={14} /><span>Archive</span>
+                <Archive size={14} /><span>{t("mailbox.archive", "Archive")}</span>
               </button>
             )}
             {pendingDeleteMessageId === selectedMessage.id ? (
@@ -1153,7 +1153,7 @@ export function MailboxView({
       {isMailboxArchivedTab(activeTab) && (
         <div className="mailbox-list" data-testid="mailbox-archived-list">
           {isLoading && !archivedInbox && <MailboxSkeleton />}
-          {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">No archived messages</div>}
+          {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
           {archivedInbox?.messages.map((message) => (
             <button type="button" className="mailbox-item" key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
               <span className="mailbox-item-preview">{message.content}</span>
@@ -1163,9 +1163,9 @@ export function MailboxView({
       )}
       {activeTab === "inbox" && (
         <div className="mailbox-list" data-testid="mailbox-inbox-list">
-          <div className="mailbox-structural-filter" role="group" aria-label="Inbox filter">
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>All</button>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>Reports & approvals</button>
+          <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
           </div>
           {isLoading && !inbox && <MailboxSkeleton />}
           {inbox && inbox.messages.length === 0 && (
@@ -1626,7 +1626,7 @@ export function MailboxView({
           <Send size={14} />
           <span>{t("mailbox.outbox", "Outbox")}</span>
         </button>
-        <button className={`btn btn-sm btn-secondary mailbox-tab ${isMailboxArchivedTab(activeTab) ? "active" : ""}`} onClick={() => handleSelectTab("archived")} data-testid="mailbox-tab-archived">Archived</button>
+        <button className={`btn btn-sm btn-secondary mailbox-tab ${isMailboxArchivedTab(activeTab) ? "active" : ""}`} onClick={() => handleSelectTab("archived")} data-testid="mailbox-tab-archived">{t("mailbox.archived", "Archived")}</button>
         <button
           className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "agents" ? "active" : ""}`}
           onClick={() => handleSelectTab("agents")}

@@ -164,6 +164,7 @@ import {
   listFeaturesForAssertion,
   listLiveLinkedTaskIds,
   getLiveTaskById,
+  lockLiveTaskForClaim,
   setTaskMissionLinkage,
   clearTaskMissionLinkage,
   listFailedTaskIds,
@@ -1378,6 +1379,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         );
       }
 
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      A live done target is claimable by concurrent link/re-point; hold its row lock before the
+      conflict check so two claimants cannot both observe it as unclaimed. The archived-tombstone
+      arm is soft-deleted and unclaimable by design, so it needs no lock.
+      */
+      if (evidence.kind === "done") {
+        await lockLiveTaskForClaim(tx, taskId);
+      }
       const taskFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
       if (taskFeature) {
         throw new TerminalTaskReconciliationError(
@@ -1509,6 +1519,16 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} has unrelated mission lineage`);
     }
+    /*
+    FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+    No lockLiveTaskForClaim on this check, deliberately: both arms that reach it are already
+    serialized on the target. The afterTaskInsert arm runs inside the creating task's own
+    transaction, which holds the insert row lock on the new task until commit, so a concurrent
+    claimant blocks on that insert. The re-claim arm (claimDefinedFeatureTask,
+    requireExistingFeatureLink) requires this feature to already own the task, and the
+    single-valued invariant means no other feature can — an external claimant sees this link as
+    its conflict and fails. The feature row was locked first, preserving the feature→task order.
+    */
     const conflict = await getConflictingFeatureByTaskId(tx, input.taskId, input.featureId);
     if (conflict) throw new Error(`Task ${input.taskId} is already linked to feature ${conflict.id}`);
 
@@ -1583,6 +1603,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       it here would corrupt that Feature's canonical task. Keep both tasks and
       let each feature retain its own transactional bootstrap claim.
       */
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      Hold the duplicate's row lock before the ownership check so a concurrent link/re-point
+      claiming the duplicate cannot commit between the read and the archive write. This path
+      takes no feature lock, so its single task lock cannot join a feature→task cycle.
+      */
+      await lockLiveTaskForClaim(tx, input.duplicateTaskId);
       const duplicateFeature = await getConflictingFeatureByTaskId(tx, input.duplicateTaskId, input.featureId);
       if (duplicateFeature) return;
       /*
@@ -1627,7 +1654,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (feature.taskId && feature.taskId !== taskId) {
         throw new Error(`Feature ${featureId} is already linked to task ${feature.taskId}`);
       }
-      const liveTask = await getLiveTaskById(tx, taskId);
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      The liveness read IS the claim lock: FOR UPDATE on the live task row serializes concurrent
+      claimants on the same target (see lockLiveTaskForClaim), and the feature row was locked
+      first by getFeatureForStatusWrite, keeping the feature→task order cycle-free.
+      */
+      const liveTask = await lockLiveTaskForClaim(tx, taskId);
       if (!liveTask) {
         throw new Error(
           `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
@@ -1662,13 +1695,115 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   async unlinkFeatureFromTask(featureId: string): Promise<MissionFeature> {
-    const feature = await getFeature(this.db, featureId);
-    if (!feature) throw new Error(`Feature ${featureId} not found`);
-    const { taskId } = feature;
-    const updated = await this.updateFeature(featureId, { taskId: undefined, status: "defined" });
-    if (taskId) await clearTaskMissionLinkage(this.db, taskId);
-    await this.recomputeSliceStatus(updated.sliceId);
-    return updated;
+    /*
+    FNXC:MissionFeatureUnlinkEvent 2026-08-17-12:20:
+    Unlink emits the same lifecycle event family as link/re-point (feature:updated + a persisted
+    mission:event + feature:unlinked) using an explicit mission-unlink source so subscribers can
+    distinguish an unlink from a generic feature_status_changed. The status event and the row
+    mutation share one transaction, so there is no incidental default-sourced status event.
+
+    FNXC:MissionFeatureUnlinkContract 2026-08-19-21:24 (RUFU-134 / PR #3491 CodeRabbit):
+    Unlinking a feature that has NO task is a caller error, not an idempotent no-op: every
+    documented surface (CLI fn_feature_unlink_task, the dashboard unlink-task route, the engine
+    agent tool, docs/missions.md) promises an error, and the old silent path was worse than a
+    no-op — it still rewrote the row (status→"defined") and recorded a status event, which would
+    have demoted a reverse-lineage-credited done feature (RUFU-109 credits status without
+    setting taskId). The guard runs after the feature row lock and before any mutation, so a
+    concurrent link/unlink cannot produce a partial unlink, and a failed unlink emits nothing.
+    The task-side reverse lineage is cleared INSIDE the same transaction; the pre-change code
+    ran the clear after commit, so a crash between the two writes left the task pointing at an
+    unlinked feature.
+    */
+    const outcome = await this.layer.transactionImmediate(async (tx) => {
+      const feature = await this.getFeatureForStatusWrite(tx, featureId);
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      const taskId = feature.taskId;
+      if (!taskId) {
+        throw new Error(`Feature ${featureId} is not linked to any task`);
+      }
+      const updated: MissionFeature = { ...feature, taskId: undefined, status: "defined", updatedAt: new Date().toISOString() };
+      await updateFeature(tx, updated);
+      const event = await this.recordFeatureStatusChange(tx, feature, "defined", { type: "system", id: "mission-store", source: "mission-unlink" });
+      await clearTaskMissionLinkage(tx, taskId);
+      return { feature: updated, event, taskId };
+    });
+    this.emit("feature:updated", outcome.feature);
+    if (outcome.event) this.emit("mission:event", outcome.event);
+    this.emit("feature:unlinked", { feature: outcome.feature, taskId: outcome.taskId });
+    await this.recomputeSliceStatus(outcome.feature.sliceId);
+    return outcome.feature;
+  }
+
+  /**
+   * Atomically re-point a feature's single-valued taskId to a different live
+   * target task, preserving the forward-link model's invariants. Re-point is the
+   * supported way to correct a feature pinned to the wrong task without the
+   * status-lossy unlink→link two-step.
+   */
+  async repointFeatureToTask(featureId: string, taskId: string): Promise<MissionFeature> {
+    /*
+    FNXC:FeatureRepoint 2026-08-17-09:59:
+    Re-point is the supported way to correct a mis-pinned single-valued feature taskId
+    without the status-lossy unlink→link two-step. Single-valuedness is enforced at the
+    application layer (no DB unique constraint on mission_features.task_id): the
+    conflicting-feature query guards the target, and the feature row lock via
+    getFeatureForStatusWrite serializes concurrent re-points so two writers cannot
+    both observe the same pre-image.
+    */
+    const outcome = await this.layer.transactionImmediate(async (tx) => {
+      const feature = await this.getFeatureForStatusWrite(tx, featureId);
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      const fromTaskId = feature.taskId;
+      if (fromTaskId === taskId) return { feature, event: undefined, fromTaskId } as const;
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      Same claim lock as link: the re-point target is locked before the conflict check so a
+      concurrent link/re-point on the same target serializes instead of both committing.
+      */
+      const liveTask = await lockLiveTaskForClaim(tx, taskId);
+      if (!liveTask) {
+        throw new Error(
+          `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+        );
+      }
+      const conflictingFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
+      if (conflictingFeature) {
+        throw new Error(`Task ${taskId} is already linked to feature ${conflictingFeature.id}`);
+      }
+      const slice = await getSlice(tx, feature.sliceId);
+      const milestone = slice ? await getMilestone(tx, slice.milestoneId) : undefined;
+      if (!slice || !milestone) throw new Error(`Feature ${featureId} has incomplete mission hierarchy`);
+      const now = new Date().toISOString();
+      /*
+      FNXC:FeatureRepoint 2026-08-17-09:59:
+      Loop/status transition reuses the link method's rule: a feature promoted out of
+      unlinked (idle/absent loopState) starts an implementing loop; an already-linked
+      feature keeps its status/loop/attempts when re-pointed. This contrasts with
+      unlink→link, which demotes to defined before the link re-promotes and therefore
+      discards loop progress.
+      */
+      const transitioningFromUnlinked = !fromTaskId;
+      const shouldTransitionLoop = transitioningFromUnlinked && (!feature.loopState || feature.loopState === "idle");
+      const updated: MissionFeature = {
+        ...feature,
+        taskId,
+        status: transitioningFromUnlinked ? "triaged" : feature.status,
+        ...(shouldTransitionLoop ? { loopState: "implementing", implementationAttemptCount: 1 } : {}),
+        updatedAt: now,
+      };
+      await updateFeature(tx, updated);
+      const event = transitioningFromUnlinked
+        ? await this.recordFeatureStatusChange(tx, feature, "triaged", { type: "system", id: "mission-store", source: "mission-repoint" })
+        : undefined;
+      if (fromTaskId) await clearTaskMissionLinkage(tx, fromTaskId);
+      await setTaskMissionLinkage(tx, taskId, milestone.missionId, slice.id);
+      return { feature: updated, event, fromTaskId: fromTaskId as string | undefined };
+    });
+    this.emit("feature:updated", outcome.feature);
+    if (outcome.event) this.emit("mission:event", outcome.event);
+    if (outcome.fromTaskId !== taskId) this.emit("feature:linked", { feature: outcome.feature, taskId });
+    await this.recomputeSliceStatus(outcome.feature.sliceId);
+    return outcome.feature;
   }
 
   // ════════════════ VALIDATOR RUNS ════════════════
@@ -2888,6 +3023,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           title: taskTitle || feature.title,
           description,
           branch: branchAssignment.workingBranch,
+          ...(branchAssignment.workingBranch ? {branchWriteOrigin: branchAssignment.branchWriteOrigin ?? "engine" as const} : {}),
           baseBranch: resolvedBaseBranch,
           ...(missionId
             ? {

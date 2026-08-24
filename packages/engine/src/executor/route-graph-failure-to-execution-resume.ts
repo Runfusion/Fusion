@@ -32,7 +32,7 @@ export type RouteGraphFailureToExecutionResumeDeps = {
     taskId: string,
     memo?: { lanes?: ResumeLanes },
   ) => Promise<ResumeLanes>;
-  clearTerminalStepFailuresForRetry: (taskId: string) => Promise<void>;
+  clearTerminalStepFailuresForRetry: (taskId: string, mode: "archive" | "clear") => Promise<void>;
   persistTokenUsage: (taskId: string) => Promise<void>;
   /**
    * FNXC:WorkflowRemediation 2026-08-09-21:41:
@@ -141,14 +141,16 @@ export async function routeGraphFailureToExecutionResume(
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
+        workflowMoveSource: "workflow-remediation",
       }, deps.runContextFor(live.id));
     }
-    // FNXC:ReviewLeniency 2026-07-02-02:10: clear prior terminal failure results
-    // (incl. optional gate nodes like code-review) AFTER the task is in `todo`
-    // (non-mergeable) so the resumed run re-evaluates gates from a clean slate
-    // without dropping the in-review merge blocker mid-flight. (in-review→todo
-    // moveTask already clears all results; this covers the already-`todo` path.)
-    await deps.clearTerminalStepFailuresForRetry(live.id);
+    /*
+    FNXC:ReviewConvergence 2026-08-22-05:00:
+    Graph-failure recovery is automatic remediation, not an explicit operator retry. Archive its
+    failed review result after the remediation-provenanced move so the next reviewer receives the
+    durable ledger without opening a merge gate during the move.
+    */
+    await deps.clearTerminalStepFailuresForRetry(live.id, "archive");
     await deps.persistTokenUsage(live.id);
     return true;
 }

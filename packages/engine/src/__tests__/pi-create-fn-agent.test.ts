@@ -481,6 +481,22 @@ describe("worktree path boundary helpers", () => {
       expect(result).toEqual({ ok: true, content: [{ type: "text", text: "daily memory" }] });
     });
 
+    it("rejects bash command targets and verification cwd outside the same boundary", async () => {
+      const makeTool = (name: string) => ({ name, label: name, description: name, parameters: {}, execute: vi.fn().mockResolvedValue({ ok: true }) });
+      const bash = makeTool("bash");
+      const verification = makeTool("fn_run_verification");
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary([bash, verification] as any, "/project/.worktrees/fn-158", "/project");
+
+      const bashResult = await (wrapped[0] as any).execute("bash", { command: "cd ../../other-repo && touch x" });
+      const verificationResult = await (wrapped[1] as any).execute("verify", { cwd: "/project/other-repo", command: "pnpm test" });
+
+      expect(bashResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(verificationResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(bash.execute).not.toHaveBeenCalled();
+      expect(verification.execute).not.toHaveBeenCalled();
+    });
+
     it("allows task attachments from worktree session", async () => {
       const mockReadTool = {
         name: "read",
@@ -1447,7 +1463,17 @@ describe("createFnAgent", () => {
     const { ChatManager, __resetChatState, __setCreateResolvedAgentSession } = await import("../../../dashboard/src/chat.js");
     __clearFusionSessionIdentityRegistryForTests();
     const observedPrincipals: unknown[] = [];
-    createAgentSessionMock.mockResolvedValueOnce({
+    /*
+    FNXC:SecretsAccessApproval 2026-08-23-19:45:
+    Arm the observing session for the DURABLE CHAT session specifically, not for whichever pi session
+    happens to be created first. `ChatManager.sendMessage` also runs `summarizeTitle`, which builds
+    its own anonymous `engine-session-*` principal through `agent-session-helpers`. A bare
+    `mockResolvedValueOnce` was consumed by that title summarizer, so the prompt under inspection was
+    the summarizer's and the assertion read its anonymous identity instead of the bound agent's. The
+    injected `createResolvedAgentSession` seam is reached ONLY by the chat session, which makes it the
+    correct place to arm the instrumented session.
+    */
+    const armObservingSession = () => createAgentSessionMock.mockResolvedValueOnce({
       session: {
         prompt: vi.fn(async () => {
           // This mirrors a host-extension callback: pi supplies cwd but no agentId.
@@ -1459,7 +1485,16 @@ describe("createFnAgent", () => {
       },
     });
     const chatStore = {
-      getSession: vi.fn(() => ({ id: "chat-secret", agentId: "agent-1a009724", status: "active" })),
+      /*
+      FNXC:SecretsAccessApproval 2026-08-23-19:58:
+      The session carries a title so `ChatManager.sendMessage` does not also fire its non-blocking
+      title summarizer. That summarizer builds its OWN anonymous `engine-session-*` pi session
+      concurrently with the chat session, and the two race for the mocked session queue — the
+      observed host-tool principal then came from whichever won, which is what made this read the
+      summarizer's anonymous identity instead of the bound agent's. Titling the session removes the
+      unrelated concurrent session rather than trying to order the race.
+      */
+      getSession: vi.fn(() => ({ id: "chat-secret", agentId: "agent-1a009724", status: "active", title: "Prompt-gated secret" })),
       addMessage: vi.fn((message) => ({ id: `message-${message.role}`, ...message })),
       getMessages: vi.fn(() => []),
       setInFlightGeneration: vi.fn(async () => undefined),
@@ -1483,12 +1518,15 @@ describe("createFnAgent", () => {
     resolved-session options and pi's host-tool prompt dispatch, where the
     immediate extension context intentionally omits agentId.
     */
-    __setCreateResolvedAgentSession(async (options: any) => createFnAgent({
-      ...options,
-      tools: "coding",
-      defaultProvider: "mock",
-      defaultModelId: "scripted",
-    }) as any);
+    __setCreateResolvedAgentSession(async (options: any) => {
+      armObservingSession();
+      return createFnAgent({
+        ...options,
+        tools: "coding",
+        defaultProvider: "mock",
+        defaultModelId: "scripted",
+      }) as any;
+    });
 
     try {
       const manager = new ChatManager(
@@ -2041,6 +2079,14 @@ describe("createFnAgent", () => {
         anthropicPromptCaching: true,
         models: [{ id: "anthropic-model", name: "Anthropic Model" }],
       },
+      {
+        id: "880e8400-e29b-41d4-a716-446655440003",
+        name: "Custom Google Provider",
+        apiType: "google-generative-ai",
+        baseUrl: "https://google.example",
+        apiKey: "GOOGLE_API_KEY",
+        models: [{ id: "google-model", name: "Google Model" }],
+      },
     ] as any);
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
@@ -2058,6 +2104,8 @@ describe("createFnAgent", () => {
       api: "openai-completions",
       models: [expect.objectContaining({
         id: "custom-model",
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
         compat: expect.objectContaining({ cacheControlFormat: "anthropic" }),
       })],
     }));
@@ -2065,16 +2113,33 @@ describe("createFnAgent", () => {
     // Opted-out (default) openai-compatible provider: no forced cache_control marker.
     const noCacheCall = registerProviderMock.mock.calls.find(([key]: [string]) => key === "custom-openai-no-caching");
     expect(noCacheCall).toBeDefined();
-    const [, noCacheConfig] = noCacheCall as [string, { models: Array<{ compat?: Record<string, unknown> }> }];
+    const [, noCacheConfig] = noCacheCall as [string, { models: Array<{ reasoning: boolean; thinkingLevelMap: Record<string, string>; compat?: Record<string, unknown> }> }];
+    expect(noCacheConfig.models[0]).toMatchObject({
+      reasoning: true,
+      thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    });
     expect(noCacheConfig.models[0].compat).not.toHaveProperty("cacheControlFormat");
 
     // anthropic-compatible provider: opt-in is a documented no-op — pi-ai's anthropic path already
     // auto-caches without this compat flag, and openai-completions-only compat must not leak in.
     const anthropicCall = registerProviderMock.mock.calls.find(([key]: [string]) => key === "custom-anthropic-caching-opt-in");
     expect(anthropicCall).toBeDefined();
-    const [, anthropicConfig] = anthropicCall as [string, { api: string; models: Array<{ compat?: Record<string, unknown> }> }];
+    const [, anthropicConfig] = anthropicCall as [string, { api: string; models: Array<{ reasoning: boolean; thinkingLevelMap: Record<string, string>; compat?: Record<string, unknown> }> }];
     expect(anthropicConfig.api).toBe("anthropic-messages");
+    expect(anthropicConfig.models[0]).toMatchObject({
+      reasoning: true,
+      thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    });
     expect(anthropicConfig.models[0].compat).toBeUndefined();
+
+    const googleCall = registerProviderMock.mock.calls.find(([key]: [string]) => key === "custom-google-provider");
+    expect(googleCall).toBeDefined();
+    const [, googleConfig] = googleCall as [string, { api: string; models: Array<{ reasoning: boolean; thinkingLevelMap: Record<string, string> }> }];
+    expect(googleConfig.api).toBe("google-generative-ai");
+    expect(googleConfig.models[0]).toMatchObject({
+      reasoning: true,
+      thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    });
   });
 
   it("avoids lock-based SettingsManager.create when loading extension providers", async () => {

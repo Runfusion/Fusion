@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/acp-runtime",
-  "version": "0.1.36-beta.1",
+  "version": "0.1.36-beta.8",
   "type": "module",
   "description": "ACP (Agent Client Protocol) runtime plugin for Fusion — drives any ACP-compatible agent over JSON-RPC/stdio",
   "keywords": [
@@ -21,7 +21,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
     "test": "vitest run --silent=passed-only --reporter=dot",
     "typecheck": "tsc --noEmit"
   },

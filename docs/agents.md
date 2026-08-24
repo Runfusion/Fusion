@@ -95,7 +95,7 @@ printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 
 ## Mission lineage and task creation
 
-`fn_task_create` and `fn_delegate_task` use two distinct controls. In an autonomous no-task heartbeat, the caller must provide approved `mission_lineage` (mission, slice, and feature); a rejection states that approved mission lineage is required, and no permission grant overrides it. In interactive/user-supervised and task-scoped sessions, lineage is optional and `task_agent_mutation` category rules and exact-tool overrides decide whether creation is allowed, requires approval, or is blocked.
+`fn_task_create` and `fn_delegate_task` use two distinct controls. A session executing a board task, including the durable Workflow Executor, implementation/retry, both workflow-step lanes, verification-fix, and spawned-child sessions, cannot create or delegate tasks. It records optional out-of-scope findings as `fn_task_done` completion recommendations, implements in-scope needs directly, and uses the honest blocked exit only for real external blockers. In an autonomous no-task heartbeat, the caller must provide approved `mission_lineage` (mission, slice, and feature); a rejection states that approved mission lineage is required, and no permission grant overrides it. In interactive/user-supervised non-execution sessions, lineage is optional and `task_agent_mutation` category rules and exact-tool overrides decide whether creation is allowed, requires approval, or is blocked.
 
 A valid active lineage can bootstrap the first task for a hand-authored `defined` feature. The feature is linked to that exact task and promoted to `triaged`; later autonomous scheduler work still requires a `triaged` or `in-progress` feature.
 
@@ -957,9 +957,9 @@ Mail has an optional structural metadata contract: `mailKind` distinguishes ordi
 
 ### Dashboard Chat workspace tools
 
-Dashboard Chat, Chat Room responders, and task-detail Planner Chat run at the interactive project checkout with coding workspace tools: `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. Use them for user-directed file changes and shell investigation. When a durable agent is bound, its permanent-agent permission policy still governs file writes/deletes and command execution; unbound model Chat has no durable-principal policy gate. Chat must keep the checkout branch sticky: inspect Git freely, but do not use `git checkout` or `git switch` unless the operator explicitly requests it.
+Dashboard Chat, Chat Room responders, and task-aware task-detail Chat run at the interactive project checkout with coding workspace tools: `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. Use them for user-directed file changes and shell investigation. When a durable agent is bound, its permanent-agent permission policy still governs file writes/deletes and command execution; unbound model Chat has no durable-principal policy gate. Chat must keep the checkout branch sticky: inspect Git freely, but do not use `git checkout` or `git switch` unless the operator explicitly requests it.
 
-Task-detail Planner Chat is included because it is a `task-planner:<taskId>` ChatManager session. This does not change the readonly planning/mission interview lanes or WhatsApp plugin chat. Chat verification remains limited to its existing allowlisted profiles rather than accepting arbitrary shell commands.
+Task-detail Chat is included because it is a `task-planner:<taskId>` ChatManager session, not because it is the workflow planner lane. The session keeps the server-built task definition, dependencies, activity, metrics, steering, and refinement context and retains the existing task-scoped tool and SSE task-identity contract. Its model target follows the project Direct Chat default, and the Chat UI exposes model/thinking selectors while keeping targeting model-only; it never impersonates a configured durable Direct Chat agent. This does not change the readonly planning/mission interview lanes or WhatsApp plugin chat. Chat verification remains limited to its existing allowlisted profiles rather than accepting arbitrary shell commands.
 
 ### Worktree session file boundary
 
@@ -1722,6 +1722,14 @@ Seven coordination tools support spawning, provisioning, discovery, delegation, 
 - `list_agents` — Discovery with `role`/`state`/`includeEphemeral` filters.
 - `delegate_task` — Create + assign task to a specific agent. Implementation tasks require executor-role target unless `override: true`. Cannot target ephemeral agents (use `spawn_agent`).
 - `get_agent_config` / `update_agent_config` — Read/write soul, instructions, heartbeat interval/timeout, max concurrent runs, message response mode. **Authorization**: caller can only act on agents where `target.reportsTo === caller.id`. Cannot operate on ephemeral agents.
+
+## Workspace repository scope tools
+
+`fn_task_create` accepts an optional `repository_scope` list for an explicit operator-selected workspace scope. Omit it only when the planner will confirm the proposed scope in `## Repository Scope` of the task plan; a workspace plan without a valid non-empty heading is rejected before it is persisted.
+
+`fn_acquire_repo_worktree` acquires a configured member checkout; it does not make that member task intent merely by acquiring it. When the member is outside the current pre-land scope, provide a reason: Fusion records one accepted scope-extension history entry so later review and landing can include that member deliberately. An acquisition after review or landing has started is refused with follow-up-task guidance.
+
+For workspace tasks, `fn_task_file_scope_add` must use qualified paths such as `repo-a/src/file.ts`. A relative entry is only unambiguous when the task has one active repository; never use an unqualified path to imply every acquired workspace repository.
 
 ## Checkout leasing
 

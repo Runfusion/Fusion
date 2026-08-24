@@ -105,7 +105,7 @@ function persistCollapsed(collapsed: boolean): void {
 export interface LeftSidebarNavProps {
   view: TaskView;
   onChangeView: (view: TaskView) => void;
-  onNewTask?: () => void;
+  onNewTask?: (workflowId?: string | null) => void;
   onOpenSettings?: () => void;
   mailboxUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
@@ -504,7 +504,7 @@ export function LeftSidebarNav({
             aria-label={newTaskLabel}
             title={newTaskLabel}
             data-testid="sidebar-nav-new-task"
-            onClick={onNewTask}
+            onClick={() => onNewTask()}
           >
             <Plus size={16} />
             <span className="left-sidebar-nav__label">{newTaskLabel}</span>

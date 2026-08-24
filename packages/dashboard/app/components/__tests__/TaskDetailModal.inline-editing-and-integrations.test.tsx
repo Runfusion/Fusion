@@ -15,6 +15,7 @@ import {
   noopMove,
   noopOpenDetail,
   mockConfirm,
+  mockConfirmWithCheckbox,
   mockUsePluginUiSlots,
   expectBaseRule,
   expectSingleStatsRuntimeStatus,
@@ -712,6 +713,131 @@ describe("TaskDetailModal", () => {
           description: "New description",
         }), undefined);
       });
+    });
+
+    it("deletes a cleared description through the confirmed task callback", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      const onDeleteTask = vi.fn(async () => makeTask({ id: "FN-001" }) as Task);
+      mockConfirmWithCheckbox.mockResolvedValue({ choice: "primary", checkboxValue: false });
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      fireEvent.change(document.querySelector("#task-form-description")!, { target: { value: "   \n\t" } });
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockConfirmWithCheckbox).toHaveBeenCalledWith(expect.objectContaining({ title: "Delete Task", danger: true }));
+        expect(onDeleteTask).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUpdate).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({ description: "" }), undefined);
+    });
+
+    it("keeps a cleared description editable when deletion is cancelled", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      const onDeleteTask = vi.fn(async () => makeTask({ id: "FN-001" }) as Task);
+      mockConfirmWithCheckbox.mockResolvedValue({ choice: "cancel", checkboxValue: false });
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-001", column: "triage", description: "Original description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      fireEvent.change(document.querySelector("#task-form-description")!, { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalledTimes(1));
+      expect(onDeleteTask).not.toHaveBeenCalled();
+      expect(mockUpdate).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({ description: "" }), undefined);
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
+    });
+
+    it("does not delete a restored draft from a stale confirmation", async () => {
+      let resolveConfirmation: ((value: { choice: "primary"; checkboxValue: boolean }) => void) | undefined;
+      const confirmation = new Promise<{ choice: "primary"; checkboxValue: boolean }>((resolve) => {
+        resolveConfirmation = resolve;
+      });
+      const onDeleteTask = vi.fn(async () => makeTask({ id: "FN-001" }) as Task);
+      mockConfirmWithCheckbox.mockReturnValue(confirmation);
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-001", column: "triage", description: "Original description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      const description = document.querySelector("#task-form-description")!;
+      fireEvent.change(description, { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalledTimes(1));
+      fireEvent.change(description, { target: { value: "Restored description" } });
+      await act(async () => resolveConfirmation?.({ choice: "primary", checkboxValue: false }));
+
+      expect(onDeleteTask).not.toHaveBeenCalled();
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
+    });
+
+    it("fences the description debounce and Save click to one embedded-host deletion", async () => {
+      vi.useFakeTimers();
+      try {
+        const onDeleteTask = vi.fn(async () => makeTask({ id: "FN-001" }) as Task);
+        const onRequestClose = vi.fn();
+        mockConfirmWithCheckbox.mockResolvedValue({ choice: "primary", checkboxValue: false });
+
+        render(
+          <TaskDetailContent
+            initialTab="definition"
+            embedded
+            task={makeTask({ id: "FN-001", column: "triage", description: "Original description" })}
+            onOpenDetail={noopOpenDetail}
+            onMoveTask={noopMove}
+            onDeleteTask={onDeleteTask}
+            onMergeTask={noopMerge}
+            addToast={noop}
+            onRequestClose={onRequestClose}
+          />,
+        );
+
+        fireEvent.click(document.querySelector(".modal-edit-btn")!);
+        fireEvent.change(document.querySelector("#task-form-description")!, { target: { value: "" } });
+        fireEvent.click(screen.getByText("Save"));
+        await act(async () => vi.advanceTimersByTimeAsync(1_500));
+
+        expect(onDeleteTask).toHaveBeenCalledTimes(1);
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("Save button is enabled in edit mode", () => {

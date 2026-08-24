@@ -121,6 +121,7 @@ export async function attemptExecutorVerificationFix(
     // Create the fix agent session
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "executor",
+        taskExecutionSession: true,
       pluginRunner: deps.pluginRunner,
       cwd: worktreePath, // Run in the task's worktree
       systemPrompt: `You are a verification fix agent running during task execution in a worktree.

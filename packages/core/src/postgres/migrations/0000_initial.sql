@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   source_issue_closed_at text,
   merge_details jsonb,
   workspace_worktrees jsonb,
+  repository_scope jsonb,
   break_into_subtasks integer DEFAULT 0,
   no_commits_expected integer DEFAULT 0,
   enabled_workflow_steps jsonb DEFAULT '[]',
@@ -1812,6 +1813,8 @@ CREATE INDEX IF NOT EXISTS "idxCentralActivityLogType"
   ON central.central_activity_log(type);
 CREATE INDEX IF NOT EXISTS "idxCentralActivityLogProjectId"
   ON central.central_activity_log(project_id);
+CREATE INDEX IF NOT EXISTS "idxCentralActivityLogTaskIdTimestamp"
+  ON central.central_activity_log(task_id, timestamp DESC);
 
 CREATE TABLE IF NOT EXISTS central.global_concurrency (
   id integer PRIMARY KEY,

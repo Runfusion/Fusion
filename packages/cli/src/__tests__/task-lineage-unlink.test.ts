@@ -175,14 +175,89 @@ pgDescribe("fn_task_archive / fn_task_delete removeLineageReferences plumbing", 
     expect(updatedChild.sourceParentTaskId).toBeUndefined();
   });
 
-  it("fn_task_delete with no lineage children behaves unchanged", async () => {
+  /*
+  FNXC:DependencyIntegrity 2026-08-20-19:00:
+  FN-075 covers the registered operator tool rather than reproducing the store test: an ordinary
+  delete must preserve a dependent-bearing task unchanged, while the explicit retry delegates the
+  atomic edge removal and replan fence to TaskStore.deleteTask.
+  */
+  it("fn_task_delete requires an explicit dependency cleanup retry and replans affected dependents", async () => {
     const store = h.store();
-    const task = await store.createTask({ column: "todo", title: "solo", description: "no children" });
+    const prerequisite = await store.createTask({ column: "todo", title: "prerequisite", description: "delete me" });
+    const unrelated = await store.createTask({ column: "todo", title: "unrelated", description: "keep me" });
+    const firstDependent = await store.createTask({
+      column: "todo",
+      title: "first dependent",
+      description: "depends on two tasks",
+      dependencies: [prerequisite.id, unrelated.id],
+    });
+    const secondDependent = await store.createTask({
+      column: "todo",
+      title: "second dependent",
+      description: "depends only on the deleted task",
+      dependencies: [prerequisite.id],
+    });
+    await store.updateTask(firstDependent.id, { status: "queued", blockedBy: prerequisite.id });
+    const continuation = await store.replaceActiveTaskWorkflowContinuation({
+      runId: `${firstDependent.id}:continuation:0`,
+      taskId: firstDependent.id,
+      nodeId: "plan-review",
+      kind: "task",
+      state: "runnable",
+      stableWorkflowRunId: `${firstDependent.id}:workflow`,
+      continuationSequence: 0,
+      waitReason: "planning",
+      sourceColumn: "todo",
+      targetColumn: "todo",
+      irHash: "ir-v1",
+    });
 
     const api = createMockApi();
     registerExtension(api);
     const tool = requireTool(api, "fn_task_delete");
-    const result = await tool.execute("call-8", { id: task.id }, undefined, undefined, ctx());
+
+    for (const [callId, params] of [
+      ["call-8-omitted", { id: prerequisite.id }],
+      ["call-8-false", { id: prerequisite.id, removeDependencyReferences: false }],
+    ] as const) {
+      const refused = await tool.execute(callId, params, undefined, undefined, ctx());
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0]?.text).toMatch(/still referenced as a dependency/i);
+      expect((await store.getTask(prerequisite.id, { includeDeleted: true })).deletedAt).toBeUndefined();
+      expect((await store.getTask(firstDependent.id)).dependencies).toEqual([prerequisite.id, unrelated.id]);
+      expect((await store.getTask(firstDependent.id)).blockedBy).toBe(prerequisite.id);
+      expect((await store.getTask(firstDependent.id)).status).toBe("queued");
+      expect((await store.getWorkflowWorkItem(continuation.id))?.state).toBe("runnable");
+    }
+
+    const deleted = await tool.execute(
+      "call-8-forced",
+      { id: prerequisite.id, removeDependencyReferences: true },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(deleted.content[0]?.text).toBe(`Deleted ${prerequisite.id}`);
+    expect((await store.getTask(prerequisite.id, { includeDeleted: true })).deletedAt).toBeTruthy();
+
+    const updatedFirst = await store.getTask(firstDependent.id);
+    const updatedSecond = await store.getTask(secondDependent.id);
+    expect(updatedFirst.dependencies).toEqual([unrelated.id]);
+    expect(updatedSecond.dependencies).toEqual([]);
+    expect(updatedFirst.blockedBy).toBeUndefined();
+    expect(updatedFirst.status).toBe("needs-replan");
+    expect(updatedSecond.status).toBe("needs-replan");
+    expect((await store.getWorkflowWorkItem(continuation.id))?.state).toBe("cancelled");
+  });
+
+  it("fn_task_delete with no dependents behaves unchanged", async () => {
+    const store = h.store();
+    const task = await store.createTask({ column: "todo", title: "solo", description: "no dependents" });
+
+    const api = createMockApi();
+    registerExtension(api);
+    const tool = requireTool(api, "fn_task_delete");
+    const result = await tool.execute("call-9", { id: task.id }, undefined, undefined, ctx());
 
     expect(result.content[0]?.text).toBe(`Deleted ${task.id}`);
     const deleted = await store.getTask(task.id, { includeDeleted: true });

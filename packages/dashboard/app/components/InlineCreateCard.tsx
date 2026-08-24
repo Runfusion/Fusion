@@ -2,7 +2,7 @@ import "./InlineCreateCard.css";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Brain, Link, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
+import { Brain, Link, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type ResolvedWorkflowOptionalStep, type ThinkingLevel } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -14,7 +14,7 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { applyPresetToSelection } from "../utils/modelPresets";
-import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
+import { getScopedItem, MAX_PERSISTED_DRAFT_BYTES, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
@@ -43,10 +43,6 @@ interface InlineCreateCardProps {
    * Preserved for shared create-surface prop compatibility. Inline quick-create intentionally omits Plan.
    */
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
-  /**
-   * Called when the user clicks the "Subtask" button to trigger subtask breakdown.
-   */
-  onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
 }
 
 function getNodeStatusLabel(status: NodeInfo["status"], t?: (key: string, defaultValue: string) => string): string {
@@ -91,7 +87,6 @@ export function InlineCreateCard({
   addToast,
   projectId,
   availableModels,
-  onSubtaskBreakdown,
 }: InlineCreateCardProps) {
   const { t } = useTranslation("app");
   const [description, setDescription] = useState(() => {
@@ -153,6 +148,7 @@ export function InlineCreateCard({
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
   const [pendingSubmit, setPendingSubmit] = useState<CreateTaskInput | null>(null);
   const justResetRef = useRef(false);
+  const draftPersistenceWarningShownRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
@@ -162,12 +158,26 @@ export function InlineCreateCard({
     setDescription(getScopedItem(STORAGE_KEY, projectId) || "");
   }, [projectId]);
 
-  // Persist description to localStorage whenever it changes
+  /*
+  FNXC:QuickAddDraftPersistence 2026-08-20-00:43:
+  Inline Create keeps its React draft authoritative for submission. The localStorage restore mirror is capped and optional so a large paste never exhausts browser quota or interrupts the composer (Runfusion/Fusion#3477).
+  */
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setScopedItem(STORAGE_KEY, description, projectId);
+    if (description.length === 0) {
+      removeScopedItem(STORAGE_KEY, projectId);
+      return;
     }
-  }, [description, projectId]);
+
+    const persisted = setScopedItem(STORAGE_KEY, description, projectId, {
+      maxBytes: MAX_PERSISTED_DRAFT_BYTES,
+    });
+    if (persisted) {
+      draftPersistenceWarningShownRef.current = false;
+    } else if (!draftPersistenceWarningShownRef.current) {
+      draftPersistenceWarningShownRef.current = true;
+      addToast(t("tasks.draftTooLargeToSave", "Draft is too large to save in this browser — it will not be restored after a reload."), "warning");
+    }
+  }, [addToast, description, projectId, t]);
 
   // Clear agents cache when projectId changes to prevent stale agents from leaking across projects
   useEffect(() => {
@@ -741,47 +751,6 @@ export function InlineCreateCard({
     e.preventDefault();
   }, []);
 
-  /*
-  FNXC:InlineCreate 2026-06-30-00:00:
-  Inline quick-create intentionally omits the Plan button, icon, disabled state, tooltip, and click target while preserving Subtask and task creation controls.
-  */
-  const handleSubtaskClick = useCallback(() => {
-    const trimmed = description.trim();
-    if (!trimmed) {
-      addToast(t("inline.enterDescriptionFirst", "Enter a description first"), "error");
-      return;
-    }
-    if (selectedWorkflowId !== null) {
-      onSubtaskBreakdown?.(trimmed, selectedWorkflowId);
-    } else {
-      onSubtaskBreakdown?.(trimmed);
-    }
-    // Clear the input after triggering subtask breakdown
-    setDescription("");
-    setSelectedWorkflowId(null);
-    setDependencies([]);
-    setExecutorProvider(undefined);
-    setExecutorModelId(undefined);
-    setValidatorProvider(undefined);
-    setValidatorModelId(undefined);
-    setPlanningProvider(undefined);
-    setPlanningModelId(undefined);
-    setMergerProvider(undefined);
-    setMergerModelId(undefined);
-    setThinkingLevel("");
-    setValidatorThinkingLevel("");
-    setPlanningThinkingLevel("");
-    setMergerThinkingLevel("");
-    setEnabledOptionalStepIds([]);
-    setSelectedPresetId(undefined);
-    setSelectedAgentId(null);
-    setNodeId(undefined);
-    setShowDeps(false);
-    setShowAgentPicker(false);
-    setIsModelModalOpen(false);
-    setShowPresets(false);
-    setIsExpanded(false);
-  }, [description, onSubtaskBreakdown, selectedWorkflowId, addToast]);
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
@@ -911,21 +880,6 @@ export function InlineCreateCard({
       {isExpanded && (
         <div id="inline-create-controls" className="inline-create-footer">
           <div className="inline-create-controls">
-            {/* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: Render no Subtask button or orphaned inline-create click target unless the default-off `subtaskBreakdown` experiment wires this callback. */}
-            {onSubtaskBreakdown && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={handleSubtaskClick}
-                onMouseDown={(e) => e.preventDefault()}
-                disabled={!description.trim()}
-                data-testid="subtask-button"
-                title={t("inline.breakDownSubtasks", "Break down into AI-generated subtasks")}
-              >
-                <ListTree size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                {t("inline.subtask", "Subtask")}
-              </button>
-            )}
             <div className="dep-trigger-wrap">
               <button
                 type="button"

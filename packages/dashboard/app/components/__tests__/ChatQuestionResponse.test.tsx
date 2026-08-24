@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatQuestionResponse } from "../ChatQuestionResponse";
 import type { ParsedQuestionToolCall } from "../../utils/parseQuestionToolCall";
+import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
+
+const chatQuestionResponseCss = readFileSync(resolve(__dirname, "../ChatQuestionResponse.css"), "utf8");
 
 const parsed: ParsedQuestionToolCall = {
   questions: [
@@ -84,6 +89,39 @@ describe("ChatQuestionResponse", () => {
     expect(yesButton).not.toHaveClass("chat-question-response__confirm--selected");
     expect(noButton).toHaveAttribute("aria-pressed", "true");
     expect(yesButton).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("autosizes independent text answers through five lines and returns each cleared answer to its minimum", async () => {
+    const user = userEvent.setup();
+    const twoTextQuestions: ParsedQuestionToolCall = {
+      questions: [
+        { id: "short", type: "text", question: "Short answer" },
+        { id: "long", type: "text", question: "Long answer" },
+      ],
+    };
+    render(<ChatQuestionResponse parsed={twoTextQuestions} onSubmit={vi.fn()} />);
+
+    const short = screen.getByTestId("chat-question-response-text-short") as HTMLTextAreaElement;
+    const long = screen.getByTestId("chat-question-response-text-long") as HTMLTextAreaElement;
+    Object.defineProperty(short, "scrollHeight", { configurable: true, get: () => short.value ? 60 : 24 });
+    Object.defineProperty(long, "scrollHeight", { configurable: true, get: () => long.value ? 500 : 24 });
+
+    await user.type(short, "brief");
+    await user.type(long, "one\ntwo\nthree\nfour\nfive\nsix");
+    expect(short.style.height).toBe(`${clampChatInputHeight(60, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(short)))}px`);
+    expect(long.style.height).toBe(`${clampChatInputHeight(500, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(long)))}px`);
+    expect(long.style.overflowY).toBe("auto");
+
+    await user.clear(long);
+    expect(long.style.height).toBe(`${clampChatInputHeight(24, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(long)))}px`);
+    expect(short.style.height).toBe(`${clampChatInputHeight(60, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(short)))}px`);
+  });
+
+  it("uses controller-owned overflow instead of a native resize grip", () => {
+    const textareaRule = chatQuestionResponseCss.match(/\.chat-question-response__textarea\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(textareaRule).toContain("resize: none");
+    expect(textareaRule).toContain("overflow-y: hidden");
+    expect(textareaRule).not.toContain("resize: vertical");
   });
 
   it("supports compact mode", () => {

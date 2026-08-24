@@ -60,7 +60,7 @@ export class GitLabTrackingStateService {
   }
 }
 
-export async function updateGitLabTargetState(store: TaskStore, taskId: string, target: GitLabLifecycleTarget, state: "opened" | "closed", source: "tracking" | "source" | "split-close"): Promise<void> {
+export async function updateGitLabTargetState(store: TaskStore, taskId: string, target: GitLabLifecycleTarget, state: "opened" | "closed", source: "tracking" | "source"): Promise<void> {
   const action = state === "closed" ? "close" : "reopen";
   try {
     const resolved = await resolveGitLabClient(store);

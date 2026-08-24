@@ -10,6 +10,10 @@ import { mutationContextFor } from "./mutation-context-matchers.js";
 
 const TEST_PROMPT_WRITE_CONTEXT = mutationContextForAgent("agent-prompt-writer");
 import { TaskDocumentPreconditionFailedError, type TaskDocument, type TaskStore } from "@fusion/core";
+
+const { loadWorkspaceConfig } = vi.hoisted(() => ({
+  loadWorkspaceConfig: vi.fn(),
+}));
 import {
   createChatTaskDocumentTools,
   createTaskDocumentReadTool,
@@ -19,7 +23,7 @@ import {
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");
-  return createEngineCoreMock(() => importOriginal<typeof import("@fusion/core")>());
+  return createEngineCoreMock(() => importOriginal<typeof import("@fusion/core")>(), { loadWorkspaceConfig });
 });
 
 const TASK_ID = "FN-1272";
@@ -194,6 +198,11 @@ describe("task_document_write tool", () => {
 });
 
 describe("task_prompt_write tool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadWorkspaceConfig.mockResolvedValue(undefined);
+  });
+
   it("reports success only after the authoritative store reads back the exact prompt", async () => {
     const updateTask = vi.fn().mockResolvedValue({});
     const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "# Verified plan" });
@@ -208,6 +217,55 @@ describe("task_prompt_write tool", () => {
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 
+  it("refuses a reset-fenced planning write before durable prompt persistence", async () => {
+    const updateTask = vi.fn();
+    const store = { updateTask, getTask: vi.fn().mockResolvedValue({ id: TASK_ID }) } as unknown as TaskStore;
+
+    const result = await runTool(
+      createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT, () => false),
+      "call-reset-fenced",
+      { content: "# Stale plan" },
+    );
+
+    expect(getText(result)).toContain("was reset before PROMPT.md could be persisted");
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pre-reset planner write after it queues behind the reset lifecycle lock", async () => {
+    let releaseReset!: () => void;
+    let enteredQueue!: () => void;
+    const resetPublication = new Promise<void>((resolve) => { releaseReset = resolve; });
+    const queuedBehindReset = new Promise<void>((resolve) => { enteredQueue = resolve; });
+    let generationCurrent = true;
+    const updateTask = vi.fn();
+    const store = {
+      getTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      updateTask,
+      withPlanningLifecycleLock: vi.fn(async (_id: string, write: () => Promise<void>) => {
+        enteredQueue();
+        await resetPublication;
+        await write();
+      }),
+      withTaskLock: vi.fn(async (_id: string, write: () => Promise<void>) => await write()),
+      updateTaskUnlocked: vi.fn(),
+      isBackendMode: vi.fn(() => false),
+    } as unknown as TaskStore;
+
+    const resultPromise = runTool(
+      createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT, () => generationCurrent),
+      "call-queued-before-reset",
+      { content: "# Discarded plan" },
+    );
+    await queuedBehindReset;
+    generationCurrent = false;
+    releaseReset();
+
+    const result = await resultPromise;
+    expect(getText(result)).toContain("was reset before PROMPT.md could be persisted");
+    expect(store.updateTaskUnlocked).not.toHaveBeenCalled();
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the authoritative prompt read-back is missing or different", async () => {
     const updateTask = vi.fn().mockResolvedValue({});
     const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "" });
@@ -219,6 +277,96 @@ describe("task_prompt_write tool", () => {
 
     expect(getText(result)).toContain("ERROR:");
     expect(getText(result)).toContain("could not be verified");
+  });
+
+  it("reads the authoritative prompt only after the promptless row write resolves", async () => {
+    const calls: string[] = [];
+    let written = false;
+    const updateTask = vi.fn().mockImplementation(async () => {
+      calls.push("updateTask");
+      written = true;
+      return { id: TASK_ID };
+    });
+    const getTask = vi.fn().mockImplementation(async () => {
+      calls.push("getTask");
+      return written ? { id: TASK_ID, prompt: "# Verified plan" } : { id: TASK_ID };
+    });
+    const store = { updateTask, getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-order", { content: "# Verified plan" });
+
+    expect(calls).toEqual(["getTask", "updateTask", "getTask"]);
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("confirms a duplicate verdict prompt when the artifact reads back exactly", async () => {
+    const content = "DUPLICATE: FN-1672";
+    const store = {
+      updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      getTask: vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content }),
+    } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-duplicate", { content });
+
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it.each([
+    ["missing", null],
+    ["empty", { id: TASK_ID, prompt: "" }],
+    ["altered", { id: TASK_ID, prompt: "# Truncated" }],
+  ])("fails closed when the post-write artifact is %s", async (_state, readBack) => {
+    const store = {
+      updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      getTask: vi.fn().mockResolvedValue(readBack),
+    } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-unverified", { content: "# Complete plan" });
+
+    expect(getText(result)).toContain("ERROR:");
+    expect(getText(result)).toContain("could not be verified");
+    expect(getText(result)).not.toContain(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("fails closed when the authoritative read-back rejects", async () => {
+    const getTask = vi.fn()
+      .mockResolvedValueOnce({ id: TASK_ID })
+      .mockRejectedValueOnce(new Error(`Task ${TASK_ID} not found`));
+    const store = { updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }), getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-reject", { content: "# Complete plan" });
+
+    expect(getText(result)).toContain("ERROR:");
+    expect(getText(result)).toContain("could not be verified");
+  });
+
+  it("confirms a workspace prompt after atomically publishing its validated repository scope", async () => {
+    const content = "## Repository Scope\n- `packages/engine`\n\n# Workspace plan";
+    const updateTask = vi.fn().mockResolvedValue({ id: TASK_ID });
+    const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content });
+    loadWorkspaceConfig.mockResolvedValue({ repos: ["packages/engine"] });
+    const store = { updateTask, getTask, getRootDir: () => "/workspace" } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-workspace", { content });
+
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
+      prompt: content,
+      repositoryScope: expect.objectContaining({ repositories: ["packages/engine"], state: "confirmed" }),
+    }), TEST_PROMPT_WRITE_CONTEXT);
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("keeps a verified prompt write successful when the plan mirror fails", async () => {
+    const content = "# Verified plan";
+    const store = {
+      updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      getTask: vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content }),
+      upsertTaskDocument: vi.fn().mockRejectedValue(new Error("database unavailable")),
+    } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-mirror-failure", { content });
+
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 });
 

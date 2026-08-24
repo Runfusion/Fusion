@@ -44,7 +44,7 @@
  * backend swap is invisible to the CentralCore contract. Production startup
  * requires this PostgreSQL path; `FUSION_NO_EMBEDDED_PG` is rejected.
  */
-import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import type {
@@ -1283,15 +1283,27 @@ export async function logActivityRow(
 
 export async function getRecentActivity(
   handle: QueryHandle,
-  options?: { limit?: number; projectId?: string; types?: ActivityEventType[] },
+  options?: { limit?: number; since?: string; projectId?: string; types?: ActivityEventType[]; taskId?: string },
 ): Promise<CentralActivityLogEntry[]> {
+  /*
+  FNXC:ActivityLogTaskSearch 2026-08-20-04:38:
+  Central overview search is an indexed, exact durable task-ID predicate. Project and type predicates remain
+  independent SQL conditions so selecting a task ID never broadens the cross-project feed.
+  The cursor is strictly older-than to preserve descending durable-history pagination for task investigations.
+  */
   const limit = options?.limit ?? 100;
   const conditions: SQL[] = [];
+  if (options?.since) {
+    conditions.push(lt(schema.central.centralActivityLog.timestamp, options.since));
+  }
   if (options?.projectId) {
     conditions.push(eq(schema.central.centralActivityLog.projectId, options.projectId));
   }
   if (options?.types && options.types.length > 0) {
     conditions.push(inArray(schema.central.centralActivityLog.type, options.types));
+  }
+  if (options?.taskId) {
+    conditions.push(eq(schema.central.centralActivityLog.taskId, options.taskId));
   }
   const query = handle
     .select(activityColumns)

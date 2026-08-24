@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   AI_MERGE_DIRNAME,
@@ -7,6 +8,7 @@ import {
   isAiMergeContainerDir,
   isWorktreeContainerDir,
   isInsideConfiguredWorktreesDir,
+  isReclaimableWorktreeCandidate,
   resolveAiMergeRootPath,
   resolveTaskWorktreePath,
   resolveTaskWorktreePathForBackend,
@@ -72,6 +74,21 @@ describe("worktree-paths", () => {
     expect(isWorktreeContainerDir(WORKTREE_RECOVERY_DIRNAME)).toBe(true);
     expect(isWorktreeContainerDir("fusion-ai-merge-fn-1-abc")).toBe(false);
     expect(isWorktreeContainerDir(".fusion-recovery-child")).toBe(false);
+  });
+
+  it("vetoes workspace containers and plain directories before a destructive sweep", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-worktree-paths-"));
+    try {
+      const plain = join(root, "plain");
+      const group = join(root, "workspace-group");
+      await mkdir(plain);
+      await mkdir(group);
+      await writeFile(join(group, ".fusion-workspace-root"), "/workspace");
+      expect(await isReclaimableWorktreeCandidate(plain, { rootDir: root })).toBe(false);
+      expect(await isReclaimableWorktreeCandidate(group, { rootDir: root })).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("detects paths inside and outside configured dir", () => {

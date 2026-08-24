@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import type { Artifact, ArtifactWithTask, ColumnId, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { artifactMediaUrlWithToken, fetchArtifact, fetchTaskDetail, fetchTaskDocument, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
+import { ArtifactImage, ArtifactImageViewer } from "./ArtifactImageViewer";
 import { useArtifacts } from "../hooks/useArtifacts";
 import { useDocuments } from "../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../hooks/useProjectMarkdownFiles";
@@ -149,6 +150,7 @@ interface TaskArtifactInlineViewerProps {
 
 function TaskArtifactInlineViewer({ artifact, projectId, content, loading, error, renderMarkdown, onToggleMarkdown, onOpenTask, t }: TaskArtifactInlineViewerProps) {
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const category = getArtifactCategory(artifact);
   const categoryLabel = getTaskArtifactCategoryLabel(t, category);
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
@@ -163,7 +165,7 @@ function TaskArtifactInlineViewer({ artifact, projectId, content, loading, error
 
   const body = (() => {
     if (category === "image") {
-      return <>{mediaErrorNode}<img className="documents-task-artifact-media" src={mediaUrl} alt={title} onError={() => setMediaError(t("documents.artifactMediaFailed", "Failed to load artifact preview."))} /></>;
+      return <>{mediaErrorNode}<button type="button" className="documents-task-artifact-image-button" onClick={() => setImageViewerOpen(true)} aria-label={t("documents.expandImageArtifact", "Expand image artifact {{title}}", { title })}><ArtifactImage className="documents-task-artifact-media" artifactId={artifact.id} projectId={projectId} title={title} onError={() => setMediaError(t("documents.artifactMediaFailed", "Failed to load artifact preview."))} /></button>{imageViewerOpen && <ArtifactImageViewer artifactId={artifact.id} projectId={projectId} title={title} onClose={() => setImageViewerOpen(false)} />}</>;
     }
     if (category === "video") {
       return <>{mediaErrorNode}<video className="documents-task-artifact-media" controls src={mediaUrl} aria-label={t("documents.videoArtifactLabel", "Video artifact: {{title}}", { title })} onError={() => setMediaError(t("documents.artifactMediaFailed", "Failed to load artifact preview."))} /></>;

@@ -132,7 +132,10 @@ export function createMockSkill(overrides: Partial<DiscoveredSkill>): Discovered
 }
 
 export function setupMockChat(overrides: Partial<UseChatReturn> = {}) {
-  const state: UseChatReturn = { ...defaultChatState, ...overrides };
+  const activeSession = overrides.activeSession ?? defaultChatState.activeSession;
+  const sessions = overrides.sessions ?? (activeSession ? [activeSession] : defaultChatState.sessions);
+  const filteredSessions = overrides.filteredSessions ?? (activeSession ? [activeSession] : defaultChatState.filteredSessions);
+  const state: UseChatReturn = { ...defaultChatState, ...overrides, sessions, filteredSessions };
   mockUseChat.mockReturnValue(state);
 }
 
@@ -212,14 +215,19 @@ export function ensureMatchMedia() {
   }
 }
 
-export function mockViewportMode(mode: "mobile" | "desktop") {
+/*
+FNXC:DashboardTests 2026-08-23-03:40:
+FN-9193 needs real tablet mode rather than desktop-shaped assertions; retain existing mobile and
+ desktop matching semantics while providing the 769–1024px media-query shape.
+*/
+export function mockViewportMode(mode: "mobile" | "tablet" | "desktop") {
   ensureMatchMedia();
-  const isMobile = mode === "mobile";
-  Object.defineProperty(window, "innerWidth", { value: isMobile ? 375 : 1280, configurable: true });
-  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+  const width = { mobile: 375, tablet: 900, desktop: 1280 }[mode];
+  Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string = "") => ({
     matches:
-      isMobile &&
-      (query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)"),
+      (mode === "mobile" && (query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)")) ||
+      (mode === "tablet" && query.includes("min-width: 769px") && query.includes("max-width: 1024px")),
     media: query,
     onchange: null,
     addListener: vi.fn(),
@@ -228,6 +236,131 @@ export function mockViewportMode(mode: "mobile" | "desktop") {
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   }));
+}
+
+/*
+FNXC:DashboardTests 2026-08-23-03:40:
+FN-9193 also covers tablet-class touch hardware at 768 CSS pixels. Touch and physical screen
+signals are required by useViewportMode; without them this setup silently becomes mobile.
+*/
+/*
+FNXC:DashboardTests 2026-08-23-16:07:
+Keyboard tests need a visual viewport whose height can shrink independently from layout height. iOS
+reports that gap while its software keyboard is open; syncing both values would make the keyboard
+formula zero and silently make tests vacuous.
+*/
+export function mockVisualViewport({ width, height }: { width: number; height: number }) {
+  const visualViewportDescriptor = Object.getOwnPropertyDescriptor(window, "visualViewport");
+  const innerHeightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  const clientHeightDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight");
+  const vv = new EventTarget() as unknown as VisualViewport;
+  for (const [key, value] of Object.entries({ width, height, offsetTop: 0, offsetLeft: 0, pageTop: 0, pageLeft: 0, scale: 1 })) {
+    Object.defineProperty(vv, key, { value, writable: true, configurable: true });
+  }
+  Object.defineProperty(window, "visualViewport", { value: vv, configurable: true });
+  Object.defineProperty(window, "innerHeight", { value: height, configurable: true });
+  Object.defineProperty(document.documentElement, "clientHeight", { value: height, configurable: true });
+  return {
+    vv,
+    restore: () => {
+      if (visualViewportDescriptor) Object.defineProperty(window, "visualViewport", visualViewportDescriptor);
+      else delete (window as { visualViewport?: VisualViewport }).visualViewport;
+      if (innerHeightDescriptor) Object.defineProperty(window, "innerHeight", innerHeightDescriptor);
+      if (clientHeightDescriptor) Object.defineProperty(document.documentElement, "clientHeight", clientHeightDescriptor);
+    },
+  };
+}
+
+/* FNXC:DashboardTests 2026-08-23-16:07: A software keyboard changes only visualViewport height; retain layout height so overlap remains observable. */
+export function setVisualViewportHeight(vv: VisualViewport, height: number) {
+  Object.defineProperty(vv, "height", { value: height, writable: true, configurable: true });
+  vv.dispatchEvent(new Event("resize"));
+}
+
+/* FNXC:DashboardTests 2026-08-23-16:07: A genuine layout resize changes layout and visual heights together, unlike keyboard opening. */
+export function setLayoutViewportHeight(vv: VisualViewport, height: number) {
+  Object.defineProperty(window, "innerHeight", { value: height, configurable: true });
+  Object.defineProperty(document.documentElement, "clientHeight", { value: height, configurable: true });
+  setVisualViewportHeight(vv, height);
+}
+
+export function setVisualViewportOffsetTop(vv: VisualViewport, offsetTop: number) {
+  Object.defineProperty(vv, "offsetTop", { value: offsetTop, writable: true, configurable: true });
+  vv.dispatchEvent(new Event("scroll"));
+}
+
+export function simulateKeyboardOpen({ vv, input, visualHeight }: { vv: VisualViewport; input: HTMLElement; visualHeight: number }) {
+  input.focus();
+  input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  setVisualViewportHeight(vv, visualHeight);
+}
+
+/*
+FNXC:DashboardTests 2026-08-23-16:07:
+This reproduces a phone-class landscape screen: Chat resolves mobile from short height while the
+shared hook's width heuristic sees 932px, covering the previously mismatched gate.
+*/
+export function mockPhoneLandscapeViewport() {
+  ensureMatchMedia();
+  const widthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+  const heightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  const screenDescriptor = Object.getOwnPropertyDescriptor(window, "screen");
+  const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+  Object.defineProperty(window, "innerWidth", { value: 932, configurable: true });
+  Object.defineProperty(window, "innerHeight", { value: 430, configurable: true });
+  Object.defineProperty(window, "screen", { value: { width: 430, height: 932 }, configurable: true });
+  Object.defineProperty(navigator, "maxTouchPoints", { value: 1, configurable: true });
+  const spy = vi.spyOn(window, "matchMedia").mockImplementation((query: string = "") => ({
+    matches: query === "(max-height: 480px)" || query === "(max-width: 768px), (max-height: 480px)",
+    media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+  }));
+  return () => {
+    spy.mockRestore();
+    if (widthDescriptor) Object.defineProperty(window, "innerWidth", widthDescriptor);
+    if (heightDescriptor) Object.defineProperty(window, "innerHeight", heightDescriptor);
+    if (screenDescriptor) Object.defineProperty(window, "screen", screenDescriptor);
+    if (touchDescriptor) Object.defineProperty(navigator, "maxTouchPoints", touchDescriptor);
+    else delete (navigator as { maxTouchPoints?: number }).maxTouchPoints;
+  };
+}
+
+/* FNXC:DashboardTests 2026-08-23-16:07: Explicit desktop non-touch setup keeps desktop-negative and compact-host tests independent of harness defaults. */
+export function mockDesktopNonTouchViewport() {
+  ensureMatchMedia();
+  const widthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+  const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+  Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+  Object.defineProperty(navigator, "maxTouchPoints", { value: 0, configurable: true });
+  const spy = vi.spyOn(window, "matchMedia").mockImplementation((query: string = "") => ({
+    matches: false, media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+  }));
+  return () => {
+    spy.mockRestore();
+    if (widthDescriptor) Object.defineProperty(window, "innerWidth", widthDescriptor);
+    if (touchDescriptor) Object.defineProperty(navigator, "maxTouchPoints", touchDescriptor);
+    else delete (navigator as { maxTouchPoints?: number }).maxTouchPoints;
+  };
+}
+
+export function mockTabletClassTouchViewport() {
+  ensureMatchMedia();
+  const previousWidth = window.innerWidth;
+  const previousScreen = window.screen;
+  const maxTouchDescriptor = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+  Object.defineProperty(window, "innerWidth", { value: 768, configurable: true });
+  Object.defineProperty(navigator, "maxTouchPoints", { value: 1, configurable: true });
+  Object.defineProperty(window, "screen", { value: { width: 768, height: 1024 }, configurable: true });
+  const spy = vi.spyOn(window, "matchMedia").mockImplementation((query: string = "") => ({
+    matches: query.includes("max-width: 768px") && !query.includes("max-width: 600px") && !query.includes("max-height: 480px"),
+    media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+  }));
+  return () => {
+    spy.mockRestore();
+    Object.defineProperty(window, "innerWidth", { value: previousWidth, configurable: true });
+    Object.defineProperty(window, "screen", { value: previousScreen, configurable: true });
+    if (maxTouchDescriptor) Object.defineProperty(navigator, "maxTouchPoints", maxTouchDescriptor);
+    else delete (navigator as { maxTouchPoints?: number }).maxTouchPoints;
+  };
 }
 
 /**

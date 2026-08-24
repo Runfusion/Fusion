@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../tasks/in-review-stall.js";
 import { isExperimentalFeatureEnabled } from "../config/experimental-features.js";
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey } from "../config/settings-schema.js";
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey, isProjectSettingsKey } from "../config/settings-schema.js";
 import {
   __resetLegacyCwdMainWarningForTests,
   normalizeMergeIntegrationWorktreeMode,
@@ -243,6 +243,18 @@ describe("settings defaults invariants", () => {
     it("keeps showCostBadgeOnCards project-scoped only", () => {
       expect("showCostBadgeOnCards" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
       expect(GLOBAL_SETTINGS_KEYS).not.toContain("showCostBadgeOnCards");
+    });
+  });
+
+  describe("chatMessageLayout default", () => {
+    it("defaults to bubbles and keeps the setting project-scoped", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.chatMessageLayout).toBe("bubbles");
+      expect("chatMessageLayout" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("chatMessageLayout");
+      expect(isProjectSettingsKey("chatMessageLayout")).toBe(true);
+      expect("chatMessageLayout" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("chatMessageLayout");
+      expect(isGlobalOnlySettingsKey("chatMessageLayout")).toBe(false);
     });
   });
 

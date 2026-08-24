@@ -1004,6 +1004,14 @@ export interface FeatureLinkedPayload {
   taskId: string;
 }
 
+/** Payload for feature:unlinked event */
+export interface FeatureUnlinkedPayload {
+  /** The feature that was unlinked */
+  feature: MissionFeature;
+  /** ID of the task that was detached; undefined if the feature had no live link */
+  taskId?: string;
+}
+
 /** Payload for fix-feature:created event */
 export interface FixFeatureCreatedPayload {
   /** The generated fix feature */

@@ -31,6 +31,16 @@ FN-9131 retains `pg-connection-budget.ts` as a tested cluster-shared advisory-lo
 
 The initial harness wiring made a 27-worker PostgreSQL directory run worse, even after registry contention was changed from bounded rejection to queueing. Do not restore the wiring, alter test timeouts, add retries, or cap workers as a workaround. FN-9139 owns selecting a per-worker lifecycle point that is inert for non-PostgreSQL lanes and can charge admission wait outside individual test budgets. See [the terminal-negative record](solutions/test-failures/pg-harness-connection-budget.md).
 
+### Local PostgreSQL test server provisioning
+
+<!-- FNXC:PgTestProvisioning 2026-08-22-17:08: FN-152 makes a durable local PostgreSQL test server opt-in because a postmaster derives `$libdir` from its executable and cannot survive deletion of an in-worktree payload. -->
+
+Use `pnpm pg:test:up`, `pnpm pg:test:status`, and `pnpm pg:test:down`; forward flags as `pnpm pg:test:up -- --replace` and `pnpm pg:test:down -- --purge`. The script stages the pinned embedded PostgreSQL binaries under `~/.fusion/pg-test-server` (or `FUSION_PG_TEST_SERVER_HOME`) and never starts a relative or worktree-native executable. `dynamic_library_path` cannot repair `$libdir/plpgsql` because PostgreSQL resolves that path from its executable.
+
+The configured identity follows `postgres@3.4.9`: role is URL username, then `PGUSERNAME`, `PGUSER`, and the OS user; password is URL password then `PGPASSWORD`; database is URL path, then `PGDATABASE`, then the role name. A role-only repair therefore still fails when its role-named database is absent. The readiness gate runs configured login, PL/pgSQL, maintenance, and admin-DDL probes. A bare or CI-shaped probe is diagnostic-only unless its independently resolved role/database is one the script provisions; no harness connect dials a path-less base URL.
+
+`FUSION_PG_TEST_URL_BASE` is shared by `up`, `status`, and `down`; export the same non-default URL for all three. A path-bearing URL is provisionable but reports `harness-url-concat`, since `${PG_TEST_URL_BASE}/${dbName}` corrupts the 24 harness URL constructions. The script refuses URL/`--port` conflicts and `PGHOST`/`PGPORT` endpoint divergence. It reuses healthy servers, never mutates a foreign server's roles or databases, and requires a proven data-directory/PID ownership chain before `--replace` can stop a broken PostgreSQL server. `pg_ctl` daemonizes the postmaster, avoiding detached process spawning. A skipped `pgDescribe` block is not PostgreSQL verification evidence.
+
 ### PostgreSQL setup-boundary participation and measurement
 
 <!-- FNXC:PgTestPreAdmission 2026-08-17-03:20: FN-9139 requires the shared Vitest setup path to remain connectionless for every non-PostgreSQL lane. Participation is an explicit environment signal, rather than a reachability probe, because importing the harness itself performs a TCP probe. -->
@@ -46,6 +56,16 @@ Use `scripts/pg-setup-boundary-probe.mjs` to survey setup boundaries before chan
 
 <!-- FNXC:EngineTests 2026-07-08-05:30: FN-7669 pre-bundles the gate-safe @fusion/core barrel to attack the FN-7668-identified import-phase-dominated wall-time cost. -->
 **Pre-bundled `@fusion/core` gate bundle:** FN-7668 profiled the gate's dominant wall-time cost as vitest/Vite SSR's **import-phase** — each fork worker independently re-resolves+evaluates the barrel closure from scratch with zero cross-fork sharing. `engine-core`'s `@fusion/core` alias now points at a single esbuild-bundled ESM file (`scripts/build-engine-core-gate-bundle.mjs`, entrypoint `packages/core/src/index.gate.ts`, `packages:"external"` so only the first-party closure — 411 inputs in the FN-9122 re-measurement — is inlined) instead of directly at `index.gate.ts`'s source, collapsing those per-fork Vite SSR module-loader round-trips into 1 file load per fork. The bundle is **rebuilt fresh on every gate invocation** via the `engine-core` project's `globalSetup` (the builder's own esbuild dependency graph determines what gets bundled — never a hand-maintained file/symbol list, so there is no drift surface), and lives at `packages/core/.gate-bundle/core.mjs` — a gitignored, non-committed artifact placed as a **sibling of `packages/core/node_modules/`, deliberately not nested inside it**: nesting inside `node_modules` triggers Vite's SSR external-dep heuristic (loads the whole bundle via Node's native loader, bypassing Vite's mock-interception pipeline) and silently defeats `vi.mock` for imports nested inside the bundle (see the FNXC comment in the builder script for the full repro/fix). Measured A/B (5 alternating runs each, FN-7669 task docs): median real wall-time −5.5%, import-phase aggregate −14.0%, transform-phase aggregate −25.9%, with full coverage parity (335/335 gate tests, identical per-file counts) — a modest but real, reproducible, zero-downside win. `@fusion/engine` stays on the full (unbundled) barrel: no gate file imports it directly, so bundling it would be zero-benefit churn against the core↔engine circular-import DI. Bundling the `@fusion/engine` relative-import graph (`merger.ts` et al., the untouched remainder of FN-7668's ~430-file closure) is a natural, larger-payoff follow-up, filed separately.
+
+## Workspace local/remote landing matrix
+
+Workspace landing regressions must use real Git repositories under a non-Git workspace root. Cover a remote-free modified repository (local CAS and durable leases, with no remote Git operation), remote-enabled targets (configured/default remote fences and atomic push), and mixed workspaces where clean acquired peers have no review or landing obligation. The focused local-only regression is:
+
+```bash
+pnpm --filter @fusion/engine exec vitest run src/__tests__/workspace-e2e.test.ts --silent=passed-only --reporter=dot
+```
+
+Do not replace this with a structural store that omits workspace lease APIs: that shape can hide remote fence and intent behavior.
 
 ## Weekly signal-per-second baseline
 
@@ -71,7 +91,27 @@ pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (N
 <!-- FNXC:TestInfrastructure 2026-06-25-00:00: verify:fast is the opt-in test-free verification path. docs/testing.md observes the broad test gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage; typecheck+build+boot-smoke gives deterministic, flake-free signal without running tests. It changes no default — pnpm test, the merge gate, and CI are untouched; the full suite stays available and runs non-blocking. -->
 <!-- FNXC:TestInfrastructure 2026-06-26-00:49: verify:fast must bootstrap missing workspace dist artifacts and build @runfusion/fusion even when the CLI package is not in the changed-package set because package builds and the boot smoke invoke source-checkout wrappers that require dist outputs in fresh worktrees. -->
 <!-- FNXC:TestInfrastructure 2026-07-22-12:00: Cheap deterministic policy gates must fail before verify:fast's expensive work. Read canonical package.json pretest commands and invoke their validator entry points directly so test-free verification and the merge gate cannot drift. -->
-`pnpm verify:fast` (`scripts/verify-fast.mjs`) is the recommended **test-free verification** command. It first runs the canonical, read-only static validators from root `pretest` — `check-no-nohup`, `check-no-kill-4040`, `check-no-getdatabase`, `check-prerebase-inert`, `check-cli-runtime-routing`, `check-no-node-only-core-imports-in-dashboard`, `check-pi-versions-pinned`, `check-workspace-package-graph`, `check-no-test-timeout-appeasement`, `check-changeset-format`, `check-routes-modular`, and `check-runtime-skill-loader-drift` (which enforces the Claude/Grok runtime skill loaders' clean rename-diff) — then bootstraps missing/stale workspace dist artifacts, runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`), always builds the `@runfusion/fusion` CLI package required by the source-checkout boot smoke, and runs the existing **boot smoke** once. The static phase invokes each existing validator entry point without update flags, is bounded and fail-fast, and runs **no Vitest or test lane**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs static checks, artifact bootstrap, the CLI prerequisite build, and boot smoke. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
+`pnpm verify:fast` (`scripts/verify-fast.mjs`) is the recommended **test-free verification** command. It first runs the canonical, read-only static validators from root `pretest`:
+
+<!-- pretest-validators:start -->
+- `check-no-nohup`
+- `check-no-cwd-relative-dashboard-test-reads`
+- `check-no-kill-4040`
+- `check-no-getdatabase`
+- `check-prerebase-inert`
+- `check-capacity-pool-id`
+- `check-cli-runtime-routing`
+- `check-no-node-only-core-imports-in-dashboard`
+- `check-pi-versions-pinned`
+- `check-workspace-package-graph`
+- `check-no-test-timeout-appeasement`
+- `check-changeset-format`
+- `check-pre-json-anchor`
+- `check-routes-modular`
+- `check-runtime-skill-loader-drift`
+<!-- pretest-validators:end -->
+
+`check-runtime-skill-loader-drift` enforces the Claude/Grok runtime skill loaders' clean rename-diff. It then bootstraps missing/stale workspace dist artifacts, runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`), always builds the `@runfusion/fusion` CLI package required by the source-checkout boot smoke, and runs the existing **boot smoke** once. The static phase invokes each existing validator entry point without update flags, is bounded and fail-fast, and runs **no Vitest or test lane**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs static checks, artifact bootstrap, the CLI prerequisite build, and boot smoke. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
 
 `pnpm check:workspace-package-graph` verifies that every `workspace:` dependency or override in the root importer or a glob-matched workspace manifest resolves to a glob-covered workspace package, and that no package directory under `packages/` or `plugins/` falls outside `pnpm-workspace.yaml` package globs.
 
@@ -511,7 +551,81 @@ pnpm --filter @fusion/core test 2>&1 | tee /tmp/fn-9127-core.log
 
 Checkpoint parsed JSONL and run metadata in a durable task document after every run; `/tmp` is scratch storage, not the evidence system of record.
 
+<!-- FNXC:PostgresFlakeDiagnosis 2026-08-19-11:56: FN-9146 requires loaded-flake campaigns to make a per-identity verdict rather than treating one red lane as proof for every subject. Capacity and gate selection are recorded because a configured gate may not include the investigated files. -->
+
+For a pre-registered loaded-flake campaign, record PostgreSQL version, `max_connections`, reserved slots, baseline and peak backend counts, and each run's selected file list. Track each registered test or hook independently: a capture satisfies only that exact identity; every uncaptured identity requires the full pre-registered subject-containing run set. Preserve all runner output and JSONL as task attachments as well as checkpointing parsed counters in task documents. Do not count a configured lane that does not select a subject as negative evidence for that subject.
+
 <!-- FNXC:PgDdlLaneMetric 2026-08-17-00:59: FN-9134 requires a pre-registered end-to-end band because teardown watchdogs become structurally meaningless when cleanup leaves the hook. The parser is intentionally report-only and the alternating samples are campaign observations, never Vitest retries. -->
+
+<!-- FNXC:PgLoadedFailureCensus 2026-08-19-12:41: FN-9148 requires a retained loaded-lane failure population to be classified without contacting PostgreSQL, so a complete green log remains evidence rather than being conflated with a truncated capture. -->
+
+### PostgreSQL loaded-failure census
+
+Use `scripts/pg-loaded-failure-census.mjs` to inspect an already-retained Vitest runner log and its optional teardown-diagnostics JSONL. The script never opens a cluster or runs tests. Supply `--log`, `--diagnostics`, and the recorded `--ordinary-slot-ceiling`; repeat `--subject` to label campaign files without dropping them. Its output contains total and failing files, lifecycle and failure-shape breakdowns, observed backend peak/headroom, wait histogram, phase-duration order statistics, and watchdog/probe-degradation counts.
+
+A run is `insufficient-data` when its runner log lacks a complete `Test Files` summary or when the reported failed-file count cannot be reconciled to parsed failure blocks. A complete passing summary instead produces `status: "measured"` with `failingFileCount: 0`; never treat that zero as missing evidence or coerce incomplete input to a healthy result.
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-14:33: FN-9149 requires a default-off observer that attributes setup, body, and teardown timeout boundaries without widening the budget it measures. The paired body window is necessary because Vitest invokes shared-harness beforeEach and afterEach as distinct hooks. -->
+
+### PostgreSQL timeout-boundary observer
+
+`FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER=1` enables a diagnostic-only JSONL channel; when unset it creates no timer, probe connection, sink write, listener, or environment mutation. `observeBoundary()` wraps harness-owned setup and teardown work. `openBoundary()`/`closeBoundary()` span the shared harness's separate `beforeEach` and `afterEach` hooks, so `shared.body` measures test bodies without editing consumers. Each open body window receives a unique record `joinKey`; its stable file-level `supersessionKey` only closes a stale handle. Closing is idempotent; an abandoned window is superseded by a later open or disposed without inventing a completion.
+
+The observer arms an unref'd watchdog at boundary start. Only a pending watchdog dispatches a maintenance-connection probe; completion records are host-only and emit when elapsed time meets `FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_THRESHOLD_MS` (default 2000; `0` measures every completion). With `FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_LADDER_MS` above zero, an independent unref'd checkpoint timer synchronously emits keyed payload-free `kind:"progress"` rows and rearms at that spacing. The last progress row is an elapsed lower bound for an abandoned boundary, with the configured spacing as its resolution; it is never a PostgreSQL-state snapshot. A settle/reject emits a keyed `kind:"terminal"` outcome without error text and clears both timers exactly once.
+
+The watchdog first synchronously appends a keyed `kind:"breach"`, `payloadFree:true` record, then appends its enriched `kind:"watchdog"` probe result. This two-phase form preserves a joinable elapsed boundary when Vitest abandons work during the watchdog-to-probe residual window; a payload-free breach never affirms a cluster-state mechanism. A dispatched probe survives boundary settlement and appends when it resolves, with `settledDuringProbe`, `probeLatencyMs`, and optionally `probeStartDelayMs`; records can therefore be out of order and consumers must join by the per-window `joinKey`, never by JSONL order or the shared `supersessionKey`. `flush()`/`dispose()` drain bounded pending and queued probes; a missed drain becomes `probeSuppressed:"drain-timeout"`. The enabled-only `beforeExit` hook performs the same best-effort drain.
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-16:11: FN-9150 records checkpoint progress because settle-only telemetry censors exactly the boundaries Vitest abandons. Checkpoints and breach rows establish elapsed coverage, never cluster-state attribution or a reason to extend a timeout. -->
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-16:06: FN-9150 records a payload-free breach before probe scheduling because an inherited 15-second Vitest budget can abandon a boundary before the maintenance probe resolves. The record is coverage evidence only, never a cluster-state attribution. -->
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-16:56: Consecutive shared-harness bodies reuse a lifecycle supersession key, but each emitted window has a unique join key so a later healthy terminal cannot hide an earlier abandoned ladder boundary. -->
+
+The independent, tighten-only bounds are `statement timeout < probe timeout < inherited budget`, `queue timeout < probe timeout`, and `threshold <= per-boundary watchdog < inherited budget`. A probe timeout is deliberately **not** tied to a short watchdog: forced wiring runs need a fast watchdog and a real cluster round trip. Floors are `MIN_WATCHDOG_MS`, `MIN_PROBE_TIMEOUT_MS`, and `MIN_STATEMENT_TIMEOUT_MS`; an impossible floor yields `bounds-floor`, never a wider budget.
+
+| variable | default | purpose |
+|---|---:|---|
+| `..._LOG` | unset | JSONL destination |
+| `..._THRESHOLD_MS` | 2000 | completion-record threshold; 0 measures all |
+| `..._WATCHDOG_MS`, `..._WATCHDOG_SETUP_MS`, `..._WATCHDOG_BODY_MS`, `..._WATCHDOG_TEARDOWN_MS` | 12000 | global and per-boundary watchdogs |
+| `..._PROBE_TIMEOUT_MS` / `..._STATEMENT_TIMEOUT_MS` | 1500 / derived below probe | bounded client/server probe stack |
+| `..._PROBE_DRAIN_TIMEOUT_MS` | 3000 | bounded `flush()`/`dispose()` drain |
+| `..._MAX_CONCURRENT_PROBES` | 1 | counting limiter, capped by `MAX_CONCURRENT_PROBES_CEILING` (8) |
+| `..._PROBE_QUEUE_TIMEOUT_MS` | 0 | bounded slot wait; a queued probe records delay |
+| `..._MAX_PROBES` | 4 | per-process diagnostic cost cap |
+
+At concurrency 1 the cost profile matches the older single-flight observer. `probeSuppressed:"concurrency"` supersedes legacy `single-flight`; neither is a valid forced-wiring payload. The cap is configurable because once probes survive settle, a strict single flight would suppress simultaneous setup/body/teardown breaches. Probe payloads contain host load/CPU and watchdog scheduling drift (`eventLoopLagMs`, measured as the monotonic callback delay past its deadline at the snapshot instant), active SQL and lock/blocking rows, backend count, and golden-template owner/readiness plus separately reported granted advisory holders and non-granted advisory waiters. Only a non-owner waiter supports a template-convoy attribution; a holder alone does not.
+
+For an enabled-wiring check, first run disabled and normal enabled bounds to compare duration, then threshold 0 to verify setup, `shared.body`, and teardown completion records, then force per-boundary watchdogs below measured elapsed times while independently retaining a probe/drain timeout above cluster round-trip and raising probe cap/concurrency to at least 3. Every forced boundary must have a non-suppressed payload; `cap`, `concurrency`, `bounds-floor`, `drain-timeout`, and `error` require diagnosis, not acceptance. Files using the shared harness are body-observable; direct `createTaskStoreForTest` files deliberately have no harness-owned body bracket and must be reported as `body-unobservable`.
+
+Pass `--boundary-observer <jsonl>`, `--vitest-json <reporter.json>`, `--body-unobservable-files <list>`, and `--fully-unobservable-files <list>` to `scripts/pg-loaded-failure-census.mjs`. Capture the reporter per run with `--reporter=dot --reporter=json --outputFile=<reporter.json>`; it provides per-test duration and file identifiers but Vitest 3 provides no hook duration or failure position, so a hook-clock offset is unmeasurable rather than a point estimate. The census tolerates malformed and out-of-order rows, joins ladder/breach/enriched rows by key, and reports joined, `attributed-by-ladder`, `body-unobservable`, `position-unobservable`, and `unjoined` coverage counts plus probe suppression and latency distributions. `afterEach` consumer hooks are position-unobservable because the shared-harness body bracket closes before those hooks run. Failures from fully-unobservable files remain `unjoined` but are counted and listed separately so the known no-harness limitation is never mistaken for a missing observer join. Missing/empty input stays explicitly absent rather than a measured zero.
+
+<!-- FNXC:PgClusterHygiene 2026-08-19-18:24: FN-9154 requires PostgreSQL campaign admission to distinguish a measured zero from an empty, failed, or truncated `psql -qAt` capture. The offline report consumes a complete envelope only and cannot authorize destructive cleanup.
+
+FNXC:PgClusterHygiene 2026-08-19-18:58: PostgreSQL's unaligned boolean output is `false`/`true`, while the offline capture parser intentionally accepts the harness-compatible `f`/`t` representation. The documented query must normalize `datistemplate` so a live populated capture cannot be misread as a malformed measured zero. -->
+
+### PostgreSQL campaign cluster-hygiene report
+
+Before every FN-9152/FN-9153 campaign run, capture the maintenance-cluster rows and retain the three capture files plus the JSON report in the task document. The four counted hygiene classes are `fusion_test_%`, `fusion_schema_template%` per-module templates, `fusion_schema_template_<pid>_golden<token>` golden templates, and `fusion_pool_%`. The report classifies names itself, so the deliberately conservative SQL patterns cannot silently hide an unexpected matching name.
+
+A capture is an envelope, not bare `psql -qAt` output: the `# fusion-hygiene-capture v1` banner, `kind`, cluster identity, ISO timestamp, query identity, declared row count, body, and terminal `# end` make `rows: 0` a measured zero. Missing, empty, header-less, truncated, count-mismatched, or wrong-kind captures are `insufficient-data`, never clean evidence. A supplied-but-unmeasured or wrong-kind `--markers`/`--liveness` companion makes the whole report `insufficient-data`; an omitted companion is not evidence, so Path A/C/D clean evidence requires all three captures supplied, measured, and bearing the same cluster identity. A stale marker row is dirty terminal evidence even when all four database counts are zero. With `PG_URL="${FUSION_PG_TEST_URL_BASE:-postgresql://localhost:5432}"`, capture the database and marker rows as follows (write the displayed envelope fields around each query result):
+
+```bash
+capture() { # capture KIND QUERY SQL OUTPUT
+  kind="$1" query="$2" sql="$3" output="$4"
+  cluster="$(psql "$PG_URL/postgres" -qAt -c "SELECT current_setting('port') || '|' || version() || '|' || current_database();")"
+  rows="$(psql "$PG_URL/postgres" -qAt -c "$sql")"
+  { printf '%s\n' '# fusion-hygiene-capture v1' "# kind: $kind" "# cluster: $cluster" "# captured_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" "# query: $query" "# rows: $(printf '%s\n' "$rows" | sed '/^$/d' | wc -l | tr -d ' ')"; printf '%s\n' "$rows"; printf '%s\n' '# end'; } > "$output"
+}
+capture databases leftover-v1 "SELECT datname, pg_get_userbyid(datdba), CASE WHEN datistemplate THEN 't' ELSE 'f' END, (SELECT count(*) FROM pg_stat_activity a WHERE a.datname = d.datname) FROM pg_database d WHERE datname LIKE 'fusion_test_%' OR datname LIKE 'fusion_schema_template%' OR datname LIKE 'fusion_pool_%' ORDER BY 1;" databases.capture
+capture markers markers-v1 "SELECT name, created_at FROM public._fusion_golden_templates ORDER BY 1;" markers.capture
+# For each parsed template owner PID, record exactly one `<pid>|alive` or `<pid>|dead` body row from `ps -p "$pid" -o pid=` in an analogous `kind: liveness`, `query: liveness-v1` envelope.
+node scripts/pg-cluster-hygiene-report.mjs --databases databases.capture --markers markers.capture --liveness liveness.capture --json
+```
+
+<!-- FNXC:PgClusterHygiene 2026-08-20-00:54: FN-9154 requires a broken supplied companion to fail closed and makes a safe-but-incomplete cleanup terminal, so campaign admission never mistakes unread evidence or a refused drop for hygiene. -->
+
+The report is advisory: `reclaimable-dead-owner` means only recorded `dead` liveness plus zero sessions; missing liveness, an alive owner, an unparseable name, or sessions retains the row. It never grants approval. Removal requires all of G2–G6: that recorded liveness verdict, immediate zero-session recheck, one literal name-scoped `DROP DATABASE` **without** `FORCE` against a present target, equality-only deletion of that same marker row (never a broad stale-marker sweep), and a human-authored, verbatim, action-explicit, evidence-informed approval recorded after the pre-state evidence in the task's `removal-approval` document. Agents may never self-issue or infer that approval. A refused drop, pre-check abort, partial marker reconciliation, or unmeasurable/dirty post-state is terminal: record the evidence, file or reuse one scoped follow-up, exit honest-blocked, and never retry, force, or claim clean. Record the four counts for every campaign run; an absent report is FN-9152 R3 `leftover-counts-unrecorded` evidence, not a clean arm.
 
 ### PostgreSQL DDL loaded-lane acceptance metric
 
@@ -657,6 +771,8 @@ pnpm test:velocity
 ```
 
 Each week, copy the `Post to #leads` block from `docs/test-velocity-baseline.md`. If a measured command fails because the local environment is not ready, keep the failure recorded in the report instead of fabricating a time, then fix or rerun separately as appropriate. Do not wire `pnpm test:velocity`, `test:full`, or any slow-suite expansion into PR checks; the merge gate stays the thin Lint, Typecheck, Build, and Gate path.
+
+The baseline document is generated; never hand-edit it. Attach a durable measurement verdict with `pnpm test:velocity -- --note "<text>" [--note-target <capturedAt|ISO-cycle>]`. Notes are persisted on their history entries and the report renders all annotated cycles newest first with no history window cap, so an old investigation remains visible after later weekly appends. `--note-target` must match exactly one entry; use its `capturedAt` timestamp when an ISO week would be ambiguous.
 
 ## Targeted commands
 
@@ -845,3 +961,23 @@ FN-9136 evaluated and rejected per-fork `TRUNCATE` database reuse: its two-sided
 FN-9130 evaluated a reusable advisory admission primitive: server session locks coordinate forks while a process-local ledger coordinates counted same-session locks within a fork; async context allows true nesting only. It uses one maintenance-database connection per fork, holds a slot for one statement only, and reports fail-open degradation. `FUSION_PG_TEST_DDL_MAX_CONCURRENCY` and `FUSION_PG_TEST_DDL_ADMISSION_ACQUIRE_TIMEOUT_MS` configure that primitive for its deterministic coverage.
 
 The harness does **not** currently wire the primitive into `CREATE DATABASE` or `DROP DATABASE`. Uniform CREATE/DROP pooling regressed the 12-worker lane (49 watchdogs / 5,068ms versus a 4–5 / 3,284ms baseline); drop-only wiring also regressed (27 / 3,361ms). A bounded off-hook reaper (R=2/Q=8, flush, and dead-pid sweep) was then measured and reverted: its watchdog zero was structural, but green runs took 117.2s and 122.4s against a 108.1s baseline maximum and a later run timed out. FN-9136 subsequently evaluated and rejected candidate C (per-fork reuse plus `TRUNCATE`) because its seven-pair campaign leaked dead-fork pooled databases. The pg-gate's four-worker cap remains a separate lane-shape policy.
+
+### Workspace lifecycle parity regression
+
+Use focused workspace tests for a two-repository task with one explicitly scoped, modified repository:
+
+```bash
+pnpm --filter @fusion/core exec vitest run src/__tests__/postgres/workspace-worktrees-concurrent-merge.pg.test.ts --silent=passed-only --reporter=dot
+pnpm --filter @fusion/engine exec vitest run src/__tests__/reviewer-workspace.test.ts src/__tests__/self-healing-workspace.test.ts src/__tests__/workspace-merger.test.ts --silent=passed-only --reporter=dot
+pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/WorkspaceWorktreesSummary.test.tsx --silent=passed-only --reporter=dot
+```
+
+The parity invariant is that a mono-repository task and a workspace task changing one scoped repository have identical review, completion, and landing outcomes. The acquired clean peer must be displayed as **No changes — not reviewed**, must not get a blocking verdict, and must not become a partial-land target.
+
+### Branch-writer validation regressions
+
+When task-branch validation changes, test production acquisition and task creation callers in addition to the validation boundary. Keep a source census of direct and computed branch patches, and exercise single-repository assignment persistence failure plus workspace suppression so a caller cannot silently omit provenance.
+
+### Workspace review-to-land regression
+
+Workspace merge regressions must use the production per-repository review capture before landing. Cover a modified scoped repository, a clean acquired peer (`NOT_REVIEWED`), approval-missing, content-changed, and out-of-scope changes; do not manufacture the landing fingerprint as the decisive happy-path oracle.

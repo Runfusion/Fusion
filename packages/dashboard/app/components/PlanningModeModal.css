@@ -1558,7 +1558,6 @@ its refinement menu remain reachable at the bottom of bounded desktop and mobile
   color: var(--text-muted);
 }
 
-/* Taller description textarea in subtask breakdown */
 .planning-summary-form .form-group textarea {
   min-height: 120px;
   resize: vertical;
@@ -2265,109 +2264,6 @@ mobile and desktop offer the same View task / Return to sessions choices.
   color: var(--text-muted);
 }
 
-/* Subtask Drag-and-Drop Styles */
-.subtask-item {
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
-}
-
-.subtask-item-dragging {
-  opacity: 0.5;
-  transform: scale(0.98);
-}
-
-.subtask-item-drop-target {
-  background: color-mix(in srgb, var(--todo) 12%, transparent);
-  border-color: var(--todo);
-}
-
-.subtask-item-drop-before {
-  position: relative;
-}
-
-.subtask-item-drop-before::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--todo);
-  z-index: 1;
-}
-
-.subtask-item-drop-after {
-  position: relative;
-}
-
-.subtask-item-drop-after::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--todo);
-  z-index: 1;
-}
-
-.subtask-item-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.subtask-drag-handle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  cursor: grab;
-  color: var(--text-dim);
-  transition: color var(--transition-fast);
-  user-select: none;
-}
-
-.subtask-drag-handle:hover {
-  color: var(--text-muted);
-}
-
-.subtask-item-dragging .subtask-drag-handle {
-  cursor: grabbing;
-  color: var(--todo);
-}
-
-.subtask-item-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.subtask-item-actions .btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-@media (hover: hover) {
-  .subtask-item-actions .btn-icon:hover:not(:disabled) {
-    background: var(--card-hover);
-    border-color: var(--border);
-    color: var(--text);
-  }
-}
-
-.subtask-item-actions .btn-icon:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -2730,27 +2626,8 @@ mobile and desktop offer the same View task / Return to sessions choices.
     padding: 12px;
   }
 
-  /* Subtask breakdown: touch-friendly drag handles with padding */
-  .subtask-drag-handle {
-    min-width: 36px;
-    min-height: 36px;
-    padding: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
 
-  /* Subtask action buttons: mobile-friendly sizing */
-  .subtask-item-actions .btn-icon {
-    min-width: 36px;
-    min-height: 36px;
-  }
 
-  /* Subtask items: prevent overflow */
-  .subtask-item-header {
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-  }
 
   /* Dependency chips: touch-friendly */
   .planning-dep-chip {
@@ -2916,9 +2793,4 @@ Plan selection actions must be visible before document scrolling in phone portra
 }
 .model-selector-current--spaced {
   margin-top: var(--space-sm);
-}
-
-/* Subtask header override */
-.subtask-item-header--between {
-  justify-content: space-between;
 }

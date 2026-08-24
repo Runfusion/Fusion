@@ -1,5 +1,5 @@
 import { WorkflowIrError, instanceNodeId } from "@fusion/core";
-import type { TaskDetail, WorkflowIrNode } from "@fusion/core";
+import type { TaskDetail, WorkflowIrNode, WorkflowRepositoryReviewOutcome } from "@fusion/core";
 
 import type { WorkflowNodeHandler, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import { createPrNodeHandlers, createAutoMergeGateHandler, type PrNodeDeps } from "../merge/pr-nodes.js";
@@ -137,6 +137,12 @@ export interface StepReviewSeamResult {
   review?: string;
   summary?: string;
   retryable?: boolean;
+  /** Workspace code-review evidence used to fence merge against later same-path edits. */
+  repositoryDiffFingerprints?: Record<string, string>;
+  /** Structured per-repository review state for the active workspace review episode. */
+  repositoryReviewOutcomes?: WorkflowRepositoryReviewOutcome[];
+  /** Confirmed scope generation that supplied the workspace review input. */
+  repositoryScopeRevision?: number;
 }
 
 /** The reserved context key carrying the active foreach instance (KTD-3, U3).
@@ -567,6 +573,8 @@ export function createStepReviewHandler(seams: WorkflowLegacySeams): WorkflowNod
     const patch: Record<string, unknown> = {
       [FOREACH_ACTIVE_CONTEXT_KEY]: active,
       [`node:${node.id}:verdict`]: result.verdict,
+      ...(result.repositoryReviewOutcomes ? { repositoryReviewOutcomes: result.repositoryReviewOutcomes } : {}),
+      ...(result.repositoryScopeRevision !== undefined ? { repositoryScopeRevision: result.repositoryScopeRevision } : {}),
     };
 
     const value =
@@ -626,6 +634,8 @@ export function createPrimitiveStepReviewHandler(primitives: WorkflowRuntimePrim
       ...(primitivePatch ?? {}),
       [FOREACH_ACTIVE_CONTEXT_KEY]: active,
       [`node:${node.id}:verdict`]: result.verdict,
+      ...(result.repositoryReviewOutcomes ? { repositoryReviewOutcomes: result.repositoryReviewOutcomes } : {}),
+      ...(result.repositoryScopeRevision !== undefined ? { repositoryScopeRevision: result.repositoryScopeRevision } : {}),
     };
 
     const value =

@@ -24,7 +24,13 @@ describe("FN-4954 reliability interactions: merger pooled release ordering", () 
   it.skipIf(!hasGit || !hasPg)("detaches and clears task pointers before pooled release exposes the path", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-4954-RI-A",
-      task: { steps: [] as any[] },
+      /*
+      FNXC:MergeFixtures 2026-08-23-18:30:
+      Pooled-release ordering is merge mechanics, not review gating: the merge door refuses a task
+      whose ENABLED optional pre-merge groups produced no result, and the built-in workflow enables
+      Plan Review + Code Review by default. Declare no enabled steps so the merge under test runs.
+      */
+      task: { steps: [] as any[], enabledWorkflowSteps: [] },
       settings: { recycleWorktrees: true, mergeIntegrationWorktree: "cwd-main" as const },
     });
 
@@ -45,7 +51,8 @@ describe("FN-4954 reliability interactions: merger pooled release ordering", () 
 
       await mkdir(join(rootDir, ".worktrees"), { recursive: true });
       git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
-      await store.updateTask(task.id, { branch, worktree: worktreePath });
+      // FNXC:BranchWriteProvenance 2026-08-23-18:30: an engine-side fixture branch write must declare its origin.
+      await store.updateTask(task.id, { branch, worktree: worktreePath, branchWriteOrigin: "engine" } as any);
       await store.moveTask(task.id, "in-review");
       await store.enqueueMergeQueue(task.id);
 

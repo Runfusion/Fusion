@@ -252,7 +252,20 @@ const LEDGER = {
        `outcome:review-pending` edge. For those shapes the transition is RELOCATED, not removed —
        stated plainly so the ledger is not read as more progress than it is. */
     "review transitions (handoffTaskToReview)": 1,
-    "terminal parks (status: \"failed\")": 7,
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-08-23-18:45: 7 -> 9. Two deliberate pre-session failure
+    classifiers landed after the wave-18 peel and neither updated this ledger, so the increment is
+    recorded here rather than absorbed:
+      - 3717fc5af1 (FN-107) parks BRANCH_WRITE_PROVENANCE_FAILURE_VALUE once, ahead of every retry
+        classifier, because a rejected branch provenance is deterministic mutation input rather than
+        a provider outage and must not consume graph/provider retry budgets.
+      - 10c399d01e (FN-120) parks an unrecoverable workspace-preparation failure after the durable
+        worktree-recovery route declines it, so the Git diagnostic survives as operator-actionable.
+    Both are failures raised BEFORE any model session exists, so neither is a disposition the graph
+    could have taken instead today; widening the seam's pre-session failure vocabulary is what would
+    let these two fall.
+    */
+    "terminal parks (status: \"failed\")": 9,
   },
 } as const;
 

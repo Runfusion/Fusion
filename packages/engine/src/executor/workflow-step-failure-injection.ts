@@ -95,18 +95,19 @@ export async function injectWorkflowStepFailureInstructions(
   const scopeGuard = buildWorkflowFailureScopeGuard(task, content);
   const prioritized = findings?.length ? formatFindingsByPriority(findings) : "";
   const resolved = findings?.length ? formatResolvedFindings(findings) : "";
+  const disputed = task.workflowStepResults?.flatMap((result) => result.priorAttempts?.flatMap((attempt) => attempt.findings ?? []) ?? [])
+    .filter((finding) => finding.disputedAt != null && isOpenWorkflowReviewFinding(finding)) ?? [];
+  const disputedBlock = disputed.length > 0
+    ? `\n\n**You disputed these — still open until the reviewer rules:**\n\n${disputed.map((finding) => `- ${finding.id}: ${finding.disputeRationale ?? "No rationale recorded."}`).join("\n")}`
+    : "";
   const feedbackBlock = prioritized
-    ? `**Findings:**
-
-${prioritized}${resolved ? `\n\n${resolved}` : ""}`
-    : `**Failure Feedback:**
-${failureFeedback}${resolved ? `\n\n${resolved}` : ""}`;
+    ? `**Findings:**\n\n${prioritized}${resolved ? `\n\n${resolved}` : ""}${disputedBlock}`
+    : `**Failure Feedback:**\n${failureFeedback}${resolved ? `\n\n${resolved}` : ""}${disputedBlock}`;
   /*
-   * FNXC:ReviewSeverityGate 2026-08-10-17:33:
-   * The closing instruction sanctions an explicit DECLINE with rationale. Previously the only sanctioned
-   * response was "fix the issues", so an implementer that disagreed with a finding had no way to close
-   * the loop except to comply or stall — and a reviewer re-raising the same disputed point produced an
-   * unbounded ping-pong. A recorded decline is a terminal answer the next review round can accept.
+   * FNXC:ReviewConvergence 2026-08-22-05:20:
+   * FN-149 replaces an inert prose decline with fn_review_dispute. A dispute remains an open,
+   * blocking obligation; it records the implementer's position for the next reviewer rather than
+   * allowing the implementer to close its own finding.
    */
   const failureSectionContent = `${failureSectionHeader}
 
@@ -120,7 +121,7 @@ ${scopeGuard}
 
 **Retry:** ${retry.attempt}/${retryLabel} (${remainingRetries} remaining)
 
-**Important:** This is a workflow step failure — address the findings above by making the necessary code changes. The task has been sent back to in-progress for remediation. Fix every P0. Fix P1 unless you have a concrete reason not to; if you decline one, state which and why in your summary — a recorded decline is a valid resolution and the next review round will treat it as settled. P2 items are optional and need no justification if skipped. Do not make unrelated changes while remediating.
+**Important:** This is a workflow step failure — address the findings above by making the necessary code changes. The task has been sent back to in-progress for remediation. Fix every P0. Fix P1 unless you have a concrete reason not to; if you disagree with a finding, call fn_review_dispute(findingId, rationale). A dispute remains open and blocking until the reviewer rules, so do not silently decline a finding. P2 items are optional and need no justification if skipped. Do not make unrelated changes while remediating.
 
 `;
 

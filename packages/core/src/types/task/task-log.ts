@@ -62,6 +62,8 @@ export interface TaskLogEntry {
   timestamp: string;
   action: string;
   outcome?: string;
+  /** Durable episode identity used to suppress repeated operator alerts for one recoverable cause. */
+  dedupeKey?: string;
   /** Correlation metadata linking this entry to the agent run that produced it. */
   runContext?: RunMutationContext;
 }

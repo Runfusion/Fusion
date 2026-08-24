@@ -17,7 +17,7 @@ the cwd of each call. Coverage:
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReviewResult } from "../execution/reviewer.js";
@@ -26,6 +26,16 @@ import type { ReviewResult } from "../execution/reviewer.js";
 vi.mock("../execution/reviewer.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../execution/reviewer.js")>();
   return { ...actual, reviewStep: vi.fn() };
+});
+
+vi.mock("../executor/worktree-capture-modified-files.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../executor/worktree-capture-modified-files.js")>();
+  return {
+    ...actual,
+    // FNXC:RepositoryScope 2026-08-21-00:58: workspace review must use fresh capture;
+    // this narrow Git seam supplies deterministic per-checkout evidence to the aggregation tests.
+    captureModifiedFiles: vi.fn(async (cwd: string) => capturedFilesByCwd[cwd] ?? []),
+  };
 });
 
 import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
@@ -39,6 +49,7 @@ const ROOT = "/tmp/ws-root"; // NON-git workspace root — must never be a revie
 const WT_A = "/tmp/ws-root/repo-a/.worktrees/fn-1";
 const WT_B = "/tmp/ws-root/repo-b/.worktrees/fn-1";
 const cleanupDirs: string[] = [];
+let capturedFilesByCwd: Record<string, string[]> = {};
 
 function makeGitCheckout(): string {
   const dir = mkdtempSync(join(tmpdir(), "fusion-review-checkout-"));
@@ -47,12 +58,31 @@ function makeGitCheckout(): string {
   return dir;
 }
 
+function makeFingerprintableCheckout(): { path: string; baseCommitSha: string } {
+  const path = makeGitCheckout();
+  execFileSync("git", ["config", "user.email", "fusion@example.test"], { cwd: path });
+  execFileSync("git", ["config", "user.name", "Fusion"], { cwd: path });
+  writeFileSync(join(path, "changed.ts"), "export const before = true;\n");
+  execFileSync("git", ["add", "changed.ts"], { cwd: path });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: path, stdio: "ignore" });
+  const baseCommitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: path, encoding: "utf8" }).trim();
+  writeFileSync(join(path, "changed.ts"), "export const after = true;\n");
+  execFileSync("git", ["add", "changed.ts"], { cwd: path });
+  execFileSync("git", ["commit", "-m", "reviewable change"], { cwd: path, stdio: "ignore" });
+  return { path, baseCommitSha };
+}
+
 function makeStore(task: Task): TaskStore & EventEmitter {
   const emitter = new EventEmitter();
   return Object.assign(emitter, {
     getTask: vi.fn().mockResolvedValue(task),
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false }),
     updateStep: vi.fn().mockResolvedValue(undefined),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Task) => Partial<Task> | null) => {
+      const patch = updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getRunContextFor: vi.fn(),
     // mergeEffectiveSettings degrades to base on any resolver error; these reject → base used.
@@ -78,6 +108,11 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
+    // FNXC:RepositoryScope 2026-08-20-23:07: existing conjunction fixtures represent two modified, explicitly scoped repos.
+    repositoryScope: overrides.repositoryScope ?? (overrides.workspaceWorktrees && Object.keys(overrides.workspaceWorktrees).length > 0
+      ? { repositories: Object.keys(overrides.workspaceWorktrees), state: "confirmed", revision: 1 }
+      : undefined),
+    modifiedFiles: overrides.modifiedFiles ?? (overrides.workspaceWorktrees && Object.keys(overrides.workspaceWorktrees).flatMap((repo) => [`${repo}/src/changed.ts`])),
   } as Task;
 }
 
@@ -103,6 +138,7 @@ function workspaceExecutor(store: TaskStore & EventEmitter): TaskExecutor {
 }
 
 beforeEach(() => {
+  capturedFilesByCwd = { [WT_A]: ["src/changed.ts"], [WT_B]: ["src/changed.ts"] };
   mockedReviewStep.mockReset();
 });
 afterEach(() => {
@@ -176,8 +212,63 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
     expect(result.summary).toMatch(/^repo-a:/);
   });
 
+  it("reviews only the modified scoped repository and records a clean peer as not reviewed", async () => {
+    capturedFilesByCwd = { [WT_A]: ["src/changed.ts"], [WT_B]: [] };
+    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES, repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 1 }, modifiedFiles: ["repo-a/src/changed.ts"] });
+    const executor = workspaceExecutor(makeStore(task));
+    const seen: string[] = [];
+    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
+      seen.push(cwd);
+      return { verdict: "APPROVE", review: "reviewed change", summary: "approved" };
+    });
+    expect(seen).toEqual([WT_A]);
+    expect(result.verdict).toBe("APPROVE");
+    expect(result.review).toContain("[repo-b] NOT_REVIEWED");
+    expect(result.repositoryReviewOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repository: "repo-a", status: "REVIEWED", verdict: "APPROVE" }),
+      expect.objectContaining({ repository: "repo-b", status: "NOT_REVIEWED", output: "No changes — not reviewed." }),
+    ]));
+    expect(result.repositoryScopeRevision).toBe(1);
+  });
+
+  /*
+  FNXC:RepositoryScope 2026-08-20-23:23:
+  MRG-041 acquires every workspace repository before planning, but only explicit intent plus
+  diff evidence authorizes review. An acquired modified checkout outside that intent cannot
+  consume a reviewer session or contribute a verdict.
+  */
+  it("never reviews an acquired modified repository outside explicit scope", async () => {
+    capturedFilesByCwd = { [WT_A]: ["src/changed.ts"], [WT_B]: ["src/unrelated.ts"] };
+    const task = makeTask({
+      workspaceWorktrees: TWO_REPO_WORKTREES,
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 1 },
+      modifiedFiles: ["repo-a/src/changed.ts", "repo-b/src/unrelated.ts"],
+    });
+    const executor = workspaceExecutor(makeStore(task));
+    const seen: string[] = [];
+    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
+      seen.push(cwd);
+      return { verdict: "APPROVE", review: "reviewed intended change", summary: "approved" };
+    });
+
+    expect(result.verdict).toBe("APPROVE");
+    expect(seen).toEqual([WT_A]);
+    expect(result.review).not.toContain("repo-b");
+  });
+
+  it("clean scoped repository is recorded as not reviewed without invoking a reviewer", async () => {
+    capturedFilesByCwd = { [WT_A]: [], [WT_B]: [] };
+    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES, repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 1 }, modifiedFiles: [] });
+    const executor = workspaceExecutor(makeStore(task));
+    const invoke = vi.fn();
+    const result = await (executor as any).reviewWorkspacePerRepo(task, invoke);
+    expect(result.verdict).toBe("UNAVAILABLE");
+    expect(result.review).toContain("No changes — not reviewed");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("unproven zero-acquire workspace task → non-retryable UNAVAILABLE without invoking a reviewer", async () => {
-    const task = makeTask({ workspaceWorktrees: {} });
+    const task = makeTask({ workspaceWorktrees: {}, repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 1 } });
     const executor = workspaceExecutor(makeStore(task));
     const invoke = vi.fn();
     const result = await (executor as any).reviewWorkspacePerRepo(task, invoke);
@@ -188,7 +279,7 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
   });
 
   it("commit-free zero-acquire workspace task approves honestly without invoking a reviewer", async () => {
-    const task = makeTask({ workspaceWorktrees: {}, noCommitsExpected: true });
+    const task = makeTask({ workspaceWorktrees: {}, noCommitsExpected: true, repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 1 } });
     const executor = workspaceExecutor(makeStore(task));
     const invoke = vi.fn();
     const result = await (executor as any).reviewWorkspacePerRepo(task, invoke);
@@ -219,11 +310,184 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
     expect(result.verdict).toBe("APPROVE");
   });
 
+  it("clears a matching remediation target when step-review approves the current scope", async () => {
+    const repoA = makeFingerprintableCheckout();
+    const repoB = makeFingerprintableCheckout();
+    capturedFilesByCwd = { [repoA.path]: ["changed.ts"], [repoB.path]: ["changed.ts"] };
+    const task = makeTask({
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: repoA.path, branch: "fusion/fn-1", baseCommitSha: repoA.baseCommitSha },
+        "repo-b": { worktreePath: repoB.path, branch: "fusion/fn-1", baseCommitSha: repoB.baseCommitSha },
+      },
+      repositoryScope: {
+        repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 2,
+        reviewRemediation: { scopeRevision: 2, repository: "repo-b", inputSignature: "revise" },
+      },
+    });
+    const executor = workspaceExecutor(makeStore(task));
+    scriptReviewByCwd({
+      [repoA.path]: { verdict: "APPROVE", review: "a", summary: "a" },
+      [repoB.path]: { verdict: "APPROVE", review: "b", summary: "b" },
+    });
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: WT_A, baselineSha: "base" } } as any;
+
+    await seams.stepReview!(task as any, context, { type: "code", advisory: false } as any);
+
+    expect(task.repositoryScope?.reviewEvidence).toMatchObject({ "repo-a": expect.any(Object), "repo-b": expect.any(Object) });
+    expect(task.repositoryScope?.reviewRemediation).toBeUndefined();
+  });
+
+  it("clears a matching remediation target when a custom review node approves the current scope", async () => {
+    const repoA = makeFingerprintableCheckout();
+    const repoB = makeFingerprintableCheckout();
+    capturedFilesByCwd = { [repoA.path]: ["changed.ts"], [repoB.path]: ["changed.ts"] };
+    const task = makeTask({
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: repoA.path, branch: "fusion/fn-1", baseCommitSha: repoA.baseCommitSha },
+        "repo-b": { worktreePath: repoB.path, branch: "fusion/fn-1", baseCommitSha: repoB.baseCommitSha },
+      },
+      repositoryScope: {
+        repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 2,
+        reviewRemediation: { scopeRevision: 2, repository: "repo-a", inputSignature: "revise" },
+      },
+    });
+    const executor = workspaceExecutor(makeStore(task));
+    vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(task);
+    vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, verdict: "APPROVE", output: "approved" });
+
+    const result = await (executor as any).runGraphCustomNode(
+      { id: "custom-code-review", kind: "prompt", config: { reviewKind: "code", prompt: "review" } },
+      task,
+      {},
+      undefined,
+    );
+
+    expect(result).toMatchObject({ outcome: "success" });
+    expect(task.repositoryScope?.reviewEvidence).toMatchObject({ "repo-a": expect.any(Object), "repo-b": expect.any(Object) });
+    expect(task.repositoryScope?.reviewRemediation).toBeUndefined();
+  });
+
+  /*
+  FNXC:RepositoryScope 2026-08-20-23:40:
+  Plan Review is a task-document gate, not a per-repository diff gate. Even after workspace
+  acquisition, one scoped coordinator produces exactly one review session before implementation.
+  */
+  it("discards a stale step-review callback after a repository scope revision", async () => {
+    const task = makeTask({
+      workspaceWorktrees: { "repo-a": TWO_REPO_WORKTREES["repo-a"] },
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
+      modifiedFiles: ["repo-a/src/changed.ts"],
+    });
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
+    /*
+    FNXC:RepositoryScope 2026-08-21-02:48:
+    Model the P0 race precisely: evidence commits at revision 2, then an operator
+    scope mutation wins before the step-inversion graph can mark its APPROVE done.
+    */
+    vi.mocked(store.updateTaskAtomic).mockImplementationOnce(async (_id, updater) => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      task.repositoryScope = { ...task.repositoryScope!, repositories: ["repo-a", "repo-b"], revision: 3, reviewEvidence: undefined };
+      return task;
+    });
+    mockedReviewStep.mockImplementation(async () =>
+      ({ verdict: "APPROVE", review: "approved before scope mutation", summary: "approved" }));
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: WT_A, baselineSha: "base" } } as any;
+
+    const result = await seams.stepReview!(task as any, context, { type: "code", advisory: false } as any);
+
+    expect(result.verdict).toBe("UNAVAILABLE");
+    expect(result.summary).toContain("scope changed during review");
+    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(task.repositoryScope?.reviewEvidence).toBeUndefined();
+  });
+
+  it("discards a stale custom-node callback after a repository scope revision", async () => {
+    const task = makeTask({
+      workspaceWorktrees: { "repo-a": TWO_REPO_WORKTREES["repo-a"] },
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
+      modifiedFiles: ["repo-a/src/changed.ts"],
+    });
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
+    /* FNXC:RepositoryScope 2026-08-21-02:48: The custom-node route receives the same post-evidence/pre-completion scope mutation. */
+    vi.mocked(store.updateTaskAtomic).mockImplementationOnce(async (_id, updater) => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      task.repositoryScope = { ...task.repositoryScope!, repositories: ["repo-a", "repo-b"], revision: 3, reviewEvidence: undefined };
+      return task;
+    });
+    vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(task);
+    vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, verdict: "APPROVE", output: "approved before scope mutation" });
+
+    const result = await (executor as any).runGraphCustomNode(
+      { id: "custom-code-review", kind: "prompt", config: { reviewKind: "code", prompt: "review" } },
+      task,
+      {},
+      undefined,
+    );
+
+    /* FNXC:RepositoryScope 2026-08-21-03:05: Advisory Code Review cannot convert scope supersession into a passing edge. */
+    expect(result).toMatchObject({ outcome: "failure", value: "workspace-review-unavailable" });
+    expect(task.repositoryScope?.reviewEvidence).toBeUndefined();
+  });
+
+  it("dispatches workspace Plan Review once through the read-only workspace root", async () => {
+    const task = makeTask({
+      workspaceWorktrees: TWO_REPO_WORKTREES,
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
+      modifiedFiles: [],
+      worktree: ROOT,
+    });
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
+    const seen = scriptReviewByCwd({ [WT_A]: { verdict: "APPROVE", review: "plan is sound", summary: "approved plan" } });
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: ROOT } } as any;
+
+    const result = await seams.stepReview!(task as any, context, { type: "plan", advisory: true } as any);
+
+    expect(result.verdict).toBe("APPROVE");
+    expect(seen).toEqual([ROOT]);
+    expect(mockedReviewStep).toHaveBeenCalledTimes(1);
+    expect(mockedReviewStep.mock.calls[0]?.[5]).toContain("Repository scope (task-level; review this plan once): repo-a");
+  });
+
+  it("refuses a workspace script Plan Review instead of running it in the operator checkout", async () => {
+    const task = makeTask({
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
+      modifiedFiles: [],
+    });
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
+    const executeScript = vi.spyOn(executor as any, "executeScriptWorkflowStep").mockResolvedValue({ success: true, output: "unsafe" });
+
+    const result = await (executor as any).runGraphCustomNode(
+      { id: "workspace-plan-script", kind: "script", config: { name: "Plan Review", reviewKind: "plan", scriptName: "plan-review-script" } },
+      task,
+      {},
+      undefined,
+    );
+
+    expect(result).toMatchObject({ outcome: "failure", value: "workspace-plan-review-script-readonly-required" });
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      expect.stringContaining("cannot run under the declared read-only boundary"),
+      undefined,
+      undefined,
+    );
+  });
+
   it("preserves fn_task_done's persisted no-op eligibility through the production step-review seam", async () => {
     // fn_task_done persists this flag before it schedules the graph handoff; the
     // later review must not reclassify the same zero-acquire task as unproven.
     const task = makeTask({
       workspaceWorktrees: {},
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 1 },
       noCommitsExpected: true,
       summary: "PREMISE STALE: implementation already exists on HEAD",
     });

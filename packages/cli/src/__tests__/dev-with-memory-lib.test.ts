@@ -6,8 +6,17 @@ import {
   getPrebuildCommand,
   normalizePrebuildMode,
   parseDevWrapperArgs,
+  readDevServerListening,
+  readDevServerListeningPort,
+  resolveDevTunnelPort,
+  resolveIsolatedDevPaths,
   resolvePrebuildMode,
 } from "../../../../scripts/dev-with-memory-lib.mjs";
+import {
+  extractQuickTunnelUrl,
+  formatDevTunnelBanner,
+  resolveDevTunnelAuth,
+} from "../../../../scripts/lib/dev-tunnel.mjs";
 import {
   createDevSourceWatcher,
   isRestartableSourceFile,
@@ -55,6 +64,10 @@ describe("dev-with-memory prebuild options", () => {
       requestedPrebuild: "none",
       watchSource: false,
       watchSourceFromFlag: false,
+      tunnel: false,
+      tunnelPort: undefined,
+      isolated: false,
+      isolatedDir: undefined,
     });
   });
 
@@ -65,6 +78,10 @@ describe("dev-with-memory prebuild options", () => {
       requestedPrebuild: "auto",
       watchSource: true,
       watchSourceFromFlag: true,
+      tunnel: false,
+      tunnelPort: undefined,
+      isolated: false,
+      isolatedDir: undefined,
     });
   });
 
@@ -319,5 +336,188 @@ describe("development source restart watcher", () => {
     expect(closes[0]).toHaveBeenCalledOnce();
     expect(closes[1]).toHaveBeenCalledOnce();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("close failed"));
+  });
+
+  /*
+  FNXC:DevTunnel 2026-08-18-23:40:
+  `--tunnel` exposes the dev server through a Cloudflare quick tunnel, for the case where Fusion runs
+  on a remote box (a container, a shared machine) and the operator needs to view the dev server from
+  their own browser. A quick tunnel needs no account, domain, or card BECAUSE the dev server is HTTP.
+
+  The subtle case: `--tunnel` optionally takes a port, so the parser must not swallow the next token
+  when it is a dev-command argument rather than a port — `--tunnel dashboard` means "tunnel the
+  dashboard's default port and run the dashboard", not "tunnel port NaN".
+  */
+  describe("dev tunnel flag", () => {
+    it("enables the tunnel without consuming a following non-port argument", () => {
+      expect(parseDevWrapperArgs(["--tunnel", "dashboard"], {})).toMatchObject({
+        args: ["dashboard"],
+        tunnel: true,
+        tunnelPort: undefined,
+      });
+    });
+
+    it("accepts a port as a separate token or inline", () => {
+      expect(parseDevWrapperArgs(["--tunnel", "5173"], {})).toMatchObject({ tunnel: true, tunnelPort: 5173, args: [] });
+      expect(parseDevWrapperArgs(["--tunnel=3000"], {})).toMatchObject({ tunnel: true, tunnelPort: 3000, args: [] });
+    });
+
+    it("rejects a non-numeric inline port instead of tunnelling something arbitrary", () => {
+      expect(() => parseDevWrapperArgs(["--tunnel=frontend"], {})).toThrow(/Expected a port number/);
+    });
+
+    it("stays off by default and can be enabled from the environment", () => {
+      expect(parseDevWrapperArgs(["dashboard"], {})).toMatchObject({ tunnel: false });
+      expect(parseDevWrapperArgs(["dashboard"], { FUSION_DEV_TUNNEL: "1" })).toMatchObject({ tunnel: true });
+    });
+
+    it("targets the dashboard port unless told otherwise", () => {
+      expect(resolveDevTunnelPort(undefined, {})).toBe(4040);
+      expect(resolveDevTunnelPort(undefined, { PORT: "8080" })).toBe(8080);
+      // An explicit --tunnel=PORT wins, so a Vite server can be exposed while PORT names the dashboard.
+      expect(resolveDevTunnelPort(5173, { PORT: "8080" })).toBe(5173);
+    });
+
+    /*
+    FNXC:DevIsolation 2026-08-20-04:10:
+    A plain `pnpm dev` inside a machine already running Fusion SHARES its database: everything
+    durable hangs off $HOME/.fusion, and a process pointed at a data dir whose postmaster is already
+    up attaches to it rather than starting its own. Isolating HOME alone still leaves both instances
+    on one project directory, where the orphaned-task-dir sweep would have the dev instance adopt
+    the real one's tasks — so the flag moves the working directory too.
+    */
+    it("parses --isolated with and without an explicit directory", () => {
+      expect(parseDevWrapperArgs(["--isolated"], {})).toMatchObject({ isolated: true, isolatedDir: undefined });
+      expect(parseDevWrapperArgs(["--isolated=/tmp/sandbox"], {})).toMatchObject({ isolated: true, isolatedDir: "/tmp/sandbox" });
+      expect(parseDevWrapperArgs(["dashboard"], {})).toMatchObject({ isolated: false });
+      expect(parseDevWrapperArgs(["dashboard"], { FUSION_DEV_ISOLATED: "1" })).toMatchObject({ isolated: true });
+      expect(() => parseDevWrapperArgs(["--isolated="], {})).toThrow(/Missing directory/);
+    });
+
+    it("does not swallow a following argument as the isolation directory", () => {
+      // `--isolated dashboard` means "isolate, and run the dashboard".
+      expect(parseDevWrapperArgs(["--isolated", "dashboard"], {})).toMatchObject({ isolated: true, isolatedDir: undefined, args: ["dashboard"] });
+    });
+
+    it("keeps the sandbox out of the repo and separates database from project", () => {
+      const paths = resolveIsolatedDevPaths({ repoRoot: "/Users/dev/Projects/kb", home: "/Users/dev" });
+      // Outside the work tree: a project dir inside it shows up in git status and dies on a clean checkout.
+      expect(paths.base).toBe("/Users/dev/.fusion-dev/kb");
+      expect(paths.home).toBe("/Users/dev/.fusion-dev/kb/home");
+      expect(paths.project).toBe("/Users/dev/.fusion-dev/kb/project");
+      expect(paths.project.startsWith("/Users/dev/Projects/kb")).toBe(false);
+    });
+
+    it("keys the sandbox by checkout so two clones do not share one database", () => {
+      const a = resolveIsolatedDevPaths({ repoRoot: "/w/kb", home: "/h" });
+      const b = resolveIsolatedDevPaths({ repoRoot: "/w/kb-feature", home: "/h" });
+      expect(a.home).not.toBe(b.home);
+    });
+
+    it("honours an explicit sandbox directory", () => {
+      expect(resolveIsolatedDevPaths({ repoRoot: "/w/kb", explicitDir: "/tmp/sandbox" }))
+        .toEqual({ base: "/tmp/sandbox", home: "/tmp/sandbox/home", project: "/tmp/sandbox/project" });
+    });
+
+    it("recognises the cloudflare quick-tunnel hostname in agent output", () => {
+      expect(extractQuickTunnelUrl("INF |  https://neat-fox-tree.trycloudflare.com  |")).toBe("https://neat-fox-tree.trycloudflare.com");
+      expect(extractQuickTunnelUrl("INF Registered tunnel connection")).toBeNull();
+    });
+
+    /*
+    FNXC:DevTunnel 2026-08-19-01:18:
+    The banner must state the target's ACTUAL auth. The default target is the dashboard, which is
+    bearer-token gated, so a bare URL is unusable by the person it was shared with — and the old
+    "public, unauthenticated" wording was wrong for exactly that default. Only a foreign port (a
+    Vite server, say) is genuinely ungated, because Fusion has no auth to lend it.
+    */
+    const auth = (over: Record<string, unknown> = {}) => resolveDevTunnelAuth({
+      port: 4040,
+      dashboardPort: 4040,
+      env: {},
+      settingsFile: "/nonexistent/settings.json",
+      readToken: () => null,
+      ...over,
+    });
+
+    it("lends the dashboard token to a tunnel aimed at the dashboard", () => {
+      expect(auth({ readToken: () => "fn_abc" })).toEqual({ kind: "token", token: "fn_abc" });
+      expect(auth({ env: { FUSION_DASHBOARD_TOKEN: "fn_env" }, readToken: () => "fn_disk" }))
+        .toEqual({ kind: "token", token: "fn_env" });
+      expect(auth({ env: { FUSION_DAEMON_TOKEN: "fn_daemon" } }))
+        .toEqual({ kind: "token", token: "fn_daemon" });
+    });
+
+    it("does not claim a foreign port or --no-auth is token-gated", () => {
+      expect(auth({ port: 5173, readToken: () => "fn_abc" })).toEqual({ kind: "foreign" });
+      expect(auth({ args: ["dashboard", "--no-auth"], readToken: () => "fn_abc" })).toEqual({ kind: "no-auth" });
+    });
+
+    it("defers to the dashboard banner when no token has been minted yet", () => {
+      expect(auth()).toEqual({ kind: "token-pending" });
+    });
+
+    /*
+    FNXC:DevTunnel 2026-08-19-02:05:
+    The port the dev server is ASKED for is not the port it gets: an occupied port makes the
+    dashboard rebind to an ephemeral one. With a normal Fusion already on 4040 the tunnel therefore
+    pointed at THAT instance and served the wrong app under a dev-looking URL. The child's listening
+    report is the only fact about where the dev server actually is.
+    */
+    it("reads the dev server's bound port from its listening report only", () => {
+      expect(readDevServerListeningPort({ type: "fusion:dev-server-listening", port: 51234 })).toBe(51234);
+      expect(readDevServerListeningPort({ type: "fusion:dev-source-restart-armed" })).toBeNull();
+      expect(readDevServerListeningPort({ type: "fusion:dev-server-listening" })).toBeNull();
+      expect(readDevServerListeningPort({ type: "fusion:dev-server-listening", port: 0 })).toBeNull();
+      expect(readDevServerListeningPort({ type: "fusion:dev-server-listening", port: "51234" })).toBe(51234);
+      expect(readDevServerListeningPort(null)).toBeNull();
+      expect(readDevServerListeningPort("fusion:dev-server-listening")).toBeNull();
+    });
+
+    /*
+    FNXC:DevTunnel 2026-08-19-03:00:
+    The token must come from the child, not be re-derived. A real run proved the derivation wrong:
+    ~/.fusion/settings.json held no daemonToken, so the tunnel banner said "no token yet" while the
+    dashboard's own banner two lines above printed a working one.
+    */
+    it("reads the port and token the dev server reports", () => {
+      expect(readDevServerListening({ type: "fusion:dev-server-listening", port: 58635, token: "fn_real" }))
+        .toEqual({ port: 58635, token: "fn_real" });
+      // A no-auth dev server reports no token; that is not a malformed report.
+      expect(readDevServerListening({ type: "fusion:dev-server-listening", port: 58635 }))
+        .toEqual({ port: 58635, token: null });
+      expect(readDevServerListening({ type: "fusion:dev-source-restart-armed", port: 1 })).toBeNull();
+      expect(readDevServerListening({ type: "fusion:dev-server-listening", port: 0 })).toBeNull();
+    });
+
+    it("prefers the reported token over anything it could derive", () => {
+      expect(auth({ reportedToken: "fn_from_child", env: { FUSION_DASHBOARD_TOKEN: "fn_env" }, readToken: () => "fn_disk" }))
+        .toEqual({ kind: "token", token: "fn_from_child" });
+      // Falls back only when nothing was reported (e.g. an explicit --tunnel=PORT never waits).
+      expect(auth({ reportedToken: null, env: { FUSION_DASHBOARD_TOKEN: "fn_env" } }))
+        .toEqual({ kind: "token", token: "fn_env" });
+    });
+
+    it("still treats a dev dashboard on an ephemeral port as token-gated", () => {
+      // The reported port IS the dashboard, so the banner must keep lending it the token rather
+      // than classifying it "foreign" for not matching 4040.
+      expect(auth({ port: 51234, dashboardPort: 51234, readToken: () => "fn_abc" }))
+        .toEqual({ kind: "token", token: "fn_abc" });
+    });
+
+    it("prints an openable URL for the token case and a warning only where it is true", () => {
+      const url = "https://neat-fox-tree.trycloudflare.com";
+      const tokenLines = formatDevTunnelBanner({ url, port: 4040, auth: { kind: "token", token: "fn_abc" } }).join("\n");
+      expect(tokenLines).toContain("token: fn_abc");
+      expect(tokenLines).toContain(`${url}/?token=fn_abc`);
+      expect(tokenLines).not.toContain("unauthenticated");
+
+      expect(formatDevTunnelBanner({ url, port: 5173, auth: { kind: "foreign" } }).join("\n"))
+        .toContain("Fusion adds no auth");
+      expect(formatDevTunnelBanner({ url, port: 4040, auth: { kind: "no-auth" } }).join("\n"))
+        .toContain("unauthenticated");
+      expect(formatDevTunnelBanner({ url, port: 4040, auth: { kind: "token-pending" } }).join("\n"))
+        .toContain("?token=");
+    });
   });
 });

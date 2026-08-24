@@ -223,11 +223,16 @@ describe("createFnAgent prompt layer wiring", () => {
 
     const { createFnAgent } = await import("../pi.js");
 
+    /*
+     * FNXC:CliRuntimeRouting 2026-08-23-18:30:
+     * `createFnAgent` is a ROUTED entry point now: a `mock/scripted` selection is forced onto the
+     * mock runtime, which returns a scripted session WITHOUT ever constructing a pi session — so the
+     * linked-worktree validation this test owns was never reached. Use the default (pi) runtime,
+     * the same shape every other test in this file uses, so the raw path runs its cwd validation.
+     */
     await expect(createFnAgent({
       cwd,
       systemPrompt: "system",
-      defaultProvider: "mock",
-      defaultModelId: "scripted",
     })).resolves.toBeDefined();
 
     expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ cwd }));

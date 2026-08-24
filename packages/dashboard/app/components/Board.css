@@ -44,6 +44,17 @@ The board needs a neutral first-paint shell whenever workflow lanes are enabled 
   inline-size: 75%;
 }
 
+/*
+FNXC:BoardNavigation 2026-08-21-16:03:
+FN-109 shows grab feedback only after a desktop/tablet pan crosses horizontal intent from a safe
+surface or noninteractive task-card body/text. Controls, editing cards, the unbound skeleton, and
+the disabled mobile path never activate it; this gesture pans the viewport and never relocates a task.
+*/
+.board.board-workflow-columns.is-mouse-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
 @keyframes board-workflows-skeleton-pulse {
   0%, 100% {
     opacity: 0.55;

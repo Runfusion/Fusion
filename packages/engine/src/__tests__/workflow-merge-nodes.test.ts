@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail } from "@fusion/core";
+import { createMergeAttemptHandler } from "../workflow-node-runners/merge-runner.js";
 import { classifyMergePrimitiveResult, runWorkflowMergeAttemptNode } from "../workflows/workflow-merge-nodes.js";
 import type { WorkflowPrimitiveContext } from "../execution/runtime-primitives.js";
 
@@ -31,6 +32,38 @@ describe("workflow merge nodes", () => {
       outcome: "failure",
       value: "file-scope-violation",
     });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "already on main" }, undefined, "failure")).toEqual({
+      outcome: "success",
+      value: "already-landed",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "socket timeout" }, undefined, "failure")).toEqual({
+      outcome: "success",
+      value: "transient-failure",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "merge conflict" }, undefined, "failure")).toEqual({
+      outcome: "success",
+      value: "manual-required",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "merge-unavailable" }, "merge-unavailable", "failure")).toEqual({
+      outcome: "failure",
+      value: "merge-unavailable",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "  MeRgE-UnAvAiLaBlE  " }, "merge-unavailable", "failure")).toEqual({
+      outcome: "failure",
+      value: "merge-unavailable",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "implementation-incomplete" }, undefined, "failure")).toEqual({
+      outcome: "failure",
+      value: "implementation-incomplete",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "  ImPlEmEnTaTiOn-InCoMpLeTe  " }, undefined, "failure")).toEqual({
+      outcome: "failure",
+      value: "implementation-incomplete",
+    });
+    expect(classifyMergePrimitiveResult({ status: "failed", reason: "remote rejected: non-fast-forward" }, undefined, "failure")).toEqual({
+      outcome: "failure",
+      value: "merge-failed",
+    });
     expect(classifyMergePrimitiveResult({ status: "merged-requested" }, undefined, "failure")).toEqual({
       outcome: "success",
       value: "merged-requested",
@@ -46,6 +79,14 @@ describe("workflow merge nodes", () => {
     expect(classifyMergePrimitiveResult(undefined, "merged-requested", "failure")).toEqual({
       outcome: "success",
       value: "merged-requested",
+    });
+    expect(classifyMergePrimitiveResult(undefined, "implementation-incomplete", "failure")).toEqual({
+      outcome: "failure",
+      value: "implementation-incomplete",
+    });
+    expect(classifyMergePrimitiveResult(undefined, "merge-unavailable", "failure")).toEqual({
+      outcome: "failure",
+      value: "merge-unavailable",
     });
   });
 
@@ -69,6 +110,56 @@ describe("workflow merge nodes", () => {
       value: "merged",
       contextPatch: { mergedBranch: "main", "workflow:merge-status": "merged" },
     });
+  });
+
+  it("preserves merge-unavailable from a failed merge primitive in node context and audit", async () => {
+    const audit = vi.fn();
+    const primitiveData = { status: "failed" as const, reason: "merge-unavailable" };
+    const requestMerge = vi.fn().mockResolvedValue({
+      outcome: "failure",
+      value: "merge-unavailable",
+      data: primitiveData,
+    });
+
+    await expect(runWorkflowMergeAttemptNode({ primitives: { requestMerge, audit } }, ctx, task)).resolves.toEqual({
+      outcome: "failure",
+      value: "merge-unavailable",
+      contextPatch: { "workflow:merge-status": "merge-unavailable" },
+    });
+    expect(requestMerge).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith(ctx, expect.objectContaining({
+      type: "workflow-merge-node",
+      metadata: expect.objectContaining({ primitiveValue: "merge-unavailable", primitiveData }),
+    }));
+  });
+
+  it("preserves implementation-incomplete from a failed merge primitive in node context", async () => {
+    const audit = vi.fn();
+    const requestMerge = vi.fn().mockResolvedValue({
+      outcome: "failure",
+      value: "implementation-incomplete",
+      data: { status: "failed", reason: "implementation-incomplete" },
+    });
+
+    await expect(runWorkflowMergeAttemptNode({ primitives: { requestMerge, audit } }, ctx, task)).resolves.toEqual({
+      outcome: "failure",
+      value: "implementation-incomplete",
+      contextPatch: { "workflow:merge-status": "implementation-incomplete" },
+    });
+  });
+
+  it("preserves the legacy merge seam's implementation-incomplete value without primitives", async () => {
+    const merge = vi.fn().mockResolvedValue({ outcome: "failure", value: "implementation-incomplete" });
+    const handler = createMergeAttemptHandler({
+      seams: { merge },
+      buildPrimitiveContext: vi.fn(),
+    });
+
+    await expect(handler({ id: "merge-attempt", kind: "merge-attempt" } as any, {
+      task,
+      settings: {},
+      context: {},
+    } as any)).resolves.toEqual({ outcome: "failure", value: "implementation-incomplete" });
   });
 
   it("does not retry the merge primitive when audit fails after classification", async () => {

@@ -10,10 +10,17 @@ describe("mobile bottom bars keyboard-open css contract", () => {
     expect(match![1]).toContain("bottom: 0");
   });
 
-  it("mobile nav with-footer keyboard-open selector also pins bottom to 0", () => {
-    const match = css.match(/\.mobile-nav-bar\.mobile-nav-bar--keyboard-open,\s*\.mobile-nav-bar\.mobile-nav-bar--with-footer\.mobile-nav-bar--keyboard-open\s*\{([^}]*)\}/m);
-    expect(match).toBeTruthy();
-    expect(match![1]).toContain("bottom: 0");
+  it("both portrait and viewport-mode keyboard-open copies pin and translate the nav", () => {
+    const copies = [
+      /\.mobile-nav-bar\.mobile-nav-bar--keyboard-open,\s*\.mobile-nav-bar\.mobile-nav-bar--with-footer\.mobile-nav-bar--keyboard-open\s*\{([^}]*)\}/m,
+      /html\[data-viewport-mode="mobile"\] \.mobile-nav-bar\.mobile-nav-bar--keyboard-open,\s*html\[data-viewport-mode="mobile"\] \.mobile-nav-bar\.mobile-nav-bar--with-footer\.mobile-nav-bar--keyboard-open\s*\{([^}]*)\}/m,
+    ];
+    for (const selector of copies) {
+      const match = css.match(selector);
+      expect(match).toBeTruthy();
+      expect(match![1]).toContain("bottom: 0");
+      expect(match![1]).toContain("transform: translateY(100%)");
+    }
   });
 
   it("mobile nav keyboard-open rule appears after with-footer rule", () => {

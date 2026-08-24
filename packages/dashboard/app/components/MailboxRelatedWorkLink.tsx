@@ -21,6 +21,11 @@ export function hasRelatedTaskLink(metadata: MessageMetadata | undefined, onOpen
  * its task or planning session. Task metadata wins when both targets are present, and missing
  * metadata or navigation handlers deliberately render no button so the detail never contains a
  * dead affordance.
+ *
+ * FNXC:MailboxRelatedWork 2026-08-23-07:58:
+ * FN-9194 requires mailbox task links to display their destination task ID. The shared
+ * mailbox.viewTask entries interpolate {{id}}, so every consumer must pass { id }; a catalog hit
+ * outranks an inline default and a mismatched variable otherwise exposes the raw placeholder.
  */
 export function MailboxRelatedWorkLink({
   metadata,
@@ -36,11 +41,11 @@ export function MailboxRelatedWorkLink({
       <button
         type="button"
         className="btn mailbox-related-work-link"
-        aria-label={t("mailbox.viewTaskAria", "View task: {{taskId}}", { taskId })}
+        aria-label={t("mailbox.viewTaskAria", "View task: {{id}}", { id: taskId })}
         data-testid="mailbox-view-task"
         onClick={() => onOpenTask(taskId)}
       >
-        {t("mailbox.viewTask", "View task")}
+        {t("mailbox.viewTask", "View task {{id}}", { id: taskId })}
       </button>
     );
   }

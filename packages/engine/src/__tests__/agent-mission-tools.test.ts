@@ -18,7 +18,7 @@ describe("createMissionTools", () => {
     expect(toolNames).toEqual([
       "fn_mission_list", "fn_mission_show", "fn_mission_create", "fn_mission_update", "fn_mission_set_status", "fn_mission_delete", "fn_mission_reconcile",
       "fn_milestone_add", "fn_milestone_update", "fn_milestone_delete", "fn_slice_add", "fn_slice_activate",
-      "fn_slice_delete", "fn_feature_add", "fn_feature_update", "fn_feature_repair_validation", "fn_feature_set_status", "fn_feature_delete", "fn_feature_link_task", "fn_research_promote_finding",
+      "fn_slice_delete", "fn_feature_add", "fn_feature_update", "fn_feature_repair_validation", "fn_feature_set_status", "fn_feature_delete", "fn_feature_link_task", "fn_feature_repoint_task", "fn_feature_unlink_task", "fn_research_promote_finding",
     ]);
   });
 
@@ -109,6 +109,26 @@ describe("createMissionTools", () => {
     const result = await tool.execute("call", { featureId: "F-1", taskId: "FN-1" });
     expect(linkFeatureToTask).toHaveBeenCalledWith("F-1", "FN-1");
     expect(result.details).toMatchObject({ feature: { taskId: "FN-1", status: "triaged" } });
+  });
+
+  it("delegates feature unlink to MissionStore unlinkFeatureFromTask", async () => {
+    const unlinkFeatureFromTask = vi.fn().mockResolvedValue({ id: "F-1", taskId: undefined, status: "defined" });
+    const store = { getMissionStore: () => ({ unlinkFeatureFromTask }) } as never;
+    const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_feature_unlink_task")!;
+    const result = await tool.execute("call", { featureId: "F-1" });
+    expect(unlinkFeatureFromTask).toHaveBeenCalledWith("F-1");
+    expect(unlinkFeatureFromTask).toHaveBeenCalledTimes(1);
+    expect(result.details).toMatchObject({ feature: { taskId: undefined, status: "defined" } });
+  });
+
+  it("delegates feature re-point to MissionStore repointFeatureToTask exactly once", async () => {
+    const repointFeatureToTask = vi.fn().mockResolvedValue({ id: "F-1", taskId: "FN-2", status: "triaged" });
+    const store = { getMissionStore: () => ({ repointFeatureToTask }) } as never;
+    const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_feature_repoint_task")!;
+    const result = await tool.execute("call", { featureId: "F-1", taskId: "FN-2" });
+    expect(repointFeatureToTask).toHaveBeenCalledWith("F-1", "FN-2");
+    expect(repointFeatureToTask).toHaveBeenCalledTimes(1);
+    expect(result.details).toMatchObject({ feature: { taskId: "FN-2", status: "triaged" } });
   });
 
   it("promotes completed findings through the idempotent mission-store facade", async () => {

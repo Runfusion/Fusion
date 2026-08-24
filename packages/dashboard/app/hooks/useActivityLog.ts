@@ -29,6 +29,8 @@ export interface UseActivityLogOptions {
   projectId?: string;
   /** Filter by event type */
   type?: ActivityFeedEntry["type"];
+  /** Exact normalized task ID filter */
+  taskId?: string;
   /** Number of entries to fetch per page */
   limit?: number;
   /** Whether to auto-refresh */
@@ -56,7 +58,7 @@ export interface UseActivityLogOptions {
  *   (/api/activity-feed) which aggregates activity across all registered projects.
  */
 export function useActivityLog(options: UseActivityLogOptions = {}): UseActivityLogResult {
-  const { projectId, type, limit = 50, autoRefresh = true, useCentralFeed = false } = options;
+  const { projectId, type, taskId, limit = 50, autoRefresh = true, useCentralFeed = false } = options;
 
   const [entries, setEntries] = useState<ActivityFeedEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -81,12 +83,12 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
       let data: ActivityFeedEntry[];
 
       if (useCentralFeed) {
-        data = await fetchActivityFeed({ limit, projectId, type });
+        data = await fetchActivityFeed({ limit, projectId, type, taskId });
       } else {
         // Per-project: fetchActivityLog returns ActivityLogEntry[] which is a
         // subset of ActivityFeedEntry (missing projectId/projectName). Map to
         // the full shape so downstream consumers see a uniform interface.
-        const logEntries = await fetchActivityLog({ limit, type, projectId });
+        const logEntries = await fetchActivityLog({ limit, type, projectId, taskId });
         data = logEntries.map((entry) => ({
           ...entry,
           projectId: projectId ?? "",
@@ -105,7 +107,7 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
     } finally {
       setLoading(false);
     }
-  }, [limit, projectId, type, useCentralFeed]);
+  }, [limit, projectId, taskId, type, useCentralFeed]);
 
   const loadMore = useCallback(async () => {
     if (!lastTimestampRef.current) return;
@@ -121,6 +123,7 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
           projectId,
           type,
           since: lastTimestampRef.current,
+          taskId,
         });
       } else {
         const logEntries = await fetchActivityLog({
@@ -128,6 +131,7 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
           type,
           since: lastTimestampRef.current,
           projectId,
+          taskId,
         });
         data = logEntries.map((entry) => ({
           ...entry,
@@ -169,7 +173,7 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
     } finally {
       setLoading(false);
     }
-  }, [limit, projectId, type, useCentralFeed]);
+  }, [limit, projectId, taskId, type, useCentralFeed]);
 
   const clear = useCallback(() => {
     setEntries([]);

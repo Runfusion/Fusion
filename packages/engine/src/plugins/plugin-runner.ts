@@ -48,6 +48,7 @@ import {
   workflowExtensionRegistryId,
 } from "@fusion/core";
 import { createLogger, executorLog } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import type { WorkflowCustomNodeRunner } from "../workflows/workflow-node-handlers.js";
 import {
   registerPluginTraits,
@@ -571,7 +572,7 @@ export class PluginRunner {
     const degraded = degradePluginWorkflowExtensions(registry, ids);
     if (degraded.length > 0) {
       try {
-        void this.options.taskStore.recordRunAuditEvent({
+        void emitBoundedRunAudit(this.options.taskStore, {
           agentId: "system",
           runId: `plugin-workflow-extension-degrade-${pluginId}-${Date.now()}`,
           domain: "database",
@@ -582,7 +583,7 @@ export class PluginRunner {
             degradedExtensionIds: degraded,
             note: "workflow extension handlers are degraded by fallback policy",
           },
-        });
+        }, { log: this.log });
       } catch {
         // Audit is best-effort; degradation already applied.
       }
@@ -674,7 +675,7 @@ export class PluginRunner {
     const degraded = degradePluginTraits(registry, ids);
     if (degraded.length > 0) {
       try {
-        void this.options.taskStore.recordRunAuditEvent({
+        void emitBoundedRunAudit(this.options.taskStore, {
           agentId: "system",
           runId: `plugin-trait-degrade-${pluginId}-${Date.now()}`,
           domain: "database",
@@ -686,7 +687,7 @@ export class PluginRunner {
             affectedTasks: dependents.map((d) => d.taskId),
             note: "hooks now resolve to no-ops; cards remain movable",
           },
-        });
+        }, { log: this.log });
       } catch {
         // Audit is best-effort; degradation already applied.
       }

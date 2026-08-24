@@ -7,17 +7,18 @@ Wrong-way snaps came from (1) settle direction using the last micro scroll tick 
 rubber-band/fling end often reverses for a frame — and (2) origin±nearest hybrid targets.
 Direction is locked at finger-up from net gesture delta only (never post-lift ticks). Target
 is always the next column in that scroll direction from the current viewport (classic
-directional page snap). Pin until next touch; hard-jump kills residual fling.
+directional page snap). Pin until next touch; the controlled animation kills residual fling.
 
 FNXC:BoardNavigation 2026-07-22-15:10:
 A tap during post-lift momentum must cancel the pending directional settle and re-baseline
 the gesture at the current scrollLeft (pointerHeld true). Otherwise the original swipe's
-idle timer still hard-jumps the board away from where the user stopped.
+idle timer would settle the board away from where the user stopped.
 
 FNXC:BoardNavigation 2026-07-22-15:26:
 After any user touch sequence ends, the board must rest on exactly one column center — never
-between columns. Tap-to-stop and zero-pan lifts hard-jump to the nearest center (not the
-cancelled swipe's directional page). Directional paging still applies only when the settle
+between columns. Tap-to-stop and zero-pan lifts animate to the nearest center (not the cancelled
+swipe's directional page), with hard writes reserved for reduced motion, unavailable animation,
+negligible distance, and compositor fencing. Directional paging still applies only when the settle
 gesture itself had pan intent.
 */
 /*
@@ -355,7 +356,8 @@ function hardJumpScrollLeft(scroller: HTMLElement, targetLeft: number): void {
 }
 
 /**
- * Mobile board: free-scroll + momentum, then hard-page only in the scroll direction.
+ * Mobile board: free-scroll while held, then settle to one reachable column in the locked
+ * direction.
  *
  * FNXC:BoardNavigation 2026-07-22-18:00:
  * Lock settle direction at finger-up from net gesture deltas. Pin until next touch.
@@ -364,6 +366,11 @@ function hardJumpScrollLeft(scroller: HTMLElement, targetLeft: number): void {
  * Target via resolveSettleTargetIndex: nearest (mostly-on-screen) column, clamped to at least
  * one column of progress from the gesture's origin column — commits short swipes without
  * overshooting a fling that already decelerated onto a column.
+ *
+ * FNXC:BoardNavigation 2026-08-18-19:10:
+ * Phone releases use one controlled normal-motion settle for both directional and nearest-column
+ * corrections. Exact reachable landing, reduced-motion immediacy, and compositor pin fencing stay
+ * unchanged while the release no longer visibly hard-jumps.
  */
 export function useColumnScrollSnap(
   scroller: HTMLElement | null,
@@ -588,7 +595,7 @@ export function useColumnScrollSnap(
     /**
      * Animate to a column center over `durationMs`, then pin as a normal settle.
      *
-     * Falls back to the instant hard jump when motion is reduced, `requestAnimationFrame` is
+     * Falls back to an instant hard write when motion is reduced, `requestAnimationFrame` is
      * unavailable, or the distance is not worth animating.
      */
     const animateSnapTo = (targetLeft: number, durationMs: number) => {
@@ -618,6 +625,10 @@ export function useColumnScrollSnap(
         const elapsed = now() - startedAt;
         const progress = elapsed / durationMs;
         if (progress >= 1) {
+          // FNXC:BoardNavigation 2026-08-18-19:26: Complete the final normal-motion frame before
+          // compositor fencing so a late animation frame cannot turn the remaining distance into
+          // the abrupt hard release jump this phone interaction forbids.
+          scroller.scrollLeft = target;
           cancelPageAnimation();
           applySnapTo(target);
           return;
@@ -630,9 +641,12 @@ export function useColumnScrollSnap(
     };
 
     /**
-     * FNXC:BoardNavigation 2026-07-22-15:26:
-     * Hard-jump to the nearest column center when off-center. Returns true when a snap
-     * applied (or already centered); false only when there are no usable snap columns.
+     * FNXC:BoardNavigation 2026-08-18-19:10:
+     * Smoothly settle to the nearest reachable center when normal motion is meaningful. The
+     * animation helper still chooses an immediate hard write for reduced motion, unavailable rAF,
+     * or negligible distance, and keeps the final compositor pin as the single authority.
+     * Returns true when a snap applied (or already centered); false only when there are no usable
+     * snap columns.
      */
     const snapToNearestColumnIfNeeded = (): boolean => {
       const columns = getSnapColumns(scroller);
@@ -650,7 +664,10 @@ export function useColumnScrollSnap(
         return true;
       }
       const targetIndex = nearestColumnIndex(scroller, columns);
-      applySnapTo(scrollLeftToCenterColumn(scroller, columns[targetIndex]));
+      animateSnapTo(
+        scrollLeftToCenterColumn(scroller, columns[targetIndex]),
+        resolvePageAnimationMs(1),
+      );
       return true;
     };
 
@@ -693,7 +710,8 @@ export function useColumnScrollSnap(
       /*
       FNXC:BoardNavigation 2026-07-22-15:26:
       No pan on this settle gesture (tap-to-stop after re-baseline, pure tap): still never
-      rest between columns — nearest-center only. Do not reuse a cancelled swipe's direction.
+      rest between columns — nearest-center only. Use the same controlled animation as a
+      direction-zero pan, without reusing a cancelled swipe's direction.
       */
       if (!hadPanIntent) {
         snapToNearestColumnIfNeeded();
@@ -716,8 +734,8 @@ export function useColumnScrollSnap(
       FNXC:BoardNavigation 2026-07-22-18:30:
       A user-driven mobile settle must rest at the integer center of exactly one `.column`,
       never between columns. Keep CSS proximity (not prohibited mandatory snap) and free
-      scrolling while held: a locked direction pages in that direction, while an off-center
-      zero-direction settle hard-jumps to its nearest center and pins until the next touch.
+      scrolling while held: a locked direction and an off-center zero-direction settle both use
+      the controlled animation, then pin until the next touch.
       */
       if (direction === 0 && isColumnCentered(scroller, columns)) {
         restoreNativeSnap();
@@ -735,7 +753,7 @@ export function useColumnScrollSnap(
         ? nearestColumnIndex(scroller, columns)
         : resolveSettleTargetIndex(scroller, columns, direction, gestureStartColumnIndex);
       const targetLeft = scrollLeftToCenterColumn(scroller, columns[targetIndex]);
-      applySnapTo(targetLeft);
+      animateSnapTo(targetLeft, resolvePageAnimationMs(1));
     };
 
     const armIdleSettle = () => {

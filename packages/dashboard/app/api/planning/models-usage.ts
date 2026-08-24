@@ -3,6 +3,7 @@
  * Models registry and usage client API peeled from legacy.ts.
  */
 
+import { THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
 import { api } from "../client/client.js";
 
 // --- Models API ---
@@ -14,6 +15,8 @@ export interface ModelInfo {
   name: string;
   reasoning: boolean;
   contextWindow: number;
+  /** Ordered pi-documented levels for this model; absent means the registry did not expose capability metadata. */
+  supportedThinkingLevels?: ThinkingLevel[];
   /** Provider-wide public instance metadata, attached by fetchModels for picker consumers. */
   credentialInstances?: ProviderCredentialInstanceSummary[];
 }
@@ -24,6 +27,16 @@ export interface ProviderCredentialInstanceSummary {
   id: string;
   isDefault: boolean;
   unavailableModelIds?: string[];
+}
+
+/**
+ * Model-bound controls use exact registry capabilities when present. Older servers and CLI-discovered rows deliberately retain the canonical tuple.
+ *
+ * FNXC:ModelThinkingCapabilities 2026-08-18-23:38:
+ * An omitted capability field is not an empty capability list: it means the server could not prove model support, so controls must keep every canonical option, including `max`, rather than fabricate an exclusion.
+ */
+export function getModelThinkingLevels(model: Pick<ModelInfo, "supportedThinkingLevels"> | null | undefined): readonly ThinkingLevel[] {
+  return model?.supportedThinkingLevels ?? THINKING_LEVELS;
 }
 
 export interface ModelsResponse {

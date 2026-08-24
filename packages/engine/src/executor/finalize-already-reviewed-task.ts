@@ -6,7 +6,7 @@
  * blocker remains; otherwise log deferral. Uses resolved resume lanes (not literals).
  */
 import type { TaskStore } from "@fusion/core";
-import { getTaskMergeBlocker } from "@fusion/core";
+import { getTaskMergeBlocker, resolveRequiredPreMergeStepIds, resolveWorkflowIrForTask } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
@@ -36,8 +36,12 @@ export async function finalizeAlreadyReviewedTask(
   unresolved blocker on any renamed board.
   */
   const resumeReviewLane = (await deps.resolveResumeLanes(taskId)).review;
+  const mergeIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
   const blocker = getTaskMergeBlocker(latestTask, {
     reviewColumns: new Set([resumeReviewLane ?? "in-review"]),
+    requiredPreMergeStepIds: mergeIr
+      ? resolveRequiredPreMergeStepIds(mergeIr, latestTask.enabledWorkflowSteps)
+      : undefined,
   });
   if (blocker) {
     await deps.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, deps.runContextFor(taskId));

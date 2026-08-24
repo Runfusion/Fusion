@@ -21,7 +21,7 @@ vi.mock("../CustomModelDropdown", () => ({
       </select>
       {onThinkingLevelChange ? (
         <select aria-label={`${label} thinking level`} value={thinkingLevel ?? ""} onChange={(event) => onThinkingLevelChange(event.target.value)}>
-          {["off", "minimal", "low", "medium", "high", "xhigh"].map((level) => <option key={level} value={level}>{level}</option>)}
+          {["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => <option key={level} value={level}>{level}</option>)}
         </select>
       ) : null}
     </div>

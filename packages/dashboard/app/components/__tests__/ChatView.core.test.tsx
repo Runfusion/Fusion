@@ -14,6 +14,7 @@ import type { DiscoveredSkill } from "@fusion/dashboard";
 import type { UseChatReturn, ChatSessionInfo } from "../../hooks/useChat";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { FileBrowserProvider } from "../../context/FileBrowserContext";
+import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
 import { SWR_CACHE_KEYS, writeCache } from "../../utils/swrCache";
 import {
   renderWithAct,
@@ -114,6 +115,7 @@ vi.mock("../../api", () => ({
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 installChatViewEnv();
@@ -468,6 +470,44 @@ describe("ChatView", () => {
     expect(screen.getByText("Hi there!")).toBeInTheDocument();
   });
 
+  /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  Exercise Direct Chat's persisted and live bubbles with the exact reported source response. The caller test proves the shared renderer receives complete numeric tokens and applies the secure new-tab policy on the production ChatView surface.
+  */
+  it("renders complete source links in persisted and streaming Direct Chat", async () => {
+    const sourceMarkdown = [
+      "Sources officielles:",
+      "",
+      "[GPT‑5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)",
+      "[GPT‑5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol)",
+      "[GPT‑5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra)",
+    ].join("\\n");
+    const expectedHrefs = [
+      "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    ];
+    setupMockChat({
+      activeSession: activeSessionFixture,
+      messages: [{ id: "msg-source", sessionId: "session-001", role: "assistant", content: sourceMarkdown, createdAt: "2026-04-08T00:00:00.000Z" }],
+      isStreaming: true,
+      streamingText: sourceMarkdown,
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const persisted = screen.getByTestId("chat-message-msg-source");
+    const streaming = document.querySelector(".chat-message--streaming") as HTMLElement;
+    for (const bubble of [persisted, streaming]) {
+      const links = Array.from(bubble.querySelectorAll(".chat-message-content--markdown a"));
+      expect(links.map((link) => link.getAttribute("href"))).toEqual(expectedHrefs);
+      expect(links.every((link) => link.getAttribute("target") === "_blank")).toBe(true);
+      expect(links.every((link) => link.getAttribute("rel") === "noopener noreferrer")).toBe(true);
+      expect(bubble.textContent).toContain("GPT‑5.6");
+      expect(bubble.textContent).not.toContain("5. 6");
+    }
+  });
+
   it("renders file paths in assistant inline code as clickable links while preserving the code wrapper", async () => {
     const openFile = vi.fn();
     setupMockChat({
@@ -622,6 +662,56 @@ describe("ChatView", () => {
     expect(preview).toHaveTextContent("path=foo.ts");
   });
 
+  it.each([
+    ["desktop", "desktop"],
+    ["mobile", "mobile"],
+  ] as const)("keeps streaming tool disclosure state user-owned on %s", async (_viewport, viewport) => {
+    const viewportSpy = mockViewportMode(viewport);
+    const runningToolCalls = [
+      { toolName: "read", args: { path: "foo.ts" }, isError: false, status: "running" as const },
+      { toolName: "read", args: { path: "bar.ts" }, isError: false, status: "running" as const },
+    ];
+    const completedToolCalls = [
+      { toolName: "read", args: { path: "foo.ts" }, result: "first result", isError: false, status: "completed" as const },
+      { toolName: "read", args: { path: "bar.ts" }, result: "second result", isError: false, status: "completed" as const },
+    ];
+    mockUseChat
+      .mockReturnValueOnce({
+        ...defaultChatState,
+        activeSession: activeSessionFixture,
+        messages: [],
+        isStreaming: true,
+        streamingText: "Working...",
+        streamingToolCalls: runningToolCalls,
+      })
+      .mockReturnValue({
+        ...defaultChatState,
+        activeSession: activeSessionFixture,
+        messages: [],
+        isStreaming: true,
+        streamingText: "Working...",
+        streamingToolCalls: completedToolCalls,
+      });
+
+    const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const group = screen.getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
+    expect(group).not.toHaveAttribute("open");
+
+    await userEvent.click(group.querySelector("summary") as HTMLElement);
+    expect(group).toHaveAttribute("open");
+
+    await act(async () => {
+      rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    });
+
+    const updatedGroup = screen.getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
+    expect(updatedGroup).toHaveAttribute("open");
+    expect(within(updatedGroup).queryByText("(1 running)")).not.toBeInTheDocument();
+    expect(updatedGroup).toHaveTextContent("first result");
+    expect(updatedGroup).toHaveTextContent("second result");
+    viewportSpy.mockRestore();
+  });
+
   it("collapses multiple tool calls into single summary line", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -662,7 +752,7 @@ describe("ChatView", () => {
     expect(summary.querySelector(".chat-tool-calls-names")).toHaveTextContent("read, grep");
   });
 
-  it("auto-opens grouped tool calls when any tool call is running", async () => {
+  it("keeps grouped tool calls collapsed while any tool call is running", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -693,7 +783,8 @@ describe("ChatView", () => {
 
     const group = screen.getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
     expect(group).toBeInTheDocument();
-    expect(group.open).toBe(true);
+    expect(group.open).toBe(false);
+    expect(within(group).getByText("(1 running)")).toBeVisible();
   });
 
   it("shows status counts in group summary", async () => {
@@ -1212,6 +1303,39 @@ describe("ChatView", () => {
       "chat-message--assistant",
       "chat-message--streaming",
     );
+  });
+
+  it("applies full-width layout to populated and streaming ChatView messages while bubbles stay default", async () => {
+    setupMockChat({
+      activeSession: activeSessionFixture,
+      messages: [
+        { id: "layout-user", sessionId: "session-001", role: "user", content: "Question", createdAt: "2026-04-08T00:00:00.000Z" },
+        { id: "layout-assistant", sessionId: "session-001", role: "assistant", content: "Answer", createdAt: "2026-04-08T00:00:01.000Z" },
+      ],
+      isStreaming: true,
+      streamingText: "Live answer",
+    });
+
+    await renderWithAct(
+      <ChatMessageLayoutProvider value="full-width">
+        <ChatView projectId="proj-123" addToast={vi.fn()} />
+      </ChatMessageLayoutProvider>,
+    );
+
+    expect(screen.getByTestId("chat-message-layout-user")).toHaveClass("chat-message--user");
+    expect(screen.getByTestId("chat-message-layout-assistant")).toHaveClass("chat-message--assistant");
+    expect(document.querySelector(".chat-view")).toHaveClass("chat-view--full-width");
+    expect(document.querySelector(".chat-message--streaming")).toHaveClass("chat-message--streaming");
+
+    const css = loadAllAppCss();
+    expect(css).toContain(".chat-view--full-width .chat-message");
+    expect(css).toContain("max-width: 100%");
+  });
+
+  it("keeps the default bubbles modifier absent", async () => {
+    setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    expect(document.querySelector(".chat-view")).not.toHaveClass("chat-view--full-width");
   });
 
   it("shows streaming copy action for provider chats", async () => {

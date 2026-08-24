@@ -202,6 +202,10 @@ function workspaceTask(workspaceWorktrees: Task["workspaceWorktrees"], extra: Pa
     log: [],
     paused: false,
     workspaceWorktrees,
+    // FNXC:RepositoryScope 2026-08-21-01:18: partial-land recovery admits only confirmed
+    // repository intent plus qualified modified evidence; fixtures model that production contract.
+    repositoryScope: { repositories: Object.keys(workspaceWorktrees ?? {}).sort(), state: "confirmed", revision: 1 },
+    modifiedFiles: Object.keys(workspaceWorktrees ?? {}).sort().map((repo) => `${repo}/feature.txt`),
     createdAt: new Date().toISOString(),
     updatedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
     ...extra,
@@ -248,7 +252,18 @@ pgDescribeIfGit("FN-9048 workspace archive restore reaches self-healing cleanly"
       { description: "archive workspace restore regression", column: "in-review" },
       { taskId: id, applyDefaultWorkflowSteps: false },
     );
-    await store.updateTask(id, { workspaceWorktrees, branch: undefined } as never);
+    /* FNXC:RepositoryScope 2026-08-23-23:59: partial-land recovery admits only CONFIRMED repository
+       intent plus qualified modified evidence (see makeWorkspaceTask above). This card is built
+       through the real store, so it must state the same contract or the sweep never considers it. */
+    await store.updateTask(id, {
+      workspaceWorktrees,
+      branch: undefined,
+      repositoryScope: { repositories: [...fx.repos].sort(), state: "confirmed", revision: 1 },
+      /* Recovery is another merge door: default task creation seeds pending implementation steps and
+         `getTaskMergeBlocker` refuses them, so this post-implementation fixture states them done. */
+      steps: [{ name: "Implementation", status: "done" }],
+      modifiedFiles: [...fx.repos].sort().map((repo) => `${repo}/feature.txt`),
+    } as never);
     const stalePreArchive = (await store.getTask(id))!;
     const unregister = registerArchiveWorkspaceWorktreeDisposer(store, async (_task, plan) => {
       for (const entry of plan) {
@@ -400,6 +415,35 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     expect(store.enqueued).toContain(TASK_ID);
     // Not moved backward / not parked failed (repo B branch still exists → retryable).
     expect(store.tasks.get(TASK_ID)?.status).not.toBe("failed");
+  });
+
+  it("partial-land reconciler re-enqueues a failed zero-land lease-loss workspace task", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addRepoBranch(fx, "repo-a", "a\n");
+    addRepoBranch(fx, "repo-b", "b\n");
+    const task = workspaceTask(
+      {
+        "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+        "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+      },
+      {
+        status: "failed",
+        error: "Workspace partial land: 0 repo(s) landed — Workspace lease is no longer valid",
+        steps: [{ status: "done" }, { status: "done" }],
+      },
+    );
+    const workspaceWorktrees = task.workspaceWorktrees;
+    const store = createStore([task]);
+    const manager = makeManager(store, fx.rootDir);
+
+    const recovered = await manager.reconcileWorkspacePartialLands();
+
+    expect(recovered).toBe(1);
+    expect(store.enqueued).toEqual([TASK_ID]);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.emitted.some((event) => event.event === "task:merged")).toBe(false);
+    expect(store.tasks.get(TASK_ID)?.workspaceWorktrees).toBe(workspaceWorktrees);
+    expect(store.tasks.get(TASK_ID)?.column).toBe("in-review");
   });
 
   // ── KTD1 P1: zero-landed mergeable workspace task admitted ─────────────────

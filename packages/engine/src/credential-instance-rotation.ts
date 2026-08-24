@@ -3,6 +3,7 @@ import {
   parseProviderInstanceKey,
   type ProviderInstanceRef,
 } from "@fusion/core";
+import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 
 export const CREDENTIAL_INSTANCE_COOLDOWN_MS = 15 * 60_000;
 
@@ -97,7 +98,10 @@ export class CredentialInstanceRotator {
     let exhausted = false;
     const attempted: ProviderInstanceRef[] = [];
     const audit = (type: string, metadata: Record<string, unknown>) => {
-      try { void Promise.resolve(this.options.recordRunAuditEvent?.(type, metadata)).catch(() => undefined); } catch { /* audit is non-fatal */ }
+      void emitBoundedRunAudit(
+        { recordRunAuditEvent: () => this.options.recordRunAuditEvent?.(type, metadata) },
+        { mutationType: type },
+      );
     };
     const common = {
       providerId: input.providerId,

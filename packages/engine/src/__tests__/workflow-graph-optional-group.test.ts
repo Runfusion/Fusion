@@ -281,6 +281,38 @@ describe("WorkflowGraphExecutor optional-group", () => {
     expect(result.outcome).toBe("success");
   });
 
+  it("fences a Code Review edge when scope changes after terminal result persistence", async () => {
+    const calls: string[] = [];
+    const records: WorkflowStepResult[] = [];
+    const edgeAdmission = vi.fn(async () => false);
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => {
+          calls.push(node.id);
+          return node.id === "review"
+            ? { outcome: "success", value: "APPROVE", contextPatch: { repositoryScopeRevision: 2 } }
+            : { outcome: "success" };
+        },
+      },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result); return true; },
+      isRepositoryScopeReviewEdgeCurrent: edgeAdmission,
+    });
+    const ir = reviseGroupIr();
+    const group = ir.nodes.find((node) => node.id === "group");
+    if (!group) throw new Error("review group missing");
+    group.config = { ...group.config, reviewKind: "code" };
+
+    const result = await executor.run(taskWith(["group"]), settingsOn(), ir);
+
+    /* FNXC:RepositoryScope 2026-08-21-03:05: The callback models an operator scope mutation after terminal CAS. */
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workflowStepId: "group", status: "passed", repositoryScopeRevision: 2 }),
+    ]));
+    expect(edgeAdmission).toHaveBeenCalledWith("FN-OG", "group", 2);
+    expect(calls).not.toContain("after");
+    expect(result.outcome).toBe("failure");
+  });
+
   it("pre-merge advisory REVISE requests a bounded fix and aborts forward traversal when scheduled", async () => {
     const calls: string[] = [];
     const records: unknown[] = [];
@@ -990,13 +1022,25 @@ describe("WorkflowGraphExecutor optional-group", () => {
       expect(result.context[`node:${groupId}:fixScheduled`]).toBe(true);
     }
 
+    /*
+    FNXC:WorkflowIr 2026-08-23-19:35:
+    The pre-merge order was changed so `completion-summary` runs BEFORE `code-review`
+    (browser-verification -> completion-summary -> code-review), and the two builtin IRs diverge after
+    code-review: the coding IR routes to `review`, the stepwise IR straight to `merge-gate`. The pinned
+    successor is therefore per-IR; the invariant under test is unchanged — each optional group has a
+    success edge to the next pre-merge stage and a failure edge to its own remediation node.
+    */
+    const successSuccessors = new Map<typeof BUILTIN_CODING_WORKFLOW_IR, Record<string, string>>([
+      [BUILTIN_CODING_WORKFLOW_IR, { "browser-verification": "completion-summary", "code-review": "review" }],
+      [BUILTIN_STEPWISE_CODING_WORKFLOW_IR, { "browser-verification": "completion-summary", "code-review": "merge-gate" }],
+    ]);
     for (const ir of [BUILTIN_CODING_WORKFLOW_IR, BUILTIN_STEPWISE_CODING_WORKFLOW_IR]) {
       for (const groupId of ["browser-verification", "code-review"] as const) {
         const node = ir.nodes.find((candidate) => candidate.id === groupId);
         expect(node).toMatchObject({ kind: "optional-group" });
         expect(node?.config?.phase).toBeUndefined();
         expect(ir.edges).toEqual(expect.arrayContaining([
-          expect.objectContaining({ from: groupId, to: groupId === "browser-verification" ? "code-review" : "completion-summary", condition: "success" }),
+          expect.objectContaining({ from: groupId, to: successSuccessors.get(ir)?.[groupId], condition: "success" }),
           expect.objectContaining({
             from: groupId,
             to: groupId === "browser-verification" ? "browser-verification-remediation" : "code-review-remediation",

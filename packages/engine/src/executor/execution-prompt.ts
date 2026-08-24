@@ -9,7 +9,7 @@ import type {
   TaskDetail,
   WorkflowFieldDefinition,
 } from "@fusion/core";
-import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, type WorkspaceConfig } from "@fusion/core";
+import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { parseReviewLevelFromPrompt } from "./prompt-derived-eligibility.js";
@@ -221,7 +221,13 @@ git log --oneline
     executorLog.debug(`${task.id}: applied plugin prompt contributions for executor-task surface`);
   }
 
-  const executionPrompt = `Execute this task.
+  /* FNXC:TaskOutputLanguage 2026-08-19-14:56: Executor settings are captured by the run before this prompt is built, so summary and recommendation prose do not drift mid-session. */
+  const outputLanguageInstruction = resolveTaskOutputLanguage(settings, task.description).instruction;
+  const executionPrompt = `## Task Output Language
+${outputLanguageInstruction}
+Apply this to fn_task_done summary and populated recommendation title/description only; keep recommendation schema, ids, categories, tools, code, and task syntax canonical.
+
+Execute this task.
 
 ## Task: ${task.id}
 ${task.title ? `**${task.title}**` : ""}

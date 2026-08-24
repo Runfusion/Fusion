@@ -1,3 +1,4 @@
+import { commitIdentityArgs, resolveCommitIdentity } from "../git-identity.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -54,7 +55,9 @@ export function defaultGitOps(cwd: string): GitOps {
       await runGit(cwd, ["add", ...paths]);
     },
     async commit(message: string) {
-      await runGit(cwd, ["commit", "-m", JSON.stringify(message)]);
+      // FNXC:GitIdentity 2026-08-18-07:55: explicit identity — experiment commits must not depend on
+      // ambient git config either (a host without one cannot commit at all).
+      await runGit(cwd, [...commitIdentityArgs(resolveCommitIdentity()), "commit", "-m", JSON.stringify(message)]);
       return await runGit(cwd, ["rev-parse", "HEAD"]);
     },
     async resetHard(ref: string) {

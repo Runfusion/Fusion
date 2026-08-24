@@ -22,6 +22,7 @@ import {
 } from "../agents/active-session-registry.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 
 export type AcquireSessionRegistryPathDeps = {
   store: TaskStore;
@@ -45,7 +46,7 @@ export function acquireSessionRegistryPath(
     executorLog.warn(
       `${taskId}: reclaimed a stale active-session entry on ${registryPath} from dead task ${outcome.holderTaskId} (idle ${outcome.ageMs}ms)`,
     );
-    void deps.store.recordRunAuditEvent?.({
+    void emitBoundedRunAudit(deps.store, {
       taskId,
       agentId: "executor",
       runId: generateSyntheticRunId("session-path-reclaim", taskId),
@@ -53,6 +54,6 @@ export function acquireSessionRegistryPath(
       mutationType: "session:reclaim-stale-foreign-path",
       target: taskId,
       metadata: { taskId, holderTaskId: outcome.holderTaskId, kind, ageMs: outcome.ageMs },
-    })?.catch?.(() => undefined);
+    });
   }
 }

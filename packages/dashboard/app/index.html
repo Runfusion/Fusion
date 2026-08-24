@@ -67,10 +67,16 @@
           }
 
           // Keep in sync with packages/dashboard/app/utils/viewportOffset.ts.
-          // Ignore keyboard-driven visualViewport shrink (iOS) so fixed mobile
-          // bars stay pinned to page bottom and are covered by keyboard.
+          /*
+          FNXC:ViewportChrome 2026-08-23-18:14:
+          While a keyboard-focusable element is focused at scale <= 1.01, fixed bottom bars must stay pinned to the page bottom and be covered by the keyboard. A stale or absent baseline must never lift them.
+          */
           var bottomOffset = rawBottomOffset;
-          if (activeElementIsKeyboardFocusable && vvScale <= 1.01 && baselineViewportHeight !== null) {
+          if (activeElementIsKeyboardFocusable && vvScale <= 1.01) {
+            bottomOffset = 0;
+          } else if (activeElementIsKeyboardFocusable && vvScale > 1.01) {
+            bottomOffset = rawBottomOffset;
+          } else if (activeElementIsKeyboardFocusable && baselineViewportHeight !== null) {
             var keyboardShrink = Math.max(0, baselineViewportHeight - vvH);
             if (keyboardShrink > 0) {
               bottomOffset = Math.max(0, rawBottomOffset - keyboardShrink);
@@ -164,10 +170,11 @@
             mode = 'system';
           }
           var colorTheme = localStorage.getItem('kb-dashboard-color-theme') || 'shadcn-ember';
-          var validThemes = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'aurora', 'calm', 'dawn', 'sage', 'midnight', 'factory-dark', 'factory-light', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'];
+          // FNXC:DashboardTheming 2026-08-23-01:51: Iceberg must remain after Velvet in this first-paint validator, core, selector metadata, Electron validation, token blocks, and swatch CSS so persisted selections do not flash or fall back.
+          var validThemes = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'medieval', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'aurora', 'calm', 'dawn', 'sage', 'midnight', 'velvet', 'iceberg', 'factory-dark', 'factory-light', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'];
           // FNXC:DashboardTheming 2026-06-30-00:00: Unset startup theme is Shadcn Ember; explicit stored legacy ids such as "default" and "ocean" remain valid and must not be migrated.
           // FNXC:DashboardTheming 2026-07-16-14:30: FN-8146 restores Shadcn Mono as a distinct persisted choice, so bootstrap must retain its stored id instead of remapping it to Mono Red.
-          // FNXC:MidnightTheme 2026-08-03-02:05: Web first paint must accept persisted Midnight before React hydrates; invalid or unset values still fall back to Shadcn Ember.
+          // FNXC:DashboardTheming 2026-08-19-19:23: Web first paint must accept persisted Medieval before React hydrates; invalid or unset values still fall back to Shadcn Ember.
           if (!validThemes.includes(colorTheme)) {
             colorTheme = 'shadcn-ember';
           }

@@ -9,6 +9,7 @@ import type {
   RunAuditEventInput,
 } from "../types.js";
 import { OVERSEER_INTERVENTION_MUTATION } from "../types.js";
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 
 /**
  * FNXC:PlannerOversight 2026-07-04-18:00:
@@ -23,7 +24,7 @@ import { OVERSEER_INTERVENTION_MUTATION } from "../types.js";
 
 /** Minimal store seam this module depends on (satisfied by `TaskStore`). */
 export interface PlannerInterventionStore {
-  recordRunAuditEvent(input: RunAuditEventInput): RunAuditEvent | Promise<RunAuditEvent>;
+  recordRunAuditEvent(input: RunAuditEventInput): unknown;
 }
 
 /** Read-capable seam used only by timeline queries. */
@@ -84,11 +85,11 @@ const KNOWN_SOURCE_LINK_KINDS: readonly PlannerInterventionSourceLink["kind"][] 
   "url",
 ];
 
-/** Records one planner-intervention timeline entry as a run-audit event under `overseer:intervention`. Non-throwing on optional-field absence. */
+/** Records one bounded, best-effort, non-rejecting planner-intervention audit event under `overseer:intervention`. */
 export function recordPlannerIntervention(
   store: PlannerInterventionStore,
   input: RecordPlannerInterventionInput,
-): RunAuditEvent | Promise<RunAuditEvent> {
+): Promise<void> {
   const metadata: Record<string, unknown> = {
     stage: input.stage,
     reason: input.reason,
@@ -109,7 +110,7 @@ export function recordPlannerIntervention(
     metadata.advisorSlug = input.advisorSlug.trim();
   }
 
-  return store.recordRunAuditEvent({
+  return emitBoundedRunAudit(store, {
     timestamp: input.timestamp,
     taskId: input.taskId,
     agentId: input.agentId ?? "overseer",

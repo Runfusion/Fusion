@@ -441,3 +441,9 @@ Each project persists its canonical central identity in `.fusion/project.json` a
 Dashboard `POST /api/projects` now surfaces this mismatch as `409` with `error: "orphan-identity"` and recovery metadata, and callers can opt into recovery flows with `acceptRecovery: true` behavior at the route layer.
 
 Back up PostgreSQL with the deployment's PostgreSQL backup tooling; `.fusion/project.json` is identity metadata, not a substitute for a database backup.
+
+## Workspace task repository scope
+
+For a workspace project, configured repositories may all be acquired before planning, but acquisition is not task scope. Fusion persists an explicit per-task repository scope that planning confirms. Only repositories both in that scope and evidenced by qualified modified files are reviewed, landed, or considered by partial-land recovery. A clean scoped repository appears as **No changes — not reviewed** and is neither a failed review nor a partial land.
+
+Before the first land, an accepted extension is recorded in task scope history. After a land begins, scope extension is refused and should be handled as a follow-up task, preserving the existing integration boundary and per-repository leases.

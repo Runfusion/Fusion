@@ -242,7 +242,7 @@ export function MessageComposer({
     <div
       className={`message-composer${isNativeStructureDragOver ? " message-composer--native-structure-drag-over" : ""}`}
       data-testid="message-composer"
-      aria-label="Message composer; drop a structure to attach it"
+      aria-label={t("composer.ariaLabel", "Message composer; drop a structure to attach it")}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -261,9 +261,9 @@ export function MessageComposer({
 
       <div className="message-composer-body">
         {/* FNXC:StructuralMail 2026-08-09-12:41: Quick mail remains the default and never adds metadata; report validation stays at send time so recipient gating remains independent. FN-8870 requires at least one complete section for structural reports. */}
-        <div className="message-composer-mode" role="group" aria-label="Message mode">
-          <button type="button" className="btn btn-sm btn-secondary" aria-pressed={mode === "quick"} data-testid="message-composer-mode-quick" onClick={() => { setMode("quick"); setIsComposeChatOpen(false); }}>Quick message</button>
-          <button type="button" className="btn btn-sm btn-secondary" aria-pressed={mode === "report"} data-testid="message-composer-mode-report" onClick={() => { setMode("report"); setIsComposeChatOpen(true); }}>Report</button>
+        <div className="message-composer-mode" role="group" aria-label={t("composer.mode", "Message mode")}>
+          <button type="button" className="btn btn-sm btn-secondary" aria-pressed={mode === "quick"} data-testid="message-composer-mode-quick" onClick={() => { setMode("quick"); setIsComposeChatOpen(false); }}>{t("composer.quickMessage", "Quick message")}</button>
+          <button type="button" className="btn btn-sm btn-secondary" aria-pressed={mode === "report"} data-testid="message-composer-mode-report" onClick={() => { setMode("report"); setIsComposeChatOpen(true); }}>{t("composer.report", "Report")}</button>
         </div>
         {/* Recipient selection */}
         {!recipient && (
@@ -312,13 +312,13 @@ export function MessageComposer({
         )}
 
         {mode === "report" && <div className="message-composer-report" data-testid="message-composer-report">
-          <div className="message-composer-field"><label className="message-composer-label" htmlFor="report-title">Report title</label><input id="report-title" className="input" value={reportTitle} onChange={(event) => setReportTitle(event.target.value)} data-testid="report-title" /></div>
+          <div className="message-composer-field"><label className="message-composer-label" htmlFor="report-title">{t("composer.reportTitle", "Report title")}</label><input id="report-title" className="input" value={reportTitle} onChange={(event) => setReportTitle(event.target.value)} data-testid="report-title" /></div>
           {sections.map((section) => <div className="message-composer-report-section" key={section.id}>
-            <input className="input" value={section.heading} placeholder="Section heading" onChange={(event) => setSections((current) => current.map((item) => item.id === section.id ? { ...item, heading: event.target.value } : item))} data-testid={`report-section-heading-${section.id}`} />
-            <textarea className="message-composer-textarea" value={section.body} placeholder="Section body" onChange={(event) => setSections((current) => current.map((item) => item.id === section.id ? { ...item, body: event.target.value } : item))} data-testid={`report-section-body-${section.id}`} />
-            <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSections((current) => current.filter((item) => item.id !== section.id))} data-testid={`report-section-remove-${section.id}`}>Remove section</button>
+            <input className="input" value={section.heading} placeholder={t("composer.sectionHeading", "Section heading")} onChange={(event) => setSections((current) => current.map((item) => item.id === section.id ? { ...item, heading: event.target.value } : item))} data-testid={`report-section-heading-${section.id}`} />
+            <textarea className="message-composer-textarea" value={section.body} placeholder={t("composer.sectionBody", "Section body")}  onChange={(event) => setSections((current) => current.map((item) => item.id === section.id ? { ...item, body: event.target.value } : item))} data-testid={`report-section-body-${section.id}`} />
+            <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSections((current) => current.filter((item) => item.id !== section.id))} data-testid={`report-section-remove-${section.id}`}>{t("composer.removeSection", "Remove section")}</button>
           </div>)}
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSections((current) => [...current, { id: sectionIdRef.current++, heading: "", body: "" }])} data-testid="report-section-add">Add section</button>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSections((current) => [...current, { id: sectionIdRef.current++, heading: "", body: "" }])} data-testid="report-section-add">{t("composer.addSection", "Add section")}</button>
         </div>}
 
         {/* Content */}
@@ -351,7 +351,7 @@ export function MessageComposer({
         persisted message metadata so reports carry first-class, independently reviewable embeds.
         */}
         <div className="message-composer-field message-composer-field--structures">
-          <label className="message-composer-label" htmlFor="message-native-structure">Attach structure</label>
+          <label className="message-composer-label" htmlFor="message-native-structure">{t("composer.attachStructure", "Attach structure")}</label>
           <div className="message-composer-structure-controls">
             <select
               id="message-native-structure"
@@ -361,7 +361,7 @@ export function MessageComposer({
               onChange={(event) => attachNativeStructure(event.target.value)}
               data-testid="message-composer-attach-structure"
             >
-              <option value="">{nativeStructureCandidates.length === 0 ? "No structures available" : "Select structure…"}</option>
+              <option value="">{nativeStructureCandidates.length === 0 ? t("composer.noStructures", "No structures available") : t("composer.selectStructure", "Select structure…")}</option>
               {nativeStructureCandidates.map((candidate, index) => (
                 <option key={`${candidate.ref.kind}:${candidate.ref.id}`} value={index}>{candidate.ref.kind}: {candidate.label}</option>
               ))}
@@ -375,7 +375,7 @@ export function MessageComposer({
                       capturedLabel={embed.label}
                       onOpen={openNativeStructure}
                     />
-                    <button className="btn btn-sm btn-secondary" type="button" onClick={() => setNativeStructures((current) => current.filter((currentEmbed) => currentEmbed.kind !== embed.kind || currentEmbed.id !== embed.id))} aria-label={`Remove ${embed.label ?? embed.id}`}>Remove</button>
+                    <button className="btn btn-sm btn-secondary" type="button" onClick={() => setNativeStructures((current) => current.filter((currentEmbed) => currentEmbed.kind !== embed.kind || currentEmbed.id !== embed.id))} aria-label={t("composer.removeStructure", "Remove {{label}}", { label: embed.label ?? embed.id })}>{t("actions.remove", "Remove")}</button>
                   </li>
                 ))}
               </ul>

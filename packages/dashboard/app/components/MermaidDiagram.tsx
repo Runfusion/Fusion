@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 /*
 FNXC:Markdown 2026-06-23-03:15:
@@ -39,6 +40,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
   chart,
   testId,
 }: MermaidDiagramProps) {
+  const { t } = useTranslation("app");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [errored, setErrored] = useState(false);
 
@@ -89,7 +91,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
       ref={containerRef}
       className="mailbox-mermaid"
       data-testid={testId}
-      aria-label="Mermaid diagram"
+      aria-label={t("mermaid.diagram", "Mermaid diagram")}
     />
   );
 });

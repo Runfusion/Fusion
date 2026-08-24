@@ -27,11 +27,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 import { assertNotWorkspaceTaskMerge } from "@fusion/core";
-import { landWorkspaceTask, runAiMerge } from "../merge/merger-ai.js";
+import { RESOLVED_PRIOR_FINDINGS_MARKER, landWorkspaceTask, runAiMerge } from "../merge/merger-ai.js";
+import { PRIOR_FINDING_DISPOSITIONS_MARKER } from "../merge/merger-ai-prompts.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -59,6 +61,13 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
     emitted,
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false, ...settings }),
     updateTask: vi.fn().mockResolvedValue(undefined),
+    /* FNXC:WorkspaceMergeTests 2026-08-20-23:23: the durable merge-review reconciliation path atomically records its episode before a workspace repository can land. Keep this narrow store double compatible with that production contract. */
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (task: Task) => Partial<Task> | undefined) => {
+      const current = await store.getTask(TASK_ID) as Task;
+      const patch = mutate(current);
+      if (patch) Object.assign(current, patch);
+      return current;
+    }),
     mergeWorkspaceWorktreeEntry: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
@@ -96,6 +105,24 @@ function addRepoBranchWithEdit(fx: WorkspaceFixture, repoRel: string, content: s
   fx.git(repoRel, `git worktree remove --force ${worktreePath}`);
 }
 
+/** Create production-shaped evidence: the persisted path remains a live task worktree at its branch tip. */
+function addRegisteredTaskWorktreeWithEdit(
+  fx: WorkspaceFixture,
+  repoRel: string,
+  content: string,
+): { worktreePath: string; baseCommitSha: string } {
+  const repoDir = fx.repoPath(repoRel);
+  // Keep the linked checkout outside its main checkout so the production dirty-root guard stays meaningful.
+  const worktreePath = path.join(fx.rootDir, `.task-worktree-${repoRel}`);
+  const baseCommitSha = fx.git(repoRel, "git rev-parse HEAD");
+  fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
+  configureIdentity(worktreePath);
+  writeFileSync(path.join(worktreePath, "feature.txt"), content, "utf-8");
+  execSync("git add feature.txt", { cwd: worktreePath, stdio: "pipe" });
+  execSync(`git commit -m "feat(${TASK_ID}): linked task worktree feature"`, { cwd: worktreePath, stdio: "pipe" });
+  return { worktreePath, baseCommitSha };
+}
+
 /**
  * FN-8141 shape: a `fusion/<id>` branch that committed work then REVERTED it — AHEAD of the
  * integration tip (two real commits) but net-zero, so its tip is NOT an ancestor of main and the
@@ -114,22 +141,32 @@ function addRepoRevertedBranch(fx: WorkspaceFixture, repoRel: string): void {
   fx.git(repoRel, `git worktree remove --force ${worktreePath}`);
 }
 
-/** Make a sub-repo's integration tip and the task branch BOTH edit README so the
- *  squash conflicts. */
-function makeConflictingRepo(fx: WorkspaceFixture, repoRel: string): void {
+/*
+FNXC:WorkspaceReviewEvidence 2026-08-23-20:10:
+Production records a workspace entry whose `worktreePath` is a LIVE task worktree sitting at the
+branch tip, and `computeReviewDiffFingerprint` reads `baseCommitSha..HEAD` from that path. A fixture
+that points the entry at the repo's main checkout therefore produces an EMPTY diff and an undefined
+fingerprint, which silently disables the whole merge-boundary review fence. This variant keeps the
+conflicting-README setup but leaves the task worktree registered at the branch tip so the fence is
+exercised for real.
+*/
+function makeConflictingRepoWithRegisteredWorktree(
+  fx: WorkspaceFixture,
+  repoRel: string,
+): { worktreePath: string; baseCommitSha: string } {
   const repoDir = fx.repoPath(repoRel);
-  // Task branch edits README on a new commit.
-  const worktreePath = path.join(repoDir, ".wt-conflict");
+  const worktreePath = path.join(fx.rootDir, `.task-worktree-${repoRel}`);
+  const baseCommitSha = fx.git(repoRel, "git rev-parse HEAD");
   fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
   configureIdentity(worktreePath);
   writeFileSync(path.join(worktreePath, "README.md"), "# branch-side change\n", "utf-8");
   execSync("git add README.md", { cwd: worktreePath, stdio: "pipe" });
   execSync(`git commit -m "feat(${TASK_ID}): branch README"`, { cwd: worktreePath, stdio: "pipe" });
-  fx.git(repoRel, `git worktree remove --force ${worktreePath}`);
   // Integration tip (main) diverges with a conflicting README edit.
   writeFileSync(path.join(repoDir, "README.md"), "# main-side change\n", "utf-8");
   fx.git(repoRel, "git add README.md");
   fx.git(repoRel, 'git commit -m "main diverge README"');
+  return { worktreePath, baseCommitSha };
 }
 
 /** A merge agent that performs the real squash in the clean room (no AI). */
@@ -157,6 +194,11 @@ const approveReviewAgent = async (): Promise<string> => "REVIEW_VERDICT: approve
 
 function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
   return {
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture, not a review-gating one.
+       The door refuses a card whose enabled optional pre-merge groups produced no result, and the
+       built-in workflow enables Plan and Code Review by default, so an unspecified list failed the
+       door before the behaviour under test ran. An explicit empty list states the intent. */
+    enabledWorkflowSteps: [],
     id: TASK_ID,
     title: "Workspace merge task",
     description: "",
@@ -167,6 +209,20 @@ function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
     currentStep: 0,
     log: [],
     workspaceWorktrees,
+    // FNXC:RepositoryScope 2026-08-21-00:12: merge fixtures model planner-confirmed intent and fresh qualified diff evidence; acquisition alone is deliberately insufficient to land.
+    repositoryScope: {
+      repositories: Object.keys(workspaceWorktrees ?? {}).sort(),
+      state: "confirmed",
+      revision: 1,
+      // FNXC:RepositoryScope 2026-08-21-01:36: fixtures persist the same
+      // merge-boundary fingerprint that production requires from Code Review.
+      reviewEvidence: Object.fromEntries(Object.entries(workspaceWorktrees ?? {}).map(([repo, entry]) => {
+        const mergeBase = execSync(`git merge-base HEAD ${entry.branch}`, { cwd: entry.worktreePath, encoding: "utf8" }).trim();
+        const diff = execSync(`git diff --binary ${entry.baseCommitSha ?? mergeBase}..${entry.branch}`, { cwd: entry.worktreePath, encoding: "utf8" });
+        return [repo, { fingerprint: createHash("sha256").update(diff).digest("hex"), approvedAt: new Date().toISOString() }];
+      })),
+    },
+    modifiedFiles: Object.keys(workspaceWorktrees ?? {}).sort().map((repo) => `${repo}/feature.txt`),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as Task;
@@ -218,6 +274,58 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(store.emitted.filter((e) => e.event === "task:merged")).toHaveLength(1);
   });
 
+  it("lands reviewed work from a live linked task worktree baseline", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const linked = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "linked feature\n");
+    const integrationTipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const store = createStore();
+    const task = makeTask({
+      "repo-a": { worktreePath: linked.worktreePath, branch: BRANCH, baseCommitSha: linked.baseCommitSha },
+    });
+
+    // The production shape that regressed: HEAD and the branch name resolve to the same task tip.
+    expect(execSync("git rev-parse HEAD", { cwd: linked.worktreePath, encoding: "utf8" }).trim())
+      .toBe(execSync(`git rev-parse ${BRANCH}`, { cwd: linked.worktreePath, encoding: "utf8" }).trim());
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    expect(result.repos[0]?.error).toBeUndefined();
+    expect(result.repos).toMatchObject([{ repo: "repo-a", status: "landed" }]);
+    expect(result.allLanded).toBe(true);
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).not.toBe(integrationTipBefore);
+    expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "done" }]);
+  });
+
+  it("reuses reconciled review findings for a workspace sub-repository", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
+    const store = createStore({ merger: { mode: "ai", maxReviewPasses: 1 } });
+    const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
+    const finding = "drops the workspace task export";
+    const reviewPrompts: string[] = [];
+    let reviews = 0;
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: async (_cwd, prompt) => {
+        reviewPrompts.push(prompt);
+        reviews++;
+        return reviews === 1
+          ? `${finding}\n${PRIOR_FINDING_DISPOSITIONS_MARKER}\nfinding-1-1: still-present\nSEVERITY: blocking\nREVIEW_VERDICT: reject`
+          : `${RESOLVED_PRIOR_FINDINGS_MARKER} ${finding}\n${PRIOR_FINDING_DISPOSITIONS_MARKER}\nfinding-1-1: corrected\nREVIEW_VERDICT: approve`;
+      },
+    });
+
+    expect(result.allLanded).toBe(true);
+    /* FNXC:WorkspaceMergeTests 2026-08-20-23:23: FN-090 requires two clean confirmations after a corrected finding, so the final approval pass is intentionally a second independent reviewer session. */
+    expect(reviewPrompts).toHaveLength(3);
+    expect(reviewPrompts[1]).toContain(finding);
+    expect(reviewPrompts[1]).not.toContain("finding-1-1: still-present");
+  });
+
   it("per-repo resolution: each repo lands on its OWN origin/HEAD branch (override-stripping)", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     // Give each repo a different default integration branch via a bare origin whose
@@ -264,18 +372,62 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(fx.git("repo-b", "git rev-parse refs/heads/release")).toBe(byRepo["repo-b"].landedSha);
   });
 
+  it("rejects a modified repository with no approving review fingerprint", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    /*
+    FNXC:WorkspaceReviewEvidence 2026-08-23-20:10:
+    The entry must be a live task worktree at the branch tip: the merge-boundary fingerprint is read
+    as `baseCommitSha..HEAD` from `worktreePath`, so an entry pointing at the repo's main checkout
+    yields no fingerprint at all and the approval-missing fence never evaluates.
+    */
+    const linked = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "review evidence is mandatory\n");
+    const store = createStore();
+    const task = makeTask({ "repo-a": { worktreePath: linked.worktreePath, branch: BRANCH, baseCommitSha: linked.baseCommitSha } });
+    task.repositoryScope!.reviewEvidence = {};
+
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    })).rejects.toThrow("approval is missing");
+    expect(store.mergeWorkspaceWorktreeEntry).not.toHaveBeenCalled();
+  });
+
+  it("returns a fresh repository file to Code Review instead of landing it without review evidence", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    addRepoBranchWithEdit(fx, "repo-a", "review this newly discovered file\n");
+    const store = createStore();
+    const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
+    task.modifiedFiles = [];
+
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    })).rejects.toThrow("content changed after approval");
+    expect(store.mergeWorkspaceWorktreeEntry).not.toHaveBeenCalled();
+  });
+
   it("partial: repo B conflict → repo A lands, B reports failure, task NOT moved done", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
-    addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
-    makeConflictingRepo(fx, "repo-b");
+    /*
+    FNXC:WorkspaceReviewEvidence 2026-08-23-20:10:
+    Both entries are live task worktrees at their branch tips so the merge-boundary fingerprints
+    actually describe the task branches. With the entries pointed at the repos' main checkouts,
+    repo-b's fingerprint described main's diverged README instead and the review fence rejected the
+    land as "content changed after approval" before the conflict under test could occur.
+    */
+    const linkedA = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "a feature\n");
+    const linkedB = makeConflictingRepoWithRegisteredWorktree(fx, "repo-b");
 
     const tipABefore = fx.git("repo-a", "git rev-parse refs/heads/main");
 
     const store = createStore();
     const task = makeTask({
-      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
-      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+      "repo-a": { worktreePath: linkedA.worktreePath, branch: BRANCH, baseCommitSha: linkedA.baseCommitSha },
+      "repo-b": { worktreePath: linkedB.worktreePath, branch: BRANCH, baseCommitSha: linkedB.baseCommitSha },
     });
+    // FNXC:RepositoryScope 2026-08-21-00:58: the merge boundary only admits fresh
+    // changes that were present in the persisted Code Review evidence.
+    task.modifiedFiles = ["repo-a/feature.txt", "repo-b/README.md"];
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
     const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {

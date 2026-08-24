@@ -185,6 +185,32 @@ describe("maybeAutoLaunchOnboarding", () => {
     });
 
     expect(runOnboard).toHaveBeenCalledTimes(1);
+    // FNXC:Onboarding 2026-08-19-03:38: auto-launch never interrogates the operator — it fires while
+    // they are starting something else, and a dev server stopped on a prompt never listens.
+    expect(runOnboard).toHaveBeenCalledWith({ interactive: false });
+  });
+
+  /*
+  FNXC:Onboarding 2026-08-19-03:38:
+  A Postgres install has no `fusion-central.db`; SQLite central was removed. Probing only that path
+  left centralDbExists permanently false, so onboarding auto-launched on every interactive start of
+  a fully working Fusion. The embedded Postgres data directory counts as an initialized install.
+  */
+  it("treats an embedded-postgres install as initialized", async () => {
+    const runOnboard = vi.fn();
+
+    await maybeAutoLaunchOnboarding({
+      command: "task",
+      args: ["task", "list"],
+      centralDbPath: "/virtual/fusion-central.db",
+      isTTY: true,
+      // No SQLite file, but the Postgres data directory is present.
+      pathExists: (candidate: string) => candidate === "/virtual/embedded-postgres",
+      cliOnboardingCompleted: false,
+      runOnboard,
+    });
+
+    expect(runOnboard).not.toHaveBeenCalled();
   });
 
   it("does not invoke runOnboard when gate fails", async () => {

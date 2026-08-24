@@ -45,6 +45,16 @@ function openInBrowser(url: string): void {
   try {
     // process-supervisor-allowlist: user-facing browser opener must outlive the TUI process
     const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    /*
+    FNXC:DashboardTUI 2026-08-19-04:45:
+    A missing opener is reported ASYNCHRONOUSLY as an 'error' event, not a synchronous throw, so the
+    catch below never saw it: Node re-throws an 'error' with no listener and the TUI died. Pressing
+    Enter on the System panel therefore crashed the whole dashboard anywhere `xdg-open` is absent —
+    every slim Linux container, which is exactly where Fusion runs headless.
+    */
+    child.on("error", () => {
+      // Best-effort — the platform tool is missing or not executable.
+    });
     child.unref();
   } catch {
     // Best-effort — silently ignore if the platform tool isn't available.
@@ -193,7 +203,7 @@ const STATIC_SECTION_CONTENT_ROWS: Record<string, number> = {
 // and Token (each may wrap onto multiple lines), then an always-on hint
 // row. The hint and token must always be visible, so we never collapse
 // those rows regardless of focus.
-function estimateSystemContentRows(
+export function estimateSystemContentRows(
   info: SystemInfo | null,
   cols: number,
   _isFocused: boolean,
@@ -232,9 +242,18 @@ function estimateSystemContentRows(
   const tokenRows = info.authToken
     ? Math.max(1, Math.ceil((5 + 1 + info.authToken.length) / inner))
     : 0;
+  /*
+  FNXC:DevTunnel 2026-08-19-04:45:
+  The tunnel row is measured like URL and Token ("Tunnel" is 6 chars + a gap). Omitting it made the
+  panel one-to-several rows too short for a trycloudflare hostname, so the row it was added for got
+  squeezed out of the panel it lives in.
+  */
+  const tunnelRows = info.tunnelUrl
+    ? Math.max(1, Math.ceil((6 + 1 + info.tunnelUrl.length) / inner))
+    : 0;
 
   // +1 for the always-on hint row.
-  return chipRows + urlRows + tokenRows + 1;
+  return chipRows + urlRows + tokenRows + tunnelRows + 1;
 }
 
 function estimateSectionPanelHeight(
@@ -394,6 +413,16 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
             <Box flexDirection="row" gap={1} flexShrink={0}>
               <Text dimColor>Token</Text>
               <Text color="yellow">{info.authToken}</Text>
+            </Box>
+          )}
+          {/* FNXC:DevTunnel 2026-08-19-04:45: a tunnel's public URL — dev (--tunnel) or the
+              operator's own remote tunnel — is shown here full width, never truncated, like the
+              token. The dev wrapper's stdout banner is painted over by this TUI, and the remote
+              tunnel's URL never reached the terminal at all. */}
+          {info.tunnelUrl && (
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Tunnel</Text>
+              <Text color="cyanBright">{info.tunnelUrl}</Text>
             </Box>
           )}
           {/* Inline hint row — always shown so the [Enter] / [c] shortcuts

@@ -62,10 +62,48 @@ function summarizeRows(rows) {
   );
 }
 
+/*
+FNXC:QuarantineLockstep 2026-08-23-22:45:
+STRING-AWARE. The previous regex stripper treated the `/**` inside a glob literal such as
+"src/**\/*.slow.test.ts" or "node_modules/**" as the start of a block comment, so it deleted from
+there to the next "*\/" — swallowing whole array literals and the entries after them. A concrete
+quarantine exclude placed after any such glob was then invisible, and this guard reported
+`missing-exclude` for a file that WAS excluded (observed 2026-08-23 quarantining
+self-healing-pending-wedge-notification.test.ts). Scan character by character instead, tracking
+string literals, so comment markers inside strings are left alone.
+*/
 function stripComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+  let out = "";
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      out += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      out += character;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 1;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "/") {
+      const end = source.indexOf("\n", index);
+      if (end === -1) break;
+      index = end - 1;
+      continue;
+    }
+    out += character;
+  }
+  return out;
 }
 
 function extractBalancedArray(source, openingBracket) {

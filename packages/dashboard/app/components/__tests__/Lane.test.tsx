@@ -74,8 +74,6 @@ const baseProps = () => ({
   maxConcurrent: 2,
   onMoveTask: vi.fn().mockResolvedValue({} as Task),
   onPromote: vi.fn().mockResolvedValue(undefined),
-  canDropTask: vi.fn().mockReturnValue(null),
-  getDraggingTaskId: vi.fn().mockReturnValue(null),
   onOpenDetail: vi.fn(),
   addToast: vi.fn(),
 });
@@ -202,31 +200,7 @@ describe("Lane", () => {
     await waitFor(() => expect((screen.getByTestId("card-promote-FN-8") as HTMLButtonElement).disabled).toBe(false));
   });
 
-  it("prevents the drop (no-move) when canDropTask returns a rejection key", () => {
-    const props = baseProps();
-    props.getDraggingTaskId = vi.fn().mockReturnValue("FN-DRAG");
-    props.canDropTask = vi.fn().mockReturnValue("board.rejection.workflowMismatch");
-    render(<Lane {...props} tasks={[mkTask({ id: "FN-1", column: "in-progress" })]} />);
-    const ipColumn = document.querySelector('[data-column="in-progress"]') as HTMLElement;
-    const preventDefault = vi.fn();
-    fireEvent.dragOver(ipColumn, { dataTransfer: { dropEffect: "" }, preventDefault });
-    // Rejection → preventDefault NOT called → the browser refuses the drop.
-    expect(props.canDropTask).toHaveBeenCalledWith("FN-DRAG", "in-progress", "builtin:coding");
-    // Inline feedback surfaces the translated rejection.
-    expect(screen.getByTestId("column-inline-feedback")).toBeDefined();
-  });
 
-  it("allows the drop (preventDefault) when canDropTask returns null", () => {
-    const props = baseProps();
-    props.getDraggingTaskId = vi.fn().mockReturnValue("FN-DRAG");
-    props.canDropTask = vi.fn().mockReturnValue(null);
-    render(<Lane {...props} tasks={[mkTask({ id: "FN-1", column: "in-progress" })]} />);
-    const ipColumn = document.querySelector('[data-column="in-progress"]') as HTMLElement;
-    // fireEvent.dragOver returns false when a handler called preventDefault.
-    const notPrevented = fireEvent.dragOver(ipColumn, { dataTransfer: { dropEffect: "" } });
-    expect(notPrevented).toBe(false);
-    expect(screen.queryByTestId("column-inline-feedback")).toBeNull();
-  });
 });
 
 /*

@@ -1,0 +1,6 @@
+/* FNXC:Workspace 2026-08-20-02:03: The repository input wraps on narrow Settings layouts without introducing a parallel control system. */
+.workspace-repos-card { margin-block: var(--space-4); }
+.workspace-repos-card__controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.workspace-repos-card__controls .input { flex: 1 1 auto; }
+.workspace-repos-card__error { color: var(--color-error); }
+@media (max-width: 768px) { .workspace-repos-card__controls { align-items: stretch; } }

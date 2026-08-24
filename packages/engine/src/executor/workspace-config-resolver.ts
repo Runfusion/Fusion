@@ -1,4 +1,4 @@
-import { loadWorkspaceConfig, type WorkspaceConfig } from "@fusion/core";
+import { loadWorkspaceConfig, type Task, type TaskStore, type WorkspaceConfig } from "@fusion/core";
 
 /**
  * FNXC:Workspace 2026-08-14-21:06:
@@ -17,6 +17,35 @@ const workspaceConfigEpochs = new WeakMap<object, number>();
 export function invalidateWorkspaceConfigCache(owner: object): void {
   inFlightWorkspaceConfigLoads.delete(owner);
   workspaceConfigEpochs.set(owner, (workspaceConfigEpochs.get(owner) ?? 0) + 1);
+}
+
+/*
+FNXC:WorkspaceRootRouting 2026-08-19-12:15:
+Resolve stale singular routing through the TaskStore's atomic PostgreSQL mutation before a review or
+recovery path interprets task.worktree/branch/session metadata. The compatibility fallback updates
+only singular fields and never replaces workspaceWorktrees, preserving sub-repository siblings in
+structural test stores that predate the persistence seam.
+*/
+export async function normalizeWorkspaceTaskRouting(store: TaskStore, taskId: string): Promise<Task> {
+  const normalize = (store as TaskStore & {
+    normalizeWorkspaceTaskWorktreeMetadata?: (id: string) => Promise<Task>;
+  }).normalizeWorkspaceTaskWorktreeMetadata;
+  if (typeof normalize === "function") return normalize.call(store, taskId);
+
+  let task = await store.getTask(taskId);
+  if (task.worktree || task.branch || task.executionStartBranch || task.baseCommitSha) {
+    if (typeof (store as Partial<TaskStore>).updateTask !== "function") return task;
+    await store.updateTask(taskId, {
+      worktree: null,
+      branch: null,
+      branchWriteOrigin: "engine" as const,
+      executionStartBranch: null,
+      baseCommitSha: null,
+      sessionFile: null,
+    });
+    task = await store.getTask(taskId);
+  }
+  return task;
 }
 
 export type WorkspaceConfigResolverDeps = {

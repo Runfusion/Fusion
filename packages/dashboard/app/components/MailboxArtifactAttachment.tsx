@@ -1,6 +1,8 @@
 import { memo, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import type { ArtifactType } from "@fusion/core";
 import { artifactMediaUrlWithToken } from "../api";
+import { ArtifactImage, ArtifactImageViewer } from "./ArtifactImageViewer";
 
 export interface MailboxArtifactAttachmentProps {
   artifactId?: unknown;
@@ -41,49 +43,45 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
   onOpenTask,
   hideTaskLink = false,
 }: MailboxArtifactAttachmentProps) {
+  const { t } = useTranslation("app");
   const id = readString(artifactId);
   const type = readArtifactType(artifactType);
-  const label = readString(title) ?? "artifact";
+  const label = readString(title) ?? t("mailbox.artifact", "artifact");
   const mediaMimeType = readString(mimeType);
   const task = readString(taskId);
   const [imageFailed, setImageFailed] = useState(false);
-  const mediaUrl = useMemo(() => id ? artifactMediaUrlWithToken(id, projectId) : "", [id, projectId]);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const mediaUrl = useMemo(() => id && type !== "image" ? artifactMediaUrlWithToken(id, projectId) : "", [id, projectId, type]);
 
   if (!id) return null;
 
-  const openLink = (
-    <a
-      className="mailbox-artifact-attachment__link btn"
-      href={mediaUrl}
-      target="_blank"
-      rel="noreferrer"
-      aria-label={`Open artifact: ${label}`}
-    >
-      Open artifact
+  const openLink = type === "image" ? (
+    <button type="button" className="mailbox-artifact-attachment__link btn" onClick={() => setImageViewerOpen(true)} aria-label={t("mailbox.openArtifactAria", "Open artifact: {{label}}", { label })}>
+      {t("mailbox.openArtifact", "Open artifact")}
+    </button>
+  ) : (
+    <a className="mailbox-artifact-attachment__link btn" href={mediaUrl} target="_blank" rel="noreferrer" aria-label={t("mailbox.openArtifactAria", "Open artifact: {{label}}", { label })}>
+      {t("mailbox.openArtifact", "Open artifact")}
     </a>
   );
   const taskLink = task && onOpenTask && !hideTaskLink ? (
     <button
       type="button"
       className="mailbox-artifact-attachment__link btn"
-      aria-label={`View task: ${task}`}
+      aria-label={t("mailbox.viewTaskAria", "View task: {{id}}", { id: task })}
       data-testid="mailbox-artifact-view-task"
       onClick={() => onOpenTask(task)}
     >
-      View task
+      {t("mailbox.viewTaskLabel", "View task")}
     </button>
   ) : null;
 
   let preview: ReactNode = null;
   if (type === "image" && !imageFailed) {
     preview = (
-      <img
-        className="mailbox-artifact-attachment__media mailbox-artifact-attachment__image"
-        src={mediaUrl}
-        alt={label}
-        loading="lazy"
-        onError={() => setImageFailed(true)}
-      />
+      <button type="button" className="mailbox-artifact-attachment__image-button" onClick={() => setImageViewerOpen(true)} aria-label={t("mailbox.openArtifactAria", "Open artifact: {{label}}", { label })}>
+        <ArtifactImage className="mailbox-artifact-attachment__media mailbox-artifact-attachment__image" artifactId={id} projectId={projectId} title={label} onError={() => setImageFailed(true)} />
+      </button>
     );
   } else if (type === "video") {
     preview = (
@@ -91,7 +89,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
         className="mailbox-artifact-attachment__media"
         src={mediaUrl}
         controls
-        aria-label={`Video artifact: ${label}`}
+        aria-label={t("mailbox.videoArtifactAria", "Video artifact: {{label}}", { label })}
       />
     );
   } else if (type === "audio") {
@@ -100,7 +98,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
         className="mailbox-artifact-attachment__audio"
         src={mediaUrl}
         controls
-        aria-label={`Audio artifact: ${label}`}
+        aria-label={t("mailbox.audioArtifactAria", "Audio artifact: {{label}}", { label })}
       />
     );
   }
@@ -121,6 +119,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
         {openLink}
         {taskLink}
       </div>
+      {imageViewerOpen && type === "image" && <ArtifactImageViewer artifactId={id} projectId={projectId} title={label} onClose={() => setImageViewerOpen(false)} />}
     </div>
   );
 });

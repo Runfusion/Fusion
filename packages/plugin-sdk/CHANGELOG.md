@@ -1,5 +1,47 @@
 # @fusion/plugin-sdk
 
+## 0.77.0-beta.8
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.8
+
+## 0.77.0-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.7
+
+## 0.77.0-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.6
+
+## 0.77.0-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.5
+
+## 0.77.0-beta.4
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.4
+
+## 0.77.0-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.3
+
+## 0.77.0-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.2
+
 ## 0.77.0-beta.1
 
 ### Patch Changes

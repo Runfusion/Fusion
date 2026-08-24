@@ -310,11 +310,15 @@ holds a 36px touch target without claiming a row of its own.
 }
 
 /*
-FNXC:GitHubImport 2026-07-15-18:20:
-The detail panel is the FloatingWindow's only child and owns its own inset — without one the Preview header rendered flush against the window's left edge while FN-8015's resize gutter left a lone gap on the right, so the header read as mis-aligned on both the desktop window and the mobile sheet.
-padding-inline-end is deliberately 0: FN-8015 already reserves var(--space-lg) of inline-end margin on the shared .floating-window__body to hold a hosted scrollbar clear of the east/north-east/south-east resize hot zones, and that gutter supplies this panel's right inset. Matching padding-inline-start to the same token makes the inset symmetric without overriding the shared body (which would push the inner scroller back into the hot zone).
-If that body gutter ever changes token, change padding-inline-start with it.
-Padding lives on the panel rather than the pane content so header, toast, and scrolling body share one inset and the header divider is inset with them.
+FNXC:GitHubImport 2026-08-17-23:47:
+The detail panel is the FloatingWindow's only child and owns its own inset — without one the Preview
+header rendered flush against the window's left edge, so the header read as mis-aligned on both the
+desktop window and the mobile sheet.
+This padding is now symmetric on all four sides. It previously set `padding-inline-end: 0` and
+borrowed its right inset from FN-8015's shared `.floating-window__body` gutter; that gutter is
+deleted, so the panel supplies both insets itself and no longer needs a tablet-specific restore.
+Padding lives on the panel rather than the pane content so header, toast, and scrolling body share
+one inset and the header divider is inset with them.
 */
 .github-import-detail-panel {
   display: flex;
@@ -323,18 +327,7 @@ Padding lives on the panel rather than the pane content so header, toast, and sc
   min-width: 0;
   min-height: 0;
   padding: var(--space-lg);
-  padding-inline-end: 0;
   overflow: hidden;
-}
-
-/*
-FNXC:GitHubImport 2026-08-01-03:48:
-Tablet windows zero the shared FN-8015 body gutter (`.floating-window--tablet-viewport .floating-window__body`
-in FloatingWindow.css) because it rendered as an uneven right border on tablet. This panel's right
-inset was supplied by that gutter, so restore it locally to keep the panel's insets symmetric.
-*/
-.floating-window--tablet-viewport .github-import-detail-panel {
-  padding-inline-end: var(--space-lg);
 }
 
 /*

@@ -43,7 +43,7 @@ vi.mock("@fusion/core", () => ({
   // @fusion/engine imports) read AWAITING_APPROVAL_PAUSE_REASON from @fusion/core (FN-7736);
   // stub it for the same real-fs-cascade reason as above.
   AWAITING_APPROVAL_PAUSE_REASON: "awaiting-approval",
-  THINKING_LEVELS: ["off", "minimal", "low", "medium", "high", "xhigh"],
+  THINKING_LEVELS: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
   AgentStore: vi.fn(),
   ChatStore: vi.fn(),
   registerTraitHookImpl: vi.fn(),

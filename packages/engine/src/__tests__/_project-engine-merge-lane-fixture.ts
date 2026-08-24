@@ -6,6 +6,7 @@ type MergeLaneState = {
   capacityDeferredMerges: Map<string, unknown>;
   coordinatorAdmittedMergeTaskIds: Set<string>;
   pausedReviewTaskIds: Set<string>;
+  mergeSweepHoldReasons: Map<string, string>;
   mergeRunning: boolean;
   mergeRunningSince: number;
   activeMergeSession: { dispose(): void } | null;
@@ -41,6 +42,9 @@ export function seedMergeLaneState<T extends object>(
     capacityDeferredMerges: new Map(),
     coordinatorAdmittedMergeTaskIds: new Set(),
     pausedReviewTaskIds: new Set(),
+    /* FNXC:MergeAuthority 2026-08-23-21:40: the merge-sweep hold-reason log de-duplicator. Empty is
+       the production-equivalent default — a fresh engine has held nothing yet. */
+    mergeSweepHoldReasons: new Map(),
     mergeRunning: false,
     mergeRunningSince: 0,
     activeMergeSession: null,

@@ -20,6 +20,7 @@ const severityAuditLog = createLogger("dashboard-board-workflows");
 
 import {
   resolveDefaultWorkflowIr,
+  resolveEffectiveDefaultWorkflowId,
   getBuiltinWorkflow,
   isBuiltinWorkflowId,
   parseWorkflowIr,
@@ -72,6 +73,8 @@ export interface BoardWorkflowColumn {
 export interface BoardWorkflowDefinition {
   id: string;
   name: string;
+  /** Whether this definition may be selected for new board/task work. Optional for older cached payloads. */
+  selectable?: boolean;
   /** Optional compact custom workflow icon; built-ins render the Fusion mark by id. */
   icon?: string;
   columns: BoardWorkflowColumn[];
@@ -179,6 +182,7 @@ function describeFields(ir: WorkflowIr): BoardWorkflowField[] | undefined {
 async function describeWorkflow(
   store: Pick<TaskStore, "getWorkflowDefinition">,
   workflowId: string,
+  selectable: boolean,
 ): Promise<BoardWorkflowDefinition> {
   // The display name comes from the persisted definition when available,
   // otherwise the IR's own name (default workflow).
@@ -186,7 +190,7 @@ async function describeWorkflow(
     const ir = await resolveWorkflowIrById(store, workflowId);
     const name = getBuiltinWorkflow(workflowId)?.name ?? ir.name;
     const fields = describeFields(ir);
-    return { id: workflowId, name, columns: describeColumns(ir, true), ...(fields ? { fields } : {}) };
+    return { id: workflowId, name, selectable, columns: describeColumns(ir, true), ...(fields ? { fields } : {}) };
   }
   // Custom workflow: fetch the definition once and derive both IR and name from
   // it (previously getWorkflowDefinition was called twice per workflow).
@@ -212,7 +216,7 @@ async function describeWorkflow(
     // fall through to the default IR/name
   }
   const fields = describeFields(ir);
-  return { id: workflowId, name, ...(icon ? { icon } : {}), columns: describeColumns(ir), ...(fields ? { fields } : {}) };
+  return { id: workflowId, name, selectable, ...(icon ? { icon } : {}), columns: describeColumns(ir), ...(fields ? { fields } : {}) };
 }
 
 /**
@@ -244,32 +248,51 @@ export async function buildBoardWorkflowsPayload(
   */
   void settingsOverride;
   const flagEnabled = true;
+  let settings: Pick<Settings, "defaultWorkflowId" | "enabledBuiltinWorkflowIds"> = {};
+  try {
+    const loaded = await store.getSettings();
+    if (loaded) settings = loaded;
+  } catch {
+    // A degraded settings read still permits explicit task assignments to render.
+  }
+  /*
+  FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+  Board metadata uses the same effective default as task creation. The catalog
+  Coding id is only the fallback identity; it is never injected when project
+  enablement has selected another built-in.
+  */
+  const defaultWorkflowId = resolveEffectiveDefaultWorkflowId(
+    settings.defaultWorkflowId,
+    settings.enabledBuiltinWorkflowIds,
+  );
 
   const taskWorkflowIds: Record<string, string> = {};
   const referenced = new Set<string>();
+  const selectableWorkflowIds = new Set<string>([defaultWorkflowId]);
 
   for (const taskId of taskIds) {
-    let workflowId = DEFAULT_WORKFLOW_LANE_ID;
+    let workflowId = defaultWorkflowId;
     try {
       const selection = store.getTaskWorkflowSelectionAsync
         ? await store.getTaskWorkflowSelectionAsync(taskId)
         : store.getTaskWorkflowSelection(taskId);
       if (selection?.workflowId) workflowId = selection.workflowId;
     } catch {
-      workflowId = DEFAULT_WORKFLOW_LANE_ID;
+      workflowId = defaultWorkflowId;
     }
     taskWorkflowIds[taskId] = workflowId;
     referenced.add(workflowId);
   }
 
-  // The default workflow lane is always describable so a no-task board still
-  // resolves it (and the client's default-lane-first ordering is stable).
-  referenced.add(DEFAULT_WORKFLOW_LANE_ID);
+  // The effective default is always describable so a no-task board still
+  // resolves it and the client has one authoritative selectable lane.
+  referenced.add(defaultWorkflowId);
 
   try {
     const definitions = await store.listWorkflowDefinitions();
     for (const definition of definitions) {
       if (definition.kind === "fragment") continue;
+      selectableWorkflowIds.add(definition.id);
       referenced.add(definition.id);
     }
   } catch (err) {
@@ -281,12 +304,12 @@ export async function buildBoardWorkflowsPayload(
 
   const workflows: BoardWorkflowDefinition[] = [];
   for (const workflowId of referenced) {
-    workflows.push(await describeWorkflow(store, workflowId));
+    workflows.push(await describeWorkflow(store, workflowId, selectableWorkflowIds.has(workflowId)));
   }
 
   return {
     flagEnabled,
-    defaultWorkflowId: DEFAULT_WORKFLOW_LANE_ID,
+    defaultWorkflowId,
     workflows,
     taskWorkflowIds,
   };

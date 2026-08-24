@@ -1,0 +1,148 @@
+/*
+FNXC:ChatTitleSwitcher 2026-08-23-03:13:
+The title trigger stays in the existing flex identity row, while its menu is anchored to that stable
+header identity. Token-based sizing keeps the switcher usable in full, narrow, and mobile ChatView
+hosts without changing the legacy title truncation rule asserted elsewhere.
+*/
+.chat-thread-title-switcher {
+  position: relative;
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-thread-title-trigger {
+  border: none;
+  padding: var(--space-3xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  text-align: start;
+}
+
+.chat-thread-title-trigger:hover {
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
+}
+
+.chat-thread-title-trigger:focus-visible {
+  outline: var(--space-3xs) solid var(--accent);
+  outline-offset: var(--space-3xs);
+  border-radius: var(--radius-sm);
+}
+
+.chat-thread-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thread-title-caret,
+.chat-thread-title-menu-pin {
+  flex: 0 0 auto;
+}
+
+.chat-thread-title-menu {
+  position: absolute;
+  inset-block-start: calc(100% + var(--space-xs));
+  inset-inline-start: 0;
+  width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+  max-block-size: min(calc(var(--space-xl) * 24), calc(100vh - (var(--space-xl) * 4)));
+  overflow-y: auto;
+  background: var(--surface);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+.chat-thread-title-menu-item,
+.chat-thread-title-menu-all,
+.chat-thread-title-menu-empty {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text);
+  text-align: start;
+}
+
+.chat-thread-title-menu-item,
+.chat-thread-title-menu-all {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.chat-thread-title-menu-item:hover,
+.chat-thread-title-menu-item:focus-visible,
+.chat-thread-title-menu-all:hover,
+.chat-thread-title-menu-all:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  outline: none;
+}
+
+.chat-thread-title-menu-item--active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.chat-thread-title-menu-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thread-title-menu-item .status-dot {
+  flex: 0 0 auto;
+}
+
+.chat-thread-title-menu-all {
+  border-block-start: thin solid var(--border);
+  font-weight: 600;
+}
+
+.chat-thread-title-menu-empty {
+  color: var(--text-muted);
+}
+
+/*
+FNXC:ChatTitleSwitcher 2026-08-23-16:00:
+Narrow ChatView hosts keep the switcher root static so its menu can span the pane. The header owns
+its containing block; otherwise the absolute menu resolves below the clipped full-height thread.
+*/
+.chat-view--narrow .chat-thread-header {
+  position: relative;
+}
+
+.chat-view--narrow .chat-thread-title-switcher {
+  position: static;
+}
+
+.chat-view--narrow .chat-thread-title-menu {
+  inset-inline: var(--space-md);
+  width: auto;
+  max-inline-size: none;
+  max-block-size: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
+}
+
+@media (max-width: 768px) {
+  .chat-thread-title-menu {
+    inset-inline-start: var(--space-sm);
+    width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
+  }
+
+  .chat-view--narrow .chat-thread-title-menu {
+    inset-inline: var(--space-sm);
+  }
+}

@@ -8,7 +8,7 @@
  * integration rebases each branch in step order; projection flips done-iff-integrated.
  * Best-effort: a git failure routes the foreach to a clean failure rather than crashing the run.
  */
-import { isWorkspaceTask, type Task, type TaskStore } from "@fusion/core";
+import { isFusionDeletableBranch, isWorkspaceTask, type Task, type TaskStore } from "@fusion/core";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getConflictedFiles } from "../merger.js";
@@ -213,7 +213,8 @@ export function buildForeachWorktreeDeps(
           }
           instancePaths.delete(stepIndex);
         }
-        // Delete the (now-merged or conflicting) branch.
+        // Delete only branches proven to originate from Fusion's task assignment.
+        if (!isFusionDeletableBranch(task, branchName)) return;
         try {
           await execAsync(`git branch -D ${branchName}`, { cwd });
         } catch {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BUILTIN_CODING_WORKFLOW_IR, type WorkflowIr } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, getBuiltinWorkflow, type WorkflowIr } from "@fusion/core";
 import { buildBoardWorkflowsPayload } from "../routes/board-workflows.js";
 
 const CUSTOM_WORKFLOW_ID = "WF-DESCRIPTIONS";
@@ -70,6 +70,39 @@ The canonical map must therefore be a FALLBACK for a column whose IR name adds n
 the raw id, or the same words in different case) — never an override of a name the IR chose.
 This is also the mechanism that would clobber U11's Todo->Planning rename.
 */
+describe("buildBoardWorkflowsPayload disabled built-ins", () => {
+  function disabledCodingStore(taskWorkflowId?: string) {
+    const quickFix = getBuiltinWorkflow("builtin:quick-fix")!;
+    return {
+      getSettings: vi.fn(async () => ({
+        defaultWorkflowId: "builtin:coding",
+        enabledBuiltinWorkflowIds: ["builtin:quick-fix"],
+      })),
+      getTaskWorkflowSelection: vi.fn(() => taskWorkflowId ? { workflowId: taskWorkflowId } : null),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      listWorkflowDefinitions: vi.fn(async () => [quickFix]),
+    };
+  }
+
+  it("uses the enabled workflow as the default and omits disabled Coding with no tasks", async () => {
+    const payload = await buildBoardWorkflowsPayload(disabledCodingStore() as never, []);
+
+    expect(payload.defaultWorkflowId).toBe("builtin:quick-fix");
+    expect(payload.workflows.map((workflow) => workflow.id)).toEqual(["builtin:quick-fix"]);
+    expect(payload.workflows[0]?.selectable).toBe(true);
+  });
+
+  it("retains an explicitly assigned disabled Coding definition without making it selectable", async () => {
+    const payload = await buildBoardWorkflowsPayload(disabledCodingStore("builtin:coding") as never, ["FN-CODING"]);
+
+    expect(payload.taskWorkflowIds["FN-CODING"]).toBe("builtin:coding");
+    expect(payload.workflows.map((workflow) => [workflow.id, workflow.selectable])).toEqual([
+      ["builtin:coding", false],
+      ["builtin:quick-fix", true],
+    ]);
+  });
+});
+
 describe("buildBoardWorkflowsPayload built-in column labels", () => {
   function builtinStore(workflowId: string) {
     return {

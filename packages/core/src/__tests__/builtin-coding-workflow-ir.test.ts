@@ -83,14 +83,14 @@ describe("builtin coding workflow ir", () => {
       toolMode: "readonly",
       gateMode: "gate",
     });
-    // execute → browser-verification → code-review → completion-summary → review on the success path; the
-    // pre-merge code-review optional-group sits next to browser-verification. failures route to remediation nodes.
+    // FNXC:WorkspaceReviewSeal 2026-08-21-19:36: the summary precedes Code Review so no
+    // built-in worktree agent can mutate the approved branch before landing.
     expect(BUILTIN_CODING_WORKFLOW_IR.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ from: "execute", to: "browser-verification", condition: "success" }),
-        expect.objectContaining({ from: "browser-verification", to: "code-review", condition: "success" }),
-        expect.objectContaining({ from: "code-review", to: "completion-summary", condition: "success" }),
-        expect.objectContaining({ from: "completion-summary", to: "review", condition: "success" }),
+        expect.objectContaining({ from: "browser-verification", to: "completion-summary", condition: "success" }),
+        expect.objectContaining({ from: "completion-summary", to: "code-review", condition: "success" }),
+        expect.objectContaining({ from: "code-review", to: "review", condition: "success" }),
         expect.objectContaining({ from: "browser-verification", to: "browser-verification-remediation", condition: "failure" }),
         expect.objectContaining({ from: "code-review", to: "code-review-remediation", condition: "failure" }),
       ]),
@@ -184,6 +184,7 @@ describe("builtin coding workflow ir", () => {
         expect.objectContaining({ from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" }),
         expect.objectContaining({ from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" }),
         expect.objectContaining({ from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" }),
+        expect.objectContaining({ from: "merge-attempt", to: "code-review", condition: "outcome:workspace-review-required", kind: "rework" }),
       ]),
     );
   });

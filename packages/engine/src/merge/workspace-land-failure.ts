@@ -1,4 +1,4 @@
-import type { TaskStore } from "@fusion/core";
+import type { TaskStore, WorkspaceLandFailure } from "@fusion/core";
 
 /**
  * FNXC:Workspace 2026-08-15-07:05:
@@ -13,12 +13,12 @@ export async function persistWorkspaceRepoLandFailure(
   store: TaskStore,
   taskId: string,
   repoRel: string,
-  failure: { message: string; at: string; branch?: string },
+  failure: Omit<WorkspaceLandFailure, "category"> & { category?: WorkspaceLandFailure["category"] },
 ): Promise<void> {
   await store.mergeWorkspaceWorktreeEntry(
     taskId,
     repoRel,
-    { landFailure: failure },
+    { landFailure: { ...failure, category: failure.category ?? "internal-technical" } },
     { requireExistingEntry: true },
   );
 }

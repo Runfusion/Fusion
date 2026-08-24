@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Power } from "lucide-react";
 import { DEFAULT_PROJECT_SETTINGS, type ColorTheme, type ThemeMode } from "@fusion/core";
-import { fetchConfig, fetchSettings, updateSettings } from "../../api/legacy";
+import { resolveEffectiveConcurrency } from "../../../../core/src/workflows/workflow-capacity.js";
+import { fetchSettings, updateSettings } from "../../api/legacy";
 import { useAppSettings } from "../../hooks/useAppSettings";
 import { useConfirm } from "../../hooks/useConfirm";
 // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Concurrency card adopts the shared global-concurrency hook so it and the footer EngineControlMenu read/write ONE source of truth (no more duplicated fetch/debounce/clobber logic).
@@ -121,11 +122,19 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
     setConcurrencyState({ status: "loading", data: null, error: null });
     void (async () => {
       try {
-        const [config, settings] = await Promise.all([fetchConfig(projectId), fetchSettings(projectId)]);
+        const settings = await fetchSettings(projectId);
         if (!cancelled) {
+          const capacity = resolveEffectiveConcurrency(settings);
+          /*
+          FNXC:CapacityModel 2026-08-21-16:37:
+          Worktree limiting controls admission, not storage. Preserve the configured Max Worktrees
+          value when its gate is disabled so saving a Max Concurrent edit never overwrites an
+          operator's dormant worktree setting with the shipped default.
+          */
+          const configuredWorktreeCapacity = resolveEffectiveConcurrency({ ...settings, worktreeLimitEnabled: true });
           const persistedValues = {
-            maxConcurrent: settings.maxConcurrent ?? config.maxConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxConcurrent,
-            maxWorktrees: settings.maxWorktrees ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
+            maxConcurrent: capacity.maxConcurrent,
+            maxWorktrees: configuredWorktreeCapacity.worktreeLimit ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
             worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
           };
           persistedConcurrencyRef.current = persistedValues;

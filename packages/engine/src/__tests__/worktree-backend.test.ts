@@ -14,6 +14,7 @@ const {
   execMock,
   accessMock,
   rmMock,
+  chmodMock,
   existsSyncMock,
   parseIndexLockPathMock,
   classifyStaleLockMock,
@@ -29,6 +30,7 @@ const {
     execMock: mock,
     accessMock: vi.fn(),
     rmMock: vi.fn(),
+    chmodMock: vi.fn(),
     existsSyncMock: vi.fn(),
     parseIndexLockPathMock: vi.fn(),
     classifyStaleLockMock: vi.fn(),
@@ -42,7 +44,7 @@ const {
 
 vi.mock("node:child_process", () => ({ exec: execMock, execFile: vi.fn() }));
 vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
-vi.mock("node:fs/promises", () => ({ access: accessMock, rm: rmMock }));
+vi.mock("node:fs/promises", () => ({ access: accessMock, chmod: chmodMock, rm: rmMock }));
 vi.mock("../execution/branch-conflicts.js", () => ({
   inspectBranchConflict: vi.fn().mockResolvedValue({ kind: "stale" }),
 }));
@@ -80,6 +82,8 @@ beforeEach(() => {
   accessMock.mockReset();
   rmMock.mockReset();
   rmMock.mockResolvedValue(undefined as never);
+  chmodMock.mockReset();
+  chmodMock.mockResolvedValue(undefined);
   existsSyncMock.mockReset();
   accessMock.mockResolvedValue(undefined);
   existsSyncMock.mockReturnValue(true);
@@ -118,7 +122,24 @@ describe("NativeWorktreeBackend", () => {
       'git worktree add -b "fusion/fn-1" "/repo/.worktrees/fn-1" "main"',
       expect.objectContaining({ cwd: "/repo", timeout: 120000, maxBuffer: 10485760 }),
     );
-    expect(installGuardMock).toHaveBeenCalledWith({ worktreePath: "/repo/.worktrees/fn-1", taskId: "FN-1" });
+    /*
+    FNXC:WorktreeIdentityGuard 2026-08-23-18:45:
+    The identity guard is installed with the branch Git actually checked out (sibling-collision
+    recovery can rename it) plus the commit-msg/author settings it stamps. With no settings on the
+    backend those resolve to undefined; the assertion records the full argument so a dropped field
+    fails rather than passing under a partial match.
+    */
+    expect(installGuardMock).toHaveBeenCalledWith({
+      worktreePath: "/repo/.worktrees/fn-1",
+      taskId: "FN-1",
+      expectedBranch: "fusion/fn-1",
+      commitMsgHookEnabled: undefined,
+      taskPrefix: undefined,
+      taskAttributionTrailerName: undefined,
+      commitAuthorEnabled: undefined,
+      commitAuthorName: undefined,
+      commitAuthorEmail: undefined,
+    });
   });
 
   it("propagates installer failure after cleanup", async () => {
@@ -248,18 +269,43 @@ describe("NativeWorktreeBackend", () => {
     expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
   });
 
-  it("rethrows filesystem removal failure after recoverable native remove failure", async () => {
-    const rmError = new Error("EACCES: permission denied");
+  it("preserves the registered-but-missing rethrow contract without a fallback", async () => {
+    const error = { message: "git failed", stderr: "fatal: '/repo/.worktrees/fn-1' is not a working tree" };
+    execMock.mockRejectedValueOnce(error);
+
+    await expect(new NativeWorktreeBackend().remove({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" })).rejects.toBe(error);
+    expect(rmMock).not.toHaveBeenCalled();
+    expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
+  });
+
+  it("retries errno-only recoverable cleanup failures before pruning once", async () => {
+    const busy = Object.assign(new Error("busy"), { code: "EBUSY" });
+    execMock.mockRejectedValueOnce(busy);
+    rmMock.mockRejectedValueOnce(busy).mockResolvedValueOnce(undefined);
+
+    await new NativeWorktreeBackend().remove({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" });
+    expect(rmMock).toHaveBeenCalledTimes(2);
+    expect(pruneWorktreeAdminEntriesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("audits residual filesystem removal while preserving the fallback throw and prune contract", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    const rmError = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     execMock.mockRejectedValueOnce({ stderr: "error: failed to delete '/repo/.worktrees/fn-1': Directory not empty" });
-    rmMock.mockRejectedValueOnce(rmError as never);
+    rmMock.mockRejectedValue(rmError as never);
 
     await expect(
-      new NativeWorktreeBackend().remove({
+      new NativeWorktreeBackend({ audit }).remove({
         rootDir: "/repo",
         worktreePath: "/repo/.worktrees/fn-1",
       }),
     ).rejects.toBe(rmError);
 
+    expect(rmMock).toHaveBeenCalledTimes(5);
+    expect(audit.git).toHaveBeenCalledWith(expect.objectContaining({
+      type: "worktree:remove-fallback",
+      metadata: expect.objectContaining({ attempts: 5, residual: true, registrationRetained: true }),
+    }));
     expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
   });
 

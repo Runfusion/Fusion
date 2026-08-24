@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isTaskExecutionSessionPrincipal } from "../agents/task-execution-task-creation.js";
 import {
   __clearFusionSessionIdentityRegistryForTests,
   registerFusionSessionIdentity,
@@ -38,11 +39,12 @@ describe("session identity registry", () => {
     expect(resolveFusionSessionPrincipal("/tmp/wt-a")).toEqual({ kind: "operator" });
   });
 
-  it("two live sessions on one cwd resolve to ambiguous (fail closed)", () => {
-    registerFusionSessionIdentity("/tmp/project-root", { agentId: "agent-1" });
+  it("round-trips the task-execution marker and fails closed for ambiguity", () => {
+    registerFusionSessionIdentity("/tmp/project-root", { agentId: "agent-1", taskExecutionSession: true });
     registerFusionSessionIdentity("/tmp/project-root", { agentId: "agent-2" });
     const principal = resolveFusionSessionPrincipal("/tmp/project-root");
     expect(principal.kind).toBe("ambiguous");
+    expect(isTaskExecutionSessionPrincipal(principal)).toBe(true);
   });
 
   it("uses the invocation identity for concurrent sessions sharing a cwd", async () => {
@@ -69,6 +71,14 @@ describe("session identity registry", () => {
       disposeA();
       disposeB();
     }
+  });
+
+  it("uses marker-free ALS identity over a marker-bearing registry entry", async () => {
+    const cwd = "/tmp/marker-precedence";
+    registerFusionSessionIdentity(cwd, { agentId: "executor", taskExecutionSession: true });
+    const principal = await runWithFusionSessionIdentity([cwd], { agentId: "heartbeat" }, async () => resolveFusionSessionPrincipal(cwd));
+    expect(principal).toEqual(expect.objectContaining({ kind: "agent", identity: expect.objectContaining({ agentId: "heartbeat" }) }));
+    expect(isTaskExecutionSessionPrincipal(principal)).toBe(false);
   });
 
   it("dispose is idempotent and only removes its own entry", () => {

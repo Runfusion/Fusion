@@ -122,6 +122,26 @@ describe("a card parked at a manual intake is never auto-planned", () => {
     expect(specified).toEqual(["FN-PROMOTED"]);
   });
 
+  /*
+  FNXC:DependencyReplanManualIntake 2026-08-19-02:45:
+  Dependency invalidation preserves the existing PROMPT.md, so triage must admit a promoted Planning
+  card marked `needs-replan` even when it already has a real specification. The parked Ideas card remains
+  excluded by the same real workflow selection.
+  */
+  it("discovers a promoted Planning card marked needs-replan even with an existing prompt", async () => {
+    const replan = parkedTask({
+      id: "FN-REPLAN",
+      column: "todo",
+      status: "needs-replan",
+      prompt: "# Existing specification\n\n## Steps\n\n1. Keep it\n",
+    } as Partial<Task>);
+    const specified = await pollWith(
+      resolvingStore([replan], BUILTIN_CODING_IDEAS_WORKFLOW_IR),
+    );
+
+    expect(specified).toEqual(["FN-REPLAN"]);
+  });
+
   it("still auto-plans an AUTO intake, so the fix is not 'never admit at intake'", async () => {
     // The default lineage's intake carries no `autoTriage: false`, and post-U11 it is the same column
     // as the hold lane. A fix that keyed on "is intake" rather than "is MANUAL intake" would have

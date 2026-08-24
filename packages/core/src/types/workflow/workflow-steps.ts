@@ -33,7 +33,7 @@ export type WorkflowStepGateMode = "gate" | "advisory";
 
 /** Closed severity vocabulary shared by persisted workflow findings and Review-tab items. */
 export type WorkflowReviewFindingSeverity = "low" | "medium" | "high" | "critical";
-export type WorkflowReviewFindingResolution = "open" | "resolved-in-review" | "superseded";
+export type WorkflowReviewFindingResolution = "open" | "resolved-in-review" | "superseded" | "dispute-upheld";
 
 /**
  * FNXC:WorkflowReviewFindings 2026-08-11-19:39:
@@ -50,6 +50,30 @@ export interface WorkflowReviewFinding {
   line?: number;
   severity?: WorkflowReviewFindingSeverity;
   resolution?: WorkflowReviewFindingResolution;
+  /** Implementer position; a dispute stays open until a reviewer or arbiter adjudicates it. */
+  disputeRationale?: string;
+  disputedAt?: string;
+  /** Timestamp stamped when a reviewer explicitly maintains the disputed objection. */
+  disputeRebuttedAt?: string;
+  /** Explicit link from a new finding to the disputed finding it maintains. */
+  rebutsDisputedFindingId?: string;
+}
+
+/*
+FNXC:RepositoryScope 2026-08-21-02:17:
+Workspace review aggregates must retain repository identity, review input, and verdict data as structured task state. Rendered prose is not a remediation or merge authority because clean repositories have no verdict and identical feedback can describe different diffs.
+*/
+export interface WorkflowRepositoryReviewOutcome {
+  repository: string;
+  status: "REVIEWED" | "NOT_REVIEWED";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "RETHINK" | "UNAVAILABLE";
+  findings?: WorkflowReviewFinding[];
+  output?: string;
+  fingerprint?: string;
+  /** Stable identifier for the single reviewer session that produced this record. */
+  episodeId: string;
+  scopeRevision?: number;
+  reviewedAt: string;
 }
 
 /** Lifecycle phase for workflow step execution. */
@@ -280,6 +304,25 @@ export interface WorkflowStepResult {
   output?: string;
   /** Normalized structured advisory findings from an explicitly classified review node. */
   findings?: WorkflowReviewFinding[];
+  /** Per-repository review records for workspace code-review nodes; clean peers carry NOT_REVIEWED without a verdict. */
+  repositoryReviewOutcomes?: WorkflowRepositoryReviewOutcome[];
+  /** Confirmed repository-scope generation that supplied the workspace review input. */
+  repositoryScopeRevision?: number;
+  /**
+   * FNXC:ReviewConvergence 2026-08-22-05:00:
+   * Automatic remediation archives a failed review as a skipped carrier so the next attempt can
+   * inspect its findings. These fields distinguish that non-blocking archive from an operator bypass.
+   */
+  remediationArchivedAt?: string;
+  remediationArchivedFromStatus?: WorkflowStepResult["status"];
+  /** Durable input identity used to detect a repeated review over unchanged code or plan text. */
+  reviewInputFingerprint?: string;
+  /** Arbitration provenance is only written by the fenced single-gate ruling writer. */
+  arbitrationDecision?: "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
+  arbitrationBindingFindingCount?: number;
+  arbitratedAttemptAt?: string;
+  arbitratedAt?: string;
+  arbitrationNotes?: string;
   /** Prior result containing the finding IDs this review step explicitly declared superseded. */
   supersededFindingSourceWorkflowStepId?: string;
   /** Prior-lane finding IDs this review step explicitly declared superseded; audit-only. */
@@ -345,7 +388,8 @@ export interface WorkflowStepResult {
   /** Mandatory operator-supplied justification for the bypass. */
   bypassReason?: string;
   /** The `status` this result carried immediately before the bypass rewrote it (always `"failed"` for the supported bypass path). */
-  bypassedFromStatus?: WorkflowStepResult["status"];
+  /** `absent` records an operator bypass of an enabled gate that never produced a result. */
+  bypassedFromStatus?: WorkflowStepResult["status"] | "absent";
   /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
   bypassedFromVerdict?: WorkflowStepResult["verdict"];
   /*

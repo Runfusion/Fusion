@@ -63,6 +63,7 @@ describe("UI metadata routes", () => {
       expect.objectContaining({ id: "general", label: "General · Project", scope: "project", group: "Project" }),
       expect.objectContaining({ id: "merge", keywords: expect.any(Array), searchableKeys: expect.any(Array) }),
       expect.objectContaining({ id: "project-models", advanced: false }),
+      expect.objectContaining({ id: "remote", label: "Remote Access", scope: "global", group: "Infrastructure", advanced: false }),
       expect.objectContaining({ id: "authentication", scope: null, group: "AI & Models" }),
     ]));
     expect(response.body.sections.some((section: { id: string }) => section.id.startsWith("__"))).toBe(false);

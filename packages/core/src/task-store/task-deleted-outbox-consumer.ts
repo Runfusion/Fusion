@@ -3,6 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { TaskStore } from "../store.js";
 import { createLogger } from "../process/logger.js";
 import { recordRunAuditEvent } from "../postgres/data-layer.js";
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 import * as schema from "../postgres/schema/index.js";
 import {
   acknowledgeTaskLifecycleEvent,
@@ -22,11 +23,25 @@ import {
 } from "./task-lifecycle-consumer-registry.js";
 
 export const TASK_DELETED_OUTBOX_POLL_MS = 5_000;
+export const TASK_DELETED_OUTBOX_MAX_POLL_MS = 60_000;
+export const TASK_DELETED_OUTBOX_BACKOFF_STEP_MS = 10_000;
+export const TASK_DELETED_OUTBOX_POLL_JITTER_RATIO = 0.2;
 export const TASK_DELETED_OUTBOX_LEASE_MS = 15_000;
 export const TASK_DELETED_OUTBOX_BATCH_SIZE = 100;
 export const TASK_DELETED_OUTBOX_RETENTION_DAYS = 30;
 
 const outboxConsumerLog = createLogger("task-deleted-outbox-consumer");
+
+/**
+ * Apply ±`TASK_DELETED_OUTBOX_POLL_JITTER_RATIO` multiplicative jitter to a poll delay so the ~44
+ * per-project dashboard/engine consumers de-synchronize instead of firing on the same cadence.
+ * Imported by the regression test to assert its bounded, non-negative range. The delay never falls
+ * below the fast base so jitter cannot speed an idle consumer back into the storm.
+ */
+export function applyPollJitter(delayMs: number, ratio = TASK_DELETED_OUTBOX_POLL_JITTER_RATIO): number {
+  const delta = delayMs * ratio * (Math.random() * 2 - 1);
+  return Math.max(TASK_DELETED_OUTBOX_POLL_MS, Math.round(delayMs + delta));
+}
 
 type OutboxEventForValidation = {
   eventId: string;
@@ -53,8 +68,6 @@ function assertTaskDeletedOutboxEvent(event: OutboxEventForValidation): void {
     || (deleted.previousStatus !== null && typeof deleted.previousStatus !== "string")
     || typeof deleted.deletedAt !== "string" || typeof deleted.allowResurrection !== "boolean"
     || (deleted.githubIssueAction !== null && typeof deleted.githubIssueAction !== "string")
-    || (deleted.closureContext !== null && (!deleted.closureContext || typeof deleted.closureContext !== "object"
-      || Array.isArray(deleted.closureContext)))
     || (deleted.deletedBy !== null && typeof deleted.deletedBy !== "string")) {
     throw new TypeError("Malformed task:deleted lifecycle outbox payload");
   }
@@ -66,24 +79,62 @@ function assertTaskDeletedOutboxEvent(event: OutboxEventForValidation): void {
  * before the durable receipt/cursor acknowledgement, intentionally yielding at-least-once
  * observed notifications in the crash window; observed dispatch has no writer-owned effects.
  */
+
+/**
+ * Tri-state poll outcome that drives the idle backoff. Only "idle" (the outbox was genuinely
+ * empty) extends the delay toward the 60s cap. "active" means at least one event was
+ * delivered/processed. "waiting" covers retry-backoff windows, lease contention, fencing,
+ * errors, and shutdown races: none of those mean the outbox is idle, so none may extend the
+ * backoff. Resetting to the fast base on "waiting" keeps transient failures on a 5s recovery
+ * cadence instead of letting an error streak masquerade as an idle streak and hide recovery
+ * behind the 60s cap.
+ */
+export type TaskDeletedOutboxPollOutcome = "active" | "idle" | "waiting";
+
 export class TaskDeletedOutboxConsumer {
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private renewalTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private lease: TaskLifecycleLease | null = null;
+  private idlePollsSinceEvent = 0;
 
   constructor(private readonly store: TaskStore) {}
 
+  /*
+  FNXC:TaskLifecycleConsumerIdleBackoff 2026-08-13-06:41:
+  The outbox consumer reschedules itself instead of polling a fixed 5s setInterval forever. Each
+  poll feeds back its outcome: an idle poll (the outbox returned zero events) grows the next delay
+  by TASK_DELETED_OUTBOX_BACKOFF_STEP_MS toward TASK_DELETED_OUTBOX_MAX_POLL_MS, with ±20% jitter
+  so the ~44 per-project dashboard/engine consumers de-synchronize instead of thundering together;
+  a poll that delivered events resets to the fast TASK_DELETED_OUTBOX_POLL_MS base. A paused/idle
+  project stops writing lifecycle events, so its outbox drains and backoff alone drops the DB
+  idx_scan/CPU storm on task_lifecycle_consumer_cursors without touching delivery semantics. Any
+  new event mid-backoff resets the cadence to 5s, bounding delivery latency. Cursor fencing, lease
+  advance, per-event ordering, and at-least-once delivery are unchanged — backoff only changes when
+  poll() runs, never the poll/dispatch/ack logic.
+
+  FNXC:TaskLifecycleConsumerIdleBackoff 2026-08-18-00:55 (RUFU-074 review fix):
+  Review feedback: retry and error outcomes must not be classified as idle polls. The outcome is
+  now tri-state (TaskDeletedOutboxPollOutcome): only a genuinely empty outbox reports "idle" and
+  extends the backoff. Retry-backoff windows (cursor.retryBackoffUntil), lease contention, fencing,
+  and poll errors report "waiting" and reset the idle streak to the fast 5s base, so a transient
+  failure recovers at 5s cadence instead of an error streak growing the delay to the 60s cap and
+  hiding recovery behind it.
+  */
   async start(): Promise<void> {
     if (this.running || !this.store.asyncLayer || !this.store.consumerId) return;
     this.running = true;
-    await this.pollSafely();
-    this.pollTimer = setInterval(() => void this.pollSafely(), TASK_DELETED_OUTBOX_POLL_MS);
+    /* Drain any backlog with the immediate poll, then feed its outcome into the first scheduled
+    delay so a fresh idle consumer backs off from the very first timer (not after one wasted 5s
+    tick). */
+    const outcome = await this.pollSafely();
+    this.recordPollOutcome(outcome);
+    this.scheduleNextPoll();
   }
 
   async stop(): Promise<void> {
     this.running = false;
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.renewalTimer) clearInterval(this.renewalTimer);
     this.pollTimer = null;
     this.renewalTimer = null;
@@ -106,18 +157,28 @@ export class TaskDeletedOutboxConsumer {
     }
   }
 
-  private async pollSafely(): Promise<void> {
+  private async pollSafely(): Promise<TaskDeletedOutboxPollOutcome> {
     try {
-      await this.poll();
+      return await this.poll();
     } catch (error) {
       outboxConsumerLog.warn("Task:deleted outbox poll failed; delivery will retry", error);
+      return "waiting";
     }
   }
 
-  async poll(): Promise<void> {
+  /**
+   * Idle/active/waiting backoff contract: returns "active" when the poll delivered/processed at
+   * least one lifecycle event, "idle" when it found the outbox genuinely empty, and "waiting" when
+   * it took a non-delivering early return that does NOT mean the outbox is idle (retry-backoff
+   * window, lease contention, fencing, errors, shutdown races). The rescheduling loop extends the
+   * next poll delay toward the 60s cap on "idle" only and resets to the fast 5s base on "active"
+   * and "waiting", so transient failures recover quickly instead of being hidden behind an idle
+   * cap grown out of an error streak.
+   */
+  async poll(): Promise<TaskDeletedOutboxPollOutcome> {
     const layer = this.store.asyncLayer;
     const consumerId = this.store.consumerId;
-    if (!this.running || !layer || !consumerId) return;
+    if (!this.running || !layer || !consumerId) return "waiting";
     await registerTaskLifecycleConsumer(layer, consumerId);
     /*
     FNXC:CrossProcessDeleteObservation 2026-08-01-12:14:
@@ -126,7 +187,7 @@ export class TaskDeletedOutboxConsumer {
     */
     if (!this.running) {
       await setTaskLifecycleConsumerActive(layer, consumerId, false);
-      return;
+      return "waiting";
     }
     const now = new Date();
     const acquired = await acquireTaskLifecycleLease(
@@ -136,27 +197,29 @@ export class TaskDeletedOutboxConsumer {
       new Date(now.getTime() + TASK_DELETED_OUTBOX_LEASE_MS).toISOString(),
       now.toISOString(),
     );
-    if (!acquired) return;
+    if (!acquired) return "waiting";
     if (!this.running) {
       await releaseTaskLifecycleLease(layer, consumerId, acquired);
-      return;
+      return "waiting";
     }
     this.lease = acquired;
     this.startRenewal(acquired);
     try {
       const cursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-      if (!cursor) return;
-      if (cursor.retryBackoffUntil && Date.parse(cursor.retryBackoffUntil) > Date.now()) return;
+      if (!cursor) return "waiting";
+      // In the per-event retry window: the cursor already scheduled when the failed event may be
+      // retried. This is a retry wait, not an idle outbox — the next probe stays on the fast base.
+      if (cursor.retryBackoffUntil && Date.parse(cursor.retryBackoffUntil) > Date.now()) return "waiting";
       const reconciliationReason = await this.needsReconciliation(cursor.lastAckedSeq, cursor.updatedAt);
       if (reconciliationReason) {
         const reconciled = await this.reconcile(cursor.lastAckedSeq, acquired, reconciliationReason);
         if (!reconciled) {
           await this.recordLeaseFenced(acquired, 0);
-          return;
+          return "waiting";
         }
       }
       const currentCursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-      if (!currentCursor) return;
+      if (!currentCursor) return "waiting";
       const events = await listTaskLifecycleEvents(layer, currentCursor.lastAckedSeq, TASK_DELETED_OUTBOX_BATCH_SIZE);
       let priorSeq = currentCursor.lastAckedSeq;
       let dispatchedCount = 0;
@@ -183,11 +246,9 @@ export class TaskDeletedOutboxConsumer {
           }
           const payload = event.payload as {
             githubIssueAction: import("../types.js").GithubIssueAction | null;
-            closureContext: import("../types.js").TaskDeleteClosureContext | null;
           };
           this.store.emitObservedTaskDeleted(task, event.eventId, {
             githubIssueAction: payload.githubIssueAction ?? "auto",
-            ...(payload.closureContext ? { closureContext: payload.closureContext } : {}),
           });
           dispatchedCount++;
           const acknowledged = await acknowledgeTaskLifecycleEvent(layer, {
@@ -218,7 +279,13 @@ export class TaskDeletedOutboxConsumer {
         }
       }
       if (this.running && events.length > 0) {
-        await recordRunAuditEvent(layer, {
+        /*
+        FNXC:RunAudit 2026-08-20-06:50:
+        FN-9178 classified task-deleted-outbox catch-up, reconciliation, and lease-fence rows as
+        class A: bounded best-effort telemetry. Keep each emit awaited at its durable-work boundary,
+        rather than fire-and-forget, so post-acknowledgement/cursor ordering remains observable.
+        */
+        await emitBoundedRunAudit({ recordRunAuditEvent: (input) => recordRunAuditEvent(layer, input) }, {
           agentId: "system",
           runId: `task-deleted-outbox:${consumerId}`,
           domain: "task-lifecycle",
@@ -228,6 +295,7 @@ export class TaskDeletedOutboxConsumer {
         });
       }
       if (this.running) await setTaskLifecycleConsumerActive(layer, consumerId, true);
+      return events.length > 0 ? "active" : "idle";
     } finally {
       if (this.renewalTimer) clearInterval(this.renewalTimer);
       this.renewalTimer = null;
@@ -257,6 +325,48 @@ export class TaskDeletedOutboxConsumer {
     return null;
   }
 
+  /**
+   * Reschedule the next poll with a setTimeout whose delay reflects the previous poll's outcome,
+   * replacing the old fixed-interval setInterval so an idle consumer stops thundering against the
+   * DB. pollSafely always resolves (it maps errors to "waiting"), so the reschedule chain never
+   * stalls.
+   */
+  private scheduleNextPoll(): void {
+    if (!this.running) return;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      void this.pollSafely().then((outcome) => {
+        this.recordPollOutcome(outcome);
+        this.scheduleNextPoll();
+      });
+    }, this.nextPollDelayMs());
+  }
+
+  /**
+   * FNXC:TaskLifecycleConsumerIdleBackoff 2026-08-18-00:55 (RUFU-074 review fix):
+   * Only a genuinely idle poll (empty outbox) extends the backoff. Active and waiting outcomes
+   * reset the idle streak so the next poll lands on the fast 5s base — an error or retry streak
+   * must never masquerade as an idle streak and push the cadence toward the 60s cap.
+   */
+  private recordPollOutcome(outcome: TaskDeletedOutboxPollOutcome): void {
+    if (outcome === "idle") this.idlePollsSinceEvent += 1;
+    else this.idlePollsSinceEvent = 0;
+  }
+
+  /** Jittered delay for the upcoming poll, derived from the accumulated idle-poll count. */
+  private nextPollDelayMs(): number {
+    return applyPollJitter(this.computeNextPollDelayMs());
+  }
+
+  /** Deterministic idle-backoff delay (no jitter): 5s -> 15s -> 25s -> ... -> 60s cap. */
+  private computeNextPollDelayMs(): number {
+    if (this.idlePollsSinceEvent <= 0) return TASK_DELETED_OUTBOX_POLL_MS;
+    const grown = TASK_DELETED_OUTBOX_POLL_MS
+      + this.idlePollsSinceEvent * TASK_DELETED_OUTBOX_BACKOFF_STEP_MS;
+    return Math.min(grown, TASK_DELETED_OUTBOX_MAX_POLL_MS);
+  }
+
   private async reconcile(
     priorSeq: bigint,
     lease: TaskLifecycleLease,
@@ -279,7 +389,7 @@ export class TaskDeletedOutboxConsumer {
     }
     const advanced = await advanceTaskLifecycleConsumerCursor(layer, consumerId, priorSeq, headSeq, lease.fencingToken);
     if (!advanced) return false;
-    await recordRunAuditEvent(layer, {
+    await emitBoundedRunAudit({ recordRunAuditEvent: (input) => recordRunAuditEvent(layer, input) }, {
       agentId: "system", runId: `task-deleted-outbox:${consumerId}`, domain: "task-lifecycle",
       mutationType: "task-deleted-outbox:reconciliation-fallback", target: consumerId,
       metadata: { projectId: layer.projectId, consumerId, reason, reconciliationHeadSeq: headSeq.toString(), dispatchedCount, scannedCount: liveRows.length },
@@ -292,7 +402,7 @@ export class TaskDeletedOutboxConsumer {
     const consumerId = this.store.consumerId;
     if (!layer || !consumerId) return;
     const cursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-    await recordRunAuditEvent(layer, {
+    await emitBoundedRunAudit({ recordRunAuditEvent: (input) => recordRunAuditEvent(layer, input) }, {
       agentId: "system", runId: `task-deleted-outbox:${consumerId}`, domain: "task-lifecycle",
       mutationType: "task-deleted-outbox:lease-fenced", target: consumerId,
       metadata: {

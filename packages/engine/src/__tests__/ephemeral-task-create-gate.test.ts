@@ -189,20 +189,22 @@ describe("executor session tool list (behavioral)", () => {
     expect(toolNames).toContain("fn_task_done");
   });
 
-  it("keeps fn_task_create under upon_validation but still withholds delegation", async () => {
+  it("withholds both tools under upon_validation", async () => {
     const { toolNames } = await captureExecutorSession("upon_validation");
-    expect(toolNames).toContain("fn_task_create");
+    expect(toolNames).not.toContain("fn_task_create");
     expect(toolNames).not.toContain("fn_delegate_task");
   });
 
-  it("keeps both tools when the policy allows creation", async () => {
+  it("withholds both tools when policy allows creation", async () => {
     const { toolNames } = await captureExecutorSession("allow");
-    expect(toolNames).toContain("fn_task_create");
+    expect(toolNames).not.toContain("fn_task_create");
+    expect(toolNames).not.toContain("fn_delegate_task");
   });
 
-  it("defaults to allow when no policy is persisted", async () => {
+  it("withholds both tools with no persisted policy", async () => {
     const { toolNames } = await captureExecutorSession();
-    expect(toolNames).toContain("fn_task_create");
+    expect(toolNames).not.toContain("fn_task_create");
+    expect(toolNames).not.toContain("fn_delegate_task");
   });
 
   /*
@@ -218,8 +220,8 @@ describe("executor session tool list (behavioral)", () => {
     expect(systemPrompt).toContain("recommendations: []");
   });
 
-  it("adds no withheld-tool guidance when creation is allowed", async () => {
+  it("adds withheld-tool guidance even when policy allows creation", async () => {
     const { systemPrompt } = await captureExecutorSession("allow");
-    expect(systemPrompt).not.toContain("Follow-up task creation is disabled for this session");
+    expect(systemPrompt).toContain("Follow-up task creation is disabled for this session");
   });
 });

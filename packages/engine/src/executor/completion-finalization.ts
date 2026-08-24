@@ -8,6 +8,7 @@ import { evaluateSkipBypassTaint } from "@fusion/core";
 import { COMPLETED_BLOCKED_PAUSE_REASON } from "../self-healing.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
 import {
   resolveReboundColumnFor,

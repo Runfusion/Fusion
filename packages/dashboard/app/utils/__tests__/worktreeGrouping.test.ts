@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { groupByWorktree, getWorktreeLabel } from "../worktreeGrouping";
-import type { Task } from "@fusion/core";
+import { resolveEffectiveConcurrency, type Task } from "@fusion/core";
 
 function makeTask(overrides: Partial<Task> & { id: string }): Task {
   return {
@@ -87,6 +87,16 @@ describe("groupByWorktree", () => {
     expect(groups.find((g) => g.label === "Up Next")).toBeUndefined();
   });
 
+  it("caps Up Next at the effective worktree-bound ceiling, not configured max concurrent", () => {
+    const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
+    const queued = ["FN-010", "FN-011", "FN-012", "FN-013", "FN-014"].map((id) => makeTask({ id, column: "todo" }));
+    const capacity = resolveEffectiveConcurrency({ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: true });
+
+    const upNext = groupByWorktree([active], [active, ...queued], capacity.effectiveLimit).find((group) => group.label === "Up Next");
+    expect(capacity).toMatchObject({ maxConcurrent: 8, effectiveLimit: 4, bindingKnob: "maxWorktrees" });
+    expect(upNext?.queuedTasks).toHaveLength(4);
+  });
+
   it("respects maxConcurrent limit on queued tasks shown", () => {
     const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
     const q1 = makeTask({ id: "FN-010", column: "todo" });
@@ -132,17 +142,20 @@ describe("groupByWorktree", () => {
     expect(groups.find((group) => group.kind === "unassigned")).toBeUndefined();
   });
 
-  it("uses a workspace group for a single acquired repo", () => {
+  it("uses a workspace group for a single acquired repo despite stale singular routing", () => {
     const workspaceTask = makeTask({
       id: "FN-9044",
+      worktree: "/ws/unrelated/.worktrees/stale-worktree",
       workspaceWorktrees: {
         "repo-a": { worktreePath: "/ws/repo-a/.worktrees/FN-9044", branch: "fusion/FN-9044" },
       },
     });
 
-    expect(groupByWorktree([workspaceTask], [workspaceTask], 2)[0]).toMatchObject({
-      kind: "workspace", repoCount: 1, label: "FN-9044",
-    });
+    const groups = groupByWorktree([workspaceTask], [workspaceTask], 2);
+    expect(groups).toEqual([expect.objectContaining({
+      id: "workspace:FN-9044", kind: "workspace", repoCount: 1, label: "FN-9044",
+    })]);
+    expect(groups.some((group) => group.label === "stale-worktree" || group.kind === "unassigned")).toBe(false);
   });
 
   it("keeps tasks without acquired workspace worktrees unassigned", () => {
@@ -156,17 +169,18 @@ describe("groupByWorktree", () => {
     })]);
   });
 
-  it("prefers a singular worktree for transient rows that contain both shapes", () => {
-    const transient = makeTask({
+  it("derives a multi-repository workspace label from the sorted acquired entries, never stale routing", () => {
+    const workspaceTask = makeTask({
       id: "FN-transient",
-      worktree: "/ws/.worktrees/single-worktree",
+      worktree: "/ws/.worktrees/unrelated-stale-worktree",
       workspaceWorktrees: {
-        "repo-a": { worktreePath: "/ws/repo-a/.worktrees/FN-transient", branch: "fusion/FN-transient" },
+        "repo-z": { worktreePath: "/ws/repo-z/.worktrees/acquired-z", branch: "fusion/FN-transient" },
+        "repo-a": { worktreePath: "/ws/repo-a/.worktrees/acquired-a", branch: "fusion/FN-transient" },
       },
     });
 
-    expect(groupByWorktree([transient], [transient], 2)).toEqual([expect.objectContaining({
-      id: "/ws/.worktrees/single-worktree", kind: "worktree", label: "single-worktree",
+    expect(groupByWorktree([workspaceTask], [workspaceTask], 2)).toEqual([expect.objectContaining({
+      id: "workspace:FN-transient", kind: "workspace", label: "acquired-a", repoCount: 2,
     })]);
   });
 

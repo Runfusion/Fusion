@@ -130,6 +130,19 @@ function fallbackProjectIdForRoot(rootDir: string): string {
  * kept for backward compatibility with scripts/docs that still set it. It
  * cannot force embedded mode when DATABASE_URL is set (external always wins).
  */
+export async function formatPostgresSchemaBackendBootError(err: unknown): Promise<string> {
+  const chain = describeErrorChain(err);
+  const encodingHint = /has no equivalent in encoding/i.test(chain)
+    ? " HINT: this embedded PostgreSQL cluster was created with a non-UTF-8 encoding inherited from the OS locale by an earlier Fusion version. It cannot be converted in place — stop Fusion, delete the embedded data directory (default: ~/.fusion/embedded-postgres/default), and start again so the cluster is recreated as UTF-8."
+    : "";
+  const { isWindowsBlockedNativeLibraryError, describeWindowsBlockedNativeLibraryError } =
+    await import("./embedded-lifecycle.js");
+  const blockedLibraryHint = isWindowsBlockedNativeLibraryError(chain)
+    ? describeWindowsBlockedNativeLibraryError(chain)
+    : "";
+  return `startup-factory: failed to initialize PostgreSQL schema backend: ${chain}${encodingHint}${blockedLibraryHint}`;
+}
+
 export const EMBEDDED_PG_ENV = "FUSION_EMBEDDED_PG";
 
 /**
@@ -869,20 +882,13 @@ export async function createTaskStoreForBackend(
     boot = await bootSchemaBackend(effectiveOptions);
     log.log(`startup phase backend.schemaBackend: ${Date.now() - schemaT0}ms`);
   } catch (err) {
-    const chain = describeErrorChain(err);
     /*
-    FNXC:PostgresEmbedded 2026-07-18-00:20:
-    Issue #2286: a cluster initdb'd by an earlier version on a non-UTF-8 OS
-    locale cannot store the UTF-8 schema SQL and cannot be converted in place.
-    Newly created clusters are forced to UTF-8 (DEFAULT_EMBEDDED_INITDB_FLAGS);
-    existing ones need a manual re-init, so say exactly that.
+    FNXC:PostgresEmbedded 2026-08-20-01:11:
+    Issue #3489 uses the same outer boot mapper as #2286's encoding guidance.
+    initdb wraps PostgreSQL's FATAL before this boundary, so retain the chain
+    while adding one actionable antivirus hint only for 4550/4551 signatures.
     */
-    const encodingHint = /has no equivalent in encoding/i.test(chain)
-      ? " HINT: this embedded PostgreSQL cluster was created with a non-UTF-8 encoding inherited from the OS locale by an earlier Fusion version. It cannot be converted in place — stop Fusion, delete the embedded data directory (default: ~/.fusion/embedded-postgres/default), and start again so the cluster is recreated as UTF-8."
-      : "";
-    throw new Error(
-      `startup-factory: failed to initialize PostgreSQL schema backend: ${chain}${encodingHint}`,
-    );
+    throw new Error(await formatPostgresSchemaBackendBootError(err));
   }
   let { connections } = boot;
   const {

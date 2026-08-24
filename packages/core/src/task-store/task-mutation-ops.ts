@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 import { createLogger } from "../process/logger.js";
 import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
 
@@ -19,7 +21,7 @@ import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate, TaskRecommendation, WorkspaceWorktreeEntry} from "../types.js";
+import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate, TaskRecommendation, WorkspaceWorktreeEntry, TaskRepositoryScope} from "../types.js";
 import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
@@ -28,6 +30,7 @@ import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
+import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, resolveActiveTaskWedgeEpisodeRow} from "../task-store/async/async-persistence.js";
 import {upsertArchivedTaskEntry} from "./async/async-archive-lineage.js";
 import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
@@ -43,10 +46,12 @@ import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async/a
 import {appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration} from "../async-stores/async-configuration-revision-store.js";
 import {readProjectConfig, writeProjectConfig} from "./async/async-settings.js";
 import {publishSettingsUpdated} from "./settings-ops.js";
+import {loadWorkspaceConfig} from "../git/git-repository.js";
 import { mergeRestoredProjectSettings } from "../config/settings-schema.js";
 import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
+import { invalidateSupersededRepositoryScopeReviews } from "../tasks/repository-scope.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -55,7 +60,7 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "modelPresetId", "modelProvider", "credentialInstanceId", "modelId",
       "validatorModelProvider", "validatorCredentialInstanceId", "validatorModelId",
       "planningModelProvider", "planningCredentialInstanceId", "planningModelId", "mergerModelProvider", "mergerCredentialInstanceId", "mergerModelId",
-      "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
+      "mergeRetries", "aiMergeReviewReconciliation", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "reviewConvergenceStage", "reviewConvergenceEscalationCount", "nextRecoveryAt",
       // FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8): this projection is a SECOND
       // copy of the slim column list (see getTaskSelectClauseImpl2). The IR pin, its node entry,
       // and the adoption stamp must appear in BOTH or a task read through this path reads as
@@ -65,8 +70,8 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
-      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope",
+      "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
@@ -451,6 +456,62 @@ export async function linkTaskRecommendationImpl(
   });
 }
 
+export async function normalizeWorkspaceTaskWorktreeMetadataImpl(
+  store: TaskStore,
+  id: string,
+): Promise<Task> {
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const outcome = await layer.transactionImmediate(async (tx) => {
+      /*
+      FNXC:WorkspaceRootRouting 2026-08-19-12:15:
+      A populated workspace configuration makes the singular task checkout fields stale routing
+      metadata. Clear those fields under the same project/task advisory transaction used by per-repo
+      merges, while leaving the JSON map untouched so concurrent acquisition or landing cannot lose a
+      sibling repository. The operation never inspects or mutates the filesystem.
+      */
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) throw new TaskNotFoundError(id);
+      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      const hasStaleSingularRouting = Boolean(
+        current.worktree
+        || current.branch
+        || current.executionStartBranch
+        || current.baseCommitSha,
+      );
+      if (!hasStaleSingularRouting) return { task: current, mutated: false };
+
+      const updatedAt = new Date().toISOString();
+      const [updatedRow] = await tx
+        .update(schema.project.tasks)
+        .set({
+          worktree: null,
+          branch: null,
+          executionStartBranch: null,
+          baseCommitSha: null,
+          updatedAt,
+        })
+        .where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer)))
+        .returning();
+      if (!updatedRow) throw new TaskNotFoundError(id);
+      return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), mutated: true };
+    });
+
+    if (outcome.mutated) {
+      /* FNXC:WorkspaceRootRouting 2026-08-19-12:15: sessionFile is a task.json-only resumable
+      handle. Reproject the row after the atomic singular-field clear so a root-bound legacy session
+      cannot be reopened on the next run. */
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome.task;
+  });
+}
+
 /*
 FNXC:TaskWedgeNotifications 2026-08-01-15:35:
 Resolution changes only the active episode status. The PostgreSQL compare-and-set
@@ -468,10 +529,33 @@ export async function mergeWorkspaceWorktreeEntryImpl(
   store: TaskStore,
   id: string,
   repoRelPath: string,
-  patch: Partial<WorkspaceWorktreeEntry>,
-  options: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean } = {},
+  patch: Partial<WorkspaceWorktreeEntry> | ((current: Task) => Promise<Partial<WorkspaceWorktreeEntry>>),
+  options: {
+    requireExistingEntry?: boolean;
+    clearSingularWorktree?: boolean;
+    validateBeforePersist?: (current: Task) => Promise<void>;
+  } = {},
 ): Promise<Task> {
   return store.withTaskLock(id, async () => {
+    let resolvedPatch: Partial<WorkspaceWorktreeEntry>;
+    if (typeof patch === "function") {
+      const callbackTask = await store.getTask(id, { includeDeleted: true });
+      if (callbackTask.deletedAt) throw new TaskDeletedError(id, callbackTask.deletedAt);
+      const callbackExisting = callbackTask.workspaceWorktrees?.[repoRelPath];
+      if (options.requireExistingEntry && !callbackExisting) return callbackTask;
+      /*
+      FNXC:WorkspaceWorktree 2026-08-20-07:08:
+      Filesystem creation, configured init commands, hydration, and secrets materialization must not
+      occupy a PostgreSQL transaction or one of the small runtime connection pool's sessions. The
+      in-process task mutex and durable repository-acquisition lease serialize preparation; the short
+      transaction below revalidates authoritative lifecycle state under the cross-process advisory
+      lock immediately before persisting the prepared entry.
+      */
+      resolvedPatch = await patch(callbackTask);
+    } else {
+      resolvedPatch = patch;
+    }
+
     const layer = store.asyncLayer!;
     const outcome = await layer.transactionImmediate(async (tx) => {
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
@@ -483,13 +567,27 @@ export async function mergeWorkspaceWorktreeEntryImpl(
       const workspaceWorktrees = current.workspaceWorktrees ?? {};
       const existing = workspaceWorktrees[repoRelPath];
       if (options.requireExistingEntry && !existing) return { task: current, mutated: false };
-
+      await options.validateBeforePersist?.(current);
+      /*
+      FNXC:WorkspaceWorktree 2026-08-20-07:08: Persist the prepared entry only after the authoritative
+      task row passes lifecycle revalidation under the database advisory lock. A cross-process move
+      that wins during filesystem preparation therefore blocks the row update instead of attaching a
+      late worktree to review, complete, or archived state.
+      */
       const updatedAt = new Date().toISOString();
       const [updatedRow] = await tx
         .update(schema.project.tasks)
         .set({
-          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...patch } },
-          ...(options.clearSingularWorktree ? { worktree: null, branch: null } : {}),
+          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
+          ...(options.clearSingularWorktree
+            ? {
+                worktree: null,
+                branch: null,
+                branchWriteOrigin: "engine" as const,
+                executionStartBranch: null,
+                baseCommitSha: null,
+              }
+            : {}),
           updatedAt,
         })
         .where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer)))
@@ -504,6 +602,184 @@ export async function mergeWorkspaceWorktreeEntryImpl(
       store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
     }
     return outcome.task;
+  });
+}
+
+/*
+FNXC:RepositoryScope 2026-08-20-23:07:
+Scope changes are a project-scoped read-modify-write under the task advisory lock. This updates only
+repository_scope, so an operator scope decision cannot overwrite concurrent per-repository acquisition
+or landing entries.
+*/
+export type TaskRepositoryScopeMutation = {
+  action: "add" | "remove" | "refuse";
+  repositories: string[];
+  reason: string;
+  actor: string;
+};
+
+export async function updateTaskRepositoryScopeImpl(
+  store: TaskStore,
+  id: string,
+  requestedScope: TaskRepositoryScope | TaskRepositoryScopeMutation | undefined,
+): Promise<Task> {
+  const configuredRepositories = (await loadWorkspaceConfig(store.getRootDir()))?.repos ?? [];
+  const isMutation = requestedScope !== undefined && "action" in requestedScope;
+  const requestedRepositories = requestedScope && "repositories" in requestedScope
+    ? requestedScope.repositories
+    : undefined;
+  const normalizedRepositories = requestedRepositories
+    ? [...new Set(requestedRepositories.map((repo) => repo.trim()).filter(Boolean))].sort()
+    : undefined;
+  if (normalizedRepositories && configuredRepositories.length > 0) {
+    const unknown = normalizedRepositories.filter((repo) => !configuredRepositories.includes(repo));
+    if (unknown.length > 0) throw new Error(`Unknown workspace repository scope: ${unknown.join(", ")}`);
+  }
+  /*
+  FNXC:RepositoryScope 2026-08-21-01:53:
+  Scope intent shares planning lifecycle serialization with plan confirmation. Acquire that lock
+  before the task/advisory transaction so a delta always merges the current scope and appends its
+  event instead of restoring a stale client snapshot over a planner or executor extension.
+  */
+  return store.withPlanningLifecycleLock(id, () => store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const outcome = await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) throw new TaskNotFoundError(id);
+      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      const hasLandedRepository = Object.values(current.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
+      const [pendingIntent] = await tx.select({ taskId: schema.project.workspaceLandIntents.taskId })
+        .from(schema.project.workspaceLandIntents)
+        .where(and(
+          eq(schema.project.workspaceLandIntents.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
+          eq(schema.project.workspaceLandIntents.taskId, id),
+          eq(schema.project.workspaceLandIntents.status, "pending"),
+        ))
+        .limit(1);
+      /*
+      FNXC:RepositoryScope 2026-08-21-00:12:
+      Repository intent becomes immutable once a land intent is pending or any repository has
+      landed. This transaction-level fence prevents an already-acquired clean checkout from
+      changing review or landing obligations after integration begins.
+      */
+      const now = new Date().toISOString();
+      const currentRepositories = current.repositoryScope?.repositories ?? [];
+      const mutation = isMutation ? requestedScope as TaskRepositoryScopeMutation : undefined;
+      const nextRepositories = mutation?.action === "add"
+        ? [...new Set([...currentRepositories, ...normalizedRepositories!])].sort()
+        : mutation
+          ? currentRepositories.filter((repository) => !normalizedRepositories!.includes(repository))
+          : normalizedRepositories;
+      const repositoriesChanged = JSON.stringify([...currentRepositories].sort()) !== JSON.stringify(nextRepositories ?? []);
+      if ((pendingIntent || hasLandedRepository) && repositoriesChanged) {
+        throw new Error(`Repository scope for ${id} cannot change after workspace landing has started`);
+      }
+      const priorExtensions = current.repositoryScope?.extensions ?? [];
+      const mutationEvents = mutation
+        ? normalizedRepositories!.map((repository) => ({
+            repository,
+            requestedAt: now,
+            requestedBy: mutation.actor,
+            reason: mutation.reason,
+            status: mutation.action === "refuse" ? "refused" as const : "accepted" as const,
+            ...(mutation.action === "refuse" ? { refusedAt: now, refusedBy: mutation.actor, refusalReason: mutation.reason } : {}),
+          }))
+        : [];
+      const replacement = isMutation
+        ? {
+            ...(current.repositoryScope ?? {}),
+            repositories: nextRepositories ?? [],
+            state: "confirmed" as const,
+            confirmedAt: now,
+            confirmedBy: mutation!.actor === "operator" ? "operator" as const : current.repositoryScope?.confirmedBy,
+            extensions: [...priorExtensions, ...mutationEvents],
+          }
+        : requestedScope;
+      /*
+      FNXC:RepositoryScope 2026-08-21-02:48:
+      A repository-scope mutation invalidates the prior review episode. Never carry approval
+      evidence or a remediation target into a new revision: landing may only accept fingerprints
+      reviewed against the current confirmed repository set, and remediation must re-evaluate it.
+      */
+      const stateChanged = (current.repositoryScope?.state ?? "proposed") !== (replacement?.state ?? "proposed");
+      const scopeChanged = repositoriesChanged || stateChanged;
+      /*
+      FNXC:RepositoryScope 2026-08-21-19:25:
+      FN-120 treats repository intent as a semantic set plus confirmation state. Republishing the
+      same normalized confirmed set must not churn its generation or erase a current approval;
+      only a real intent/state transition creates a new review episode.
+      */
+      const normalized = nextRepositories && replacement && {
+        ...replacement,
+        repositories: nextRepositories,
+        revision: scopeChanged
+          ? Math.max((current.repositoryScope?.revision ?? 0) + 1, replacement.revision ?? 0)
+          : (current.repositoryScope?.revision ?? replacement.revision ?? 1),
+        ...(scopeChanged
+          ? { reviewEvidence: undefined, reviewRemediation: undefined }
+          : { reviewEvidence: current.repositoryScope?.reviewEvidence, reviewRemediation: current.repositoryScope?.reviewRemediation }),
+      };
+      const [updatedRow] = await tx
+        .update(schema.project.tasks)
+        .set({
+          repositoryScope: normalized ?? null,
+          workflowStepResults: scopeChanged
+            ? invalidateSupersededRepositoryScopeReviews(current.workflowStepResults, normalized?.revision)
+            : current.workflowStepResults,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer)))
+        .returning();
+      if (!updatedRow) throw new TaskNotFoundError(id);
+      return store.rowToTask(store.pgRowToTaskRow(updatedRow));
+    });
+    await store.writeTaskJsonFile(store.taskDir(id), outcome);
+    if (store.isWatching) store.taskCache.set(id, { ...outcome });
+    store.emitTaskLifecycleEventSafely("task:updated", [outcome]);
+    return outcome;
+  }));
+}
+
+/*
+FNXC:WorkspaceFinalization 2026-08-21-09:09:
+Workspace Code Review remediation is task-owned state guarded by the current repository-scope
+revision. The CAS prevents a late reviewer from restoring a stale repository target after an
+operator changes scope; it updates only repository_scope and cannot clobber worktree land state.
+*/
+export async function updateWorkspaceReviewStateImpl(
+  store: TaskStore,
+  id: string,
+  expectedScopeRevision: number,
+  reviewRemediation: TaskRepositoryScope["reviewRemediation"] | null,
+): Promise<{ task: Task; updated: boolean }> {
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const outcome = await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) throw new TaskNotFoundError(id);
+      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      if (current.repositoryScope?.revision !== expectedScopeRevision) return { task: current, updated: false };
+      const repositoryScope = {
+        ...current.repositoryScope,
+        ...(reviewRemediation ? { reviewRemediation } : { reviewRemediation: undefined }),
+      };
+      const [updatedRow] = await tx.update(schema.project.tasks).set({
+        repositoryScope,
+        updatedAt: new Date().toISOString(),
+      }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer))).returning();
+      if (!updatedRow) throw new TaskNotFoundError(id);
+      return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), updated: true };
+    });
+    if (outcome.updated) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
   });
 }
 
@@ -778,7 +1054,7 @@ export async function setCompletionHandoffAcceptedMarkerImpl(store: TaskStore, t
     await recordCompletionHandoffAsync(layer.db, taskId, opts.source, opts.acceptedAt);
     const marker = await getCompletionHandoffMarkerAsync(layer.db, taskId);
     if (!marker) throw new Error(`Failed to set completion handoff marker for ${taskId}`);
-    void store.recordRunAuditEvent({
+    void emitBoundedRunAudit(store, {
       taskId,
       agentId: "system",
       runId: `completion-handoff:${taskId}:${Date.now()}`,
@@ -786,12 +1062,7 @@ export async function setCompletionHandoffAcceptedMarkerImpl(store: TaskStore, t
       mutationType: "task:completion-handoff-accepted",
       target: taskId,
       metadata: { taskId, acceptedAt: marker.acceptedAt, source: marker.source },
-    }).catch((err) => {
-      storeLog.warn("completion-handoff audit write failed", {
-        taskId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    }, { log: { warn: (detail) => storeLog.warn("completion-handoff audit write failed", { taskId, detail }) } });
     return marker as CompletionHandoffMarker;
 }
 
@@ -827,7 +1098,7 @@ export async function reconcileLegacyAutoMergeStampsImpl(store: TaskStore, optio
       if (store.isWatching) store.taskCache.set(current.id, { ...current });
       store.emitTaskLifecycleEventSafely("task:updated", [current]);
 
-      void store.recordRunAuditEvent({
+      void emitBoundedRunAudit(store, {
         taskId: current.id,
         agentId: "system",
         runId: `legacy-auto-merge-stamp-clear-${current.id}-${Date.now()}`,
@@ -914,6 +1185,15 @@ export async function cleanupBranchForTaskImpl(store: TaskStore, task: Task): Pr
       } catch {
         // Skip branches whose names would be unsafe to pass through a shell.
         // A malformed stored value should not become a command-injection vector.
+        continue;
+      }
+      /*
+      FNXC:BranchDeletionProvenance 2026-08-20-03:39:
+      A task branch written by an operator remains operator data even when its spelling
+      resembles Fusion's namespace. Keep the generated fallback only when the shared
+      provenance classifier proves this candidate is Fusion-owned.
+      */
+      if (!isFusionDeletableBranch(task, branch)) {
         continue;
       }
       const verify = await store.runGitCommand(`git rev-parse --verify "${branch}"`);

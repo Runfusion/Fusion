@@ -28,7 +28,11 @@ Fusion supports an opt-in Linux sandbox backend using `bubblewrap` (`bwrap`).
 
 Port 4040 is reserved for the production dashboard. Sandbox policy rejects `allowedPorts` containing `4040` unless `allowPort4040Override=true` is explicitly set.
 
-### Fusion workflow defaults
+### Fusion task sessions
+
+Task sessions resolve the backend with prompt override, project setting, then the native default. When an isolating backend is selected, the declared task boundary is its writable root; workspace tasks use their one task directory, and linked repository worktrees additionally receive the Git administration paths required for commits. The agent `bash` tool and streaming verification both run through that backend. The JavaScript boundary remains active underneath as portable defense in depth when the backend is native or falls back to native.
+
+Defaults remain unchanged: sandboxing is experimental, `backend` defaults to `native`, and `failureMode` defaults to `fail-hard` because host namespace capability is not universal.
 
 Use `fusionWorktreePreset(ctx)` to get the standard Fusion-friendly defaults:
 

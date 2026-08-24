@@ -37,8 +37,16 @@ import { attachAgentLinkSync, type AgentLinkSyncOutcome } from "../agents/task-a
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live agent-link E2E: a finished card must release its agent", () => {
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-23-22:20:
+  FN-8764 (eaadd153b1) made `AgentStore.init()` provision the built-in workflow-role agents, and
+  those backend writes are project-owned: an unbound partition is rejected rather than silently
+  sharing the legacy empty-string one. Bind the harness to a project so the real AgentStore this
+  E2E depends on can initialize at all.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_agent_link_e2e",
+    projectId: "fusion-agent-link-e2e",
   });
 
   let agentStore: AgentStore;

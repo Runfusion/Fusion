@@ -42,6 +42,8 @@ version of this file was falsified: 141/335 gate tests failed on missing
 etc. pulled in by production modules, not test files).
 */
 
+export { resolveTaskOutputLanguage, isTaskOutputLanguage } from "./ai/ai-output-language.js";
+export type { TaskOutputLanguage, ResolvedTaskOutputLanguage } from "./ai/ai-output-language.js";
 export { COLUMNS, DEFAULT_COLUMN, isColumn, normalizeColumnId, COLUMN_LABELS, COLUMN_DESCRIPTIONS, VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalSettingsKey, isProjectSettingsKey, isMergeRequestContractShadowEnabled, resolvePersistAgentThinkingLog, THINKING_LEVELS, ANTHROPIC_AUTH_PREFERENCES, THEME_MODES, COLOR_THEMES, SUPPORTED_LOCALES, DEFAULT_LOCALE, isLocale, AGENT_PERMISSIONS, PERMANENT_AGENT_ACTION_CATEGORIES, AGENT_PERMISSION_POLICY_ACTION_CATEGORIES, AGENT_PROVISIONING_APPROVAL_MODES, SANDBOX_PROVISIONING_APPROVAL_MODES, AGENT_PERMISSION_POLICY_PRESET_IDS, LEGACY_AGENT_PERMISSION_POLICY_ACTION_CATEGORY_ALIASES, APPROVAL_REQUEST_STATUSES, APPROVAL_REQUEST_AUDIT_EVENT_TYPES, normalizeApprovalRequestActionCategory, isValidApprovalRequestTransition, agentToConfigSnapshot, diffConfigSnapshots, isEphemeralAgent, hasAgentIdentity, CheckoutConflictError, DEFAULT_HEARTBEAT_PROCEDURE_PATH, getDefaultHeartbeatProcedurePath, EXECUTION_MODES, DEFAULT_EXECUTION_MODE, PLANNER_OVERSIGHT_LEVELS, DEFAULT_PLANNER_OVERSIGHT_LEVEL, TASK_PRIORITIES, DEFAULT_TASK_PRIORITY, WORKFLOW_WORK_ITEM_KINDS, WORKFLOW_WORK_ITEM_STATES, HIGH_FANOUT_BLOCKER_TODO_THRESHOLD, STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS, DASHBOARD_USER_ID, normalizeMessageParticipant, validateMessageMetadata, resolveEphemeralTaskCreationPolicy, validateDockerNodeConfig, sanitizeDockerNodeConfigForResponse, normalizeMergeIntegrationWorktreeMode, normalizeMergeAdvanceAutoSyncMode, DEFAULT_GITLAB_API_BASE_URL, DEFAULT_GITLAB_INSTANCE_URL, resolveGitlabConfig, resolveGitlabEnabled, MERGE_ADVANCE_AUTO_SYNC_MODES, normalizeMergeConflictStrategy, normalizeMergeStrategyOverlapBehavior, normalizePostMergeAuditMode, POST_MERGE_AUDIT_MODES, normalizeMergeAuditAutoRecovery, MERGE_AUDIT_AUTO_RECOVERY_MODES, normalizeMergerMode, MERGER_MODES, normalizeAutoRecovery, AUTO_RECOVERY_MODES, buildResearchDocumentKey, REPO_OVERRIDE_RE, SHARED_STATE_SNAPSHOT_VERSION, sanitizeCliAgentSettings, sanitizeCliAgentsSettings, sanitizeMcpServers, CLI_AGENT_ADAPTER_IDS, CLI_AGENT_AUTONOMY_MODES, isMcpSecretRef, OVERSEER_INTERVENTION_MUTATION } from "./types.js";
 export type { Column, ColumnId, IssueInfo, IssueState, TaskSourceIssue, TaskGitLabTracking, TaskGitLabTrackedItem, GitLabTrackedItemKind, PrInfo, PrConflictState, PrConflictDiagnostics, PrCheckState, PrCheckStatus, PrStatus, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, BranchGroupPrState, Task, TaskReleaseGateVerdict, TaskTokenUsage, TaskTokenUsagePerModel, TaskAttachment, TaskComment, TaskCommentInput, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, TaskDocumentWithTask, ArtifactType, Artifact, ArtifactCreateInput, ArtifactWithTask, NativeStructureRef, NativeStructureOpenTarget, NativeStructurePreviewPayload, NativeStructureUnavailablePayload, NativeStructurePreviewResult, TaskCreateInput, TaskSource, SourceType, TaskDetail, RetrySummary, InboxTask, TodoList, TodoItem, TodoListCreateInput, TodoListUpdateInput, TodoItemCreateInput, TodoItemUpdateInput, TodoListWithItems, AgentLogEntry, AgentLogType, AgentRole, BoardConfig, DistributedTaskIdReserveInput, DistributedTaskIdReserveResult, DistributedTaskIdCommitInput, DistributedTaskIdCommitResult, DistributedTaskIdAbortInput, DistributedTaskIdAbortResult, DistributedTaskIdStateInput, DistributedTaskIdStateResult, AutostashOrphanRecord, AutostashOutcome, MergeDetails, MergeResult, MergeIntegrationWorktreeMode, MergeAdvanceAutoSyncMode, MergeConflictStrategy, CanonicalMergeConflictStrategy, MergeStrategyOverlapBehavior, PostMergeAuditMode, MergeAuditAutoRecoveryMode, MergerMode, MergerSettings, AutoRecoveryMode, AutoRecoveryFailureClass, AutoRecoverySettings, DirectMergeCommitStrategy, Settings, GlobalSettings, ProjectSettings, ReportMode, ReportActionType, ReportTarget, SecretsEnvConfig, WebSearchBackend, ResearchEnabledSources, ResearchGlobalDefaults, ResearchProjectLimits, ResearchProjectSettings, SandboxBackendName, SandboxFailureMode, SandboxPolicy, SandboxProjectSettings, EvalFollowUpPolicy, EvalProjectSettings, ResolvedEvalSettings, SettingsScope, DaemonTokenSettings, TaskStep, StepStatus, TaskLogEntry, RunMutationContext, ActivityLogEntry, ActivityEventType, ThinkingLevel, AnthropicAuthPreference, ThemeMode, ColorTheme, Locale, ExecutionMode, PlannerOversightLevel, TaskPriority, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, MergeRequestState, MergeRequestRecord, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, HandoffEvidence, HandoffToReviewOptions, UnavailableNodePolicy, OwningNodeHandoffPolicy, PlanningQuestion, PlanningSummary, PlanningResponse, PlanningQuestionType, ArchivedTaskEntry, BatchStatusRequest, BatchStatusResponse, BatchStatusEntry, BatchStatusResult, GithubIssueAction, ModelPreset, WorkflowStep, WorkflowStepMode, WorkflowStepGateMode, WorkflowStepPhase, WorkflowReviewKind, WorkflowStepInput, WorkflowStepResult, WorkflowStepTemplate, Agent, OrgTreeNode, AgentState, AgentDetail, AgentCreateInput, AgentUpdateInput, AgentApiKey, AgentApiKeyCreateResult, AgentCapability, AgentPromptTemplate, AgentPromptsConfig, AgentPermission, PermanentAgentActionCategory, PermanentAgentSensitiveActionCategory, PermanentAgentGatingContext, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermissionPolicyToolRules, AgentPermissionPolicyActionCategory, AgentProvisioningApprovalMode, SandboxProvisioningApprovalMode, LegacyAgentPermissionPolicyActionCategory, ApprovalRequestActionCategoryInput, ApprovalRequestActionCategory, AgentPermissionPolicyDisposition, AgentPermissionPolicyPresetId, ApprovalRequestStatus, ApprovalRequestAuditEventType, ApprovalRequestActorSnapshot, ApprovalRequestTargetAction, ApprovalRequestAuditEvent, ApprovalRequest, ApprovalRequestCreateInput, ApprovalRequestDecisionInput, ApprovalRequestCompletionInput, ApprovalRequestListInput, TaskAssignSource, AgentAccessState, AgentHeartbeatConfig, AgentBudgetConfig, AgentBudgetStatus, InstructionsBundleConfig, MessageResponseMode, AgentHeartbeatEvent, AgentHeartbeatRun, BlockedStateSnapshot, HeartbeatInvocationSource, AgentTaskSession, AgentRating, AgentRatingSummary, AgentRatingInput, AgentConfigSnapshot, RevisionFieldDiff, AgentConfigRevision, AgentStats, ReflectionTrigger, ReflectionMetrics, AgentReflection, AgentPerformanceSummary, NtfyNotificationEvent, NotificationEvent, NotificationPayload, NotificationProviderConfig, CustomProvider, SteeringComment, ParticipantType, MessageType, Message, MessageCreateInput, MessageFilter, MessageMetadata, ProposedTaskMetadata, EphemeralTaskCreationPolicy, MessageReplyReference, MailKind, MailReportSection, MailReport, Mailbox, CheckoutLease, CheckoutClaimPrecondition, TaskClaimRow, CentralClaimStore, RunAuditDomain, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, AgentMemoryInclusionMode, HeartbeatPromptTemplate, HeartbeatScopeDisciplineMode, WorktrunkSettings, WorktrunkOnFailure, TaskBranchContext, CliAgentSettings, McpSecretRef, McpSensitiveValue, McpStdioTransport, McpSseTransport, McpStreamableHttpTransport, McpTransport, McpServerDefinition, McpServersSettings, GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabConfigInput, GitlabAuthTokenType, PlannerOversightStage, PlannerInterventionAction, PlannerInterventionOutcome, PlannerInterventionSourceLink, PlannerInterventionEntry, BackupSettingsMigrationCandidate, BackupSettingsMigrationConflict } from "./types.js";
 export { AGENT_VALID_TRANSITIONS, DUPLICATE_OF_METADATA_KEY, REPORT_ATTACHMENT_SOURCE, assertNotWorkspaceTaskMerge, isWorkspaceTask, WorkspaceTaskMergeError, normalizeAgentRoles } from "./types.js";
@@ -50,14 +52,22 @@ export {
   sanitizeBranchSegment,
   derivePerTaskBranchName,
   deriveAutoTaskBranchName,
+  BranchWriteProvenanceError,
   isValidBranchGroupBranchName,
   validateBranchGroupBranchName,
+  isValidTaskBranchName,
+  validateTaskBranchName,
+  classifyTaskBranchOrigin,
+  isFusionDeletableBranch,
+  isOperatorAttachEligibleBranch,
+  resolveTaskPrHeadBranch,
   filterTasksByBranchGroup,
 } from "./branch/branch-assignment.js";
 export type {
   EntryPointAssignmentMode,
   EntryPointBranchAssignmentInput,
   EntryPointBranchAssignment,
+  TaskBranchOrigin,
 } from "./branch/branch-assignment.js";
 export { customProviderRegistryKey } from "./ai/custom-provider-key.js";
 export {
@@ -80,6 +90,12 @@ export {
 export type { OpenAiCodexProviderRegistration } from "./ai/openai-models.js";
 export { detectImageMimeFromBytes } from "./i18n/image-mime.js";
 export type { DetectedImageMime } from "./i18n/image-mime.js";
+export { resolveUpdateAutomationSettings } from "./config/update-automation.js";
+export {
+  EXTERNALLY_MANAGED_UPDATES_ENV,
+  EXTERNALLY_MANAGED_UPDATE_MESSAGE,
+  resolveUpdatesExternallyManaged,
+} from "./config/update-management.js";
 export { redactSecrets } from "./secrets/redact-secrets.js";
 export {
   evaluatePromptCondition,
@@ -279,6 +295,7 @@ export {
   isWorkflowOptionalGroupEnabled,
 } from "./workflows/workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional-steps.js";
+export { resolveRequiredPreMergeStepIds } from "./merge/required-pre-merge-steps.js";
 export {
   applyPromptOverridesToIr,
   enumeratePromptBearingWorkflowNodes,
@@ -318,7 +335,9 @@ export {
 export {
   ensureGitRepositoryForProjectPath,
   GitRepositoryInitializationError,
+  WorkspaceRepoValidationError,
   detectWorkspaceRepos,
+  addWorkspaceRepo,
   loadWorkspaceConfig,
   saveWorkspaceConfig,
   removeWorkspaceConfig,
@@ -332,6 +351,7 @@ export type {
   GitRepositoryEnsureOutcome,
   EnsureGitRepositoryOptions,
   WorkspaceConfig,
+  WorkspaceRepoValidationReason,
   WorkspaceModeToggleOps,
   WorkspaceModeToggleResult,
 } from "./git/git-repository.js";
@@ -448,7 +468,7 @@ export {
 } from "./plugins/plugin-gate-verdict.js";
 export type { PluginGateVerdict, ColumnPluginGate } from "./plugins/plugin-gate-verdict.js";
 // ── U6: workflow capacity (WIP) resolution shared by store + sweep ───────────
-export { resolveColumnCapacity, DEFAULT_WORKFLOW_POOL_ID, resolveCapacityPoolId, resolveWorktreeCapacityLimit} from "./workflows/workflow-capacity.js";
+export { resolveColumnCapacity, DEFAULT_WORKFLOW_POOL_ID, resolveCapacityPoolId, resolveWorktreeCapacityLimit, resolveMaxConcurrentSetting, resolveEffectiveConcurrency, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_WORKTREES } from "./workflows/workflow-capacity.js";
 export type { ColumnCapacity } from "./workflows/workflow-capacity.js";
 // ── U5: workflow lifecycle reconciliation (switch / edit / delete) ───────────
 export {
@@ -622,12 +642,20 @@ export {
 } from "./db/archive-worktree-disposer.js";
 export {
   disposeTaskBeforeMove,
+  disposeTaskBeforeReset,
   getTaskMoveDisposer,
+  getTaskResetDisposer,
   registerTaskMoveDisposer,
+  registerTaskResetDisposer,
   type TaskMoveDisposer,
+  type TaskResetDisposer,
   type TaskMoveDisposalInput,
   type TaskMoveSource,
 } from "./tasks/task-move-disposer.js";
+export {
+  __setResetPublicationFailureForTesting,
+  resetTaskPublicationImpl,
+} from "./task-store/reset-lifecycle.js";
 export {
   acquireWorktreePathReservation,
   withWorktreePathReservation,
@@ -1067,7 +1095,12 @@ export { getPrimaryPrInfo, taskHasManualOpenPullRequest } from "./tasks/task-hel
 export {
   collectLandedMemberReviewAdvisories,
   getTaskMergeBlocker,
+  isPreMergeStepsNotRunBlocker,
+  PreMergeStepsNotRunError,
+  PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
   getTaskHardMergeBlocker,
+  getMergeConfirmedFinalizationBlocker,
+  getUnfinishedStepTitles,
   REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   MERGE_CONFIRMED_TRANSIENT_STATUSES,
   clearMergeConfirmedTransientStatus,
@@ -1133,6 +1166,8 @@ export {
   resolveConsecutiveToolFailureRetryBackoffMs,
   resolveConsecutiveToolFailureThreshold,
   resolveExecutorEscalationTarget,
+  resolveReviewConvergenceEscalationTarget,
+  resolveReviewArbitrationTarget,
 } from "./tasks/in-review-stall.js";
 export type { ExecutorEscalationTarget, InReviewStallSignal, InReviewStallCode, ProviderErrorClassification } from "./tasks/in-review-stall.js";
 export {
@@ -1608,6 +1643,8 @@ export {
 export type {
   TaskPrioritySortable,
   TaskColumnSortable,
+  TaskColumnSortMode,
+  ColumnSortMode,
   DoneColumnSortMode,
   DisplayColumnSortOptions,
   BuildUnblockWeightMapOptions,
@@ -1904,6 +1941,7 @@ export {
   readProjectMemoryWithBackend,
   searchProjectMemory,
   getProjectMemory,
+  buildProactiveMemoryCueBlock,
   resolveMemoryInstructionContext,
   type MemoryInstructionContext,
 } from "./memory/project-memory.js";
@@ -1956,14 +1994,67 @@ export {
   readMemory,
   writeMemory,
   memoryExists,
+  captureMemory,
   MEMORY_BACKEND_SETTINGS_KEYS,
   DEFAULT_MEMORY_BACKEND,
   isQmdAvailable,
 } from "./memory/memory-backend.js";
 
-export { MemoryBackendError } from "./memory/memory-backend.js";
+export {
+  MemoryBackendError,
+  type MemoryBackendErrorCode,
+} from "./memory/memory-backend-error.js";
 
-export type { MemoryBackendCapabilities, MemoryFileInfo, MemoryGetOptions, MemoryGetResult, MemorySearchOptions, MemorySearchResult } from "./memory/memory-backend.js";
+// FNXC:StashBackend 2026-08-13-16:35: (RUFU-068) expose the Stash backend.
+export {
+  StashMemoryBackend,
+  DEFAULT_STASH_URL,
+  // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 recall + delete-sync helpers.
+  normalizeStashSearchQuery,
+  queryStashEvents,
+  deleteStashChatSession,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk archival delete-sync helpers.
+  DEFAULT_STASH_BULK_MAX_PAGES,
+  deleteStashChatSessions,
+  bulkDeleteStashChatSessions,
+} from "./memory/memory-backend-stash.js";
+export type {
+  StashEvent,
+  StashHttpMethod,
+  StashHttpClient,
+  StashEventQueryFilters,
+  StashChatSessionDeleteResult,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk delete-sync types.
+  StashBulkChatSessionDeleteResult,
+  StashBulkChatSessionSyncSummary,
+  StashBulkDeleteStore,
+} from "./memory/memory-backend-stash.js";
+
+// FNXC:RUFU121StashSettingsInCore 2026-08-18-19:53: (RUFU-121) Stash settings/secret
+// resolution moved from @fusion/engine into core (dashboard delete-sync consumer).
+export {
+  STASH_SECRET_KEY,
+  STASH_SECRET_SCOPE,
+  resolveStashMemorySettings,
+} from "./memory/stash-settings.js";
+export type {
+  MemoryBackendSettings,
+  StashSecretsReader,
+} from "./memory/stash-settings.js";
+
+export type {
+  MemoryBackendCapabilities,
+  MemoryFileInfo,
+  MemoryGetOptions,
+  MemoryGetResult,
+  MemorySearchOptions,
+  MemorySearchResult,
+  MemoryCaptureEvent,
+  MemoryCaptureResult,
+  MemoryCaptureEventType,
+  // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 write() identity meta.
+  MemoryWriteIdentity,
+} from "./memory/memory-backend.js";
 
 export {
   agentDailyMemoryPath,
@@ -2336,6 +2427,22 @@ export {
 } from "./secrets/secrets-sync-passphrase.js";
 export { suggestTaskPrefix } from "./tasks/task-prefix.js";
 /*
+FNXC:WorkspaceWorktree 2026-08-20-02:45:
+The engine-core gate barrel must expose the shared workspace worktree layout helpers because engine path resolution imports them at runtime.
+*/
+export {
+  WORKSPACE_GROUP_MARKER_FILENAME,
+  sanitizePathSegment,
+  assertWorkspaceRepoRelPath,
+  workspaceWorktreeGroupSegment,
+  workspaceRepoSegment,
+  resolveWorktreesDirLayout,
+  resolveWorkspaceTaskWorktreeDir,
+  resolveWorkspaceRepoWorktreePath,
+  isLegacyWorkspaceWorktreeLayout,
+} from "./tasks/worktree-layout.js";
+export type { WorkspaceWorktreeContext } from "./tasks/worktree-layout.js";
+/*
 FNXC:WorkflowStepResults 2026-07-19-01:00:
 Keep this gate-safe barrel's workflow-step-results re-exports in SYNC with the main barrel (index.ts). The `engine-core` vitest project builds its @fusion/core from THIS file (scripts/build-engine-core-gate-bundle.mjs), so any lease/step-result export present in index.ts but missing here resolves to `undefined` ONLY under engine-core — which is exactly how U3's `classifyReviewLease` went missing and threw "classifyReviewLease is not a function" on every defaultOn Plan Review run in that project (caught by task-pipeline-smoke). When adding an export to the index.ts workflow-step-results block, add it here too.
 */
@@ -2347,6 +2454,12 @@ export {
   isOpenWorkflowReviewFinding,
   normalizeSupersededFindingIds,
   applySupersededFindingIds,
+  applySupersededPriorAttemptFindingIds,
+  archiveTerminalWorkflowStepFailures,
+  archiveArbitratedWorkflowStepFailure,
+  isArchivedRemediationCarrier,
+  collectDisputedFindings,
+  closeUnrebuttedDisputedFindings,
   MAX_WORKFLOW_REVIEW_FINDINGS,
   WORKFLOW_REVIEW_FINDING_SEVERITIES,
   WORKFLOW_REVIEW_FINDING_RESOLUTIONS,
@@ -2356,6 +2469,7 @@ export {
   makeReviewLeaseRecord,
   isTerminalStepResult,
   type ReviewLeaseDisposition,
+  type ArbitrationFailureFence,
 } from "./workflows/workflow-step-results.js";
 export { PLAN_REVIEW_COMPLETENESS_POLICY } from "./agents/planning-review-policy.js";
 /*

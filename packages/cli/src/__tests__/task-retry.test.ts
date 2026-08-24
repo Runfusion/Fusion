@@ -72,6 +72,8 @@ pgTest("runTaskRetry", () => {
       error: "Refusing to start coding agent in missing worktree: /tmp/fusion-missing-worktree",
       worktree: "/tmp/fusion-missing-worktree",
       branch: `fusion/${task.id}`,
+      // FNXC:CliTests 2026-08-23-16:14: FN-107 requires branchWriteOrigin provenance on every branch write; this engine-simulated fixture predates that guard.
+      branchWriteOrigin: "engine" as const,
       sessionFile: "/tmp/fusion-session.json",
       steps: [{ name: "implemented", status: "done" }, { name: "fix", status: "pending" }],
       worktreeSessionRetryCount: 3,

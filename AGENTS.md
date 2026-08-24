@@ -210,6 +210,40 @@ FNXC:TestFlakeRegister 2026-08-01-07:00: Issue #2862 recorded three suite-only P
 - Motivating incident for UI affordances: the workflow-row drop-down arrow removal took three tasks (FN-6115 → FN-6118 → FN-6123) because the affordance rendered in two components and mobile kept an empty 36×36 `btn-icon` button shell.
 - If a regression test only proves the exact reported case, it is incomplete; extend it until the invariant holds across all known surfaces.
 
+### Standing Rule: Tests Assert Behavior, Never Source Text Or Comments
+
+**A test may never assert that a comment exists.** Not an `FNXC:` block, not a date stamp, not prose lifted from a source or CSS file. Comments are documentation; asserting them tests nothing a user, caller, or operator can observe.
+
+This is not a style preference — it is a rule this repo's own conventions make self-defeating. The FNXC convention above tells authors to *keep these comments updated as requirements change*. A test pinning one guarantees a future false failure, and the cheapest way to make that failure go away is the worst possible action: **re-adding a comment to shipped source purely to satisfy a test.**
+
+**Measured 2026-08-23.** `grok-runtime-bootstrap.test.ts` asserted `runTaskMerge`'s body contained the literal `FNXC:GrokCliRouting 2026-07-15-10:17`. FN-9167 legitimately rewrote that function and dropped the block while leaving the behavior intact. The test went red, and the fix applied was to restore the comment in `packages/cli/src/commands/task.ts` — a comment returned to the product not because it documented anything true, but to appease a test. Four more such assertions sat in the dashboard's CSS tests (`NewTaskModal`, `FloatingWindow`, `TaskDetailModal.responsive-and-dependencies`, `CommandCenter.tablet-layout`), each beside a real assertion and each adding nothing.
+
+What to do instead, in order of preference:
+1. **Assert the behavior** the comment describes: the rendered style, the computed value, the observable outcome, the state after the action.
+2. **Assert the code construct** if the invariant is genuinely structural — `expect(body).not.toContain("mergePluginRunner")` is a real guard; `expect(body).toContain("FNXC:…")` is not.
+3. **Delete the assertion.** If nothing behavioral or structural is behind it, it was never guarding anything.
+
+**Boundary — this rule does not touch code-construct guards.** Source scans that enforce call-site allowlists and architectural ratchets (`engine-no-blocking-shellout`, `user-configured-command-no-execsync`, `vi-mock-specifiers-resolve`, the durable-write and emit-surface inventories, `legacy-tombstones`, `lazy-loaded-views-docs`) assert code structure, are mandated elsewhere in this document, and stay. The line is: **prose, comments, and date stamps are never a test subject; code constructs may be.**
+
+Enforced by `scripts/check-no-comment-assertions-in-tests.mjs`, which runs in `pretest`, `pretest:full`, and `test:gate:static`. It flags the unambiguous case (an `FNXC:` stamp inside an assertion matcher); an earlier draft that also matched `/*` produced 24 false positives and zero true ones, because a regex cannot tell comment prose from a path glob. The rest of this rule is enforced by review.
+
+### Standing Rule: A Behavior Change Owns Every Test That Asserts The Old Behavior
+
+**Changing behavior is not done until the tests that encoded the old behavior are updated or deleted — in the same change.** This is not the same rule as "keep the tests green": targeted verification runs the tests for the files you touched, and the stale assertions are almost always in files you did not touch, so a green targeted run is not evidence that no test still encodes the behavior you just changed.
+
+Before finishing a change that alters, gates, or removes behavior, actively search for what encodes the old contract:
+
+- **You added a guard, validation, or refusal** (a new required field, a new blocker, a stricter door). Search for the FIXTURES that will now be refused. They will not be in your file scope. Grep for the construct the guard rejects — a `createTask({ branch` without provenance, a task fixture with no `enabledWorkflowSteps` — and fix each fixture to state its intent explicitly.
+- **You removed a feature.** Delete its tests. A test asserting a deliberately removed contract guards nothing, and "fixing" it later means re-adding the removed behavior. Grep for the removed symbol, prompt string, flag, or route.
+- **You changed an order, a default, a constant, or a prompt.** Grep for the literal. Topology lists, prompt-content assertions, and snapshot fixtures live far from the code they describe. Prompt text also has SIZE budgets (`agent-prompts.test.ts` caps the fast triage prompt) — an addition can break a guard nowhere near the words you wrote.
+- **You added a public store/service method.** Check the inventory and drift guards that require every public surface to be classified.
+
+Prefer fixing at the SHARED FACTORY, not per test: one fixture helper usually explains dozens of failures, and per-test patches leave the next author the same trap.
+
+Never make a stale test pass by weakening it. The honest resolutions are: update the fixture to state the intent it always had, record the new truth in the assertion, or delete the test with a comment naming the change that removed its subject. Restoring removed behavior to satisfy a test is a defect, not a fix.
+
+**Motivating incidents (measured 2026-08-24, one full engine suite run):** 297 failing tests, of which ~135 traced to exactly five behavior changes whose tests were never updated — the FN-158 required-pre-merge-gate guard (~70 fixtures across 13 files), the branch-write provenance guard (18 failures from ONE shared reliability fixture), a workflow-IR reorder that moved `completion-summary` before `code-review` (10 stale topology assertions), an `updateTaskAtomic` store seam missing from fake stores (~9), and FN-074's task-splitting removal leaving 4 reviewer-prompt tests asserting a deleted contract. Every one of those changes passed its own targeted verification. `merger-ai.test.ts` alone carried 37 failures that one fixture line fixed.
+
 ### Port 4040 is Reserved
 
 Never kill processes on port 4040 and never start test servers on 4040. Use `--port 0` or another free port.
@@ -275,6 +309,27 @@ Scoped exception (FN-5819/FN-8823): while project auto-merge is On, shared-branc
 `testMode?: boolean` is now available in both project and global settings. If project `testMode === true` (or the resolved default provider is `"mock"` at any tier), every AI lane is forced to `mock/scripted`, overriding per-task and per-lane model selections. The dashboard exposes this via the Settings Modal "Enable test mode" toggle and a persistent "Test mode — no real AI calls" banner.
 
 ### Run Audit
+<!--
+FNXC:RunAudit 2026-08-20-03:12:
+FN-9172 makes executor telemetry optional even when PostgreSQL or an extension sink stalls. Direct
+`store.recordRunAuditEvent` calls under `packages/engine/src/executor/` are an anti-pattern: use
+`emitBoundedRunAudit` so audit visibility never becomes a lifecycle dependency.
+
+FNXC:RunAudit 2026-08-20-04:15:
+FN-9175 promotes this to every engine lane. Direct engine `store.recordRunAuditEvent` calls are an
+anti-pattern: use `packages/engine/src/util/emit-bounded-run-audit.ts` and prove hostile sink
+isolation through a behavioral regression.
+
+FNXC:RunAudit 2026-08-20-05:39:
+FN-9176 applies that seam to hold-release, goals, overseer, mesh leases, runtime credential
+rotation, and workflow-column boundaries. The bespoke merge-write fence and packages/core
+canonical emitters remain explicit exclusions until their separately scoped hardening work lands.
+-->
+- FN-9175: New engine run-audit emitters must use `emitBoundedRunAudit` from `packages/engine/src/util/emit-bounded-run-audit.ts`; it absorbs absent, throwing, rejecting, hanging, and late-settling sinks without changing the owning branch, and requires behavioral sink-health coverage.
+- FNXC:RunAudit 2026-08-20-05:49: FN-9177 requires new core best-effort emitters to use `packages/core/src/run-audit/emit-bounded-run-audit.ts`. It deliberately mirrors the engine seam because core cannot import engine; transactional and deliberately awaited durability writers remain unbounded.
+- FNXC:RunAudit 2026-08-20-07:14: FN-9182 requires core emitters whose behavior branches on audit success to use `emitBoundedRunAuditWithOutcome`; `emitBoundedRunAudit` remains the default best-effort seam, while transactional and deliberately awaited durability writers remain unbounded.
+- FN-9180: The `task-deleted-outbox:*` catch-up, reconciliation-fallback, lease-fenced, and retention-pruned emitters use `packages/core/src/run-audit/emit-bounded-run-audit.ts`, remain awaited at their post-cursor/post-DELETE positions, and require hostile-sink production-path coverage.
+- FN-9181: Detached recall-capture `memory:capture-recorded` and `memory:capture-failed` emissions use the core bounded seam, preserving the injectable test adapter and preventing stalled telemetry from retaining detached capture work; see `docs/run-audit.md`.
 - FN-9109: `session:cross-runtime-fallback-engaged` records a single retryable-failure handoff from a primary runtime to a deferred CLI runtime. Metadata is ids/outcomes-only (`sessionPurpose`, primary/fallback provider and model IDs, trigger point, failure category, `contextTransferred`); never record error prose or transferred transcript text.
 
 - FN-8958: `merge:orphan-write-fenced` is emitted once per orphan merge body at its fence's first interaction. Metadata is ids/counts/outcomes-only: `{ taskId, category, interaction, suppressedCount }`; `suppressedCount` is the emit-time count (`1` for `interaction:"suppressed"`, `0` for `interaction:"rejected"`), never a cumulative body total.
@@ -302,10 +357,13 @@ Scoped exception (FN-5819/FN-8823): while project auto-merge is On, shared-branc
 - FN-7069: task-store open and self-healing housekeeping emit `task:reconcile-phantom-committed-reservation` when they prune orphaned child rows for a committed task-ID reservation that has no live/soft-deleted/archived task row and no task directory, while preserving the committed reservation so the ID is never reused.
 - FN-7074: task creation emits `task:reservation-commit-rolled-back` when a distributed reservation was committed atomically with a `tasks` row but a later create materialization step failed; metadata includes `reservationId`, `nodeId`, `reason: "failed-create"`, and `error`, and the reservation is moved to aborted so the sequence remains burned.
 - FN-6782/FN-6796: self-healing emits `task:auto-recover-paused-abort-park` when it clears a benign pause-abort operator park, requeueing safe `todo`/`in-progress` rows or preserving a clean auto-merge-eligible `in-review` row for review progression.
+- FN-9187: self-healing emits `task:auto-archive-failure-budget-exhausted` once when a stale done-task archive exhausts `MAX_STARVATION_DROPS`; metadata remains ids/counts/fixed outcomes only (`taskId`, `attempts`, `maxAttempts`, `reason`), and the one-shot task log directs an operator to repair the archive guard.
 - FN-8908: self-healing reserves `task:auto-recover-terminal-failure` and `task:auto-recover-terminal-failure-exhausted` for generic terminal-failure budget recovery. Metadata must remain ids/counts/outcomes-only and never include failure prose or the rotating `wedgeNotification.autoRecovery.applyToken`; that durable budget is the backoff source, and its apply fence—not the grace heuristic—authorizes the single clear/requeue transition.
 - FN-6793/FN-6797: self-healing emits `task:reconcile-in-review-unmet-dependencies` when it rebounds an `in-review` task whose declared dependencies are still unmet, and `task:reconcile-in-review-unmet-dependencies-no-action` when pause/user-pause, `autoMerge:false`, live execution/checkout proof, or a failed rebound mutation blocks that backward move.
 - Workspace (Phase D U1): self-healing emits `task:reconcile-workspace-partial-land` when it re-enqueues a partial/zero-landed workspace task's per-repo land (or parks it `failed` for proven branch absence or exhausted `evidence-unavailable` branch reads), and `task:reconcile-workspace-partial-land-no-action` when `autoMerge:false`, user-pause, a live sub-repo worktree (workspace-aware liveness), or `evidence-unavailable` blocks that backward move. The bounded evidence-exhaustion reason is `evidence-unavailable-exhausted`; audit metadata remains ids/counts/outcomes-only.
 - Workspace (Phase D U1): self-healing emits `task:reclaim-phantom-workspace-land-lease` when it clears a leaked `workspace-repo-land` lease whose owning task is terminal/dead and older than the FN-6736 staleness floor. Archived-role and soft-deleted owners are terminal; live merging, executing, or merge-pending owners are untouched.
+- FN-9164: `worktree:workspace-repo-base-branch` records per-repo base resolution with exactly `taskId`, `repoRelPath`, `stage`, `source`, `outcome`, and optional `fallbackReason`; branch/ref names are deliberately excluded from metadata and `target`, living only in the durable entry and task log.
+- FN-9168: `task:merge-boundary-unproven-parked` is emitted once per terminal merge-boundary-unproven park at the bounded-retry router and reachable graph terminal-merge park. Metadata is ids/counts/fixed outcomes only (`taskId`, `nodeId`, `failureValue`, `source`, optional `reasonCode`/`missingInstanceCount`, `priorColumn`, `priorStatus`, `outcome`) and never boundary reason prose, foreach instance IDs, or error text. `emitMergeBoundaryUnprovenParked` swallows absent/throwing/rejecting sinks and time-bounds a hung one with `MERGE_BOUNDARY_UNPROVEN_AUDIT_EMIT_TIMEOUT_MS`; late settlement is swallowed and the unref'd timer is cleared, so best-effort telemetry never alters, delays, aborts, or wedges the terminal park.
 - FN-9058: `worktree:workspace-main-checkout-edit` records workspace completion guard evidence with ids/counts/fixed outcomes only: task/repo IDs, file/commit counts, evidence or warning reason enum, `taskDoneRetryCount`, and `blocked`/`warned`/`skipped`; never paths, file content, or commit prose.
 - FN-9059: workspace coordination emits `workspace-lease:*` events for lease acquisition, renewal, release, `fence-published`, `fence-superseded`, `reclaimed`, and `reclaim-refused`, plus `workspace-land-intent:*` events for write-ahead intent lifecycle and `resolve-refused`. Metadata is ids, SHAs, counts, and fixed outcomes only; it never includes a credential-bearing remote URL.
 - FN-9056: self-healing emits `task:reconcile-orphaned-workspace-worktree` when it reclaims a complete-lane or conservatively-idle failed/soft-deleted workspace entry. It vetoes raw/canonical active paths, task-session/executor/merge liveness, pauses and scheduled recovery; archived rows remain archive-lifecycle-owned. It runs `git worktree prune` even for already-gone paths and deletes only safely-discardable canonical `fusion/<id>` branches. Duplicate, foreign, unowned, or outside-root claims are skipped without git work; one entry-scoped `MAX_STARVATION_DROPS` budget plus settlement bounds retries. Metadata is ids/counts/fixed outcomes: task/repo/path, success/reason/lane, worktree/prune/branch outcomes, and attempt.
@@ -408,3 +466,9 @@ Note: the embedded main-content views Workflows (`_WorkflowEditorView`), Import 
    The modal should be 20% wider than the first section-sidebar layout and use a taller viewport so more settings remain visible without scrolling.
    */
    ```
+<!-- FNXC:RunAudit 2026-08-20-05:49: FN-9177 requires new core best-effort emitters to use the core-owned bounded seam. -->
+- FN-9177: New core best-effort emitters must use `packages/core/src/run-audit/emit-bounded-run-audit.ts`. It deliberately mirrors the engine seam because `@fusion/core` cannot import `@fusion/engine`; transactional and deliberately awaited durability writers remain unbounded.
+- FN-9178: Awaited core audit exclusions are classified with evidence in `docs/run-audit.md`: class A candidates, class B outcome-signalled candidates, and class C forensic/durability records. Transactional writers remain permanently unbounded because they share the mutation transaction.
+- FN-9186: self-healing emits `task:no-progress-no-task-done-requeue` for each bounded, backed-off zero-progress requeue and `task:no-progress-no-task-done-requeue-exhausted` once when its `taskDoneRetryCount` budget is spent. Metadata remains ids/counts/outcomes-only (`taskId`, column, attempt, maxAttempts, optional delayMs, outcome); the `NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED:` park is protected from generic terminal-failure and restart recovery, and audit emission is bounded best-effort.
+<!-- FNXC:ReviewConvergence 2026-08-22-17:20: FN-149 requires all five review-convergence emit sites to use the FN-9175 bounded seam, so telemetry never becomes a review lifecycle dependency. -->
+- FN-149: review convergence emits `task:review-finding-disputed`, `task:review-convergence-escalation`, `task:review-arbitration`, and `task:review-convergence-human-escalation` through `emitBoundedRunAudit`; metadata is ids/counts/fixed outcomes only and never rationale, finding prose, reviewer feedback, or arbiter output.

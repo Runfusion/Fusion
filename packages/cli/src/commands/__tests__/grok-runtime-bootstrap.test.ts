@@ -97,8 +97,6 @@ describe("Grok CLI PluginRunner host wiring", () => {
     expect(mergeFnIndex).toBeGreaterThanOrEqual(0);
     const nextExport = source.indexOf("export async function runTaskAttach", mergeFnIndex);
     const mergeFnBody = source.slice(mergeFnIndex, nextExport > 0 ? nextExport : undefined);
-    expect(mergeFnBody).toContain("FNXC:GrokCliRouting 2026-07-15-10:17");
-    expect(mergeFnBody).toContain("Do not invent a full PluginRunner bootstrap");
     expect(mergeFnBody).not.toContain("mergePluginRunner");
   });
 });

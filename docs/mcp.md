@@ -58,8 +58,8 @@ Fusion materializes MCP secret references only at the use seam:
 - when running a bounded validation/reachability probe;
 - when importing plaintext Claude Desktop env/header values and immediately creating Fusion secrets.
 
-<!-- FNXC:McpConfig 2026-06-26-17:06: FN-7078 extended the FN-7077 forwarding invariant to dashboard readonly planning helpers. Configured MCP servers must reach subtask breakdown (stream/retry/triage), text refinement, goal drafting, agent onboarding generation, PR metadata generation, and insight extraction whenever those helpers have a scoped TaskStore; terminal sessions and DB-row chat session creation remain non-agent-runtime surfaces and intentionally receive no MCP payload. -->
-MCP-capable AI sessions include Chat, planning, executor/Tasks, heartbeat runs, reviewer/validator/merger lanes, PR-response and PR-conflict merger helpers, manual AI-prompt workflow steps, workflow model nodes, evaluator, cron/automation, mission execution, mission and milestone/slice interviews, agent reflection, and dashboard readonly planning helpers such as subtask breakdown, text refinement/goal drafting, agent onboarding generation, PR metadata generation, and insight extraction. Non-agent runtime surfaces such as terminal sessions and `chatStore.createSession` database row creation do not receive MCP servers.
+<!-- FNXC:McpConfig 2026-08-20-17:54: FN-074 removed subtask breakdown sessions. Configured MCP servers continue to reach supported planning and readonly dashboard helpers without preserving a removed fan-out path. -->
+MCP-capable AI sessions include Chat, planning, executor/Tasks, heartbeat runs, reviewer/validator/merger lanes, PR-response and PR-conflict merger helpers, manual AI-prompt workflow steps, workflow model nodes, evaluator, cron/automation, mission execution, mission and milestone/slice interviews, agent reflection, and dashboard readonly planning helpers such as text refinement/goal drafting, agent onboarding generation, PR metadata generation, and insight extraction. Non-agent runtime surfaces such as terminal sessions and `chatStore.createSession` database row creation do not receive MCP servers.
 
 Expected outcome: API responses, CLI output, settings JSON, exports, and structured logs show secret references or counts/status metadata only; they do not include decrypted env/header values.
 
@@ -266,7 +266,7 @@ Expected outcome: API clients can display candidates, source labels, configured 
 
 ## How MCP servers reach AI lanes
 
-When an AI lane or readonly dashboard helper starts a session, Fusion resolves the effective `mcpServers` settings, materializes secret references through the scoped secrets store, and passes the resulting in-memory server declarations to runtimes that support MCP. The forwarding path covers chat/planning, executor, reviewer, validator, merger, workflow model nodes, summarization, evaluator, research, cron/automation, mission, reflection, subtask breakdown, text refinement/goal drafting, agent onboarding generation, PR metadata generation, and insight extraction paths.
+When an AI lane or readonly dashboard helper starts a session, Fusion resolves the effective `mcpServers` settings, materializes secret references through the scoped secrets store, and passes the resulting in-memory server declarations to runtimes that support MCP. The forwarding path covers chat/planning, executor, reviewer, validator, merger, workflow model nodes, summarization, evaluator, research, cron/automation, mission, reflection, text refinement/goal drafting, agent onboarding generation, PR metadata generation, and insight extraction paths.
 
 Runtime support is guarded. Claude/pi/ACP-compatible runtimes receive MCP servers; mock or unsupported runtimes skip forwarding and emit only structured count/provider/runtime metadata. Skipped forwarding is not a settings error: it means the selected runtime does not accept MCP server declarations.
 

@@ -10,6 +10,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   AgentStore,
+  ResolvedTaskOutputLanguage,
   Settings,
   Task,
   TaskStore,
@@ -18,6 +19,7 @@ import type {
 } from "@fusion/core";
 import {
   applyReviewSeverityGate,
+  computePlanApprovalFingerprint,
   isOpenWorkflowReviewFinding,
   MAX_WORKFLOW_REVIEW_FINDINGS,
   PLAN_REVIEW_GROUP_ID,
@@ -26,12 +28,14 @@ import {
   resolvePersistAgentThinkingLog,
   resolveReviewBlockingSeverity,
   resolveValidatorFallbackModel,
+  resolveTaskOutputLanguage,
   startPlanningSegment,
 } from "@fusion/core";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createTaskPromptWriteTool } from "./shared-worker-tools.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { AgentLogger } from "../agents/agent-logger.js";
+import type { SessionBoundaryDescriptor } from "../agents/agent-runtime.js";
 import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
 import {
   createResolvedAgentSession,
@@ -82,8 +86,9 @@ import {
   type WorkflowStepOutcome,
 } from "./workflow-step-verdict.js";
 import { resolveDiffBaseRef } from "./worktree-git-refs.js";
+import { computeReviewDiffFingerprint } from "../worktree/review-diff-fingerprint.js";
 // FNXC:PlanReviewConvergence 2026-08-15-22:15: FN-8768 convergence primer + revision-key classifier (restored post-wave-18).
-import { buildGraphPlanReviewConvergenceContext, optionalStepRevisionKey } from "./optional-step-revision.js";
+import { buildGraphPlanReviewConvergenceContext, buildReviewConvergenceContext, optionalStepRevisionKey } from "./optional-step-revision.js";
 // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 
@@ -126,7 +131,7 @@ export async function executeWorkflowStep(
   worktreePath: string,
   settings: Settings,
   taskEnv?: NodeJS.ProcessEnv,
-  stepOptions?: { unattended?: boolean; principalAgentId?: string },
+  stepOptions?: { unattended?: boolean; principalAgentId?: string; outputLanguage?: ResolvedTaskOutputLanguage; sessionBoundary?: SessionBoundaryDescriptor },
 ): Promise<WorkflowStepOutcome> {
     let toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
     // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
@@ -254,6 +259,7 @@ export async function executeWorkflowStep(
     // that match the task description's keywords. See FN-3327 post-mortem.
     const scopedFiles = await deps.captureModifiedFiles(worktreePath, task.baseCommitSha, task.id, undefined, "workflow-step-handler");
     let diffShortstat: string | undefined;
+    let reviewInputFingerprint: string | undefined;
     try {
       const baseRef = await resolveDiffBaseRef(worktreePath, task.baseCommitSha);
       if (baseRef) {
@@ -262,6 +268,7 @@ export async function executeWorkflowStep(
           encoding: "utf-8",
         });
         diffShortstat = stdout.trim() || undefined;
+        if (isReviewTypeWorkflowStep) reviewInputFingerprint = await computeReviewDiffFingerprint(worktreePath, baseRef);
       }
     } catch {
       // best-effort — fall through with no shortstat
@@ -320,7 +327,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
 - If NONE of the modified files are relevant to your review category, confirm that from the list and fast-bail without broad repository exploration.
 - Keep adjacent reads bounded to the changed behavior and its immediate production/test chain so the review finishes within its wall-clock budget.${approvedContractBlock}`;
 
+    if (isPlanReviewStep && workflowReviewSpecText.trim()) reviewInputFingerprint = computePlanApprovalFingerprint(workflowReviewSpecText);
     const latestTaskForUserComments = await deps.store.getTask(task.id).catch(() => task);
+    const sameGateStepId = workflowStep.id.replace(/^graph:/, "");
+    const reviewConvergenceContext = workflowStepMetadata.reviewKind === "code"
+      ? buildReviewConvergenceContext(latestTaskForUserComments, { revisionKey: sameGateStepId, reviewKind: "code" })
+      : "";
     const workflowStepUserComments = selectUserCommentsForAgentContext(latestTaskForUserComments, { limit: null });
     const workflowStepUserCommentSection = buildUserCommentsPromptSection(workflowStepUserComments);
 
@@ -369,7 +381,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
      * commit-timestamp inference, so receipts cannot be mistaken for new executor work.
      */
     const priorFindings = reviewFindingsContract
-      ? (task.workflowStepResults ?? []).flatMap((result) => result.workflowStepId === workflowStep.id
+      ? (latestTaskForUserComments.workflowStepResults ?? []).flatMap((result) => result.workflowStepId === sameGateStepId
         ? []
         : (result.findings ?? []).filter(isOpenWorkflowReviewFinding).map((finding) => ({ finding, result })))
         .slice(0, MAX_WORKFLOW_REVIEW_FINDINGS)
@@ -422,6 +434,11 @@ CRITICAL SCOPING RULES — read before doing anything else:
   - After any inline edit, treat your own change as untrusted: re-read the fresh diff, restart the mandatory review procedure from its requirements ledger and production-reachability checks, and rerun the smallest relevant verification. Never approve solely because the local fix compiles or its narrow test passes.`
       : "";
 
+    /*
+    FNXC:TaskOutputLanguage 2026-08-19-16:34:
+    Graph dispatch supplies a start-time target so input-mode detection survives task edits between
+    nodes. Direct workflow-step callers retain the live resolver for backward compatibility.
+    */
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
 
   Task Context:
@@ -429,7 +446,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
   - Task Description: ${task.description}
   - Worktree: ${worktreePath}
 
-  ${scopeBlock}${workflowStepUserCommentSection ? `\n\n${workflowStepUserCommentSection}` : ""}${priorFindingsBlock}
+  ${scopeBlock}${reviewConvergenceContext ? `\n\n${reviewConvergenceContext}` : ""}${workflowStepUserCommentSection ? `\n\n${workflowStepUserCommentSection}` : ""}${priorFindingsBlock}
 
   Your role:
   - Execute this workflow step exactly as scoped.
@@ -440,6 +457,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
 
   Your Instructions:
   ${workflowStep.prompt}
+
+  ## Task Output Language
+  ${stepOptions?.outputLanguage?.instruction ?? resolveTaskOutputLanguage(settings, task.description).instruction}
+  Apply this only to human-readable task-facing output; do not translate this operator-authored workflow prompt, verdict tokens, JSON, identifiers, tools, or schema fields.
 
   You have access to the file system to review changes.${inlineFixBlock}${verdictBlock}`;
 
@@ -682,9 +703,11 @@ CRITICAL SCOPING RULES — read before doing anything else:
         : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
+        taskExecutionSession: true,
         runtimeHint: workflowRuntimeHint,
         pluginRunner: deps.options.pluginRunner,
         cwd: worktreePath,
+        ...(stepOptions?.sessionBoundary ? { sessionBoundary: stepOptions.sessionBoundary } : {}),
         systemPrompt: stepSystemPrompt,
         tools: toolMode,
         defaultProvider: provider,
@@ -900,6 +923,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
             verdict: effectiveVerdict,
             notes: parsed.notes,
             ...(parsed.findings ? { findings: parsed.findings } : {}),
+            ...(reviewInputFingerprint ? { reviewInputFingerprint } : {}),
             ...(parsed.supersededFindingSourceWorkflowStepId && parsed.supersededFindingIds ? { supersededFindingSourceWorkflowStepId: parsed.supersededFindingSourceWorkflowStepId, supersededFindingIds: parsed.supersededFindingIds } : {}),
           };
         }

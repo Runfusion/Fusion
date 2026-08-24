@@ -214,12 +214,13 @@ export function triggerRoutineWebhook(id: string, payload?: Record<string, unkno
 export type { ActivityLogEntry, ActivityEventType } from "@fusion/core";
 
 /** Fetch activity log entries */
-export function fetchActivityLog(options?: { limit?: number; since?: string; type?: ActivityEventType; projectId?: string }): Promise<ActivityLogEntry[]> {
+export function fetchActivityLog(options?: { limit?: number; since?: string; type?: ActivityEventType; projectId?: string; taskId?: string }): Promise<ActivityLogEntry[]> {
   const search = new URLSearchParams();
   if (options?.limit !== undefined) search.set("limit", String(options.limit));
   if (options?.since !== undefined) search.set("since", options.since);
   if (options?.type !== undefined) search.set("type", options.type);
   if (options?.projectId) search.set("projectId", options.projectId);
+  if (options?.taskId) search.set("taskId", options.taskId);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return api<ActivityLogEntry[]>(`/activity${suffix}`);
 }

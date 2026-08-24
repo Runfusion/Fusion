@@ -381,7 +381,7 @@ describe("CustomModelDropdown", () => {
     expect(thinkingSelect).toHaveAccessibleName("Thinking Level");
     expect(thinkingSelect.closest(".model-combobox-dropdown")).not.toBeNull();
     expect(within(thinkingSelect).getByRole("option", { name: "Default (off)" })).toBeTruthy();
-    for (const optionName of ["Off", "Minimal", "Low", "Medium", "High", "Very High"]) {
+    for (const optionName of ["Off", "Minimal", "Low", "Medium", "High", "Very High", "Max"]) {
       expect(within(thinkingSelect).getByRole("option", { name: optionName })).toBeTruthy();
     }
 
@@ -389,6 +389,35 @@ describe("CustomModelDropdown", () => {
     expect(onThinkingLevelChange).toHaveBeenLastCalledWith("xhigh");
     await user.selectOptions(thinkingSelect, "");
     expect(onThinkingLevelChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("filters model-bound thinking options to documented max support without clearing the persisted value", async () => {
+    const user = userEvent.setup();
+    const onThinkingLevelChange = vi.fn();
+    render(
+      <CustomModelDropdown
+        label="Codex Model"
+        value="openai-codex/gpt-5.6-luna"
+        onChange={vi.fn()}
+        models={[{
+          provider: "openai-codex",
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          reasoning: true,
+          contextWindow: 372000,
+          supportedThinkingLevels: ["off", "minimal", "low", "medium", "high", "max"],
+        }]}
+        showThinkingLevel
+        thinkingLevel=""
+        onThinkingLevelChange={onThinkingLevelChange}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Codex Model" }));
+    const select = await screen.findByTestId("custom-model-dropdown-thinking");
+    expect(within(select).queryByRole("option", { name: "Max" })).toBeTruthy();
+    expect(within(select).queryByRole("option", { name: "Very High" })).toBeNull();
+    await user.selectOptions(select, "max");
+    expect(onThinkingLevelChange).toHaveBeenCalledWith("max");
   });
 
   it("renders concrete-only thinking control without Default when no defaultThinkingLevel is supplied", async () => {
@@ -409,7 +438,7 @@ describe("CustomModelDropdown", () => {
     const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
 
     expect(within(thinkingSelect).queryByRole("option", { name: /Default/ })).toBeNull();
-    expect(within(thinkingSelect).getAllByRole("option")).toHaveLength(6);
+    expect(within(thinkingSelect).getAllByRole("option")).toHaveLength(7);
   });
 
   it("keeps thinking control inert when callers do not opt in", async () => {

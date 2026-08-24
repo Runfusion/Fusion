@@ -16,6 +16,7 @@ import type {
   DriftReport,
   SpecLock,
   TaskRecommendationListItem,
+  TaskColumnSortMode,
 } from "@fusion/core";
 import { withTokenHeader } from "../../auth";
 import { api, ApiRequestError, buildApiUrl, proxyApi } from "../client/client.js";
@@ -61,10 +62,12 @@ export function fetchArchivedTasks(
   projectId?: string,
   limit?: number,
   offset?: number,
+  sortMode: TaskColumnSortMode = "completion-date-desc",
 ): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
   if (offset !== undefined) search.set("offset", String(offset));
+  search.set("sort", sortMode);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return api<{ tasks: Task[]; total: number; hasMore: boolean }>(withProjectId(`/tasks/archived${suffix}`, projectId));
 }
@@ -282,7 +285,6 @@ export async function createTask(
     description,
     column,
     dependencies,
-    breakIntoSubtasks,
     enabledWorkflowSteps,
     workflowId,
     assignedAgentId,
@@ -314,6 +316,7 @@ export async function createTask(
     sessionAdvisorEnabled,
     acknowledgedDuplicates,
     bypassDuplicateCheck,
+    repositoryScope,
   } = input;
 
   try {
@@ -326,8 +329,7 @@ export async function createTask(
       description,
       column,
       dependencies,
-      breakIntoSubtasks,
-      enabledWorkflowSteps,
+        enabledWorkflowSteps,
       workflowId,
       assignedAgentId,
       modelPresetId,
@@ -358,6 +360,7 @@ export async function createTask(
       sessionAdvisorEnabled,
       acknowledgedDuplicates,
       bypassDuplicateCheck,
+      repositoryScope,
     }),
   });
   } catch (error) {
@@ -369,6 +372,18 @@ export async function createTask(
     }
     throw error;
   }
+}
+
+/** Update explicit workspace repository intent before any land intent or landed SHA exists. */
+export function updateTaskRepositoryScope(
+  id: string,
+  input: { repositories: string[]; reason: string; action?: "add" | "remove" | "refuse" },
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(id)}/repository-scope`, projectId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export interface RepairOverlapBlockerResult {

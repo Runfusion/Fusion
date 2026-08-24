@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { resolveGlobalDir } from "../config/global-settings.js";
 import { CronExpressionParser } from "cron-parser";
-import { getDefaultCentralDbPath } from "../central/central-db.js";
 import { PgBackupManager, type PgBackupPair, type PgDumpResult } from "../postgres/pg-backup.js";
 import { resolveBackend } from "../postgres/backend-resolver.js";
 import { getActiveEmbeddedRuntimeUrl } from "../postgres/active-backend-registry.js";
@@ -45,7 +44,6 @@ export interface BackupPairInfo {
 export interface BackupOptions {
   backupDir?: string;
   retention?: number;
-  centralDbPath?: string;
   includeCentralDb?: boolean;
   /**
    * FNXC:SqliteFinalRemoval 2026-06-26-00:15:
@@ -69,7 +67,6 @@ export class BackupManager {
   private fusionDir: string;
   private backupDir: string;
   private retention: number;
-  private centralDbPath: string;
   private includeCentralDb: boolean;
   private readonly pgManager: PgBackupManager;
 
@@ -77,7 +74,6 @@ export class BackupManager {
     this.fusionDir = fusionDir;
     this.backupDir = options?.backupDir ?? ".fusion/backups";
     this.retention = options?.retention ?? 7;
-    this.centralDbPath = options?.centralDbPath ?? join(this.fusionDir, "..", ".fusion", "fusion-central.db");
     this.includeCentralDb = options?.includeCentralDb ?? true;
     const connectionString = options?.connectionString ?? resolveBackendConnectionString();
     if (!connectionString) {
@@ -233,12 +229,13 @@ export function createBackupManager(
   settings?: Partial<Settings>,
   connectionString?: string,
 ): BackupManager {
-  let centralDbPath: string;
-  try {
-    centralDbPath = getDefaultCentralDbPath();
-  } catch {
-    centralDbPath = join(fusionDir, "..", ".fusion", "fusion-central.db");
-  }
+  /*
+  FNXC:SqliteFinalRemoval 2026-08-19-04:00:
+  The `fusion-central.db` path this used to compute and pass through was never read: PgBackupManager
+  takes only the includeCentral flag. It was a leftover of the SQLite file-copy backup that
+  VAL-REMOVAL-003 deleted, and keeping it invited the mistake that shipped elsewhere — treating that
+  file's presence as evidence about a Postgres install (see onboard-autolaunch).
+  */
 
   /*
    * FNXC:SqliteFinalRemoval 2026-06-26:
@@ -253,7 +250,6 @@ export function createBackupManager(
   return new BackupManager(fusionDir, {
     backupDir: canonicalizeBackupDir(settings?.autoBackupDir),
     retention: settings?.autoBackupRetention,
-    centralDbPath,
     includeCentralDb: true,
     connectionString: resolvedConnectionString,
   });

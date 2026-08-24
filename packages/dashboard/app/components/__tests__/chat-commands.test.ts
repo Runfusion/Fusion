@@ -14,11 +14,16 @@ describe("chat-commands registry", () => {
     mockAddSteeringComment.mockReset();
   });
 
-  it("registers /steer as the first (and, today, only) command", () => {
-    expect(CHAT_COMMANDS).toHaveLength(1);
+  it("registers /steer and the /focus memory-focus command", () => {
+    expect(CHAT_COMMANDS).toHaveLength(2);
     expect(CHAT_COMMANDS[0]).toMatchObject({
       trigger: "/steer",
       name: "steer",
+    });
+    expect(CHAT_COMMANDS[1]).toMatchObject({
+      trigger: "/focus",
+      name: "focus",
+      requiresAgent: false,
     });
   });
 
@@ -73,9 +78,12 @@ describe("chat-commands registry", () => {
     });
 
     it("matches by partial trigger or name, case-insensitively", () => {
-      expect(filterChatCommands("ste")).toEqual(CHAT_COMMANDS);
-      expect(filterChatCommands("STE")).toEqual(CHAT_COMMANDS);
-      expect(filterChatCommands("steer")).toEqual(CHAT_COMMANDS);
+      const steer = CHAT_COMMANDS.find((command) => command.name === "steer")!;
+      expect(filterChatCommands("ste")).toEqual([steer]);
+      expect(filterChatCommands("STE")).toEqual([steer]);
+      expect(filterChatCommands("steer")).toEqual([steer]);
+      // /focus matches by name but not by "ste".
+      expect(filterChatCommands("foc")).toEqual([CHAT_COMMANDS.find((command) => command.name === "focus")!]);
     });
 
     it("returns an empty list when nothing matches", () => {

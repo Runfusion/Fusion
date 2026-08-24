@@ -429,3 +429,83 @@ describe("archive release follows the board's own archive lane", () => {
     expect(activeSessionRegistry.pathsForTask("TASK-LEGACY")).toEqual([]);
   });
 });
+
+describe("task:moved lane cache fallback", () => {
+  it("uses a warm renamed cache answer when an optional payload omits lanes", async () => {
+    const { executor, store } = makeExecutor();
+    (store as any).laneCache = { get: vi.fn(() => ({ archived: "shipped", hold: "backlog", wip: "building" })) };
+    (executor as any).setActiveWorkflowStepSession("TASK-CACHE", {}, SHARED_ROOT);
+    const [heldPath] = activeSessionRegistry.pathsForTask("TASK-CACHE");
+    store.emit("task:moved", { task: makeTask("TASK-CACHE"), from: "backlog", to: "shipped", source: "user" });
+    await (executor as any).pendingTaskDisposals.get("TASK-CACHE");
+    expect(activeSessionRegistry.isPathActive(heldPath)).toBe(false);
+  });
+
+  /*
+  FNXC:PlanningEvacuation 2026-08-22-00:30:
+  The cache tier is load-bearing for the reported planning evacuation, not only archive disposal.
+  With no payload, a warm renamed answer must reach the real listener's backward-move branch; a cold
+  cache must retain the legacy compatibility answer for untyped test stores and older emitters.
+  */
+  it("starts execution in a renamed warm-cache wip lane when payload lanes are absent", async () => {
+    const { executor, store } = makeExecutor();
+    const task = makeTask("TASK-CACHE-WIP");
+    const execute = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+    vi.spyOn(executor as any, "resetMergeStateIfNeeded").mockResolvedValue(task);
+    (store as any).laneCache = { get: vi.fn(() => ({ wip: "building" })) };
+
+    store.emit("task:moved", { task, from: "inbox", to: "building", source: "engine" });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(execute).toHaveBeenCalledWith(task);
+  });
+
+  it("aborts work leaving a renamed warm-cache wip lane when payload lanes are absent", async () => {
+    const { executor, store } = makeExecutor();
+    vi.spyOn(executor as any, "isBackwardMoveOutOfPlanning").mockReturnValue(false);
+    const abort = vi.spyOn(executor as any, "awaitAbortInFlightTaskWork").mockResolvedValue(undefined);
+    (store as any).laneCache = { get: vi.fn(() => ({ hold: "backlog", wip: "building" })) };
+
+    store.emit("task:moved", { task: makeTask("TASK-CACHE-LEAVE-WIP"), from: "building", to: "checking", source: "engine" });
+
+    await (executor as any).pendingTaskDisposals.get("TASK-CACHE-LEAVE-WIP");
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it("evacuates a renamed planner lane from the warm cache when payload lanes are absent", async () => {
+    const { executor, store } = makeExecutor();
+    const abort = vi.spyOn(executor as any, "awaitAbortInFlightTaskWork").mockResolvedValue(undefined);
+    vi.spyOn(executor as any, "releasePreExecutionWorktree").mockResolvedValue(undefined);
+    (store as any).laneCache = { get: vi.fn(() => ({ intake: "inbox", hold: "queued", wip: "building", review: "checking", complete: "shipped" })) };
+
+    store.emit("task:moved", { task: makeTask("TASK-CACHE-PLAN"), from: "queued", to: "ideas", source: "user" });
+
+    await (executor as any).pendingTaskDisposals.get("TASK-CACHE-PLAN");
+    expect(abort).toHaveBeenCalledOnce();
+    expect(String(abort.mock.calls[0]?.[1] ?? "")).toContain("out of planning");
+  });
+
+  it("uses legacy planner ids when the optional payload and cache are both absent", async () => {
+    const { executor, store } = makeExecutor();
+    const abort = vi.spyOn(executor as any, "awaitAbortInFlightTaskWork").mockResolvedValue(undefined);
+    vi.spyOn(executor as any, "releasePreExecutionWorktree").mockResolvedValue(undefined);
+
+    store.emit("task:moved", { task: makeTask("TASK-COLD-PLAN"), from: "todo", to: "ideas", source: "user" });
+
+    await (executor as any).pendingTaskDisposals.get("TASK-COLD-PLAN");
+    expect(abort).toHaveBeenCalledOnce();
+    expect(String(abort.mock.calls[0]?.[1] ?? "")).toContain("out of planning");
+  });
+
+  it("does not treat a roleless lane answer as the legacy wip column", async () => {
+    const { executor, store } = makeExecutor();
+    const execute = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    store.emit("task:moved", {
+      task: makeTask("TASK-NO-WIP"), from: "parking", to: "in-progress", source: "user", lanes: { hold: "backlog" },
+    });
+
+    await Promise.resolve();
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

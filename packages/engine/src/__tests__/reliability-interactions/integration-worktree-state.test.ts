@@ -28,6 +28,13 @@ async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
   const fixture = await makeReliabilityFixture({
     taskId,
     settings: { baseBranch, mergeIntegrationWorktree: "reuse-task-worktree", worktreeRebaseRemote: "origin" } as any,
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-18:44: merge-mechanics fixture, not a review-gating one.
+       The merge door refuses a card whose ENABLED optional pre-merge groups produced no result, and
+       the built-in workflow enables Plan Review + Code Review by default, so an unspecified list
+       threw PreMergeStepsNotRunError before this telemetry scenario ran. The explicit empty list
+       states the intent these worktree-state cases always had; siblings in this directory declare
+       it the same way. */
+    task: { enabledWorkflowSteps: [] },
   });
 
   const { rootDir, store, task } = fixture;
@@ -43,6 +50,8 @@ async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
   await store.updateTask(task.id, {
     baseBranch,
     branch,
+    // FNXC:BranchNaming 2026-08-23-18:43: engine-owned branch binding; provenance is mandatory.
+    branchWriteOrigin: "engine",
     steps: (actualTask?.steps ?? []).map((step) => ({ ...step, status: "done" as const })),
     currentStep: (actualTask?.steps ?? []).length,
   } as any);
@@ -52,7 +61,9 @@ async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
   await fixture.checkout(baseBranch);
   await mkdir(worktreeRoot, { recursive: true });
   git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
-  await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
+  // FNXC:BranchNaming 2026-08-23-18:43: writing `branch` requires declared provenance; this fixture
+  // is standing in for the engine's own worktree/branch binding.
+  await store.updateTask(task.id, { worktree: worktreePath, branch, branchWriteOrigin: "engine" } as any);
   await store.enqueueMergeQueue(task.id);
 
   return { fixture, worktreePath, branch };

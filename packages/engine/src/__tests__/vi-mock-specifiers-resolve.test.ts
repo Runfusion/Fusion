@@ -12,15 +12,22 @@ A `vi.mock` for a moved relative module is lazy: its factory never runs, local `
 unwired, and a test either passes vacuously or later resembles a product regression. Key exceptions by
 file-plus-specifier because repeated strings must not let one file hide another file's new defect.
 */
+/*
+FNXC:ViMockSpecifiers 2026-08-23-19:30:
+RATCHETED DOWN 11 -> 8. Three dead `vi.mock` specifiers were repaired at their source rather than
+tolerated: `self-healing-stalled-card-watchdog` and `self-healing-orphaned-pending-step-results`
+both aimed at `../run-audit.js` after that module folded into `util/run-audit.ts` (cb57093d03), and
+`merger-ai-no-commits-deps-skip` aimed at `../merge-dependency-sync.js` after it moved to `merge/`.
+A dead specifier mocks NOTHING, so each silently disarmed every audit/dependency assertion in its
+file — the tests passed for the wrong reason until the modules' real behavior broke them. This list
+only ever shrinks; the counts below are the ratchet.
+*/
 const KNOWN_DEAD_SPECIFIERS = [
-  { file: "__tests__/self-healing-stalled-card-watchdog.test.ts", specifier: "../run-audit.js" },
-  { file: "__tests__/self-healing-orphaned-pending-step-results.test.ts", specifier: "../run-audit.js" },
   { file: "__tests__/merge-single-flight-invariant.test.ts", specifier: "../pr-monitor.js" },
   { file: "__tests__/merge-single-flight-invariant.test.ts", specifier: "../pr-comment-handler.js" },
   { file: "__tests__/merge-single-flight-invariant.test.ts", specifier: "../auth-storage.js" },
   { file: "__tests__/merge-single-flight-invariant.test.ts", specifier: "../notifier.js" },
   { file: "__tests__/merge-single-flight-invariant.test.ts", specifier: "../cron-runner.js" },
-  { file: "__tests__/merger-ai-no-commits-deps-skip.test.ts", specifier: "../merge-dependency-sync.js" },
   { file: "__tests__/triage-duplicate-verdict-session-recovery.test.ts", specifier: "../reviewer.js" },
   { file: "__tests__/triage-plan-admission-throttle-audit.test.ts", specifier: "../reviewer.js" },
   { file: "__tests__/triage-planning-worktree-session-registration.test.ts", specifier: "../reviewer.js" },
@@ -246,8 +253,8 @@ describe("relative engine test specifiers", () => {
   });
 
   it("resolves relative literals and ratchets the remaining moved-module exceptions downward", () => {
-    expect(KNOWN_DEAD_SPECIFIERS).toHaveLength(11);
-    expect(new Set(KNOWN_DEAD_SPECIFIERS.map((entry) => entry.file))).toHaveLength(7);
+    expect(KNOWN_DEAD_SPECIFIERS).toHaveLength(8);
+    expect(new Set(KNOWN_DEAD_SPECIFIERS.map((entry) => entry.file))).toHaveLength(4);
     expect(KNOWN_DEAD_SPECIFIERS.some((entry) => entry.file === "__tests__/self-healing-query-filter-blindness.test.ts")).toBe(false);
 
     const allowed = new Set(KNOWN_DEAD_SPECIFIERS.map((entry) => `${entry.file}\0${entry.specifier}`));

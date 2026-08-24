@@ -972,7 +972,8 @@ describe("MilestoneSliceInterviewModal", () => {
     });
 
     it("reconnects to stream for generating session when resumeSessionId is provided", async () => {
-      mockFetchAiSession.mockResolvedValue(mockSessionGenerating);
+      const trace = "**Ensuring Docker build includes dev dependencies for tests**\n\nDocker tests need development dependencies.\n\n**Planning deployment commit structure**\n\nDeployment commits remain independently reviewable.";
+      mockFetchAiSession.mockResolvedValue({ ...mockSessionGenerating, thinkingOutput: trace });
 
       render(
         <MilestoneSliceInterviewModal
@@ -992,9 +993,15 @@ describe("MilestoneSliceInterviewModal", () => {
         expect(mockConnectMilestoneInterviewStream).toHaveBeenCalled();
       });
 
-      await waitFor(() => {
-        expect(screen.getByText(/AI is thinking/)).toBeDefined();
-      });
+      const output = await screen.findByText("Deployment commits remain independently reviewable.");
+      const container = output.closest(".planning-thinking-output")!;
+      const sections = container.querySelectorAll<HTMLElement>("[data-testid='thinking-trace-section']");
+      expect(sections).toHaveLength(2);
+      expect([...sections].every((section) => section.open)).toBe(true);
+      const first = sections[0];
+      act(() => streamHandlers.onThinking?.("\n\n**Editing README content**\n\nREADME edits remain visible in their own section."));
+      expect(container.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(3);
+      expect(container.querySelector("[data-testid='thinking-trace-section']")).toBe(first);
     });
 
     it("shows error state for error session when resumeSessionId is provided", async () => {

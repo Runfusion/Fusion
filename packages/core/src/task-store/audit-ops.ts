@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * audit-ops operations.
  *
@@ -79,7 +81,7 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
       const resolved = registry.resolveTraitHook(traitId, hookKind);
       if (resolved.warning) {
         // Degraded (no impl / force-disabled) → passive no-op, audit the warning.
-        void store.recordRunAuditEvent({
+        void emitBoundedRunAudit(store, {
           taskId,
           agentId: "system",
           runId: `plugin-trait-hook-${traitId}-${taskId}-${Date.now()}`,
@@ -93,7 +95,7 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
           await resolved.impl({ task: taskDetail, context: { fromColumn, toColumn, hookKind } });
         } catch (err) {
           // A throwing plugin hook DEGRADES — audited, never wedges the lock.
-          void store.recordRunAuditEvent({
+          void emitBoundedRunAudit(store, {
             taskId,
             agentId: "system",
             runId: `plugin-trait-hook-${traitId}-${taskId}-${Date.now()}`,
@@ -123,6 +125,44 @@ Release gates can be evaluated by multiple schedulers. Claim the project/task
 episode and append its diagnostic in one transaction so a crash cannot leave a
 suppression marker without the operator-visible task-log entry.
 */
+/**
+ * FNXC:WorkspaceIntegration 2026-08-21-22:07:
+ * Environment repair is one operator episode even when concurrent merge doors observe it.
+ * The project/task advisory lock makes the log check and append atomic across engine, CLI, and UI.
+ */
+export async function logEntryOnceImpl(
+  store: TaskStore,
+  id: string,
+  input: { action: string; outcome?: string; dedupeKey: string; windowMs: number },
+): Promise<boolean> {
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const now = new Date();
+  const result = await layer.transactionImmediate(async (tx) => {
+    await acquireTaskAdvisoryXactLock(tx, projectId, id);
+    const rows = await tx.select().from(schema.project.tasks).where(and(
+      eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id), isNull(schema.project.tasks.deletedAt),
+    ));
+    const current = rows[0];
+    if (!current) throw new Error(`Task ${id} not found while logging episode`);
+    const log = Array.isArray(current.log) ? [...current.log as TaskLogEntry[]] : [];
+    const duplicate = log.some((entry) => entry.dedupeKey === input.dedupeKey
+      && now.getTime() - Date.parse(entry.timestamp) < input.windowMs);
+    if (duplicate) return { appended: false, row: current };
+    log.push({ timestamp: now.toISOString(), action: input.action, outcome: truncateTaskLogOutcome(input.outcome), dedupeKey: input.dedupeKey });
+    const limit = getTaskActivityLogEntryLimit();
+    if (log.length > limit) log.splice(0, log.length - limit);
+    const updated = await tx.update(schema.project.tasks).set({ log, updatedAt: now.toISOString() }).where(and(
+      eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id),
+    )).returning();
+    return { appended: true, row: updated[0]! };
+  });
+  const task = store.rowToTask(store.pgRowToTaskRow(result.row as unknown as Record<string, unknown>));
+  await store.writeTaskJsonFile(store.taskDir(id), task);
+  if (store.isWatching) store.taskCache.set(id, { ...task });
+  return result.appended;
+}
+
 export interface QueuedEpisodeTransition {
   /** Canonical complete blocker identity, e.g. dependency:FN-1,FN-2. */
   signature: string;

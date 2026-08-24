@@ -17,8 +17,11 @@ type CompleteSettings<T> = { [K in keyof Required<T>]: Required<T>[K] | undefine
  * split documented in `moved-settings.ts`.
  *
  * This union is NOT compile-time-enforced against `MOVED_SETTINGS_KEYS`.
- * Enforcement lives in `src/__tests__/settings-consistency.test.ts` (every key
- * must belong to exactly one regime). A STALE entry here only loosens the `Omit`
+ * Enforcement note (corrected 2026-08-23): this block long claimed enforcement lives in
+ * `src/__tests__/settings-consistency.test.ts`, but NO SUCH FILE EXISTS — the "every key belongs to
+ * exactly one regime" union has no direct guard today. What does exist:
+ * `builtin-workflow-settings-triage.test.ts` (core) pins the workflow-native catalogs key by key, and
+ * `workflow-settings-fallback-alignment.test.ts` (engine) catches a key declared in both regimes. A STALE entry here only loosens the `Omit`
  * type — at worst it lets `DEFAULT_PROJECT_SETTINGS` drop a key it should keep;
  * it can never re-add a key to the schema object. A MISSING entry surfaces as a
  * type error on `DEFAULT_PROJECT_SETTINGS` if that key still has a default.
@@ -40,6 +43,27 @@ type MovedProjectSettingsKey =
   | "maxReviewerContextRetries"
   | "maxReviewerFallbackRetries"
   | "reflectionEnabled"
+  /*
+  FNXC:ReviewConvergence 2026-08-23-23:20 (comment corrected after review):
+  FN-149 declared these six in `BUILTIN_REVIEW_REVISION_SETTINGS` but left them inside
+  `ProjectSettingsSchema`, so `DEFAULT_PROJECT_SETTINGS` had to re-declare their defaults — the
+  dual-regime drift `workflow-settings-fallback-alignment` guards. Listing them here removes them
+  from that schema `Omit`, which is the whole effect: the workflow declaration becomes the single
+  source of each default.
+
+  PRECISION, because the earlier wording of this note ("they belong to the moved regime") was read as
+  a stronger claim than the change makes: this type is consumed ONLY by the `ProjectSettingsSchema`
+  Omit. It does NOT add them to the runtime moved catalog (`BUILTIN_MOVED_WORKFLOW_SETTINGS`), so
+  `MOVED_SETTINGS_KEYS` does not contain them and they are not tombstoned on the project-settings
+  write path. That is deliberate and matches FN-149: they are workflow-native settings, not migrated
+  project settings, and `builtin-workflow-settings-triage.test.ts` asserts exactly that regime split.
+  */
+  | "reviewConvergenceEscalationEnabled"
+  | "reviewConvergenceEscalationProvider"
+  | "reviewConvergenceEscalationModelId"
+  | "reviewArbitrationEnabled"
+  | "reviewArbitrationProvider"
+  | "reviewArbitrationModelId"
   | "executionProvider"
   | "executionCredentialInstanceId"
   | "executionModelId"
@@ -230,6 +254,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   openrouterAppAttribution: undefined,
   openrouterModelFilters: undefined,
   openrouterProviderPreferences: undefined,
+  orcarouterModelSync: true,
   opencodeGoModelSync: true,
   updateCheckEnabled: true,
   fnBinaryCheckEnabled: true,
@@ -243,6 +268,15 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   opt in before Fusion replaces its own binary and bounces the process under them.
   */
   autoUpdateAndRestart: false,
+  /*
+  FNXC:UpdateAutomation 2026-08-21-02:17:
+  Fresh installations require separate opt-ins for unattended installation and
+  restart. The legacy combined switch remains false and is only a fallback for
+  older persisted settings.
+  */
+  /* FNXC:UpdateAutomation 2026-08-21-02:48: Keep these schema keys unset because defaults merge into effective settings and `undefined` is distinct from explicit false. */
+  autoUpdateEnabled: undefined,
+  autoRestartAfterUpdate: undefined,
   autoReloadOnVersionChange: true,
   githubTrackingDefaultRepo: undefined,
   reportRoadmapDedupeEnabled: undefined,
@@ -253,6 +287,13 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   gitlabApiBaseUrl: undefined,
   gitlabAuthToken: undefined,
   gitlabAuthTokenType: undefined,
+  jiraEnabled: undefined,
+  jiraBaseUrl: undefined,
+  jiraApiBaseUrl: undefined,
+  jiraAuthEmail: undefined,
+  jiraAuthTokenSecretKey: undefined,
+  jiraAuthTokenSecretScope: undefined,
+  jiraBranchNameTemplate: undefined,
   modelOnboardingComplete: undefined,
   useClaudeCli: undefined,
   useDroidCli: undefined,
@@ -440,6 +481,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
 export const DEFAULT_PROJECT_SETTINGS = {
   // FNXC:TaskRecommendations 2026-08-08-05:02: completion follows-ups stay bounded by default; 0 disables writing them.
   maxRecommendationsPerTask: 3,
+  // FNXC:TaskRecommendations 2026-08-19-13:05: explicit recommendation evaluation is opt-in and only applies while the positive cap enables capture; relevance always outranks count.
+  requireTaskRecommendations: false,
   // FNXC:TaskRecommendations 2026-08-13-03:56: surface completed-task proposals by default; operators can suppress the notice without suppressing capture.
   recommendationMailboxNoticeEnabled: true,
   globalPause: false,
@@ -551,6 +594,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   showCostBadgeOnCards: false,
   /*
+  FNXC:ChatMessageLayout 2026-08-18-20:27:
+  The project preference applies one reversible layout choice to every standard and task chat surface. Explicitly seed the historical bubbles presentation so upgraded projects preserve their existing UI.
+  */
+  chatMessageLayout: "bubbles",
+  /*
   FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
   Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
   */
@@ -624,6 +672,16 @@ export const DEFAULT_PROJECT_SETTINGS = {
   executorEscalationProvider: undefined,
   executorEscalationModelId: undefined,
   executorEscalationNodeId: undefined,
+  /*
+  FNXC:ReviewConvergence 2026-08-23-21:05:
+  FN-149's six review-convergence/arbitration keys are declared in BUILTIN_WORKFLOW_SETTINGS, which
+  the U4 hard-move made the SINGLE source of truth for a moved key's default. Re-declaring them here
+  put them back in the legacy object the hard-move emptied, so an undeclared key on a custom workflow
+  could resolve to this literal instead of the declaration default — the exact drift
+  `workflow-settings-fallback-alignment` guards. The declaration defaults are identical (both
+  `*Enabled` default true, the provider/model lanes carry no default), and the reader uses
+  `!== false`, so removing them here preserves behaviour and restores the invariant.
+  */
   /**
    * FNXC:Merge 2026-06-26-00:00:
    * New and unconfigured projects default AI merge to sync a dirty checked-out integration branch, restoring the legacy stash → fast-forward → restore landing behavior. Explicit persisted merger.allowDirtyLocalCheckoutSync values still win, and no existing-project migration stamps this default into storage.
@@ -738,6 +796,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   gitlabApiBaseUrl: undefined,
   gitlabAuthToken: undefined,
   gitlabAuthTokenType: undefined,
+  jiraEnabled: undefined,
+  jiraBaseUrl: undefined,
+  jiraApiBaseUrl: undefined,
+  jiraAuthEmail: undefined,
+  jiraAuthTokenSecretKey: undefined,
+  jiraAuthTokenSecretScope: undefined,
+  jiraBranchNameTemplate: undefined,
   gitlabCommentOnDone: false,
   gitlabCommentTemplate: undefined,
   gitlabCloseSourceIssueOnDone: false,
@@ -759,6 +824,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   not variant-detected and unsupported input, including Japanese, remains English.
   */
   taskDefinitionInInputLanguage: false,
+  /* FNXC:TaskOutputLanguage 2026-08-19-14:56: Undefined preserves legacy true compatibility; the resolver supplies English for fresh projects. */
+  taskOutputLanguage: undefined,
   useAiMergeCommitSummary: true,
   // Title-summarizer model lanes stay project-scoped (not moved in U4).
   titleSummarizerProvider: undefined,
@@ -807,6 +874,40 @@ export const DEFAULT_PROJECT_SETTINGS = {
   taskEvaluationRetention: undefined,
   memoryEnabled: true,
   memoryBackendType: "qmd",
+  // FNXC:StashConfig 2026-08-13-16:35: (RUFU-068) Optional per-project Stash LCM
+  // memory backend config. stashUrl points at the operator's Stash server
+  // (default http://127.0.0.1:3457). stashApiKey is an override for hard
+  // isolation (separate Stash instance/account); the PRIMARY API key lives in
+  // the global secrets store ("stash-api-key") and is NEVER committed. Project
+  // value wins over global. TencentDB's URL setting is intentionally NOT ported.
+  stashUrl: "",
+  stashApiKey: "",
+  /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D3): opt-in vector (semantic) recall for the Stash memory backend.
+  Default OFF — zero behavior change until the operator enables it (this is a
+  prototype; rejected alternative was automatic capability detection, which
+  would change default behavior and pay a per-process 404 round-trip against
+  unpatched servers). When true, multi-word (≥2 tokens) recall queries try the
+  Stash GET /api/v1/me/sessions/events/semantic-search endpoint first and fall
+  back byte-identically to the RUFU-121 keyword path on any vector failure
+  (see memory-backend-stash.ts search() + docs/research/stash-vector-search-evaluation.md
+  for D1–D5). Schema-only, consistent with stashUrl/stashApiKey (no UI row).
+  */
+  stashVectorSearch: false,
+  /*
+  FNXC:StashSessionCapture 2026-08-19-04:37:
+  (RUFU-122) Task-terminal transcript upload defaults. All are inert unless
+  memoryBackendType === "stash". executorSessionCaptureEnabled gates ONLY the
+  transcript upload (the RUFU-068 terminal anchor event still fires when it is
+  off) and defaults ON. executorSessionCaptureMaxEvents caps transcript events
+  per task; the engine keeps the most recent N (default 20000). 
+  executorSessionCaptureIncludeStatus is the schema-only "keep a setting" for
+  uploading `status` log entries (default off; no UI row).
+  */
+  executorSessionCaptureEnabled: true,
+  executorSessionCaptureMaxEvents: 20_000,
+  executorSessionCaptureIncludeStatus: false,
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",

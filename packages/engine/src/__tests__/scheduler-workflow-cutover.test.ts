@@ -580,7 +580,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=1/4"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
+      expect.stringContaining("gate=maxWorktrees; effectiveLimit=1 (bindingKnob=maxWorktrees); maxConcurrent used=1/4"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
@@ -604,7 +604,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
-      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=5/10"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
+      expect.stringContaining("gate=maxWorktrees; effectiveLimit=4 (bindingKnob=maxWorktrees); maxConcurrent used=5/10"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
@@ -754,7 +754,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-402", "in-progress", expect.anything(), expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-402",
-      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=4/10"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
+      expect.stringContaining("gate=maxWorktrees; effectiveLimit=4 (bindingKnob=maxWorktrees); maxConcurrent used=4/10"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(onSchedule).toHaveBeenCalledTimes(1);
   });

@@ -66,7 +66,7 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     /*
     FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
     Swapping projects must not leave the previous project's modals (task detail, group,
-    subtask, git manager, …) rendering over the new project. Re-selecting the already
+    git manager, …) rendering over the new project. Re-selecting the already
     current project is a no-op navigation and must NOT dismiss whatever the user has open.
     */
     if (project.id !== currentProject?.id) {

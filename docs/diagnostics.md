@@ -249,3 +249,52 @@ No output means Git no longer registers that temp path; matching `worktree <temp
 ## Bounded hold-release and health diagnostics (FN-8856)
 
 Hold-release summaries include prefetch, IR-resolution, and evaluation accumulators; measured sweep-attributable read counts; scanned-task and held-candidate counts; released/held totals; `unevaluatedCount`; and `budgetOverrunMs`. A budget-truncated sweep warns even when it stops in the preamble. Resolver reads are measured by a delegating counting facade (and direct sweep reads at their call sites), not cache-size inference. PostgreSQL health probes return a degraded timeout reason when the pool is saturated. Migration-state probe timeouts remain advisory after database and task-ID integrity checks succeed.
+
+## `/metrics` observability endpoint (RUFU-081)
+
+The dashboard HTTP server exposes **`GET /metrics`** — a plain-text Prometheus exposition endpoint (`text/plain; version=0.0.4; charset=utf-8`) serving the system / runtime / Fusion-domain measurements that earlier CPU and UI-responsiveness diagnoses had to collect by hand (`curl /api/health` for event-loop latency, `ps` for child-process cadence, `psql` for query rate, RAM-usage sampling for RSS). A `curl /metrics` returns the same numbers a Prometheus/Grafana scrape would consume; no OTLP collector or `prom-client` dependency is involved — the module serializes Prometheus text in-process.
+
+### Contract
+
+- **Public, outside `/api`:** the route is mounted at the app level (before the SPA catch-all and `express.static`), so it returns Prometheus text rather than `index.html`. Daemon bearer-token auth only protects `/api/*`; `/metrics` is intentionally unauthenticated. The body carries **numeric values plus low-cardinality string label values** — no secrets, no prose, no request payloads, no run-audit telemetry. The label values do include registered **project identifiers** (`fusion_domain_project_running_agents{project="…"}`) and board column names, so any client that can reach the port can enumerate open project ids. Bind the port to a trusted network when that disclosure is not acceptable (CodeRabbit Major review fix 2026-08-18-11:53: the earlier "numeric gauges only" wording did not match the emitted body).
+- **Non-blocking by construction:** the `/metrics` handler renders **synchronously** from pre-read snapshots. It performs zero awaited I/O — a scrape completes in O(metric count) work and can never itself starve the event loop or trigger an on-demand DB/ps query. All sampling happens on pre-read tick timers (see cadence below).
+- **Run-audit blackline (FN-7158/FN-7528):** no metric content, relabeled names, timestamps, or numeric snapshots are written to the run-audit. The endpoint computes on scrape from in-process state; nothing here emits a documented run-audit event.
+
+### Served metric families
+
+| Metric | Type | Cadence source | Meaning |
+| --- | --- | --- | --- |
+| `fusion_system_request_count_total` | counter | live request pipeline | Requests served through the latency recorder |
+| `fusion_system_request_latency_ms{quantile="p50\|p95\|max"}` | gauge | live request pipeline | Histogram over the recent served-request ring |
+| `fusion_system_request_latency_bucket{le="…"}` | gauge | live request pipeline | Cumulative bucket counts over the ring |
+| `fusion_system_last_request_age_ms` | gauge | live request pipeline | ms since the last served request — **grows during event-loop starvation** (the freeze indicator) |
+| `fusion_system_process_rss_bytes` | gauge | ~5s tick | RSS of the serving process |
+| `fusion_system_process_heap_used_bytes` / `…_heap_total_bytes` | gauge | ~5s tick | Heap usage of the serving process |
+| `fusion_system_cpu_user_seconds_total` / `…_system_seconds_total` | counter | ~5s tick | CPU time consumed by the serving process |
+| `fusion_system_child_process_spawn_total` | counter | spawn hook | Cumulative `child_process` spawn/fork/execFile/exec invocations |
+| `fusion_system_child_process_spawn_total_by_kind{kind="…"}` | counter | spawn hook | Per-kind cumulative spawn counts |
+| `fusion_system_git_child_processes` | gauge | ~15s `ps` | Live `git` children of the serving process (best-effort) |
+| `fusion_domain_postgres_queries_per_second` | gauge | ~5s tick | Derived PG xact rate from `pg_stat_database` deltas (best-effort) |
+| `fusion_domain_projects_total` / `…_active` / `…_idle` | gauge | ~5s tick | Registered open project split by running-agent activity |
+| `fusion_domain_project_running_agents{project="…"}` | gauge | ~5s tick | Running agents per registered project |
+| `fusion_domain_board_tasks{column="…"}` | gauge | ~5s tick | Tasks per board column across registered projects |
+
+### Sampling cadence and lifecycle
+
+- The request-latency recorder is an Express middleware mounted before route handlers, so it measures the **live serving path** (including `GET /api/health`), not a synthetic probe.
+- Process CPU/memory gauges update every ~5s; the git-subprocess gauge every ~15s; the PG rate and domain gauges every ~5s. All timers are `unref()`'d so a running sampler never keeps the process alive. The process and git arms invoke the same sampler, so they share ONE in-flight guard key: at the default 5s/15s cadence the arms coincide every 15 s and the coinciding tick skips the duplicate `ps` probe instead of double-probing (CodeRabbit Major review fix 2026-08-18-11:53).
+- Sampler **start** is wired into the server's listen override and **stop** into the close handler (co-located with the OTLP exporter lifecycle), and runs in both headless and non-headless modes. Both start and stop are idempotent and never break server startup/shutdown; both calls are wrapped in try/catch (same pattern as the OTLP exporter) so a failure is logged and can never skip the remaining close handlers.
+- **Spawn-count hook:** on start, `child_process.spawn`, `fork`, `execFile`, and `exec` are wrapped with an atomic counter that delegates to the original via `.apply`, so child spawning (including `superviseSpawn` / `runCommandAsync` / `execFileAsync`) is never broken. On stop the original functions are restored exactly. The hook is idempotent (starting twice never stacks a second wrap).
+
+### Best-effort degradation
+
+- **Git-subprocess gauge:** a single-level `ps -o comm= --ppid <pid>` scan every ~15s counts live `git` children of the serving process. It never recurses and never scans the whole process tree. When `ps` is unavailable (Windows, non-POSIX, missing procfs), the gauge degrades to `0` rather than throwing.
+- **PG query-rate sampler:** reads cumulative `pg_stat_database` xact_commit/xact_rollback deltas PER DATABASE from the store's live async layer on the tick, normalized to a per-second rate. It is best-effort: on a privilege-fenced PG, transient pool error, or absent async layer it keeps the last-known rate (or `0` on the first invalid sample) rather than throwing or hammering the DB. A failed-probe gap invalidates the retained baseline — the first success after the gap re-baselines and keeps the last-known rate, so a stats reset landing inside the gap can never produce a cross-epoch rate — and a backward delta on ANY single database is treated as a stats reset even when the cross-database sum stays positive. The baseline is also marked stale on **stop**: after a dashboard stop/restart the first success re-baselines and keeps the last-known rate, so a stats reset during the stop gap can never emit a cross-epoch rate either (Greptile P1 review fix 2026-08-18-11:53). Embedded PostgreSQL reads may be operator-only depending on context.
+- **Domain gauges** come only from already-open project stores via `countRunningAgentsInStore` / `listRegisteredProjectStores` / `store.listTasks({ slim: true })`. Empty/undefined/duplicate project and empty-column states produce well-formed `0`-valued or absent metric lines, never malformed output; the sampler never opens a store or starts an engine to answer a scrape.
+- **Value safety:** non-finite or non-numeric values are coerced to `0` so a single bad sample cannot abort the whole body; invalid metric/label names are sanitized to the permitted Prometheus character set.
+
+### Test coverage (RUFU-082)
+
+- **Endpoint acceptance** (`packages/dashboard/src/routes/__tests__/metrics-endpoint.test.ts`): drives `GET /metrics` through the real server creator and an independent exposition-text parser (`packages/dashboard/src/__tests__/prometheus-text-parse.ts`) to prove the served body is well-formed Prometheus text covering all five measurement gaps and is NOT the pre-RUFU-081 SPA `index.html` fallback, that a scrape writes no run-audit row, and that repeat scrapes render a fresh, bounded snapshot.
+- **Sampler acceptance** (`packages/dashboard/src/metrics/__tests__/metrics-samplers-acceptance.test.ts`): exercises the orchestrator `render()` end-to-end — synchronous pre-read render (no on-demand DB/ps on a scrape), all five family gaps as finite gauges, and the spawn-count hook incrementing on a real child process with the wrapper restored in `finally`.
+- **Parser unit cases** (`packages/dashboard/src/__tests__/prometheus-text-parse.test.ts`): gauge/counter `_total`/NaN/Inf/labeled families and non-exposition-text rejection.

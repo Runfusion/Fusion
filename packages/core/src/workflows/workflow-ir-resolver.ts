@@ -103,6 +103,18 @@ export type WorkflowSelection = { workflowId: string; stepIds: string[] };
 /** A caller-owned cache that is valid only for one resolver pass. */
 export type WorkflowSelectionCache = Map<string, WorkflowSelection | undefined>;
 
+/*
+FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
+In-flight selection-read coalescing, keyed by the CALLER-OWNED per-pass cache object. Several
+`resolveTaskParkedColumns` wake closures can race on the same task in one scheduler event, and each
+used to see the cache still-empty (the `.has` check runs before the first `await` resolves and the
+`.set`) — so all of them hit the DB. This WeakMap lets concurrent calls that SHARE a cache coalesce
+onto ONE in-flight read promise; the weak key binds it strictly to that pass, so it is NOT a global
+/infinite cache and auto-releases when the pass cache is GC'd. A selection write in the next pass
+uses a fresh cache (fresh WeakMap slot) and is always observed.
+*/
+const inflightSelectionReads = new WeakMap<WorkflowSelectionCache, Map<string, Promise<WorkflowSelection | undefined>>>();
+
 export interface WorkflowIrResolverStore {
   getTaskWorkflowSelection(taskId: string): WorkflowSelection | undefined;
   getTaskWorkflowSelectionAsync?(taskId: string): Promise<WorkflowSelection | undefined>;
@@ -326,12 +338,44 @@ export async function resolveWorkflowIrForTaskWithProvenance(
     FNXC:WorkflowScheduling 2026-08-09-06:07:
     Selection caches are per-call/per-scheduler-pass only: selection writes invalidate lane state and the next pass must observe them. A throwing read is deliberately not cached so transient PostgreSQL failures are retried; therefore instrumentation must count calls rather than infer them from cache keys.
     */
-    const selection = selectionCache?.has(taskId)
-      ? selectionCache.get(taskId)
-      : store.getTaskWorkflowSelectionAsync
-        ? await store.getTaskWorkflowSelectionAsync(taskId)
-        : store.getTaskWorkflowSelection(taskId);
-    if (!selectionCache?.has(taskId)) selectionCache?.set(taskId, selection);
+    const isSelectionCached = selectionCache?.has(taskId) ?? false;
+    let selection: WorkflowSelection | undefined = isSelectionCached && selectionCache ? selectionCache.get(taskId) : undefined;
+    if (!isSelectionCached) {
+      // When a caller OWNs a per-tick cache shared by concurrent wake closures, coalesce duplicated
+      // in-flight reads onto ONE promise (RUFU-073). When NO cache is supplied, behave exactly as
+      // before: read the selection once, live-per-call, and cache nothing.
+      let inflight: Map<string, Promise<WorkflowSelection | undefined>> | undefined;
+      let coalesced = false;
+      if (selectionCache) {
+        inflight = inflightSelectionReads.get(selectionCache);
+        if (!inflight) {
+          inflight = new Map<string, Promise<WorkflowSelection | undefined>>();
+          inflightSelectionReads.set(selectionCache, inflight);
+        }
+        const pending = inflight.get(taskId);
+        if (pending) {
+          // A concurrent closure sharing this cache already owns the read; just await its outcome.
+          selection = await pending;
+          coalesced = true;
+        }
+      }
+      if (!coalesced) {
+        const readPromise = store.getTaskWorkflowSelectionAsync
+          ? store.getTaskWorkflowSelectionAsync(taskId)
+          : Promise.resolve(store.getTaskWorkflowSelection(taskId));
+        // Book first, then fulfill; any subsequent caller sharing this cache sees `pending` and awaits
+        // the same promise instead of issuing its own DB read.
+        if (inflight) inflight.set(taskId, readPromise);
+        try {
+          selection = await readPromise;
+        } finally {
+          inflight?.delete(taskId);
+        }
+      }
+      // Cache the resolved value so SEQUENTIAL later calls in the same pass skip even the coalescer.
+      // A throwing read is deliberately NOT cached so transient failures are retried next pass.
+      selectionCache?.set(taskId, selection);
+    }
     workflowId = selection?.workflowId;
   } catch {
     return { ir: defaultCodingWorkflowIr(), source: "default" };

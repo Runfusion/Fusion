@@ -9,6 +9,7 @@ import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-tas
 import {
   MERGE_REGION_KINDS,
   SESSION_CONTENTION_HOLD_VALUE,
+  WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE,
 } from "../workflows/workflow-graph-executor.js";
 import { isMissingWorktreeSessionStartFailure } from "../healing/restart-recovery-coordinator.js";
 import { isSessionContentionError } from "../errors/transient-error-detector.js";
@@ -179,6 +180,11 @@ export function isSessionContentionGraphFailure(result: WorkflowGraphTaskRunResu
 }
 
 /** True only for the pre-session refresh refusal values emitted by graph preparation. */
+/** A workspace Git/base-ref acquisition failure is a pre-provider environment hold. */
+export function isWorkspacePreparationGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
+  return graphFailureValue(result) === WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE;
+}
+
 export function isWorktreeBaseRefreshGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
   return new Set([
     "stale-base-conflict",

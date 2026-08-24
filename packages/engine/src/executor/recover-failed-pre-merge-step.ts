@@ -32,6 +32,8 @@ import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } fr
 import { hasPreMergeRemediationAutoMergeHold } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
+import { hasRepeatedUnchangedReview } from "./request-pre-merge-optional-step-fix.js";
 
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
@@ -113,7 +115,41 @@ export async function recoverFailedPreMergeWorkflowStep(
       );
       return false;
     }
+    /*
+    FNXC:ReviewConvergence 2026-08-22-05:44:
+    Recovery is an independent remediation requester. It must compare the durable current
+    review input before bouncing an unlimited budget, otherwise restart recovery recreates the
+    unchanged-review loop that the live graph path already escalates.
+    */
+    if (hasRepeatedUnchangedReview(task, {
+      nodeId: target.workflowStepId,
+      stepName,
+      feedback,
+      phase: target.phase ?? "pre-merge",
+      status: target.status,
+      verdict: target.verdict,
+      findings: target.findings,
+    })) {
+      const outcome = await routeReviewConvergenceLadder({
+        ...deps,
+        getRunContextFor: deps.getRunContextFor ?? (() => undefined),
+      }, task.id, {
+        kind: "repeat-unchanged", workflowStepId: target.workflowStepId, stepName,
+        feedback, findings: target.findings, attempt: budget.attempts,
+        max: budget.unbounded ? undefined : budget.max,
+      });
+      if (outcome === "escalated" || outcome === "arbitrated") return true;
+      return false;
+    }
     if (!budget.unbounded && budget.attempts >= budget.max) {
+      const outcome = await routeReviewConvergenceLadder({
+        ...deps,
+        getRunContextFor: deps.getRunContextFor ?? (() => undefined),
+      }, task.id, {
+        kind: "budget-exhausted", workflowStepId: target.workflowStepId, stepName,
+        feedback, findings: target.findings, attempt: budget.attempts, max: budget.max,
+      });
+      if (outcome === "escalated" || outcome === "arbitrated") return true;
       executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
       await deps.store.logEntry(
         task.id,

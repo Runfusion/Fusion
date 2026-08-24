@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { validateCustomFieldPatch, type Settings, type Task } from "@fusion/core";
+import {
+  PreMergeStepsNotRunError,
+  PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  validateCustomFieldPatch,
+  type Settings,
+  type Task,
+} from "@fusion/core";
 import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const testState = vi.hoisted(() => {
@@ -71,7 +77,7 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
 import { ProjectEngine } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
 import { VerificationError } from "../merger.js";
-import { runAiMerge } from "../merge/merger-ai.js";
+import { AiMergeBlockedError, runAiMerge } from "../merge/merger-ai.js";
 
 type MockTask = {
   id: string;
@@ -96,6 +102,7 @@ type MockTask = {
   customFields?: Record<string, unknown>;
   updatedAt: string;
   log: Array<{ action?: string }>;
+  aiMergeReviewReconciliation?: { candidateSha?: string };
 };
 
 type MockTaskStore = {
@@ -150,6 +157,17 @@ function makeStore({
       globalPause: false,
       enginePaused: false,
       pollIntervalMs: 15_000,
+      /*
+      FNXC:EngineTests 2026-08-23-18:49:
+      `baseBranch` is not decoration here: the auto-merge sweep resolves each candidate's shared-
+      branch integration target through `resolveIntegrationBranch`, which falls back to SHELLING OUT
+      to `git symbolic-ref .../origin/HEAD` when settings name no branch. Real subprocess I/O cannot
+      be advanced by `vi.advanceTimersByTimeAsync`, so under fake timers the sweep never settles: its
+      `finally` never runs, no retry timer is rescheduled, and the failure surfaces as a missing log
+      line far from the cause. Naming the branch — as every real project does — keeps resolution in
+      settings and off the real clock.
+      */
+      baseBranch: "main",
       // FNXC:MergerUnification 2026-06-21-19:05: U0 unified merges onto runAiMerge;
       // these tests mock/assert runAiMerge directly. No `merger.mode` pin needed —
       // the dispatch ignores the value.
@@ -268,7 +286,8 @@ describe("ProjectEngine merge error recovery", () => {
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const store = makeStore();
     store.getSettings
-      .mockResolvedValueOnce({ autoMerge: true, globalPause: false, enginePaused: false })
+      // baseBranch: see makeStore — an unnamed integration branch shells out to git under fake timers.
+      .mockResolvedValueOnce({ autoMerge: true, globalPause: false, enginePaused: false, baseBranch: "main" })
       .mockRejectedValueOnce(new Error("interval unavailable"));
 
     const engine = createEngine(store);
@@ -281,6 +300,10 @@ describe("ProjectEngine merge error recovery", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     await vi.runAllTicks();
 
+    // eslint-disable-next-line no-console
+    await vi.advanceTimersByTimeAsync(60_000);
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    console.warn("PROBE counts:", JSON.stringify(Object.fromEntries(Object.entries(store).filter(([, v]) => typeof v === "function" && (v as any).mock).map(([k, v]) => [k, (v as any).mock.calls.length]).filter(([, n]) => (n as number) > 0))), "timers:", vi.getTimerCount(), "warns:", JSON.stringify(warnSpy.mock.calls), "errors:", JSON.stringify(errorSpy.mock.calls));
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Auto-merge retry: failed to read pollIntervalMs, using default 15s: interval unavailable"),
     );
@@ -360,6 +383,80 @@ describe("ProjectEngine merge error recovery", () => {
       expect.stringContaining("bounced to in-progress"),
       "MergeConflictBounce", ANY_MUTATION_CONTEXT);
     expect(hasErrorLog(errorSpy, "failed to bounce")).toBe(false);
+  });
+
+  it("parks typed AI review blocks containing conflicts without retrying or bouncing", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const store = makeStore({
+      tasks: [makeTask({ mergeRetries: 0, aiMergeReviewReconciliation: { candidateSha: "abc123def456" } }), makeTask({ mergeRetries: 3, aiMergeReviewReconciliation: { candidateSha: "abc123def456" } })],
+    });
+    vi.mocked(runAiMerge).mockRejectedValueOnce(
+      new AiMergeBlockedError(TASK_ID, ["review assertions conflicts with builtin settings"]),
+    );
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, {
+      status: "failed",
+      mergeRetries: 3,
+      error: "AI merge review blocked landing at abc123def456: review assertions conflicts with builtin settings. Rebase/re-push, dismiss a finding with a reason, or land manually.",
+    });
+    expect(store.updateTask).not.toHaveBeenCalledWith(TASK_ID, expect.objectContaining({ status: null }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalledWith(TASK_ID, expect.any(String), "MergeConflictBounce");
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), expect.any(Number));
+    const canMergeTask = (engine as unknown as { canMergeTask: (task: MockTask, retries: number) => boolean }).canMergeTask.bind(engine);
+    expect(canMergeTask(makeTask({ status: "failed", updatedAt: new Date(0).toISOString() }), 3)).toBe(false);
+    vi.useRealTimers();
+  });
+
+  /*
+  FNXC:RequiredPreMergeSteps 2026-08-22-22:40 (FN-9191 wedge):
+  SYMPTOM: FN-9191 sat `in-review` with `status:"failed"` and
+  `error: "Cannot merge FN-9191: task has enabled pre-merge workflow steps that never ran"`,
+  even though BOTH enabled gates (Plan Review, Code Review) later ran and APPROVED. The sweep
+  enqueued the card ~2s after `fn_task_done`, ~18s before the graph started its own Code Review
+  node; the door refused correctly, and THIS error path turned a not-yet answer into a terminal
+  park. Every later merge — including the graph's own merge node at 02:04:38 — then died on
+  `task is marked 'failed'`.
+  ASSERTION: a `PreMergeStepsNotRunError` writes no status, burns no retry, and moves nothing.
+  */
+  it("defers (does not park) when a merge door refuses only because a pre-merge gate has not run", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const store = makeStore({ tasks: [makeTask({ mergeRetries: 0 }), makeTask({ mergeRetries: 0 })] });
+    vi.mocked(runAiMerge).mockRejectedValueOnce(new PreMergeStepsNotRunError(TASK_ID));
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.addTaskComment).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.stringContaining(PRE_MERGE_STEPS_NOT_RUN_BLOCKER),
+      "MergeDeferredPendingPreMergeSteps",
+    );
+    expect(store.logEntry).not.toHaveBeenCalledWith(TASK_ID, expect.any(String), "MergeNonConflictFailure");
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), expect.any(Number));
+    vi.useRealTimers();
+  });
+
+  it("still parks other non-conflict merge failures as failed", async () => {
+    const store = makeStore({ tasks: [makeTask({ mergeRetries: 0 }), makeTask({ mergeRetries: 0 })] });
+    vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("remote rejected the push"));
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.updateTask).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({ status: "failed", error: expect.stringContaining("remote rejected the push") }),
+    );
+    expect(store.logEntry).toHaveBeenCalledWith(TASK_ID, expect.any(String), "MergeNonConflictFailure");
   });
 
   it("logs when bouncing fails after conflict retries are exhausted", async () => {

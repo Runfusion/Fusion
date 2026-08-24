@@ -42,7 +42,10 @@ describe("KnowledgeGraphPanel", () => {
     rerender(<KnowledgeGraphPanel addToast={vi.fn()} />);
     expect(screen.getByTestId("knowledge-graph-no-results")).toBeInTheDocument();
     for (const [result, id] of [[{ outcome: "found", path: { nodes: [node], edges: [] }, hops: 0, maxHops: 2, expansions: 1, truncated: false }, "knowledge-graph-path-found"], [{ outcome: "not-found", path: null, maxHops: 2, expansions: 2, truncated: false }, "knowledge-graph-path-not-found"], [{ outcome: "limit-reached", path: null, maxHops: 2, expansions: 2, truncated: true, limit: "max-hops" }, "knowledge-graph-path-limit-reached"]] as const) {
-      useKnowledgeGraph.mockReturnValue(graph({ pathResult: result })); rerender(<KnowledgeGraphPanel addToast={vi.fn()} />); expect(screen.getByTestId(id)).toBeInTheDocument();
+      useKnowledgeGraph.mockReturnValue(graph({ pathResult: result }));
+      rerender(<KnowledgeGraphPanel addToast={vi.fn()} />);
+      expect(screen.getByTestId(id)).toBeInTheDocument();
+      if (id === "knowledge-graph-path-found") expect(screen.getByTestId(id)).toHaveTextContent("0 hops");
     }
     useKnowledgeGraph.mockReturnValue(graph({ error: "Unknown graph node" })); rerender(<KnowledgeGraphPanel addToast={vi.fn()} />); expect(screen.getByTestId("knowledge-graph-path-error")).toHaveTextContent("Unknown graph node");
   });

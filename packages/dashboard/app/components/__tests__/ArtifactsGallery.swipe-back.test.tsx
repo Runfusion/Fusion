@@ -15,6 +15,9 @@ vi.mock("../../api", () => ({
 vi.mock("../FloatingWindow", () => ({
   FloatingWindow: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+vi.mock("../../hooks/useArtifactImageBlob", () => ({
+  useArtifactImageBlob: vi.fn(() => ({ url: "blob:secure-preview", loading: false, error: null, reload: vi.fn() })),
+}));
 
 const artifacts: ArtifactWithTask[] = [
   {
@@ -69,7 +72,7 @@ function openDocumentViewer() {
 }
 
 function expectViewerOpen(container: HTMLElement) {
-  expect(container.querySelector(".artifacts-gallery-viewer")).not.toBeNull();
+  expect(container.querySelector(".artifacts-gallery-viewer, .artifact-image-viewer")).not.toBeNull();
 }
 
 describe("ArtifactsGallery mobile viewer navigation history", () => {
@@ -104,7 +107,7 @@ describe("ArtifactsGallery mobile viewer navigation history", () => {
     await waitFor(() => expect(container.querySelector(".artifacts-gallery-viewer")).toBeNull());
     expect(screen.getByRole("button", { name: "Expand Image artifact" })).toBeInTheDocument();
     dispatchPopState(0);
-    expect(container.querySelector(".artifacts-gallery-viewer")).toBeNull();
+    expect(container.querySelector(".artifact-image-viewer")).toBeNull();
   });
 
   it("routes Android native Back through popstate before dismissing the document viewer", async () => {

@@ -73,6 +73,7 @@ function register(registry?: Registry, configuredOAuthProviders: string[] = []) 
   registerAuthRoutes(context as never);
   return {
     handler: getHandlers.get("/models")!,
+    refreshCatalog: postHandlers.get("/models/refresh")!,
     saveApiKey: postHandlers.get("/auth/api-key")!,
     setDefaultInstance: postHandlers.get("/auth/providers/:provider/default-instance")!,
     warn,
@@ -84,6 +85,12 @@ async function request(handler: Handler): Promise<{ models: typeof rows }> {
   const json = vi.fn();
   await handler({}, { json });
   return json.mock.calls[0]?.[0] as { models: typeof rows };
+}
+
+async function refreshCatalog(handler: Handler): Promise<Record<string, unknown>> {
+  const json = vi.fn();
+  await handler({}, { json });
+  return json.mock.calls[0]?.[0] as Record<string, unknown>;
 }
 
 async function saveApiKey(handler: Handler) {
@@ -231,6 +238,73 @@ describe("registerModelRoutes refresh bounding", () => {
     const cached = await request(handler);
     expect(registry.refresh).toHaveBeenCalledOnce();
     expect(cached.models).toEqual(fresh.models);
+  });
+
+  it("forces a fresh built-in catalog and exposes refreshed rows through GET /models", async () => {
+    let availableRows = rows;
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const registered = register({ refresh, getAvailable: () => availableRows });
+
+    await expect(request(registered.handler)).resolves.toMatchObject({ models: rows });
+    availableRows = [{ ...rows[0], id: "gpt-refreshed", name: "Refreshed" }];
+
+    await expect(refreshCatalog(registered.refreshCatalog)).resolves.toEqual({ outcome: "completed" });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await expect(request(registered.handler)).resolves.toMatchObject({ models: availableRows });
+  });
+
+  it("reports an unavailable registry without pretending a refresh ran", async () => {
+    const { refreshCatalog: refresh } = register();
+
+    await expect(refreshCatalog(refresh)).resolves.toEqual({
+      outcome: "failed",
+      error: "Model registry unavailable",
+    });
+  });
+
+  it("retains the last catalog after a failed manual refresh", async () => {
+    const refresh = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("catalog unavailable"));
+    const registered = register({ refresh, getAvailable: () => rows });
+
+    await request(registered.handler);
+    await expect(refreshCatalog(registered.refreshCatalog)).resolves.toEqual(expect.objectContaining({ outcome: "failed" }));
+    await expect(request(registered.handler)).resolves.toMatchObject({ models: rows });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the last catalog after a timed-out manual refresh", async () => {
+    vi.useFakeTimers();
+    const refresh = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => new Promise<void>(() => {}));
+    const registered = register({ refresh, getAvailable: () => rows });
+
+    await request(registered.handler);
+    const pending = refreshCatalog(registered.refreshCatalog);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(pending).resolves.toEqual({ outcome: "timed_out" });
+    await expect(request(registered.handler)).resolves.toMatchObject({ models: rows });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("fences a manual refresh behind an older in-flight generation", async () => {
+    const first = deferred<void>();
+    const refresh = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(undefined);
+    const registered = register({ refresh, getAvailable: () => rows });
+
+    const initial = request(registered.handler);
+    await flushSettlements();
+    await expect(refreshCatalog(registered.refreshCatalog)).resolves.toEqual({ outcome: "stale_in_flight" });
+    first.resolve();
+    await initial;
+    await flushSettlements();
+
+    await expect(refreshCatalog(registered.refreshCatalog)).resolves.toEqual({ outcome: "completed" });
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it("preserves route dedupe and the absent-registry empty-list branch", async () => {

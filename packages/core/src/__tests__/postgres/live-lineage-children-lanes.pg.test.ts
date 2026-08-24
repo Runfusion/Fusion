@@ -87,11 +87,12 @@ pgDescribe("findLiveLineageChildren under a renamed board vocabulary", () => {
     expect(await h.store().findLiveLineageChildren("KB-PARENT")).toEqual([]);
   });
 
-  it("renamed vocabulary: a child in the RENAMED archive lane does not count as live", async () => {
+  it("renamed vocabulary: a child in the RENAMED archive lane does not block the parent archive", async () => {
     await seedRenamedWorkflow();
     await seedLineagePair("vaulted");
 
     expect(await h.store().findLiveLineageChildren("KB-PARENT")).toEqual([]);
+    await expect(h.store().archiveTask("KB-PARENT", { cleanup: false })).resolves.toMatchObject({ id: "KB-PARENT" });
   });
 
   /*

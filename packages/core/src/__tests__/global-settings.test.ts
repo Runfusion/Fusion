@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { GlobalSettingsStore, defaultGlobalDir } from "../config/global-settings.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "../types.js";
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
@@ -958,6 +958,45 @@ describe("GlobalSettingsStore", () => {
       const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
       expect(raw.defaultProvider).toBe("anthropic");
       expect(raw.defaultModelId).toBeUndefined();
+    });
+
+    it("discards a snapshot read concurrently with a sibling write", async () => {
+      const sibling = new GlobalSettingsStore(dir);
+      await store.init();
+      let releaseRead!: () => void;
+      const readStarted = new Promise<void>((resolve) => {
+        const originalReadRaw = sibling.readRaw.bind(sibling);
+        vi.spyOn(sibling, "readRaw").mockImplementationOnce(async () => {
+          resolve();
+          await new Promise<void>((release) => { releaseRead = release; });
+          return originalReadRaw();
+        });
+      });
+
+      const pendingRead = sibling.getSettings();
+      await readStarted;
+      await store.updateSettings({ themeMode: "dark" });
+      releaseRead();
+
+      expect((await pendingRead).themeMode).toBe("dark");
+      expect((await sibling.getSettings()).themeMode).toBe("dark");
+    });
+
+    it("refreshes a primed sibling store after a write and preserves its latest snapshot", async () => {
+      const sibling = new GlobalSettingsStore(dir);
+      await store.init();
+      await sibling.getSettings();
+      await store.updateSettings({ themeMode: "dark", futureSetting: "preserve-me" });
+
+      expect((await sibling.getSettings()).themeMode).toBe("dark");
+      await sibling.updateSettings({ colorTheme: "velvet" });
+
+      const raw = await sibling.readRaw();
+      expect(raw).toMatchObject({ themeMode: "dark", colorTheme: "velvet", futureSetting: "preserve-me" });
+      await store.invalidateCache();
+      // @ts-expect-error null intentionally removes an unknown key.
+      await sibling.updateSettings({ futureSetting: null });
+      expect((await store.getSettings() as Record<string, unknown>).futureSetting).toBeUndefined();
     });
   });
 });

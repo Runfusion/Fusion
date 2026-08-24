@@ -52,12 +52,18 @@ function asSubpath(path: string): string {
   return `(subpath "${sbplEscape(path)}")`;
 }
 
-function ensureNoFusionWrites(paths: string[], repoRootPath: string): void {
+function ensureNoFusionWrites(paths: string[], repoRootPath: string, worktreePath: string): void {
   const fusionRoot = resolve(repoRootPath, ".fusion");
   const fusionDb = resolve(fusionRoot, "fusion.db");
+  const declaredWorktree = resolve(worktreePath);
   for (const candidate of paths) {
     const resolved = resolve(candidate);
-    if (resolved === fusionRoot || resolved === fusionDb || resolved.startsWith(`${fusionRoot}/`)) {
+    // FNXC:WorkspaceSandbox 2026-08-22-23:58: workspace task worktrees live
+    // below .fusion/worktrees, but only the exact declared task root may be
+    // writable. The task DB and every other .fusion path remain forbidden.
+    const isDeclaredTaskWorktree = resolved === declaredWorktree
+      && (declaredWorktree === fusionRoot || declaredWorktree.startsWith(`${fusionRoot}/`));
+    if (!isDeclaredTaskWorktree && (resolved === fusionRoot || resolved === fusionDb || resolved.startsWith(`${fusionRoot}/`))) {
       throw new SandboxPolicyError("Sandbox policy cannot include writable paths under .fusion/.");
     }
   }
@@ -79,8 +85,12 @@ export function policyToSbplProfile(policy: SandboxExecPolicy, ctx: SandboxExecC
   const tmpDir = resolve(ctx.tmpDirOverride ?? "/private/tmp");
   const nodeDir = dirname(ctx.nodeBinPath);
 
-  const writePaths = uniq([ctx.worktreePath, ctx.pnpmStorePath, ...(policy.allowedWritePaths ?? [])]);
-  ensureNoFusionWrites(writePaths, ctx.repoRootPath);
+  // FNXC:WorkspaceSandbox 2026-08-22-23:45: An explicit empty list is a
+  // read-only session policy; only unspecified write paths retain the legacy preset.
+  const writePaths = uniq(policy.allowedWritePaths === undefined
+    ? [ctx.worktreePath, ctx.pnpmStorePath]
+    : policy.allowedWritePaths);
+  ensureNoFusionWrites(writePaths, ctx.repoRootPath, ctx.worktreePath);
 
   const readPaths = uniq([
     ...((policy.allowedReadPaths ?? []).length ? (policy.allowedReadPaths ?? []) : [ctx.repoRootPath]),

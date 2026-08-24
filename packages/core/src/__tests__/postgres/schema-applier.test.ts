@@ -25,7 +25,7 @@ import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   applySchemaBaseline,
@@ -103,6 +103,12 @@ import {
   MESSAGE_ARCHIVE_SCHEMA_VERSION,
   TASK_SOURCE_AGENT_INDEX_VERSION,
   WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+  ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
+  REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+  AI_MERGE_REVIEW_RECONCILIATION_VERSION,
+  TASK_REPOSITORY_SCOPE_VERSION,
+  REVIEW_CONVERGENCE_STAGE_VERSION,
+  CHAT_SESSION_MEMORY_FOCUS_VERSION,
   IDENTITY_ACTORS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
@@ -134,17 +140,32 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION).toBe("0056");
     expect(PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION).toBe("0057");
     expect(MESSAGE_ARCHIVE_SCHEMA_VERSION).toBe("0058");
-    /* FNXC:PgSchemaApplier 2026-08-15-22:10: 0059 (FN-9037 recommendation source-agent index) and
-       0060 (FN-9059 workspace coordination leases/intents) advance the baseline to 0060. */
+    /* FNXC:PgSchemaApplier 2026-08-15-22:10: 0059 (FN-9037 recommendation source-agent index) and 0060 (FN-9059 workspace
+       coordination leases/intents) landed first; the 2026-08-20 upstream batch owns 0061-0064 (FN-066..FN-094), FN-149
+       owns 0065, and the RUFU-068 chat_sessions.memory_focus migration is renumbered to 0066 (2026-08-23), advancing the baseline to 0066. */
     expect(TASK_SOURCE_AGENT_INDEX_VERSION).toBe("0059");
     expect(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION).toBe("0060");
+    expect(ACTIVITY_LOG_TASK_ID_INDEX_VERSION).toBe("0061");
     /*
-    FNXC:Identity 2026-08-15-22:52:
-    Identity was 0047 then 0059 then 0060 on this branch; main already shipped 0060 as workspace
-    leases, so identity is 0061 and the ceiling moves with it.
+    FNXC:ReviewConvergence 2026-08-22-18:58:
+    The tail of this list went stale twice in a row (it still asserted 0063 while the ceiling was
+    0064), so it stopped being the tripwire it exists to be. Assert every identity through the
+    current head and keep the ceiling equal to the newest one — FN-149 shipped 0065 with the marker
+    left at 0064, and that mismatch made the binary reject its own database at startup.
     */
-    expect(IDENTITY_ACTORS_VERSION).toBe("0061");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0061");
+    expect(REMOVE_TASK_SUBTASK_SPLITTING_VERSION).toBe("0062");
+    expect(AI_MERGE_REVIEW_RECONCILIATION_VERSION).toBe("0063");
+    expect(TASK_REPOSITORY_SCOPE_VERSION).toBe("0064");
+    expect(REVIEW_CONVERGENCE_STAGE_VERSION).toBe("0065");
+    expect(CHAT_SESSION_MEMORY_FOCUS_VERSION).toBe("0066");
+    /*
+    FNXC:Identity 2026-08-23-23:49:
+    Identity was 0047 then 0059 then 0060 then 0061 on this branch; main has since shipped 0061-0066,
+    so identity is 0067 and the ceiling moves with it. Two migrations sharing one bookkeeping identity
+    would skip the identity tables on upgraded databases.
+    */
+    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -277,39 +298,13 @@ describe("schema-applier: immutable migration identities", () => {
 });
 
 /*
-FNXC:Lifecycle 2026-07-16-22:40:
-Migration wiring integrity — the class guard for the FN-8141 crash. Migrations are
-registered EXPLICITLY in schema-applier.ts (not auto-discovered), so a new .sql
-file that is not wired through a version constant + bookkeeping check silently
-never runs (documented hazard). PR #2260 tripped the adjacent trap: it added a
-column to the model + 0000 baseline and bumped nothing, so existing DBs never got
-it. These pure (no-PostgreSQL) assertions run in the merge gate and fail fast when
-the baseline marker and the on-disk migration set drift out of sync.
+FNXC:ReviewConvergence 2026-08-22-18:58:
+The pure "migration wiring integrity" assertions (baseline ceiling == highest migration file, and
+every .sql wired into the applier) MOVED to src/__tests__/migration-wiring-integrity.test.ts. They
+need no PostgreSQL, and living in this integration file kept them out of the merge gate — which is
+how FN-149 shipped migration 0065 with the ceiling left at 0064 and made every startup reject its
+own database. The new home is wired into `test:unit-gate`. Do not re-add them here.
 */
-describe("schema-applier: migration wiring integrity", () => {
-  const migrationsDir = fileURLToPath(new URL("../../postgres/migrations", import.meta.url));
-  const applierSource = readFileSync(
-    fileURLToPath(new URL("../../postgres/schema-applier.ts", import.meta.url)),
-    "utf8",
-  );
-  const migrationFiles = readdirSync(migrationsDir)
-    .filter((f) => /^\d{4}_.*\.sql$/.test(f))
-    .sort();
-
-  it("advances SCHEMA_BASELINE_VERSION to the highest-numbered migration file", () => {
-    const highest = migrationFiles[migrationFiles.length - 1]!.slice(0, 4);
-    // A new column that ships a migration file must also bump the baseline marker
-    // (else the "all markers recorded" fast-path and upgrade bookkeeping drift).
-    expect(SCHEMA_BASELINE_VERSION).toBe(highest);
-  });
-
-  it("wires every migration .sql file into the applier so none silently never runs", () => {
-    // The applier references each migration by its exact basename in a path
-    // constant. A file present on disk but absent from the source is unwired.
-    const unwired = migrationFiles.filter((f) => !applierSource.includes(f));
-    expect(unwired).toEqual([]);
-  });
-});
 
 interface TestContext {
   testUrl: string;
@@ -728,7 +723,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
     0060 adds workspace coordination leases and land intents (→ 115).
-    FNXC:Identity 2026-08-15-22:52: 0061 adds project.actor_role_grants (→ 116). Plugin tables are added separately
+    FNXC:Identity 2026-08-23-23:49: 0067 adds project.actor_role_grants (→ 116). Plugin tables are added separately
     by the schema-init hook and are excluded here.
     */
     expect(bySchema.project).toBe(116);
@@ -739,7 +734,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     so fresh and upgraded databases converge on the same shape.
 
     FNXC:Identity 2026-08-15-22:52:
-    21, not 17: migration 0061 adds central.actors, actor_credentials, actor_sessions, and
+    21, not 17: migration 0067 adds central.actors, actor_credentials, actor_sessions, and
     actor_provider_links (KTD7 — identity is central because one daemon serves N projects).
     */
     expect(bySchema.central).toBe(21);
@@ -1604,6 +1599,23 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
         created_at text NOT NULL,
         updated_at text NOT NULL
       );
+      /*
+      FNXC:PgSchemaApplier 2026-08-23-00:06:
+      Migration 0061 (activity-log task-id index) builds an index on central.central_activity_log,
+      a table real 0000 databases have from 0000_initial.sql. This historical fixture must retain it
+      so upgrade-from-0000 reaches the current baseline instead of failing on a missing relation.
+      */
+      CREATE TABLE central.central_activity_log (
+        id text PRIMARY KEY,
+        timestamp text NOT NULL,
+        type text NOT NULL,
+        project_id text NOT NULL,
+        project_name text NOT NULL,
+        task_id text,
+        task_title text,
+        details text NOT NULL,
+        metadata jsonb
+      );
       /* FNXC:GitHubImportTranslate 2026-07-16-23:30: Later durable-task migrations run after this historical 0000 fixture, so retain their required task table surface. */
       /*
       FNXC:PgSchemaApplier 2026-08-15-22:10:
@@ -1778,6 +1790,12 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
       TASK_SOURCE_AGENT_INDEX_VERSION,
       WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+      ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
+      REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+      AI_MERGE_REVIEW_RECONCILIATION_VERSION,
+      TASK_REPOSITORY_SCOPE_VERSION,
+      REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1865,6 +1883,12 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
       TASK_SOURCE_AGENT_INDEX_VERSION,
       WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+      ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
+      REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+      AI_MERGE_REVIEW_RECONCILIATION_VERSION,
+      TASK_REPOSITORY_SCOPE_VERSION,
+      REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2085,6 +2109,12 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
       TASK_SOURCE_AGENT_INDEX_VERSION,
       WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+      ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
+      REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+      AI_MERGE_REVIEW_RECONCILIATION_VERSION,
+      TASK_REPOSITORY_SCOPE_VERSION,
+      REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2186,6 +2216,12 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
       TASK_SOURCE_AGENT_INDEX_VERSION,
       WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+      ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
+      REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+      AI_MERGE_REVIEW_RECONCILIATION_VERSION,
+      TASK_REPOSITORY_SCOPE_VERSION,
+      REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2287,6 +2323,12 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
       TASK_SOURCE_AGENT_INDEX_VERSION,
       WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+      ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
+      REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+      AI_MERGE_REVIEW_RECONCILIATION_VERSION,
+      TASK_REPOSITORY_SCOPE_VERSION,
+      REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });

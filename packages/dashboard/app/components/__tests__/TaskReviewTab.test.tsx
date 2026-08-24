@@ -1284,6 +1284,7 @@ describe("TaskReviewTab", () => {
       { id: "c3", summary: "Earlier timeout", body: "Earlier finding", resolution: "superseded" as const },
       { id: "r1", summary: "Receipt one", body: "Fixed: explicit catch", resolution: "resolved-in-review" as const },
       { id: "r2", summary: "Receipt two", body: "Fixed: timeout budget", resolution: "resolved-in-review" as const },
+      { id: "u1", summary: "Adjudicated dispute", body: "The reviewer maintained this objection", resolution: "dispute-upheld" as const },
       { id: "o1", summary: "Open finding", body: "The only actionable item" },
     ];
     apiMocks.fetchTaskReview.mockResolvedValue({
@@ -1305,7 +1306,8 @@ describe("TaskReviewTab", () => {
     expect(await screen.findAllByRole("checkbox")).toHaveLength(1);
     expect(screen.getAllByText("Fixed in review")).toHaveLength(2);
     expect(screen.getAllByText("Superseded")).toHaveLength(3);
-    expect(screen.queryAllByLabelText(/Earlier cleanup|Receipt one/)).toHaveLength(0);
+    expect(screen.getByText("Dispute upheld")).toBeInTheDocument();
+    expect(screen.queryAllByLabelText(/Earlier cleanup|Receipt one|Adjudicated dispute/)).toHaveLength(0);
     expect(document.querySelectorAll(".task-review-tab__item-selection")).toHaveLength(1);
     await act(async () => {
       fireEvent.click(screen.getByRole("checkbox"));
@@ -1317,7 +1319,7 @@ describe("TaskReviewTab", () => {
     apiMocks.reviseTaskReviewItems.mockClear();
     const mobile = await renderAt(true);
     expect(await screen.findAllByRole("checkbox")).toHaveLength(1);
-    expect(document.querySelectorAll("[data-review-resolution]")).toHaveLength(5);
+    expect(document.querySelectorAll("[data-review-resolution]")).toHaveLength(6);
     expect(document.querySelectorAll(".task-review-tab__item-selection")).toHaveLength(1);
     mobile.unmount();
   });

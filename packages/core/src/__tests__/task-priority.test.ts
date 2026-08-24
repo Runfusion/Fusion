@@ -213,6 +213,19 @@ describe("sortTasksForDisplayColumn shared display contract", () => {
     expect(ids(sortTasksForDisplayColumn(tasks, "backlog", { columnFlags: { hold: true } }))).toEqual(["FN-1", "FN-9", "FN-2"]);
   });
 
+  it("applies an explicit generic mode to hold, review, and custom columns without mutation", () => {
+    const tasks = [
+      task("FN-2", { priority: "urgent", status: "merging-fix", columnMovedAt: "2026-06-02T00:00:00.000Z" }),
+      task("FN-10", { priority: "low", status: "idle", columnMovedAt: "2026-06-03T00:00:00.000Z" }),
+      task("TASK-alpha", { priority: "high", status: "idle", updatedAt: "2026-06-04T00:00:00.000Z", columnMovedAt: undefined }),
+      task("TASK-beta", { priority: "normal", status: "idle", updatedAt: undefined, createdAt: "2026-06-05T00:00:00.000Z", columnMovedAt: undefined }),
+    ];
+    const snapshot = structuredClone(tasks);
+    expect(ids(sortTasksForDisplayColumn(tasks, "todo", { columnFlags: { hold: true }, sortMode: "completion-date-desc" }))).toEqual(["TASK-beta", "TASK-alpha", "FN-10", "FN-2"]);
+    expect(ids(sortTasksForDisplayColumn(tasks, "review", { columnFlags: { humanReview: true }, sortMode: "task-id-desc" }))).toEqual(["TASK-beta", "TASK-alpha", "FN-10", "FN-2"]);
+    expect(tasks).toEqual(snapshot);
+  });
+
   it("supports both complete-column modes with deterministic invalid-date and nonnumeric-id ties", () => {
     const tasks = [
       task("TASK-alpha", { createdAt: "not-a-date", updatedAt: undefined }),

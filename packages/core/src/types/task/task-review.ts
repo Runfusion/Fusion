@@ -15,7 +15,7 @@ export type TaskReviewVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "R
 export type TaskReviewerType = "plan" | "code";
 export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
 export type TaskReviewFindingSeverity = "low" | "medium" | "high" | "critical";
-export type TaskReviewFindingResolution = "open" | "resolved-in-review" | "superseded";
+export type TaskReviewFindingResolution = "open" | "resolved-in-review" | "superseded" | "dispute-upheld";
 
 export interface LegacyTaskReviewItem {
   id: string;

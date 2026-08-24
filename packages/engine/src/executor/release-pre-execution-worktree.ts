@@ -57,7 +57,7 @@ export async function releasePreExecutionWorktree(
       });
     }
     deps.activeWorktrees.get(taskId)?.delete(live.worktree);
-    await deps.store.updateTask(taskId, { worktree: null, branch: null, baseCommitSha: null, sessionFile: null }, deps.runContextFor(taskId));
+    await deps.store.updateTask(taskId, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null, sessionFile: null }, deps.runContextFor(taskId));
     await deps.store.logEntry(taskId, `Released the pre-execution worktree (${reason}) — it will be re-acquired when planning or execution resumes`, undefined, deps.runContextFor(taskId)).catch(() => undefined);
     executorLog.log(`${taskId}: released pre-execution worktree ${live.worktree} (${reason})`);
     return true;

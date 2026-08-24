@@ -76,7 +76,6 @@ const ALL_PROMPT_KEYS: PromptKey[] = [
   "agent-generation-system",
   "workflow-step-refine",
   "planning-system",
-  "subtask-breakdown-system",
   "mission-interview-system",
   "ai-refine-system",
 ];

@@ -9,6 +9,7 @@ import {
   sendNtfyNotificationWithResult,
 } from "../util/notifier.js";
 import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
+import { NotificationService } from "../notification/notification-service.js";
 import { MockTaskStore, createTask, flushAsyncWork } from "./notifier.test-harness.js";
 
 vi.mock("../logger.js", () => ({
@@ -729,7 +730,15 @@ describe("NtfyNotifier", () => {
     });
 
     it("sends a high-priority wedge notification when a task terminally fails", async () => {
-      notifier = new NtfyNotifier(store);
+      /*
+      FNXC:TaskWedgeNotifications 2026-08-23-22:50:
+      FN-8953 put a durable SETTLE WINDOW in front of wedge delivery (default 5 minutes): the first
+      classification arms a pending hold instead of pushing, so this case asserted a push that no
+      longer happens on the same turn. Use the service's documented settle test hook to keep the
+      subject of this case — the content and priority of the delivered wedge push — intact; the hold
+      and its expiry are covered by self-healing-pending-wedge-notification.test.ts.
+      */
+      notifier = new NtfyNotifier(store, {}, new NotificationService(store as never, { wedgeNotificationSettleMs: 0 }));
       await notifier.start();
 
       const failedTask = createTask("FN-001", "Test Task", "failed");

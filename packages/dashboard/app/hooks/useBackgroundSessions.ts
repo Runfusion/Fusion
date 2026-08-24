@@ -3,7 +3,6 @@ import {
   fetchAiSessions,
   deleteAiSession,
   cancelPlanning,
-  cancelSubtaskBreakdown,
   cancelMissionInterview,
   type AiSessionSummary,
 } from "../api";
@@ -66,6 +65,8 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
     fetchAiSessions(projectId)
       .then((fetched) => {
         const filtered = fetched.filter((session) => {
+          // FNXC:SubtaskBreakdownRemoval 2026-08-20-17:56: Subtask Breakdown is no longer a dashboard UI flow, so persisted sessions must not surface a resume affordance with no destination.
+          if (session.type === "subtask") return false;
           const fetchedTimestamp = parseTimestamp(session.updatedAt);
           const dismissedTimestamp = dismissedSessionTimestampsRef.current.get(session.id);
           if (dismissedTimestamp === undefined) {
@@ -345,12 +346,6 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
       // FNXC:PlanningMultiTab 2026-07-14-00:00: planning routes are lock-free; no tabId needed.
       try {
         await cancelPlanning(id, projectId);
-      } catch {
-        cancelFailed = true;
-      }
-    } else if (sessionType === "subtask") {
-      try {
-        await cancelSubtaskBreakdown(id, projectId);
       } catch {
         cancelFailed = true;
       }

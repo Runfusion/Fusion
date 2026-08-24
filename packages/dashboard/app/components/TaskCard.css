@@ -4,7 +4,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--card-padding);
-  cursor: grab;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
@@ -31,13 +30,6 @@
   box-shadow: var(--focus-ring-strong);
   border-color: var(--todo);
   outline: none;
-}
-.card:active {
-  cursor: grabbing;
-}
-.card.dragging {
-  opacity: 0.4;
-  transform: scale(0.98);
 }
 .card.file-drop-target {
   border: 2px dashed var(--todo);
@@ -167,6 +159,18 @@ Lock the id to the same chip-height row as .card-header-actions so the task id, 
   font-size: 0.8125rem;
   line-height: 1.4;
   word-break: break-word;
+}
+
+/*
+FNXC:TaskTitleDisplay 2026-08-19-15:22:
+FN-044 bounds only the display-derived description fallback after title precedence has been resolved.
+The card remains presentation-only: it neither persists a fallback nor restores FN-036's AI-length policy.
+*/
+.card-title--bounded-description {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .card-branch-row {

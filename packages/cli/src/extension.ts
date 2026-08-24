@@ -34,9 +34,12 @@ import {
   MAX_TASK_LIST_TEXT_CHARS,
   resolveSecretAccessPolicy,
   getProjectRootFromWorktree,
+  resolveWorktreesDirLayout,
   resolveTaskGithubTracking,
   formatCurrentTaskLine,
   resolveFusionSessionPrincipal,
+  isTaskExecutionSessionPrincipal,
+  taskExecutionTaskCreationRefusalText,
   resolveEffectiveAgentPermissionPolicy,
   mutationContextForAgent,
   type FusionSessionPrincipal,
@@ -94,7 +97,7 @@ import {
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -211,9 +214,42 @@ const MIME_TYPES: Record<string, string> = {
 
 let warnedMissingProjectRootResolver = false;
 
+type WorkspaceRootConfig = { settings?: { worktreesDir?: string; workspaceMode?: boolean } };
+type WorkspaceReposConfig = { repos?: unknown };
+
+/*
+FNXC:WorkspaceWorktree 2026-08-20-01:46:
+Extension sessions launched from grouped member checkouts must use a project root
+provided by a forward-derived layout candidate. The hash-bearing group segment is
+one-way, so parent trimming can select a non-project directory and is forbidden.
+*/
+function getKnownWorktreeCandidates(): Array<{ dir: string; projectRoot: string }> {
+  const candidates: Array<{ dir: string; projectRoot: string }> = [];
+  for (const projectRoot of knownProjectRoots) {
+    try {
+      const config = JSON.parse(readFileSync(join(projectRoot, ".fusion", "config.json"), "utf8")) as WorkspaceRootConfig;
+      const settings = config.settings;
+      candidates.push({ dir: resolveWorktreesDirLayout(projectRoot, settings), projectRoot });
+      if (settings?.workspaceMode !== true) continue;
+      const workspace = JSON.parse(readFileSync(join(projectRoot, ".fusion", "workspace.json"), "utf8")) as WorkspaceReposConfig;
+      if (!Array.isArray(workspace.repos)) continue;
+      for (const repoRelPath of workspace.repos) {
+        if (typeof repoRelPath !== "string") continue;
+        candidates.push({
+          dir: resolveWorktreesDirLayout(projectRoot, settings, { workspaceRootDir: projectRoot, repoRelPath }),
+          projectRoot,
+        });
+      }
+    } catch {
+      // A missing or malformed local config cannot prove a workspace root.
+    }
+  }
+  return candidates;
+}
+
 function resolveProjectRoot(cwd: string): string {
   const worktreeProjectRoot = typeof getProjectRootFromWorktree === "function"
-    ? getProjectRootFromWorktree(cwd)
+    ? getProjectRootFromWorktree(cwd, { worktreesDirCandidates: getKnownWorktreeCandidates() })
     : null;
   if (typeof getProjectRootFromWorktree !== "function" && !warnedMissingProjectRootResolver) {
     warnedMissingProjectRootResolver = true;
@@ -235,6 +271,16 @@ function resolveProjectRoot(cwd: string): string {
     }
     current = parent;
   }
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-20-02:23:
+Keep the production root-resolution route directly testable so a separately
+loaded Pi extension proves it reads the host's shared known-project registry
+for grouped workspace member checkouts instead of stopping at the member repo.
+*/
+export function __resolveProjectRootForTesting(cwd: string): string {
+  return resolveProjectRoot(cwd);
 }
 
 /*
@@ -261,6 +307,7 @@ interface ExtensionStoreState {
   readonly cache: Map<string, CachedStoreEntry>;
   readonly bootInflight: Map<string, Promise<TaskStore>>;
   readonly bootFailureCooldown: Map<string, { untilMs: number; error: string }>;
+  readonly knownProjectRoots: Set<string>;
 }
 
 const extensionStoreStateKey = Symbol.for("@runfusion/fusion/extension-store-state");
@@ -269,11 +316,14 @@ const extensionStoreState = extensionStoreGlobal[extensionStoreStateKey] ?? {
   cache: new Map<string, CachedStoreEntry>(),
   bootInflight: new Map<string, Promise<TaskStore>>(),
   bootFailureCooldown: new Map<string, { untilMs: number; error: string }>(),
+  knownProjectRoots: new Set<string>(),
 };
 extensionStoreGlobal[extensionStoreStateKey] = extensionStoreState;
 
 /** Cache stores per project root to avoid re-booting the backend on every tool call. */
 const storeCache = extensionStoreState.cache;
+/* FNXC:WorkspaceWorktree 2026-08-20-01:46: Keep grouped-layout candidates visible to Pi's separately evaluated extension module. */
+const knownProjectRoots = extensionStoreState.knownProjectRoots;
 /*
 FNXC:MergeQueue 2026-07-15-11:08:
 Concurrent first-call fn_* tools must share one boot promise. Without this, two parallel cache misses each call createTaskStoreForBackend and contend on fusion:schema-applier advisory locks / pool setup — the pattern behind wedged fn_task_show during AI merge.
@@ -575,6 +625,7 @@ async function getStore(
  * The entry is external: closeCachedStores / clearHostTaskStores will not shut it down — the host owns lifecycle.
  */
 export function setHostTaskStore(projectRoot: string, store: TaskStore): void {
+  knownProjectRoots.add(resolve(projectRoot));
   // FNXC:WorkflowLifecycle 2026-07-16-10:00: Install before caching an injected host store because getStore returns cached stores without a construction pass; this preserves executor-less archive cleanup during host startup.
   installBaselineArchiveWorktreeDisposer(store, {rootDir: projectRoot, getSettings: () => store.getSettings()});
   const canonical = resolveProjectRoot(projectRoot);
@@ -1049,10 +1100,29 @@ async function findLatestApprovalRequestByDedupeKey(
 }
 
 /**
- * FNXC:ToolPermissionGates 2026-07-26-13:55:
- * Shared hard-deny for the withheld list above. Returns null for operator principals
- * (tool proceeds unchanged) and a structured error result for agent/ambiguous principals.
+ * FNXC:TaskExecutionTaskCreation 2026-08-21-23:43:
+ * FN-125 closes every host-extension route that can add a board card, not only
+ * fn_task_create and fn_delegate_task. Pi injects this extension into coding sessions,
+ * so duplicate, refine, imports, and planning share this execute-time fence.
  */
+function denyTaskCreationForTaskExecutionPrincipal(
+  toolName: string,
+  ctx: ExtensionCallerContext,
+): AgentGateDenyResult | null {
+  /* FNXC:TaskExecutionTaskCreation 2026-08-21-23:16: explicit ctx.agentId
+  synthesizes an identity without the execution marker, so inspect the registry too. */
+  const resolved = resolveExtensionCallerPrincipal(ctx);
+  const registry = resolveFusionSessionPrincipal(typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : process.cwd());
+  if (!isTaskExecutionSessionPrincipal(resolved) && !isTaskExecutionSessionPrincipal(registry)) return null;
+  const agentId = resolved.kind === "agent" ? resolved.identity.agentId : undefined;
+  const taskId = resolved.kind === "agent" ? resolved.identity.taskId : undefined;
+  return {
+    content: [{ type: "text", text: taskExecutionTaskCreationRefusalText(toolName) }],
+    isError: true,
+    details: { rule: "task-execution-cannot-create-tasks", tool: toolName, ...(taskId ? { taskId } : {}), ...(agentId ? { agentId } : {}) },
+  };
+}
+
 function denyWithheldToolForAgentPrincipal(
   toolName: string,
   ctx: ExtensionCallerContext,
@@ -1754,6 +1824,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_create", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const store = await getStore(ctx.cwd);
 
       /*
@@ -2612,7 +2684,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           status: null,
           error: null,
           worktree: null,
-          branch: null,
+          branch: null, branchWriteOrigin: "engine" as const,
           sessionFile: null,
           ...autoPauseClearPatch,
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
@@ -2846,6 +2918,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_duplicate", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const store = await getStore(ctx.cwd);
       const newTask = await store.duplicateTask(params.id);
 
@@ -2882,6 +2956,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_refine", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const store = await getStore(ctx.cwd);
       const newTask = await store.refineTask(params.id, params.feedback);
 
@@ -2983,7 +3059,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     description:
       "Soft-delete a task from active Fusion board views. " +
       "The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. " +
-      "If the task is still referenced as a lineage parent by another task, deletion is rejected unless removeLineageReferences:true is passed.",
+      "If live lineage children or dependents still reference the task, deletion is rejected unless the matching explicit reference-removal option is passed.",
     promptSnippet: "Soft-delete a Fusion task",
     promptGuidelines: [
       "Use for cleaning up test tasks or tasks created in error when you want the task hidden from active board views",
@@ -2992,16 +3068,23 @@ export default function kbExtension(pi: ExtensionAPI) {
       "Use fn_task_archive for completed work you want to keep referenceable in the board",
       "True hard removal is handled by archive cleanup paths (archiveTaskAndCleanup / cleanupArchivedTasks), not fn_task_delete",
       "If deletion fails because the task is still referenced as a lineage parent by another task, retry with removeLineageReferences:true to clear that reference and unblock the delete",
+      "If deletion fails because live tasks depend on it, first review the conflict, then deliberately retry with removeDependencyReferences:true to atomically remove only those incoming dependency edges and replan affected tasks",
     ],
     /*
     FNXC:TaskLifecycleTools 2026-07-07-00:00:
     See matching comment on fn_task_archive above (FN-7661): the store's TaskHasLineageChildrenError message
     advertises { removeLineageReferences: true } as the recovery path, so this tool must expose and forward it too.
+
+    FNXC:DependencyIntegrity 2026-08-20-19:00:
+    FN-075 exposes the store's explicit dependent-conflict recovery at the CLI bridge. The bridge
+    must delegate incoming-edge removal, stale-blocker clearing, and dependency replan fencing to
+    the PostgreSQL delete transaction; it must not mutate dependency arrays itself.
     */
     parameters: Type.Object({
       id: Type.String({ description: "Task ID to delete (e.g. FN-001)" }),
       allowResurrection: Type.Optional(Type.Boolean({ description: "When true, mark this tombstone as explicitly reusable for future recreation." })),
       removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references (child sourceParentTaskId) before deleting, so a task still referenced as a lineage parent can be removed." })),
+      removeDependencyReferences: Type.Optional(Type.Boolean({ description: "When true, remove incoming dependency edges before soft deletion. Omit or pass false to retain the dependent-conflict refusal." })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -3016,6 +3099,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const task = await store.deleteTask(params.id, {
         allowResurrection: params.allowResurrection === true,
         removeLineageReferences: params.removeLineageReferences === true,
+        removeDependencyReferences: params.removeDependencyReferences === true,
         auditContext: {
           /*
           FNXC:TaskDeleteAttribution 2026-07-26-14:30:
@@ -3092,6 +3176,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
       const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
       if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_github", acting.candidateCount);
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_github", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const [owner, repo] = params.ownerRepo.split("/");
       const limit = clampImportBrowseLimit(params.limit, 30);
       const labels = params.labels;
@@ -3189,6 +3275,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
       const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
       if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_github_issue", acting.candidateCount);
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_github_issue", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const { owner, repo, issueNumber } = params;
       const issue = await fetchGitHubIssueViaGh(owner, repo, issueNumber, { signal });
 
@@ -3404,6 +3492,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
       const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
       if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_gitlab_project_issues", acting.candidateCount);
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_gitlab_project_issues", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const { client } = await createGitLabClient(ctx);
       const issues = await client.listProjectIssues(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       const createdTasks = await importGitLabItems(ctx, "project_issue", params.project, issues, acting.runContext);
@@ -3434,6 +3524,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
       const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
       if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_gitlab_group_issues", acting.candidateCount);
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_gitlab_group_issues", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const { client } = await createGitLabClient(ctx);
       const issues = await client.listGroupIssues(params.group, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       const createdTasks = await importGitLabItems(ctx, "group_issue", params.group, issues, acting.runContext);
@@ -3464,6 +3556,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
       const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
       if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_gitlab_merge_requests", acting.candidateCount);
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_gitlab_merge_requests", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       const { client } = await createGitLabClient(ctx);
       const mergeRequests = await client.listMergeRequests(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
       const createdTasks = await importGitLabItems(ctx, "merge_request", params.project, mergeRequests, acting.runContext);
@@ -3496,7 +3590,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       resumeSessionId: Type.Optional(Type.String({ description: "Existing planning session id to resume instead of starting a new session" })),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_plan", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       // Import the planning function dynamically to avoid circular dependencies
       const { runTaskPlan } = await import("./commands/task.js");
 
@@ -5300,6 +5396,115 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_feature_repoint_task ────────────────────────────────────
+  pi.registerTool({
+    name: "fn_feature_repoint_task",
+    label: "fn: Re-point Feature to Task",
+    description:
+      "Atomically re-point an already-linked feature's single-valued taskId to a different task. " +
+      "Corrects a feature pinned to the wrong task (for example a shared vision doc) without the status-lossy " +
+      "unlink then link two-step. The target task must be live; same-task re-point is an idempotent no-op.",
+    promptSnippet: "Re-point a feature to a different task",
+    promptGuidelines: [
+      "Use when a feature is linked to the wrong task and should point at a different delivery task",
+      "The target task must be active; re-point fails with a clear error otherwise",
+      "A task already linked to another feature rejects the re-point with a conflict error",
+      "Same-task re-point is a safe idempotent no-op",
+    ],
+    parameters: Type.Object({
+      featureId: Type.String({ description: "Feature ID to re-point (e.g., F-001)" }),
+      taskId: Type.String({ description: "Task ID to re-point to (e.g., FN-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      const feature = await missionStore.getFeature(params.featureId);
+      if (!feature) {
+        return {
+          content: [{ type: "text", text: `Feature ${params.featureId} not found` }],
+          isError: true,
+          details: { error: "Feature not found" },
+        };
+      }
+
+      try {
+        const updated = await missionStore.repointFeatureToTask(params.featureId, params.taskId);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Re-pointed ${updated.id}: "${updated.title}" → ${params.taskId}\nStatus: ${updated.status}`,
+            },
+          ],
+          details: { featureId: updated.id, taskId: params.taskId, title: updated.title, status: updated.status },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+    },
+  });
+
+  // ── fn_feature_unlink_task ─────────────────────────────────────
+  pi.registerTool({
+    name: "fn_feature_unlink_task",
+    label: "fn: Unlink Feature from Task",
+    description:
+      "Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status " +
+      "to 'defined'. Use before the documented safe duplicate-cleanup and reconcile-done flow. Returns a clear error " +
+      "if the feature is not currently linked to any task.",
+    promptSnippet: "Unlink a feature from its task",
+    promptGuidelines: [
+      "Use to fully detach a feature from its current task before re-linking or cleaning up a duplicate",
+      "Fails with a clear error if the feature is not linked to any task",
+      "Clears the old task's reverse mission/slice linkage and demotes the feature to 'defined'",
+      "Prefer fn_feature_repoint_task to move a link directly without the status loss",
+    ],
+    parameters: Type.Object({
+      featureId: Type.String({ description: "Feature ID to unlink (e.g., F-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      const feature = await missionStore.getFeature(params.featureId);
+      if (!feature) {
+        return {
+          content: [{ type: "text", text: `Feature ${params.featureId} not found` }],
+          isError: true,
+          details: { error: "Feature not found" },
+        };
+      }
+
+      try {
+        const updated = await missionStore.unlinkFeatureFromTask(params.featureId);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Unlinked ${updated.id}: "${updated.title}" from its task\nStatus: ${updated.status}`,
+            },
+          ],
+          details: { featureId: updated.id, title: updated.title, status: updated.status },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+    },
+  });
+
   // ── fn_feature_set_status ───────────────────────────────────────
   /* FNXC:MissionStatusWrites 2026-08-10-12:47: Dedicated tools keep the linked-task execution-status guard unambiguous instead of widening generic updates. */
   pi.registerTool({
@@ -6491,6 +6696,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_delegate_task", ctx as ExtensionCallerContext);
+      if (taskExecutionDenied) return taskExecutionDenied;
       /*
       FNXC:ToolPermissionGates 2026-07-26-13:55:
       Ordinary delegation stays ungated (coordination primitive), but the executor-role

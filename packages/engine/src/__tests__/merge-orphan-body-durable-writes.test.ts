@@ -33,6 +33,14 @@ function git(directory: string, args: string): string {
   return execSync(`git ${args}`, { cwd: directory, encoding: "utf8" }).trim();
 }
 
+/*
+FNXC:MergeReliability 2026-08-23-21:20:
+The task branch is lowercase (`fusion/fn-8923`). Production derives the merge branch by lowercasing
+the task ID, then FN-090's episode-identity check compares that derived name against the live
+`task.branch`. An uppercase fixture branch made those two disagree on EVERY pass, so the merge body
+invalidated its reconciliation episode and the unbounded rebuild loop in runAiMerge spun until the
+test timed out instead of reaching the abort seam under test.
+*/
 /** A real clean-room-sized repository so an abort can land during the production merge tail. */
 function createMergeRepo(): string {
   const directory = mkdtempSync(join(tmpdir(), "fn-8923-merge-"));
@@ -42,7 +50,7 @@ function createMergeRepo(): string {
   git(directory, "config user.name FN-8923");
   writeFileSync(join(directory, "base.txt"), "base\\n");
   git(directory, "add -A && git commit -q -m base");
-  git(directory, "checkout -q -b fusion/FN-8923");
+  git(directory, "checkout -q -b fusion/fn-8923");
   writeFileSync(join(directory, "feature.txt"), "feature\\n");
   git(directory, "add -A && git commit -q -m feature");
   git(directory, "branch group-main main");
@@ -52,7 +60,13 @@ function createMergeRepo(): string {
 
 function createRecordingStore(controller: AbortController, options: { sharedGroup?: boolean; onMergeDetailsPersist?: () => void; onIntegrationRefAdvance?: () => void } = {}) {
   const task: Record<string, unknown> = {
-    id: "FN-8923", column: "in-review", status: null, branch: "fusion/FN-8923", title: "orphan evidence", steps: [],
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-20:25: merge-mechanics fixture, not a review-gating one.
+       The merge door refuses a card whose ENABLED optional pre-merge groups produced no result, and
+       the built-in workflow enables Plan and Code Review by default, so an unspecified list failed
+       the door before the orphan-write behaviour under test could run. The empty list states the
+       intent this fixture always had. */
+    enabledWorkflowSteps: [],
+    id: "FN-8923", column: "in-review", status: null, branch: "fusion/fn-8923", title: "orphan evidence", steps: [],
     ...(options.sharedGroup ? { branchContext: { groupId: "BG-8923", source: "planning", assignmentMode: "shared" } } : {}),
   };
   const records: Array<{ generation: string; writer: string; args: unknown[] }> = [];
@@ -70,6 +84,19 @@ function createRecordingStore(controller: AbortController, options: { sharedGrou
         records.push({ generation, writer: "updateTask", args: [_id, patch] });
         Object.assign(task, patch);
         if (patch.mergeDetails) options.onMergeDetailsPersist?.();
+        return task;
+      }),
+      /* FNXC:MergeReliability 2026-08-23-20:30: the durable merge-review reconciliation path
+         atomically records its episode before a repository can land, so a store double without
+         updateTaskAtomic fails with a TypeError long before the orphan-write behaviour under test.
+         Same faithful shape as merger-ai.test.ts's store. */
+      updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Record<string, unknown>) => Record<string, unknown> | undefined) => {
+        const patch = await updater(task);
+        if (patch) {
+          records.push({ generation, writer: "updateTaskAtomic", args: [_id, patch] });
+          Object.assign(task, patch);
+          if (patch.mergeDetails) options.onMergeDetailsPersist?.();
+        }
         return task;
       }),
       mergeWorkspaceWorktreeEntry: vi.fn(async (_id: string, repoRelPath: string, patch: Record<string, unknown>, mergeOptions?: { requireExistingEntry?: boolean }) => {
@@ -154,7 +181,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
         getTask: vi.fn().mockImplementation(async () => {
           controller.abort("orphaned generation after task read");
           writesAtAbort = updateTask.mock.calls.length;
-          return { id: "FN-8923", branch: "fusion/FN-8923", column: "in-review", workflow: "builtin:coding" };
+          return { id: "FN-8923", branch: "fusion/fn-8923", column: "in-review", workflow: "builtin:coding" };
         }),
         getSettings: vi.fn().mockResolvedValue({ merger: { maxReviewPasses: 0 }, agentPrompts: {} }),
         updateTask,
@@ -176,7 +203,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
       const { store, records } = createRecordingStore(controller, { sharedGroup: true });
       let recordsAtAbort = -1;
       await expect(runAiMerge(store as never, directory, "FN-8923", { manual: true, signal: controller.signal }, {
-        mergeAgent: async (cwd) => { git(cwd, "merge --squash fusion/FN-8923 && git commit -q -m squash"); },
+        mergeAgent: async (cwd) => { git(cwd, "merge --squash fusion/fn-8923 && git commit -q -m squash"); },
         // This is the abort-at-boundary fixture: review completed, the squash exists, and the
         // production body is about to enter its landing/finalization stretch.
         reviewAgent: async () => {
@@ -206,7 +233,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
       const controller = new AbortController();
       controller.abort("orphaned generation before land");
       const context = { taskId: "FN-8923", settings: {}, audit: undefined, log: vi.fn(), setStatus: vi.fn(), maxPasses: 0, mergeAgent: vi.fn(), reviewAgent: vi.fn(), stashResolveAgent: vi.fn(), includeTaskId: true, trailers: [], taskTitle: "test", signal: controller.signal, store: { getTask: vi.fn() } };
-      await expect(landOneRepo("/tmp/fn-8923", "fusion/FN-8923", "main", context as never)).rejects.toThrow(/aborted/i);
+      await expect(landOneRepo("/tmp/fn-8923", "fusion/fn-8923", "main", context as never)).rejects.toThrow(/aborted/i);
       // This only characterizes entry-adjacent abort. The manifest explicitly records deep
       // review/ref-advance/merge-details rows as unobservable rather than treating this as proof.
       expect(context.log).not.toHaveBeenCalled();
@@ -221,7 +248,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
         onIntegrationRefAdvance: () => controller.abort("orphaned after integration ref advance"),
       });
       await expect(runAiMerge(store as never, directory, "FN-8923", { manual: true, signal: controller.signal }, {
-        mergeAgent: async (cwd) => { git(cwd, "merge --squash fusion/FN-8923 && git commit -q -m squash"); },
+        mergeAgent: async (cwd) => { git(cwd, "merge --squash fusion/fn-8923 && git commit -q -m squash"); },
         reviewAgent: async () => "REVIEW_VERDICT: approve",
       })).rejects.toMatchObject({ name: "MergeAbortedError" });
       expect(controller.signal.aborted).toBe(true);
@@ -237,7 +264,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
         onMergeDetailsPersist: () => controller.abort("orphaned after mergeDetails persistence"),
       });
       await expect(runAiMerge(store as never, directory, "FN-8923", { manual: true, signal: controller.signal }, {
-        mergeAgent: async (cwd) => { git(cwd, "merge --squash fusion/FN-8923 && git commit -q -m squash"); },
+        mergeAgent: async (cwd) => { git(cwd, "merge --squash fusion/fn-8923 && git commit -q -m squash"); },
         reviewAgent: async () => "REVIEW_VERDICT: approve",
       })).rejects.toMatchObject({ name: "MergeAbortedError" });
       expect(controller.signal.aborted).toBe(true);
@@ -255,7 +282,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
         git(directory, "config user.name FN-8923");
         writeFileSync(join(directory, "base.txt"), "base\\n");
         git(directory, "add -A && git commit -q -m base");
-        git(directory, "checkout -q -b fusion/FN-8923");
+        git(directory, "checkout -q -b fusion/fn-8923");
         writeFileSync(join(directory, "feature.txt"), `${name}\\n`);
         git(directory, "add -A && git commit -q -m feature");
         git(directory, "checkout -q main");
@@ -271,8 +298,24 @@ describe("FN-8923 orphan merge-body durable writes", () => {
       lane.mergeBodySettleTimeoutMs = 1;
       const orphanSignal = lane.claimActiveMerge("FN-8923");
       const { store, storeFor, task, records } = createRecordingStore(new AbortController());
-      const workspaceWorktrees = Object.fromEntries(repositories.map((_, index) => [`repo-${String.fromCharCode(97 + index)}`, { branch: "fusion/FN-8923" }]));
-      Object.assign(task, { workspaceWorktrees, title: "workspace orphan evidence" });
+      const workspaceWorktrees = Object.fromEntries(repositories.map((directory, index) => [
+        `repo-${String.fromCharCode(97 + index)}`,
+        // The merge-boundary evidence capture reads each entry's checkout, so the path is required.
+        { branch: "fusion/fn-8923", worktreePath: directory },
+      ]));
+      /*
+      FNXC:RepositoryScope 2026-08-23-21:35:
+      Landing now refuses a workspace task whose repository scope is unresolved — operator
+      confirmation is a precondition, so without it `landWorkspaceTask` rejected before its first
+      merge agent ran and this test waited forever on a boundary that could never be reached. This
+      is a merge-mechanics fixture with no review episode (no `reviewEvidence`, no enabled review
+      step), which is the legacy/direct caller shape that keeps the merge-agent review path.
+      */
+      Object.assign(task, {
+        workspaceWorktrees,
+        title: "workspace orphan evidence",
+        repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 1 },
+      });
       let mergeCount = 0;
       let recordCountAtAbort = -1;
       let releaseOrphan!: () => void;
@@ -282,7 +325,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
       const body = landWorkspaceTask(store as never, task as never, workspaceRoot, { signal: orphanSignal }, {
         mergeAgent: async (cwd) => {
           mergeCount += 1;
-          git(cwd, "merge --squash fusion/FN-8923 && git commit -q -m squash");
+          git(cwd, "merge --squash fusion/fn-8923 && git commit -q -m squash");
           if (mergeCount === 2) {
             // Keep the real production body pending after its real lane abort so the bounded
             // settle latch can expire before the real successor claim occurs.
@@ -324,7 +367,7 @@ describe("FN-8923 orphan merge-body durable writes", () => {
           successorSeamReached();
           await successorHeldAtSeam;
           successorIsHeldAtProductionSeam = false;
-          git(cwd, "merge --squash fusion/FN-8923 && git commit -q -m successor-squash");
+          git(cwd, "merge --squash fusion/fn-8923 && git commit -q -m successor-squash");
         },
         reviewAgent: async () => "REVIEW_VERDICT: approve",
         stashResolveAgent: vi.fn(),

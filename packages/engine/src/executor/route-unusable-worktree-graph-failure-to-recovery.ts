@@ -13,8 +13,9 @@ import { allowsAutoMergeProcessing } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
 import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
-import { extractUnusableWorktreeGraphFailure } from "./graph-failure-pure.js";
+import { extractUnusableWorktreeGraphFailure, graphFailureErrorTexts, isWorkspacePreparationGraphFailure } from "./graph-failure-pure.js";
 import { extractMissingWorktreePathFromSessionStartFailure } from "../healing/restart-recovery-coordinator.js";
+import { autoRecoverWorktreeSessionStartFailure } from "../self-healing/auto-recover-worktree-session.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
 export type RouteUnusableWorktreeGraphFailureToRecoveryDeps = {
@@ -44,7 +45,8 @@ export async function routeUnusableWorktreeGraphFailureToRecovery(
     // Pause/abort provenance owns aborted runs; a genuine abort never carries the
     // session-start refusal as its terminal node error in the same walk.
     if (deps.pausedAborted.has(task.id)) return false;
-    const errorText = extractUnusableWorktreeGraphFailure(result);
+    const errorText = extractUnusableWorktreeGraphFailure(result)
+      ?? (isWorkspacePreparationGraphFailure(result) ? graphFailureErrorTexts(result)[0] : undefined);
     if (!errorText) return false;
     /*
     FNXC:MissingWorktreeRecovery 2026-07-16-19:40:
@@ -67,6 +69,22 @@ export async function routeUnusableWorktreeGraphFailureToRecovery(
       taskId: task.id,
       phase: "execute",
     });
+    if (isWorkspacePreparationGraphFailure(result)) {
+      /*
+      FNXC:WorkspacePreparation 2026-08-21-19:52:
+      A failed `git worktree add` is not a missing-checkout signature, but it shares the same
+      bounded environment recovery ownership. Keep the original Git diagnostic while consuming
+      only worktreeSessionRetryCount and requeueing through the normal recovery move.
+      */
+      const recovery = await autoRecoverWorktreeSessionStartFailure(deps.store, live, {
+        failure: new Error(errorText),
+        source: "workspace-preparation",
+        auditor: audit,
+        rootDir: deps.store.getRootDir(),
+      });
+      await deps.store.logEntry(live.id, `Workspace preparation recovery: ${errorText}`);
+      return recovery.outcome === "requeue-todo";
+    }
     const outcome = await deps.recoverMissingWorktreeSessionStartFailure(live, stalePath, new Error(errorText), audit);
     // escalate-exhausted intentionally returns false: the failure falls through to the
     // visible terminal park so a human inspects the task instead of it looping silently.

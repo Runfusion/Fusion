@@ -8,7 +8,11 @@ function readSource(file: string): string {
 
 describe("fn_web_fetch universal registration", () => {
   it("executor registers fn_web_fetch", () => {
-    expect(readSource("executor.ts")).toContain("createWebFetchTool()");
+    // FNXC:WebFetchUniversal 2026-08-23-18:35: the U4 peel reduced executor.ts to a 10-line
+    // TaskExecutor shell; the implementation session that registers the executor's custom tools
+    // now lives in executor/run-implementation.ts. The universal-registration invariant is
+    // unchanged — only the file that owns the executor's customTools list moved.
+    expect(readSource("executor/run-implementation.ts")).toContain("createWebFetchTool()");
   });
 
   it("step-session executor registers fn_web_fetch", () => {

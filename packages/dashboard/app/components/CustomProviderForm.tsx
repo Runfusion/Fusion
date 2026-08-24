@@ -9,7 +9,7 @@ import "./CustomProviderForm.css";
 export const BUILT_IN_PROVIDER_IDS = new Set<string>([
   "anthropic", "claude-cli", "pi-claude-cli", "openai", "openai-codex", "google", "gemini", "google-antigravity",
   "antigravity", "google-vertex", "vertex", "google-cloud-code", "cloud-code", "google-gemini-cli", "google-generative-ai",
-  "ollama", "github", "github-copilot", "openrouter", "minimax", "minimax-cn", "zai", "kimi", "moonshot", "kimi-coding",
+  "ollama", "github", "github-copilot", "openrouter", "orcarouter", "minimax", "minimax-cn", "zai", "kimi", "moonshot", "kimi-coding",
   "bedrock", "amazon-bedrock", "xai", "grok", "opencode", "opencode-go", "qwen", "qwen-ai", "qwen-coder", "alibaba", "tongyi",
   "lmstudio", "lm-studio", "huggingface", "hugging-face", "hf", "mistral", "mistral-ai", "azure", "azure-openai",
   "azure-openai-responses", "fireworks", "fireworks-ai", "fireworksai", "cerebras", "groq", "vercel", "vercel-ai-gateway",
@@ -33,7 +33,7 @@ type Props = {
 };
 
 function emptyModel(): CustomProviderModelInput {
-  return { id: "", name: "", reasoning: false };
+  return { id: "", name: "" };
 }
 
 export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = false, error }: Props) {
@@ -100,7 +100,6 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
         .map((m) => ({
           id: m.id,
           name: m.name || m.id,
-          reasoning: Boolean(m.reasoning),
           contextWindow: m.contextWindow,
           maxTokens: m.maxTokens,
         }));
@@ -159,7 +158,6 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
       models: models.map((model) => ({
         id: model.id.trim(),
         name: model.name?.trim() || undefined,
-        reasoning: Boolean(model.reasoning),
         contextWindow: model.contextWindow,
         maxTokens: model.maxTokens,
       })),
@@ -199,6 +197,11 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
         <label>{t("providers.fields.models", "Models")}</label>
         <div className="custom-provider-form__models">
           {models.map((model, index) => (
+            /*
+            FNXC:CustomProviders 2026-08-19-15:13:
+            There is no reasoning capability control because custom models are presumed thinking-capable.
+            Pi derives selector options and execution behavior from their shared server registration.
+            */
             <div key={`${index}-model`} className="custom-provider-form__model-row">
               <input
                 className="input"
@@ -216,15 +219,6 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
                 onChange={(e) => updateModel(index, { name: e.target.value })}
                 disabled={saving}
               />
-              <label className="checkbox-label custom-provider-form__toggle">
-                <input
-                  type="checkbox"
-                  checked={Boolean(model.reasoning)}
-                  onChange={(e) => updateModel(index, { reasoning: e.target.checked })}
-                  disabled={saving}
-                />
-                {t("providers.fields.reasoning", "Reasoning")}
-              </label>
               <input
                 className="input"
                 aria-label={`${t("providers.fields.contextWindow", "Context window")} ${index + 1}`}

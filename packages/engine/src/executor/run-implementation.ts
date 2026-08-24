@@ -60,6 +60,9 @@ import {
   resolveWorkflowIrForTask,
   resolveAgentActivityAttribution,
   serializeRetryStormError,
+  isLegacyWorkspaceWorktreeLayout,
+  resolveWorkspaceTaskWorktreeDir,
+  resolveSandboxBackend as resolveConfiguredSandboxBackend,
 } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -67,7 +70,6 @@ import {
   createArtifactListTool,
   createArtifactRegisterTool,
   createArtifactViewTool,
-  createTaskCreateTool,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskFileScopeAddTool,
@@ -88,7 +90,6 @@ import {
   createAcquireRepoWorktreeTool,
   createAgentCreateTool,
   createAgentDeleteTool,
-  createDelegateTaskTool,
   createGetAgentConfigTool,
   createGoalRetrievalTools,
   createIdeationTools,
@@ -148,6 +149,8 @@ import {
   runVerificationCommand as runTaskVerificationCommand,
 } from "../execution/run-verification-tool.js";
 import { captureSessionTokenBaseline, resetSessionTokenBaseline } from "../execution/session-token-usage.js";
+import { resolveSandboxBackend } from "../sandbox/index.js";
+import { resolveSessionSandboxPolicy } from "../sandbox/session-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "../execution/spec-staleness.js";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { isResearchToolSurfaceEnabled } from "../execution/tool-availability.js";
@@ -193,7 +196,8 @@ import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
 import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
 import { runContextForTotal } from "./run-context-for.js";
-import { acquireTaskWorktree, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
   RemovalReason,
@@ -221,6 +225,7 @@ export type RunImplementationDeps = {
   rootDir: string;
   workspaceConfig: WorkspaceConfig | null | undefined;
   ensureWorkspaceConfig: () => Promise<WorkspaceConfig | null>;
+  refreshWorkspaceConfig?: () => Promise<WorkspaceConfig | null>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutorOptions is large and only partially used here
   options: any;
   stuckAborted: Map<string, boolean>;
@@ -263,6 +268,7 @@ export type RunImplementationDeps = {
   createSpawnAgentTool: AnyFn;
   createTaskAddDepTool: AnyFn;
   createTaskDoneTool: AnyFn;
+  createReviewDisputeTool: AnyFn;
   createTaskUpdateTool: AnyFn;
   createWorktree: AnyFn;
   deleteActiveSession: AnyFn;
@@ -307,6 +313,14 @@ export type RunImplementationDeps = {
   shouldDeferCompletionForGlobalPause: AnyFn;
   shouldDeferForHeartbeat: AnyFn;
   signalTaskComplete: AnyFn;
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Terminal-failure capture seam: the executor post-loop finally calls this
+  when a run exits with the task terminally failed, so failed/parked transcripts
+  reach Stash like completed ones (same capturedMemoryTaskIds gate, at most once
+  per task across both seams).
+  */
+  signalTaskTerminalFailed: AnyFn;
   terminateAllChildren: AnyFn;
   transitionReviewAddressing: AnyFn;
   tryBootstrapMisbindingRecovery: AnyFn;
@@ -650,19 +664,63 @@ export async function runImplementation(
         }
       }
 
-      const hadAssignedWorktree = Boolean(task.worktree) || externalExecutionRoute.configured;
       const taskCommandAbortController = new AbortController();
       deps.registerConfiguredCommandController(task.id, taskCommandAbortController);
+      let workspaceTaskWorktreeDir: string | undefined;
       /*
-      FNXC:Workspace 2026-06-21-12:00:
-      KTD1 — in workspace mode `deps.rootDir` is a NON-git parent. Acquiring a root worktree there fails. Skip root acquisition entirely and run the agent session rooted at the browse-only workspace root; the agent acquires per-sub-repo worktrees on demand via fn_acquire_repo_worktree. `task.worktree` stays unset. We synthesize a non-fresh, non-resume acquisition with an empty branch so the downstream env-injection/onStart bookkeeping runs unchanged while every rootDir git preflight (base capture, contamination, liveness) is gated off below. The non-workspace branch is byte-for-byte the original acquisition path.
+      FNXC:WorkspaceWorktree 2026-08-22-21:25:
+      Workspace execution is rooted in the task directory containing every acquired repository
+      worktree. There is no positional coordinator checkout, so all repo-relative paths stay inside
+      one session boundary.
+      */
+      if (hasWorkspaceRepos && deps.workspaceConfig) {
+        if (task.repositoryScope?.state !== "confirmed") {
+          throw new Error("Workspace acquisition requires a confirmed ## Repository Scope");
+        }
+        const workspace = await acquireWorkspaceTaskWorktrees({
+          workspaceConfig: deps.workspaceConfig,
+          workspaceRootDir: deps.rootDir,
+          // FNXC:WorkspaceWorktree 2026-08-22-23:45:
+          // Execution may only acquire the scope confirmed by planning. Omitting
+          // this would silently recreate the pre-plan manifest-wide lease and
+          // worktree acquisition on the direct implementation entry point.
+          repoRelPaths: task.repositoryScope.repositories,
+          task,
+          store: deps.store,
+          settings,
+          logger: executorLog,
+          secretsStore: deps.options.secretsStore,
+          audit,
+          runContext: deps.getRunContextFor(task.id),
+          runConfiguredCommand: (command, cwd, timeoutMs, env) =>
+            runConfiguredCommand(
+              command,
+              cwd,
+              timeoutMs,
+              env,
+              audit,
+              taskCommandAbortController.signal,
+            ).then((result) => {
+              if (taskCommandAbortController.signal.aborted) {
+                throw createConfiguredCommandAbortError(task.id, command);
+              }
+              return result;
+            }),
+          taskEnv,
+          addActiveWorktree: deps.addActiveWorktree,
+        });
+        task = workspace.task;
+        workspaceTaskWorktreeDir = workspace.taskWorktreeDir;
+      }
 
+      const hadAssignedWorktree = Boolean(task.worktree) || externalExecutionRoute.configured;
+      /*
       FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
       Operator-routed external checkouts skip Fusion worktree acquisition and run against the persisted checkout.
       */
-      const acquisition: AcquireTaskWorktreeResult = deps.workspaceConfig
+      const acquisition: AcquireTaskWorktreeResult = hasWorkspaceRepos
         ? {
-            worktreePath: deps.rootDir,
+            worktreePath: workspaceTaskWorktreeDir!,
             branch: "",
             source: "existing",
             hydrated: true,
@@ -715,6 +773,32 @@ export async function runImplementation(
         }
       })();
       worktreePath = acquisition.worktreePath;
+      const sessionBoundary = hasWorkspaceRepos && deps.workspaceConfig
+        ? (() => {
+            const taskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, task.id);
+            const legacyLayout = isLegacyWorkspaceWorktreeLayout(task, taskDir);
+            if (legacyLayout) {
+              const repoRelPath = deps.workspaceConfig!.repos.find((repo) => task.workspaceWorktrees?.[repo]?.worktreePath === worktreePath);
+              return {
+                kind: "task-worktree" as const,
+                writableRoot: worktreePath,
+                projectRoot: repoRelPath ? join(deps.rootDir, repoRelPath) : deps.rootDir,
+              };
+            }
+            return {
+              kind: "workspace-task-dir" as const,
+              writableRoot: worktreePath,
+              projectRoot: deps.rootDir,
+              repoRoots: task.repositoryScope?.state === "confirmed"
+                ? task.repositoryScope.repositories.map((repoRelPath) => ({ repoRelPath, repoRootDir: join(deps.rootDir, repoRelPath) }))
+                : [],
+            };
+          })()
+        : {
+            kind: "task-worktree" as const,
+            writableRoot: worktreePath,
+            projectRoot: deps.rootDir,
+          };
 
       if (acquisition.reclaimed) {
         await audit.git({
@@ -771,8 +855,10 @@ export async function runImplementation(
       }
 
       /*
-      FNXC:Workspace 2026-06-21-12:00:
-      KTD1 — the git preflights below run against `worktreePath`, which equals the non-git workspace root in workspace mode. The per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree.
+      FNXC:WorkspaceRootRouting 2026-08-19-12:15:
+      The workspace coordinator `worktreePath` is one acquired declared sub-repository checkout, not
+      the non-Git workspace root. Workspace-specific post-session capture still iterates the complete
+      durable per-repository map; singular git preflights remain disabled for workspace tasks.
 
       FNXC:ExternalExecutionCheckout 2026-08-10-03:05:
       An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
@@ -918,7 +1004,7 @@ export async function runImplementation(
             status: "queued",
             error: null,
             worktree: null,
-            branch: null,
+            branch: null, branchWriteOrigin: "engine" as const,
             sessionFile: null,
             taskDoneRetryCount: nextRequeueCount,
             paused: false,
@@ -938,7 +1024,7 @@ export async function runImplementation(
             status: "failed",
             error: failureMessage,
             worktree: null,
-            branch: null,
+            branch: null, branchWriteOrigin: "engine" as const,
             sessionFile: null,
             paused: false,
             pausedByAgentId: null,
@@ -952,7 +1038,9 @@ export async function runImplementation(
       }
       } // end !deps.workspaceConfig preflight gate (FNXC:Workspace KTD1)
 
-      // FNXC:Workspace 2026-06-21-12:00: KTD2 — register the worktree path under the task's Set. In workspace mode `worktreePath` is the browse-only root; per-repo sub-repo worktree paths ARE now added to the same Set as the agent acquires them (F2: fn_acquire_repo_worktree's onAcquired callback → addActiveWorktree), so the Set holds root + N sub-repo paths, not just the root. Non-workspace tasks add exactly one path → a one-element set (unchanged liveness/owner semantics).
+      // FNXC:WorkspaceRootRouting 2026-08-19-12:15: Register only real task worktrees. Workspace
+      // acquisition already added every declared sub-repository path; this coordinator add is
+      // idempotent and never adds the non-Git workspace root. Single-repository tasks retain one path.
       deps.addActiveWorktree(task.id, worktreePath);
       executorLog.debug(`${task.id}: worktree ready at ${worktreePath}`);
 
@@ -1560,7 +1648,7 @@ export async function runImplementation(
                 recoveryRetryCount: decision.nextState.recoveryRetryCount,
                 nextRecoveryAt: decision.nextState.nextRecoveryAt,
                 worktree: null,
-                branch: null,
+                branch: null, branchWriteOrigin: "engine" as const,
               });
               deps.markGraphExecuteSelfRequeued(task.id);
               await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
@@ -1673,7 +1761,7 @@ export async function runImplementation(
                   status: "queued",
                   error: null,
                   worktree: null,
-                  branch: null,
+                  branch: null, branchWriteOrigin: "engine" as const,
                 });
                 const reboundColumn = await resolveReboundColumnFor(deps.store, task.id);
                 if (latestTask.column !== reboundColumn) {
@@ -1825,10 +1913,10 @@ export async function runImplementation(
       every other policy decision in this engine leaves that trail.
       */
       const executionCallerIsEphemeral = !identityAgent || isEphemeralAgent(identityAgent);
-      const taskCreateWithheld = !isAgentTaskCreateToolAvailable(settings, executionCallerIsEphemeral);
-      const delegateWithheld = !isAgentDelegateTaskToolAvailable(settings, executionCallerIsEphemeral);
+      const taskCreateWithheld = !isAgentTaskCreateToolAvailable(settings, executionCallerIsEphemeral, "task-execution");
+      const delegateWithheld = !isAgentDelegateTaskToolAvailable(settings, executionCallerIsEphemeral, "task-execution");
       if (taskCreateWithheld || delegateWithheld) {
-        await deps.store.recordRunAuditEvent?.({
+        await emitBoundedRunAudit(deps.store, {
           taskId: task.id,
           agentId: identityAgent?.id ?? "executor",
           runId: deps.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("task-create-withheld", task.id),
@@ -1841,8 +1929,10 @@ export async function runImplementation(
             withheldTaskCreate: taskCreateWithheld,
             withheldDelegateTask: delegateWithheld,
             lane: "execution-session",
+            reason: "task-execution-lane",
+            principalEphemeral: executionCallerIsEphemeral,
           },
-        }).catch(() => undefined);
+        });
       }
       /*
       FNXC:AgentProvisioningGate 2026-07-26-13:20:
@@ -1862,14 +1952,51 @@ export async function runImplementation(
         deps.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stuckDetector),
         createTaskLogTool(tools, task.id),
         createTaskLogsReadTool(tools, task.id),
-        ...(taskCreateWithheld
-          ? []
-          : [createTaskCreateTool(tools, executionCallerIsEphemeral, task.id, identityAgent?.id)]),
+        // FN-125: execution sessions never receive task creation tools.
         deps.createTaskAddDepTool(task.id),
         deps.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }, audit),
+        deps.createReviewDisputeTool(task.id),
         createRunVerificationTool({
           worktreePath,
           rootDir: deps.rootDir,
+          ...(hasWorkspaceRepos ? {
+            workspaceRepos: Object.entries(task.workspaceWorktrees ?? {}).map(([repo, entry]) => ({
+              repo,
+              worktreePath: entry.worktreePath,
+              modified: (task.modifiedFiles ?? []).some((path) => path === repo || path.startsWith(`${repo}/`)),
+            })),
+            // FNXC:WorkspaceVerification 2026-08-22-22:49: This session can call
+            // fn_run_verification before post-session modifiedFiles capture. Re-read each
+            // scoped child worktree at tool invocation so default fan-out sees current edits.
+            resolveWorkspaceRepos: async () => {
+              const liveTask = await deps.store.getTask(task.id);
+              const confirmedScope = liveTask.repositoryScope?.state === "confirmed"
+                ? new Set(liveTask.repositoryScope.repositories)
+                : undefined;
+              return await Promise.all(
+                Object.entries(liveTask.workspaceWorktrees ?? {})
+                  .filter(([repo]) => !confirmedScope || confirmedScope.has(repo))
+                  .map(async ([repo, entry]) => ({
+                    repo,
+                    worktreePath: entry.worktreePath,
+                    modified: (await deps.captureModifiedFiles(
+                      entry.worktreePath,
+                      entry.baseCommitSha,
+                      liveTask.id,
+                      audit,
+                      "verification-tool",
+                    ) as string[]).length > 0,
+                  })),
+              );
+            },
+          } : {}),
+          // FNXC:WorkspaceSandbox 2026-08-22-22:04: Verification is a task-lane
+          // subprocess, so it must use the same resolved backend and declared
+          // single-root policy as agent bash rather than superviseSpawn natively.
+          sandboxBackend: resolveSandboxBackend({
+            backendId: resolveConfiguredSandboxBackend(settings, detail.prompt ?? "").backend,
+          }),
+          sandboxPolicy: resolveSessionSandboxPolicy(sessionBoundary, settings),
           taskId: task.id,
           recordActivity: () => stuckDetector?.recordActivity(task.id),
           verificationCommandTimeoutMs: settings.verificationCommandTimeoutMs,
@@ -1944,9 +2071,7 @@ export async function runImplementation(
         // Agent delegation tools — discover and delegate work to other agents.
         ...(deps.options.agentStore ? [
           createListAgentsTool(deps.options.agentStore),
-          ...(delegateWithheld
-            ? []
-            : [createDelegateTaskTool(deps.options.agentStore, deps.store, { rootDir: deps.rootDir, sourceTaskId: task.id, sourceAgentId: assignedAgentId, callerIsEphemeral: executionCallerIsEphemeral })]),
+          // FN-125: execution sessions never receive delegation tools.
           createTaskAssignTool(deps.options.agentStore, deps.store),
           ...(assignedAgentId ? [
             createGetAgentConfigTool(deps.options.agentStore, assignedAgentId),
@@ -1968,6 +2093,7 @@ export async function runImplementation(
         customTools.push(createAcquireRepoWorktreeTool({
           workspaceRootDir: deps.rootDir,
           workspaceRepos: deps.workspaceConfig.repos,
+          resolveWorkspaceRepos: async () => (await deps.refreshWorkspaceConfig?.())?.repos ?? [],
           task,
           store: deps.store,
           settings,
@@ -2159,9 +2285,11 @@ export async function runImplementation(
         try {
           const createdSession = await createResolvedAgentSession({
             sessionPurpose: "executor",
+        taskExecutionSession: true,
             runtimeHint: executorRuntimeHint,
             pluginRunner: deps.options.pluginRunner,
             cwd: worktreePath,
+            sessionBoundary,
             systemPrompt: executorSystemPromptFinal,
             systemPromptLayers: executorLayers,
             tools: "coding",
@@ -2535,8 +2663,10 @@ export async function runImplementation(
               This deliberately does NOT reuse the FN-4806 reclaim branch below: that silently requeues to `todo`, which would clear the park and — with the refusal budget already exhausted — re-park on the next pickup, looping todo→execute→park. A terminal park is the agent's own failure and must stay parked for a human.
               Note the reclaim probes below cannot cover this: they test `liveTask.worktree === null`, but the store maps a cleared column to `undefined`, never `null` (`task-store/serialization.ts` — `row.worktree || undefined`). Tightening that probe is a separate change with real blast radius, so the park is detected by status here instead.
               */
-              if (liveTask.status === "failed") {
-                const parkMessage = `${task.id}: task parked failed during no-fn_task_done retry — honoring park, not retrying`;
+              if (liveTask.status === "failed" || liveTask.status === "needs-replan") {
+                const parkMessage = liveTask.status === "needs-replan"
+                  ? `${task.id}: task parked for automatic replan during no-fn_task_done retry — honoring park, not retrying`
+                  : `${task.id}: task parked failed during no-fn_task_done retry — honoring park, not retrying`;
                 executorLog.log(parkMessage);
                 await deps.store.logEntry(task.id, parkMessage, undefined, deps.runContextFor(task.id));
                 deps.deleteActiveSession(task.id);
@@ -2554,7 +2684,13 @@ export async function runImplementation(
                 && (!hasExplicitWorktreeBinding || liveTask.worktree === worktreePath)
                 && (!hasExplicitBranchBinding || (typeof liveTask.branch === "string" && liveTask.branch.length > 0));
               if (!worktreeContractIntact) {
-                const reclaimMessage = `${task.id}: worktree/branch reclaimed during no-fn_task_done retry — aborting retry and requeueing`;
+                const mismatches = [
+                  liveTask.column !== (await deps.resolveResumeLanes(task.id)).wip ? "column" : null,
+                  liveTask.paused ? "pause" : null,
+                  hasExplicitWorktreeBinding && liveTask.worktree !== worktreePath ? "worktree" : null,
+                  hasExplicitBranchBinding && !(typeof liveTask.branch === "string" && liveTask.branch.length > 0) ? "branch" : null,
+                ].filter(Boolean).join(", ");
+                const reclaimMessage = `${task.id}: worktree/branch contract changed (${mismatches || "unknown"}) during no-fn_task_done retry — aborting retry and requeueing`;
                 executorLog.log(reclaimMessage);
                 await deps.store.logEntry(task.id, reclaimMessage, undefined, deps.runContextFor(task.id));
                 deps.deleteActiveSession(task.id);
@@ -2636,9 +2772,11 @@ export async function runImplementation(
               try {
                 const createdRetrySession = await createResolvedAgentSession({
                   sessionPurpose: "executor",
+            taskExecutionSession: true,
                   runtimeHint: executorRuntimeHint,
                   pluginRunner: deps.options.pluginRunner,
                   cwd: worktreePath,
+                  sessionBoundary,
                   systemPrompt: executorSystemPromptFinal,
                   systemPromptLayers: executorLayers,
                   tools: "coding",
@@ -2841,7 +2979,7 @@ export async function runImplementation(
               // Clear any stale binding so the next pickup creates a fresh worktree.
               // baseCommitSha is also cleared because it pinned to the now-reclaimed worktree;
               // the next pickup will re-anchor it on the fresh checkout.
-              await deps.store.updateTask(task.id, { worktree: null, branch: null, baseCommitSha: null });
+              await deps.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
               await deps.persistTokenUsage(task.id);
               deps.markGraphExecuteSelfRequeued(task.id);
               await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
@@ -3692,7 +3830,7 @@ export async function runImplementation(
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
               nextRecoveryAt: decision.nextState.nextRecoveryAt,
               worktree: null,
-              branch: null,
+              branch: null, branchWriteOrigin: "engine" as const,
             });
             deps.markGraphExecuteSelfRequeued(task.id);
             await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
@@ -3741,6 +3879,30 @@ export async function runImplementation(
         } else if (latestTask.status === "failed") {
           await deps.transitionReviewAddressing(task.id, ["in-progress", "queued"], "failed");
         }
+      }
+
+      /*
+      FNXC:StashSessionCapture 2026-08-19-05:09:
+      (RUFU-122) Shared terminal-failure seam: EVERY executor exit — execution
+      failure, transient-retry exhaustion, auto-recovery parks (status "failed" +
+      paused), worktree-liveness failures, and the completion handoffs alike —
+      funnels through this finally. When the freshly-read task is terminally
+      failed, fire the transcript capture behind the SAME capturedMemoryTaskIds
+      gate the completion seam uses, so a task captured on completion can never
+      be re-captured on failure and vice versa (at most once per task). The
+      fresh getTask read is deliberate: the in-scope `task` parameter predates
+      every terminal mutation in the try body. Best-effort: a read or capture
+      failure here must never break run teardown.
+      */
+      try {
+        const terminalTask = await deps.store.getTask(task.id);
+        if (terminalTask?.status === "failed") {
+          deps.signalTaskTerminalFailed(terminalTask);
+        }
+      } catch (terminalCaptureErr: unknown) {
+        executorLog.debug(
+          `RUFU-122 terminal-failure transcript capture skipped for ${task.id}: ${terminalCaptureErr instanceof Error ? terminalCaptureErr.message : String(terminalCaptureErr)}`,
+        );
       }
 
       /*
@@ -3898,7 +4060,7 @@ export async function runImplementation(
               status: "queued",
               error: null,
               worktree: null,
-              branch: null,
+              branch: null, branchWriteOrigin: "engine" as const,
             });
             // Only move to todo if not already there. Use the freshly-read
             // latestTask.column rather than the stale captured task.column —

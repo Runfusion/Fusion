@@ -31,10 +31,11 @@ const { cacheDir, mockResolveGlobalDir } = vi.hoisted(() => {
 
 vi.mock("@fusion/core", () => ({
   resolveGlobalDir: mockResolveGlobalDir,
+  resolveUpdatesExternallyManaged: () => process.env.FUSION_UPDATES_EXTERNALLY_MANAGED === "1",
   GlobalSettingsStore: makeConstructibleMock(),
 }));
 
-const { getCachedUpdateStatus } = await import("../update-cache.js");
+const { getCachedUpdateStatus, isUpdateCheckEnabled } = await import("../update-cache.js");
 
 function writeUpdateCache(payload: { updateAvailable: boolean; latestVersion: string; currentVersion: string }): void {
   mkdirSync(cacheDir, { recursive: true });
@@ -45,6 +46,14 @@ beforeEach(() => {
   rmSync(cacheDir, { recursive: true, force: true });
   mockResolveGlobalDir.mockReset();
   mockResolveGlobalDir.mockReturnValue(cacheDir);
+});
+
+describe("isUpdateCheckEnabled", () => {
+  it("suppresses the startup nag for an externally managed deployment", async () => {
+    process.env.FUSION_UPDATES_EXTERNALLY_MANAGED = "1";
+    await expect(isUpdateCheckEnabled()).resolves.toBe(false);
+    delete process.env.FUSION_UPDATES_EXTERNALLY_MANAGED;
+  });
 });
 
 describe("getCachedUpdateStatus", () => {

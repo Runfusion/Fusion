@@ -47,7 +47,8 @@ import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
 import type { WorkflowNodeRunnerRegistry } from "./workflow-node-runner.js";
 import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
 import type { WorkflowColumnBoundary } from "./workflow-column-boundary.js";
-import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
+import { BranchWriteProvenanceError } from "@fusion/core";
+import { WorktreeBaseRefreshError, WorkspacePreparationError } from "../worktree/worktree-acquisition.js";
 
 export type WorkflowNodeOutcome = "success" | "failure";
 
@@ -57,6 +58,10 @@ type WorkflowNodeSettings = Pick<Settings, "experimentalFeatures"> & {
 
 /** A classified Plan Review provider outage terminates the graph without replan traversal. */
 export const PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE = "plan-review-provider-failure-hold";
+/** Deterministic task-row validation; it must never enter provider retry handling. */
+export const BRANCH_WRITE_PROVENANCE_FAILURE_VALUE = "branch-write-provenance-failure";
+/** Workspace Git/base-ref preparation failed before any provider session could start. */
+export const WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE = "workspace-preparation-failure-hold";
 
 /*
 FNXC:PlanReviewLease 2026-07-18-23:45:
@@ -358,7 +363,10 @@ export interface WorkflowGraphExecutorDeps {
    * `store.updateTask({workflowStepResults})` wiring lives in the executor adapter;
    * this seam only forwards the terminal/pending entry.
    */
-  recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => void | Promise<void>;
+  /** Returns false only when a repository-scope CAS supersedes a review result before edge admission. */
+  recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => boolean | void | Promise<boolean | void>;
+  /** Atomically-adjacent admission check for Code Review edges after terminal result persistence. */
+  isRepositoryScopeReviewEdgeCurrent?: (taskId: string, workflowStepId: string, revision: number) => boolean | Promise<boolean>;
   /*
    * FNXC:WorkflowOptionalStepFix 2026-06-26-16:20:
    * Enabled PRE-merge optional workflow steps that return REVISE must offer the executor one remediation path before normal advisory/gate fall-through. The graph forwards the optional-group node id and per-step `maxRevisions` override so the executor can resolve the budget against workflow-value caps, `maxPostReviewFixes`, or `"unbounded"`; absent or false preserves prior byte-inert behavior for in-memory tests and exhausted budgets.
@@ -1099,6 +1107,15 @@ export class WorkflowGraphExecutor {
           const stepFindings = this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.findings)
             ? exitContextPatch.findings as WorkflowStepResult["findings"]
             : undefined;
+          const repositoryReviewOutcomes = this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.repositoryReviewOutcomes)
+            ? exitContextPatch.repositoryReviewOutcomes as WorkflowStepResult["repositoryReviewOutcomes"]
+            : undefined;
+          const repositoryScopeRevision = this.workflowReviewKind(node) && typeof exitContextPatch?.repositoryScopeRevision === "number"
+            ? exitContextPatch.repositoryScopeRevision
+            : undefined;
+          const reviewInputFingerprint = this.workflowReviewKind(node) && typeof exitContextPatch?.reviewInputFingerprint === "string"
+            ? exitContextPatch.reviewInputFingerprint
+            : undefined;
           const supersededFindingSourceWorkflowStepId = this.workflowReviewKind(node) && typeof exitContextPatch?.supersededFindingSourceWorkflowStepId === "string"
             ? exitContextPatch.supersededFindingSourceWorkflowStepId
             : undefined;
@@ -1129,7 +1146,7 @@ export class WorkflowGraphExecutor {
                 : undefined,
             });
           }
-          await this.recordOptionalGroupStepResult(task.id, {
+          const scopeCurrent = await this.recordOptionalGroupStepResult(task.id, {
             workflowStepId: node.id,
             workflowStepName: groupName,
             phase: stepPhase,
@@ -1140,10 +1157,19 @@ export class WorkflowGraphExecutor {
             ...(stepOutput !== undefined ? { output: stepOutput } : {}),
             ...(stepNotes !== undefined ? { notes: stepNotes } : {}),
             ...(stepFindings?.length ? { findings: stepFindings } : {}),
+            ...(repositoryReviewOutcomes?.length ? { repositoryReviewOutcomes } : {}),
+            ...(repositoryScopeRevision !== undefined ? { repositoryScopeRevision } : {}),
+            ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
             ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
             startedAt: stepStartedAt,
             completedAt: new Date().toISOString(),
           });
+          if (!scopeCurrent) {
+            /* FNXC:RepositoryScope 2026-08-21-02:48: Optional-group Code Review cannot route an approval once its terminal scope CAS is superseded. */
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = "workspace-review-superseded";
+            return { outcome: "failure", value: "workspace-review-superseded" };
+          }
           // `[pre-merge]`/`[post-merge]` terminal logs at parity with the legacy path
           // (executor.ts runWorkflowSteps: "completed" / "requested revision" /
           // "failed" + the advisory variant).
@@ -1157,6 +1183,7 @@ export class WorkflowGraphExecutor {
           } else {
             this.deps.logTaskEntry?.(`${logPrefix} Workflow step failed: ${groupName}`, stepOutput);
           }
+          if (repositoryScopeRevision !== undefined) context[`node:${node.id}:repositoryScopeRevision`] = repositoryScopeRevision;
           visitedNodeIds.push(...groupResult.visitedNodeIds);
           const result: WorkflowNodeResult = {
             outcome: groupResult.outcome,
@@ -1478,6 +1505,18 @@ export class WorkflowGraphExecutor {
       node: WorkflowIrNode,
       sourceResult: WorkflowNodeResult,
     ): Promise<WorkflowNodeResult | ReworkSignal> => {
+      const reviewRevision = context[`node:${node.id}:repositoryScopeRevision`];
+      if (this.workflowReviewKind(node) === "code" && typeof reviewRevision === "number"
+        && this.deps.isRepositoryScopeReviewEdgeCurrent
+        && !await this.deps.isRepositoryScopeReviewEdgeCurrent(task.id, node.id, reviewRevision)) {
+        /*
+        FNXC:RepositoryScope 2026-08-21-03:05:
+        Terminal-result persistence and graph traversal are separate operations. Re-check the
+        durable review record at edge admission so a scope change in that interval cannot let an
+        obsolete approval traverse an advisory or success edge.
+        */
+        return { outcome: "failure", value: "workspace-review-superseded" };
+      }
       const edges = outgoingMap.get(node.id) ?? [];
       if (edges.length === 0) {
         return sourceResult;
@@ -1720,12 +1759,13 @@ export class WorkflowGraphExecutor {
    * Recording is additive visibility bookkeeping — a sink failure (or absent sink)
    * must NEVER affect graph execution, so swallow errors and no-op when unwired.
    */
-  private async recordOptionalGroupStepResult(taskId: string, result: WorkflowStepResult): Promise<void> {
-    if (!this.deps.recordWorkflowStepResult) return;
+  private async recordOptionalGroupStepResult(taskId: string, result: WorkflowStepResult): Promise<boolean> {
+    if (!this.deps.recordWorkflowStepResult) return true;
     try {
-      await this.deps.recordWorkflowStepResult(taskId, result);
+      return (await this.deps.recordWorkflowStepResult(taskId, result)) !== false;
     } catch {
-      // Result recording is additive — a failure must not affect the run.
+      // Result recording is additive — a sink failure must not affect the run.
+      return true;
     }
   }
 
@@ -1890,8 +1930,13 @@ export class WorkflowGraphExecutor {
           if (signal?.aborted || this.isAbortNodeResult(projected)) {
             return this.withEnginePauseAbortContext(node, projected);
           }
-          if (progressRecord) {
-            await this.recordNodeProgressFinish(task.id, node, progressRecord, projected);
+          if (progressRecord && !await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)) {
+            /*
+            FNXC:RepositoryScope 2026-08-21-02:48:
+            A terminal review record rejected by the scope-generation CAS cannot
+            traverse its APPROVE edge. Return an unavailable outcome instead.
+            */
+            return { outcome: "failure", value: "workspace-review-superseded" };
           }
           return projected;
         }
@@ -1903,8 +1948,9 @@ export class WorkflowGraphExecutor {
         if (signal?.aborted || this.isAbortNodeResult(projected)) {
           return this.withEnginePauseAbortContext(node, projected);
         }
-        if (progressRecord) {
-          await this.recordNodeProgressFinish(task.id, node, progressRecord, projected);
+        if (progressRecord && !await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)) {
+          /* FNXC:RepositoryScope 2026-08-21-02:48: See the plugin-node path above; both graph dispatch routes share this edge fence. */
+          return { outcome: "failure", value: "workspace-review-superseded" };
         }
         return projected;
       } catch (error) {
@@ -1917,6 +1963,30 @@ export class WorkflowGraphExecutor {
         the refresh kind lets the graph route/park it while preserving the checkout for a later,
         independently verified acquisition.
         */
+        if (error instanceof WorkspacePreparationError) {
+          /*
+           * FNXC:WorkspacePreparation 2026-08-21-19:39:
+           * Preparation errors are emitted as a typed graph value before generic exception handling.
+           * Plan Review must not relabel a failed `git worktree add` as a provider outage or invoke
+           * its model-retry lane when no reviewer session was created.
+           */
+          const failureResult: WorkflowNodeResult = {
+            outcome: "failure",
+            value: WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE,
+            contextPatch: {
+              [`node:${node.id}:error`]: error.message,
+              [`node:${node.id}:workspacePreparation`]: {
+                repository: error.repoRelPath,
+                stage: error.stage,
+                cause: error.causeMessage,
+              },
+            },
+          };
+          if (recordProgress && this.shouldRecordNodeProgress(node)) {
+            await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+          }
+          return failureResult;
+        }
         if (error instanceof WorktreeBaseRefreshError) {
           const failureResult: WorkflowNodeResult = {
             outcome: "failure",
@@ -1983,7 +2053,9 @@ export class WorkflowGraphExecutor {
     const failureResult: WorkflowNodeResult = {
       outcome: "failure",
       // FNXC:SessionContention 2026-07-25-21:30: contention is a retryable hold, not an exception.
-      value: isSessionContentionError(lastErrorText) ? SESSION_CONTENTION_HOLD_VALUE : "exception",
+      value: lastError instanceof BranchWriteProvenanceError
+        ? BRANCH_WRITE_PROVENANCE_FAILURE_VALUE
+        : isSessionContentionError(lastErrorText) ? SESSION_CONTENTION_HOLD_VALUE : "exception",
       contextPatch: {
         [`node:${node.id}:error`]: lastErrorText,
         ...nodeErrorCodeContextPatch(node.id, lastError),
@@ -2035,13 +2107,26 @@ export class WorkflowGraphExecutor {
     node: WorkflowIrNode,
     started: WorkflowStepResult | null,
     nodeResult: WorkflowNodeResult,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const status: WorkflowStepResult["status"] = nodeResult.outcome === "success" ? "passed" : "failed";
     const contextPatch = nodeResult.contextPatch ?? {};
     let output = typeof contextPatch.output === "string" ? contextPatch.output : undefined;
     const notes = typeof contextPatch.notes === "string" ? contextPatch.notes : undefined;
     const findings = this.workflowReviewKind(node) && Array.isArray(contextPatch.findings)
       ? contextPatch.findings as WorkflowStepResult["findings"]
+      : undefined;
+    /*
+    FNXC:RepositoryScope 2026-08-21-02:17:
+    Graph custom review nodes must persist the same structured repository outcomes as step-review seams. The remediation and Review-tab readers cannot recover scope revision or clean-peer state from formatted output.
+    */
+    const repositoryReviewOutcomes = this.workflowReviewKind(node) && Array.isArray(contextPatch.repositoryReviewOutcomes)
+      ? contextPatch.repositoryReviewOutcomes as WorkflowStepResult["repositoryReviewOutcomes"]
+      : undefined;
+    const repositoryScopeRevision = this.workflowReviewKind(node) && typeof contextPatch.repositoryScopeRevision === "number"
+      ? contextPatch.repositoryScopeRevision
+      : undefined;
+    const reviewInputFingerprint = this.workflowReviewKind(node) && typeof contextPatch.reviewInputFingerprint === "string"
+      ? contextPatch.reviewInputFingerprint
       : undefined;
     /* FNXC:WorkflowReviewFindings 2026-08-11-19:39: This ordinary writer and the optional-group exit writer above carry explicit review supersession claims to the shared persistence sink. */
     const supersededFindingSourceWorkflowStepId = this.workflowReviewKind(node) && typeof contextPatch.supersededFindingSourceWorkflowStepId === "string"
@@ -2065,7 +2150,7 @@ export class WorkflowGraphExecutor {
         failureValue: nodeResult.value,
       });
     }
-    await this.recordOptionalGroupStepResult(taskId, {
+    return this.recordOptionalGroupStepResult(taskId, {
       workflowStepId: node.id,
       workflowStepName: this.workflowNodeProgressName(node),
       phase: started?.phase ?? (node.config?.phase === "post-merge" ? "post-merge" : "pre-merge"),
@@ -2075,6 +2160,9 @@ export class WorkflowGraphExecutor {
       ...(output !== undefined ? { output } : {}),
       ...(notes !== undefined ? { notes } : {}),
       ...(findings?.length ? { findings } : {}),
+      ...(repositoryReviewOutcomes?.length ? { repositoryReviewOutcomes } : {}),
+      ...(repositoryScopeRevision !== undefined ? { repositoryScopeRevision } : {}),
+      ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
       ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
       startedAt: started?.startedAt ?? new Date().toISOString(),
       completedAt: new Date().toISOString(),

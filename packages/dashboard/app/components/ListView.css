@@ -367,7 +367,7 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
   gap: var(--space-sm);
 }
 
-/* Drop zones for drag and drop */
+/* Clickable workflow column filters. */
 .list-drop-zones {
   display: flex;
   gap: var(--space-sm);
@@ -400,12 +400,6 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
   border-color: var(--todo);
   background: color-mix(in srgb, var(--todo) 15%, transparent);
   box-shadow: 0 0 0 1px var(--todo);
-}
-
-.list-drop-zone.drag-over {
-  border-color: var(--todo);
-  box-shadow: 0 0 0 1px var(--todo);
-  background: color-mix(in srgb, var(--todo) 10%, transparent);
 }
 
 .drop-zone-dot {
@@ -597,10 +591,6 @@ No border-left on the detail pane. Keeping a border-left here would produce a se
 .list-row--selected {
   background: color-mix(in srgb, var(--todo) 12%, transparent);
   box-shadow: inset 0 0 0 1px var(--todo);
-}
-
-.list-row.dragging {
-  opacity: 0.4;
 }
 
 .list-row.failed {

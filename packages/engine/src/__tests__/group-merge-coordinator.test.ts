@@ -1291,6 +1291,17 @@ function createPostReviewTask(groupId: string): Record<string, any> {
     baseBranch: "main",
     dependencies: [],
     steps: [{ name: "Code Review", status: "done" }],
+    /*
+    FNXC:RequiredPreMergeSteps 2026-08-23-00:20:
+    This fixture IS a post-Code-Review member, so its enabled pre-merge groups must carry passing
+    RESULTS — the merge door reads `workflowStepResults`, not the step row whose name happens to say
+    "Code Review". Without them the door refused this card before the branch-group routing under
+    test ran. Recording the passes states the fixture's intent; disabling the gates would not.
+    */
+    workflowStepResults: [
+      { workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "passed", phase: "pre-merge", verdict: "APPROVE" },
+      { workflowStepId: "code-review", workflowStepName: "Code Review", status: "passed", phase: "pre-merge", verdict: "APPROVE" },
+    ],
     log: [],
     paused: false,
     autoMerge: undefined,
@@ -1329,6 +1340,13 @@ function createPostReviewStore(task: Record<string, any>, branchGroup: Record<st
     listTasksByBranchGroup: vi.fn(async () => (branchGroup ? [task] : [])),
     getBranchGroup: vi.fn(() => branchGroup),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
+    /* FNXC:MergeMockDrift 2026-08-23-00:20: production write seam used by the merge path; a fake
+       store omitting it throws before the routing behaviour under test runs. */
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),

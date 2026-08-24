@@ -19,12 +19,16 @@ truncation semantics themselves are covered against real PostgreSQL in
 packages/core/src/__tests__/postgres/chat-store-content-search-edit.pg.test.ts; the seam under
 test here is the pi session branch/repoint behavior, which is store-agnostic.
 */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm } from "node:fs/promises";
-import { ChatManager } from "../chat.js";
+import {
+  ChatManager,
+  __resetChatState,
+  __setCreateResolvedAgentSession,
+} from "../chat.js";
 import type { ChatMessage, ChatSession } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -98,14 +102,22 @@ class FakeChatStore {
     return this.sessions.get(id);
   }
 
-  async addMessage(sessionId: string, input: { role: "user" | "assistant"; content: string }): Promise<ChatMessage> {
+  async addMessage(
+    sessionId: string,
+    input: {
+      role: "user" | "assistant";
+      content: string;
+      thinkingOutput?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<ChatMessage> {
     const message: ChatMessage = {
       id: `msg-${++this.counter}`,
       sessionId,
       role: input.role,
       content: input.content,
-      thinkingOutput: null,
-      metadata: null,
+      thinkingOutput: input.thinkingOutput ?? null,
+      metadata: input.metadata ?? null,
       createdAt: new Date().toISOString(),
     };
     this.messages.push(message);
@@ -220,11 +232,103 @@ describe("ChatManager.rewindSessionForEdit — pi session context seam (real Ses
     expect(afterTexts).not.toContain("second turn");
     expect(afterTexts).not.toContain("second reply");
 
+    // The next real prompt resumes this retained branch, not the abandoned leaf.
+    reopened.appendMessage({ role: "user", content: "corrected turn", timestamp: Date.now() });
+    expect(extractText(reopened.buildSessionContext())).toContain("corrected turn");
+
     // The OLD file is never mutated (append-only tree semantics) — the discarded turn is still
     // physically present there, which is why repointing cliSessionFile (not just moving an
     // in-memory leaf) is the part of this fix that actually matters.
     const oldFileStillHasDiscardedTurn = extractText(SessionManager.open(sessionFile!).buildSessionContext());
     expect(oldFileStillHasDiscardedTurn).toContain("second turn");
+  });
+
+  it("persists an interrupted prefix into the reopened pi context exactly once", async () => {
+    __resetChatState();
+    const session = chatStore.createSession({ agentId: "agent-001" });
+    session.title = "Existing title";
+    const seedManager = SessionManager.create(tmpDir);
+    await chatStore.setCliSessionFile(session.id, seedManager.getSessionFile()!);
+
+    const prefix = "Distinct interrupted prefix";
+    let rejectPrompt: ((reason?: unknown) => void) | undefined;
+    __setCreateResolvedAgentSession(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          options.onThinking?.("thinking prefix");
+          options.onText?.(prefix);
+          return new Promise<void>((_resolve, reject) => {
+            rejectPrompt = reject;
+          });
+        }),
+        dispose: vi.fn().mockImplementation(() => rejectPrompt?.(new Error("disposed"))),
+        state: { messages: [] },
+      },
+    }) as any);
+
+    const sendPromise = chatManager.sendMessage(session.id, "hello");
+    await new Promise((resolve) => setImmediate(resolve));
+    const cancellation = await chatManager.cancelGeneration(session.id);
+    await sendPromise;
+
+    expect(cancellation).toEqual(expect.objectContaining({ success: true, interrupted: true }));
+    const assistantRows = (await chatStore.getMessages(session.id)).filter((message) => message.role === "assistant");
+    expect(assistantRows).toHaveLength(1);
+    expect(assistantRows[0]).toEqual(expect.objectContaining({
+      content: prefix,
+      metadata: expect.objectContaining({ interrupted: true }),
+    }));
+
+    const reopened = SessionManager.open((await chatStore.getSession(session.id))!.cliSessionFile!);
+    const contextTexts = extractText(reopened.buildSessionContext());
+    expect(contextTexts.filter((text) => text === prefix)).toHaveLength(1);
+
+    __resetChatState();
+  });
+
+  it("falls back to a rebuilt retained session when branch materialization fails", async () => {
+    const session = chatStore.createSession({ agentId: "agent-001" });
+    const seedManager = SessionManager.create(tmpDir);
+    const sessionFile = seedManager.getSessionFile()!;
+    await chatStore.setCliSessionFile(session.id, sessionFile);
+    seedManager.appendMessage({ role: "user", content: "kept turn", timestamp: Date.now() });
+    seedManager.appendMessage(makeAssistantMessage("kept reply"));
+    seedManager.appendMessage({ role: "user", content: "discarded turn", timestamp: Date.now() });
+    seedManager.appendMessage(makeAssistantMessage("discarded reply"));
+
+    await chatStore.addMessage(session.id, { role: "user", content: "kept turn" });
+    await chatStore.addMessage(session.id, { role: "assistant", content: "kept reply" });
+    const target = await chatStore.addMessage(session.id, { role: "user", content: "discarded turn" });
+    await chatStore.updateMessageMetadata(target.id, { piParentLeafId: "missing-leaf" });
+    await chatStore.addMessage(session.id, { role: "assistant", content: "discarded reply" });
+
+    const { retained } = await chatManager.rewindSessionForEdit(session.id, target.id);
+    expect(retained.map((item) => item.content)).toEqual(["kept turn", "kept reply"]);
+    const rebuiltSession = (await chatStore.getSession(session.id))!;
+    expect(rebuiltSession.cliSessionFile).not.toBe(sessionFile);
+    const rebuilt = SessionManager.open(rebuiltSession.cliSessionFile!);
+    const rebuiltTexts = extractText(rebuilt.buildSessionContext());
+    expect(rebuiltTexts).toContain("kept turn");
+    expect(rebuiltTexts).toContain("kept reply");
+    expect(rebuiltTexts).not.toContain("discarded turn");
+    expect(rebuiltTexts).not.toContain("discarded reply");
+  });
+
+  it("prepares one replacement generation and fences duplicate/ordinary sends", async () => {
+    const session = chatStore.createSession({ agentId: "agent-001" });
+    const seedManager = SessionManager.create(tmpDir);
+    await chatStore.setCliSessionFile(session.id, seedManager.getSessionFile()!);
+    const target = await chatStore.addMessage(session.id, { role: "user", content: "replace me" });
+
+    const preparation = chatManager.prepareReplacement(session.id, target.id);
+    expect(() => chatManager.beginGeneration(session.id)).toThrow(/already being prepared/);
+    await expect(chatManager.prepareReplacement(session.id, target.id)).rejects.toThrow(/already being prepared/);
+
+    const prepared = await preparation;
+    expect(prepared.generationId).toBe(chatManager.getActiveGenerationId(session.id));
+    expect(prepared.retained).toEqual([]);
+    chatManager.releasePreparedReplacement(session.id, prepared.generationId);
+    expect(chatManager.isGenerating(session.id)).toBe(false);
   });
 
   it("primary path, first-turn edit (no recorded parent leaf): resetLeaf() forgets everything", async () => {

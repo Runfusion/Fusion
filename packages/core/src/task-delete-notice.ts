@@ -1,5 +1,5 @@
 /*
-FNXC:TaskDeleteNotice 2026-07-26-16:10:
+FNXC:TaskDeleteNotice 2026-08-20-18:40:
 Delete attribution (task-delete-attribution.ts) answered "who deleted this?" only for someone who
 later went digging through run-audit rows. The operator's actual complaint was that tasks vanished
 from the board with no signal at all. This module closes that loop: when a task is deleted by an
@@ -10,9 +10,8 @@ SCOPE — the operator chose this deliberately, do not widen it without asking:
     caller that identified itself as nothing).
   - DO NOT notify for `operator-ui` / `operator-cli` — the operator performed the delete themselves
     and does not need to be told about their own click.
-  - DO NOT notify for `engine` — triage split-close deletes the parent on every decomposition, so
-    engine deletes are high-volume routine traffic. The operator confirmed that behavior is fine
-    and explicitly does not want the mailbox flooded with it.
+  - DO NOT notify for `engine` — engine deletes are routine automation traffic. The operator
+    confirmed that behavior is fine and explicitly does not want the mailbox flooded with it.
 
 HONESTY — `callerKind` is attribution, not authentication (see task-delete-attribution.ts's trust
 model). `api-unattributed` means "nothing identified itself", NOT "an automation did it": the

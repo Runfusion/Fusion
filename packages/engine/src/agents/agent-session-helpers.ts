@@ -31,6 +31,7 @@ import {
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
+  resolveSandboxBackend as resolveConfiguredSandboxBackend,
   TEST_MODE_RESOLVED,
   toExecutionModelProviderId,
   type ResolvedModelSelection,
@@ -38,6 +39,7 @@ import {
   type ThinkingLevel,
 } from "@fusion/core";
 import { resolveRuntime, buildRuntimeResolutionContext, isMockProviderId, type SessionPurpose } from "../execution/runtime-resolution.js";
+import { resolveSessionSandboxPolicy } from "../sandbox/session-policy.js";
 import { createLogger } from "../logger.js";
 import {
   promptWithFallback,
@@ -808,8 +810,21 @@ export async function createResolvedAgentSession(
   an explicit runtime value (including null for unlimited); otherwise settings supply
   the finite default, custom cap, or explicit no-limit sentinel interpretation.
   */
+  /*
+  FNXC:WorkspaceSandbox 2026-08-22-22:15:
+  FN-158 resolves the operator-selected backend once at the shared task-session
+  seam. A declared boundary supplies the sole writable root; undeclared lanes
+  retain their existing native command behavior.
+  */
+  const sessionSandbox = executionRuntimeOptions.sessionBoundary
+    ? {
+        sandboxBackendId: resolveConfiguredSandboxBackend(settings, executionRuntimeOptions.systemPrompt).backend,
+        sandboxPolicy: resolveSessionSandboxPolicy(executionRuntimeOptions.sessionBoundary, settings),
+      }
+    : {};
   const runtimeOptions: AgentRuntimeOptions = {
     ...executionRuntimeOptions,
+    ...sessionSandbox,
     toolOutputMaxChars: executionRuntimeOptions.toolOutputMaxChars !== undefined
       ? executionRuntimeOptions.toolOutputMaxChars
       : resolveAgentToolOutputMaxChars(settings ?? {}),

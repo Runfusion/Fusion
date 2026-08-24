@@ -45,6 +45,13 @@ export interface ReconcileWorktreePlanArtifactOptions {
   /** cwd the planning session ran in. Equal to `rootDir` when planning did not get a worktree. */
   planningCwd: string;
   logger?: PlanWritebackLogger;
+  /**
+   * Optional caller-owned authoritative writer. Triage uses this to serialize a recovered
+   * worktree artifact with its reset-generation fence before it can recreate PROMPT.md.
+   */
+  writeAuthoritativePrompt?: (content: string) => Promise<boolean>;
+  /** Optional caller-owned plan-document writer subject to the same publication fence. */
+  mirrorAuthoritativePlan?: (content: string, author?: string) => Promise<boolean>;
 }
 
 export type PlanWritebackOutcome =
@@ -59,7 +66,9 @@ export type PlanWritebackOutcome =
   /** Worktree copy was copied back into the project `.fusion/` folder. */
   | "recovered"
   /** A worktree copy existed but persisting it failed; the root copy is untouched. */
-  | "recovery-failed";
+  | "recovery-failed"
+  /** A reset fenced this planning attempt before its worktree copy could be published. */
+  | "recovery-fenced";
 
 export interface ReconcileWorktreePlanArtifactResult {
   outcome: PlanWritebackOutcome;
@@ -111,7 +120,10 @@ export async function reconcileWorktreePlanArtifact(
 
   try {
     // The single validated persistence path: File Scope validation + root PROMPT.md write + task.json sync.
-    await store.updateTask(taskId, { prompt: worktreeContent }, UNATTRIBUTED_MUTATION_CONTEXT);
+    const persisted = options.writeAuthoritativePrompt
+      ? await options.writeAuthoritativePrompt(worktreeContent)
+      : (await store.updateTask(taskId, { prompt: worktreeContent }, UNATTRIBUTED_MUTATION_CONTEXT), true);
+    if (!persisted) return { outcome: "recovery-fenced", content: rootContent ?? undefined };
     logger?.log?.(
       `${taskId}: recovered a worktree-local PROMPT.md into the project .fusion folder (${planningCwd})`,
     );
@@ -173,11 +185,14 @@ export async function persistPlanArtifact(
   options: ReconcileWorktreePlanArtifactOptions & { author?: string },
 ): Promise<ReconcileWorktreePlanArtifactResult & { mirrored: boolean }> {
   const result = await reconcileWorktreePlanArtifact(options);
+  if (result.outcome === "recovery-fenced") return { ...result, mirrored: false };
   const mirrored = result.content
-    ? await mirrorPlanToProjectDb(options.store, options.taskId, result.content, {
-      author: options.author,
-      logger: options.logger,
-    })
+    ? options.mirrorAuthoritativePlan
+      ? await options.mirrorAuthoritativePlan(result.content, options.author)
+      : await mirrorPlanToProjectDb(options.store, options.taskId, result.content, {
+        author: options.author,
+        logger: options.logger,
+      })
     : false;
   return { ...result, mirrored };
 }

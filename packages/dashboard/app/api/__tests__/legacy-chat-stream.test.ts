@@ -51,6 +51,48 @@ describe("streamChatResponse SSE parser", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves a large no-attachment log as JSON while attachments remain multipart", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(createChunkedStream(["event: done\ndata: {\"messageId\":\"m-large\"}\n\n"]), { status: 200 }),
+    );
+    const log = "2026-08-21T04:35:00Z INFO repeated log line\n".repeat(3_000);
+
+    streamChatResponse("s-1", log, { onDone: vi.fn(), onError: vi.fn() });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const jsonRequest = fetchMock.mock.calls[0]?.[1];
+    expect(jsonRequest?.body).toBe(JSON.stringify({ content: log }));
+    expect(JSON.parse(String(jsonRequest?.body)).content).toBe(log);
+
+    streamChatResponse("s-1", log, { onDone: vi.fn(), onError: vi.fn() }, [new File(["file"], "note.txt")]);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const multipartBody = fetchMock.mock.calls[1]?.[1]?.body as FormData;
+    expect(multipartBody).toBeInstanceOf(FormData);
+    expect(multipartBody.get("content")).toBe(log);
+  });
+
+  it("serializes replacement identity in JSON and multipart requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(createChunkedStream(["event: done\ndata: {\"messageId\":\"m-1\"}\n\n"]), { status: 200 }),
+    );
+
+    streamChatResponse("s-1", " corrected ", { onDone: vi.fn() }, undefined, "project-1", {
+      replacement: { messageId: "target-1" },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const jsonRequest = fetchMock.mock.calls[0]?.[1];
+    expect(JSON.parse(String(jsonRequest?.body))).toMatchObject({ content: " corrected ", replacementMessageId: "target-1" });
+
+    fetchMock.mockResolvedValue(new Response(createChunkedStream(["event: done\ndata: {\"messageId\":\"m-2\"}\n\n"]), { status: 200 }));
+    const attachment = new File(["file"], "note.txt", { type: "text/plain" });
+    streamChatResponse("s-1", " corrected ", { onDone: vi.fn() }, [attachment], "project-1", {
+      replacementMessageId: "target-2",
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const multipartBody = fetchMock.mock.calls[1]?.[1]?.body;
+    expect(multipartBody).toBeInstanceOf(FormData);
+    expect((multipartBody as FormData).get("replacementMessageId")).toBe("target-2");
+  });
+
   it("fires acceptance once before the first stream event", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(createChunkedStream(["event: text\ndata: \"Hello\"\n\nevent: done\ndata: {\"messageId\":\"msg-1\"}\n\n"]), { status: 200 }),

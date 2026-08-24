@@ -160,7 +160,7 @@ describe("parseWorkflowIr — v2 columns & placement", () => {
       [{ id: "only", name: "Only", traits: [] }],
       [
         { id: "start", kind: "start", column: "only" },
-        { id: "a", kind: "prompt", column: "only", config: { thinkingLevel: "high" } },
+        { id: "a", kind: "prompt", column: "only", config: { thinkingLevel: "max" } },
         { id: "review", kind: "step-review", column: "only", config: { type: "code", thinkingLevel: "low" } },
         { id: "end", kind: "end", column: "only" },
       ],

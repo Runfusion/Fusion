@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
+import { runWorkflowMergeAttemptNode } from "../../workflows/workflow-merge-nodes.js";
 import { createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
 import type { TaskDetail } from "@fusion/core";
 
@@ -74,6 +75,28 @@ async function invokeGraphFailure(executor: TaskExecutor, task: TaskDetail, node
 
 function logText(store: ReturnType<typeof createMockStore>): string {
   return store.logEntry.mock.calls.map((call: unknown[]) => call[1]).join("\n");
+}
+
+async function produceImplementationIncompleteMergeNodeValue(task: TaskDetail): Promise<string> {
+  const requestMerge = vi.fn().mockResolvedValue({
+    outcome: "failure",
+    value: "implementation-incomplete",
+    data: { status: "failed", reason: "implementation-incomplete" },
+  });
+  const result = await runWorkflowMergeAttemptNode({
+    primitives: { requestMerge, audit: vi.fn() },
+  }, {
+    run: { runId: "run-implementation-incomplete", taskId: task.id, workflowId: "builtin:coding" },
+    node: { node: { id: "merge-attempt", kind: "merge-attempt" } },
+  }, task);
+
+  expect(requestMerge).toHaveBeenCalledTimes(1);
+  expect(result).toMatchObject({
+    outcome: "failure",
+    value: "implementation-incomplete",
+    contextPatch: { "workflow:merge-status": "implementation-incomplete" },
+  });
+  return result.value!;
 }
 
 describe("merge-node paused-abort retry classification (FN-6735)", () => {
@@ -319,6 +342,59 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     "retry-backoff",
     "merge-retry",
   ] as const;
+
+  it.each(["merge-attempt", "merge"] as const)("routes primitive-produced implementation-incomplete no-proof failure at node %s without requesting no-op merge", async (nodeId) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [],
+      currentStep: 0,
+      branch: null,
+      worktree: null,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+    (executor as any).addActiveWorktree(task.id, "/tmp/fusion-fn-9166-fail-closed");
+
+    const value = await produceImplementationIncompleteMergeNodeValue(task);
+    await invokeGraphFailure(executor, task, nodeId, value);
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
+      }),
+      undefined,
+    );
+    expect(logText(store)).toContain(`Workflow graph merge blocked at node '${nodeId}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`);
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
+  });
+
+  it.each(["merge-attempt", "merge"] as const)("routes primitive-produced implementation-incomplete resumable failure at node %s without requesting merge", async (nodeId) => {
+    const worktreePath = "/tmp/fusion-fn-9166-resumable";
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "pending" },
+      ],
+      currentStep: 1,
+      branch: "fusion/fn-9166-resumable",
+      worktree: worktreePath,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+    (executor as any).addActiveWorktree(task.id, worktreePath);
+
+    const value = await produceImplementationIncompleteMergeNodeValue(task);
+    await invokeGraphFailure(executor, task, nodeId, value);
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({ preserveProgress: true }));
+    expect(logText(store)).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume`);
+    expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
+  });
 
   it.each(implementationIncompleteMergeNodes)("fails implementation-incomplete no-proof merge pause abort at node %s without requesting no-op merge", async (nodeId) => {
     const { store, task, executor, mergeRequester } = makeHarness({

@@ -88,12 +88,13 @@ describe("mobile board column swipe target containment (FN-6389)", () => {
     expect(columnBodyBlock).not.toContain("overflow-y: hidden");
   });
 
-  it("opts workflow and multi-lane board interiors into horizontal panning", () => {
+  it("opts live workflow Board columns into horizontal panning", () => {
+    expect(baseCss).not.toMatch(/\.lane-columns\b/);
+    expect(mobileCss).not.toMatch(/\.lane-columns\b/);
+
     for (const selector of [
       ".board.board-workflow-columns",
       ".board.board-workflow-columns > .column",
-      ".lane-columns",
-      ".lane-columns > .column",
     ]) {
       expectTouchPanXY(baseCss, selector);
     }
@@ -120,10 +121,10 @@ describe("mobile board column swipe target containment (FN-6389)", () => {
     expect(widthContainmentBlock).toContain("max-inline-size: 100%;");
   });
 
-  it("preserves FN-6378 horizontal overscroll containment, with proximity snap on phones and none on desktop", () => {
+  it("preserves live Board containment, phone proximity snap, and desktop free-panning", () => {
     expectContainmentScroller(ruleBlock(baseCss, ".board"), "none");
     expectContainmentScroller(ruleBlock(mobileCss, ".board"), "proximity");
     expectContainmentScroller(ruleBlock(baseCss, ".board.board-workflow-columns"), "none");
-    expectContainmentScroller(ruleBlock(baseCss, ".lane-columns"), "none");
+    expectContainmentScroller(ruleBlock(mobileCss, ".board.board-workflow-columns"), "proximity");
   });
 });

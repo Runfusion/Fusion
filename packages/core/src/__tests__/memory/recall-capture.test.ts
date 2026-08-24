@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CORE_RUN_AUDIT_EMIT_TIMEOUT_MS } from "../../run-audit/emit-bounded-run-audit.js";
 import {
   buildRecallCaptureContent,
   createRecallCaptureWriter,
@@ -11,6 +12,31 @@ import type { RecallAppendInput } from "../../memory/recall/recall-types.js";
 const layer = {} as never;
 const logger = { warn: vi.fn() };
 
+type AuditSinkMode = "absent" | "throw" | "reject" | "never" | "late-resolve" | "late-reject";
+
+function hostileAudit(mode: AuditSinkMode) {
+  let settle: (() => void) | undefined;
+  const audit = vi.fn(() => {
+    if (mode === "throw") throw new Error("audit throw");
+    if (mode === "reject") return Promise.reject(new Error("audit rejection"));
+    if (mode === "never") return new Promise<void>(() => undefined);
+    if (mode === "late-resolve") return new Promise<void>((resolve) => { settle = resolve; });
+    if (mode === "late-reject") return new Promise<void>((_resolve, reject) => { settle = () => reject(new Error("late audit rejection")); });
+    return undefined;
+  });
+  return { audit, settle: () => settle?.() };
+}
+
+async function drainBounded(writer: ReturnType<typeof createRecallCaptureWriter>, mode: AuditSinkMode, settle: () => void) {
+  const drain = writer.flushPendingCaptures();
+  if (mode === "never" || mode.startsWith("late-")) {
+    await vi.advanceTimersByTimeAsync(CORE_RUN_AUDIT_EMIT_TIMEOUT_MS);
+    settle();
+  }
+  await expect(drain).resolves.toBeUndefined();
+  await expect(writer.flushPendingCaptures()).resolves.toBeUndefined();
+}
+
 function created(input: RecallAppendInput) {
   return {
     status: "created" as const,
@@ -21,6 +47,8 @@ function created(input: RecallAppendInput) {
     },
   };
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe("recall capture writer", () => {
   it("maps every automatic origin to FN-8922 kinds and source provenance", async () => {
@@ -62,6 +90,47 @@ describe("recall capture writer", () => {
     await writer.flushPendingCaptures();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith("Automatic recall capture failed for research-finding");
+  });
+
+  it.each(["absent", "throw", "reject", "never", "late-resolve", "late-reject"] as const)(
+    "keeps injectable capture audit bounded for %s sinks", async (mode) => {
+      vi.useFakeTimers();
+      const hostile = hostileAudit(mode);
+      const append = vi.fn(async (input: RecallAppendInput) => created(input));
+      const warn = vi.fn();
+      const writer = createRecallCaptureWriter({
+        layer,
+        logger: { warn },
+        append,
+        ...(mode === "absent" ? {} : { audit: hostile.audit }),
+      });
+
+      expect(writer.capture({ origin: "insight", summary: "secret capture summary", insightId: "INS-1" })).toBeUndefined();
+      await drainBounded(writer, mode, hostile.settle);
+      expect(append).toHaveBeenCalledTimes(1);
+      if (mode === "absent") expect(hostile.audit).not.toHaveBeenCalled();
+      else expect(hostile.audit).toHaveBeenCalledWith({ type: "memory:capture-recorded", metadata: { recallRecordId: "recall-1", outcome: "created" } });
+      expect(JSON.stringify([hostile.audit.mock.calls, warn.mock.calls])).not.toContain("secret capture summary");
+    },
+  );
+
+  it("preserves duplicate and failure adapter metadata without invoking the layer sink", async () => {
+    const audit = vi.fn(async () => {});
+    const duplicate = { ...created({ kind: "decision", content: "x", source: { origin: "other" } }), id: "recall-duplicate" };
+    const append = vi.fn()
+      .mockResolvedValueOnce({ status: "duplicate" as const, duplicateOf: duplicate, similarity: 1 })
+      .mockRejectedValueOnce(new TypeError("append failure"));
+    const warn = vi.fn();
+    const writer = createRecallCaptureWriter({ layer, logger: { warn }, append, audit });
+
+    writer.capture({ origin: "insight", summary: "never expose this summary" });
+    writer.capture({ origin: "research-finding", summary: "nor this failure summary" });
+    await writer.flushPendingCaptures();
+
+    expect(audit).toHaveBeenNthCalledWith(1, { type: "memory:capture-recorded", metadata: { recallRecordId: "recall-duplicate", outcome: "duplicate" } });
+    expect(audit).toHaveBeenNthCalledWith(2, { type: "memory:capture-failed", metadata: { errorClass: "TypeError" } });
+    expect(warn).toHaveBeenCalledWith("Automatic recall capture failed for research-finding");
+    expect(JSON.stringify([audit.mock.calls, warn.mock.calls])).not.toContain("summary");
   });
 
   it("records ids-only capture audit metadata after persistence", async () => {

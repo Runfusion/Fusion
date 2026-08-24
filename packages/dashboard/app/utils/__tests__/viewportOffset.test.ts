@@ -34,6 +34,38 @@ describe("computeIcbOffsets", () => {
     expect(offsets.bottomOffset).toBe(0);
   });
 
+  it("does not lift fixed bars for a focused field without a baseline", () => {
+    const offsets = computeIcbOffsets({
+      innerWidth: 390,
+      innerHeight: 844,
+      vvWidth: 390,
+      vvHeight: 508,
+      vvOffsetTop: 0,
+      vvOffsetLeft: 0,
+      vvScale: 1,
+      activeElementIsKeyboardFocusable: true,
+      baselineViewportHeight: null,
+    });
+
+    expect(offsets.bottomOffset).toBe(0);
+  });
+
+  it("does not retain a stale focused baseline residual", () => {
+    const offsets = computeIcbOffsets({
+      innerWidth: 390,
+      innerHeight: 844,
+      vvWidth: 390,
+      vvHeight: 508,
+      vvOffsetTop: 0,
+      vvOffsetLeft: 0,
+      vvScale: 1,
+      activeElementIsKeyboardFocusable: true,
+      baselineViewportHeight: 754,
+    });
+
+    expect(offsets.bottomOffset).toBe(0);
+  });
+
   it("preserves pinch-zoom offset compensation", () => {
     const offsets = computeIcbOffsets({
       innerWidth: 390,

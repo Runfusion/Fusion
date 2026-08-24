@@ -13,7 +13,10 @@
  */
 import type { TaskStore } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { archiveTerminalWorkflowStepFailures } from "@fusion/core";
 import { clearTerminalWorkflowStepFailures } from "./workflow-step-failures.js";
+
+export type TerminalFailureRetryMode = "archive" | "clear";
 
 export type ClearTerminalStepFailuresForRetryDeps = {
   store: TaskStore;
@@ -24,10 +27,13 @@ export type ClearTerminalStepFailuresForRetryDeps = {
 export async function clearTerminalStepFailuresForRetry(
   deps: ClearTerminalStepFailuresForRetryDeps,
   taskId: string,
+  mode: TerminalFailureRetryMode,
 ): Promise<void> {
   const live = await deps.store.getTask(taskId).catch(() => null);
   if (!live) return;
-  const cleared = clearTerminalWorkflowStepFailures(live.workflowStepResults);
+  const cleared = mode === "archive"
+    ? archiveTerminalWorkflowStepFailures(live.workflowStepResults)
+    : clearTerminalWorkflowStepFailures(live.workflowStepResults);
   if (cleared !== live.workflowStepResults) {
     await deps.store.updateTask(taskId, { workflowStepResults: cleared }, deps.runContextFor(taskId));
   }

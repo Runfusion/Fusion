@@ -344,30 +344,7 @@ describe("Column workflow mode (U9)", () => {
     expect(document.querySelector(".column-menu")).not.toBeNull();
   });
 
-  it("surfaces a translated rejection messageKey on a failed drop (snap-back)", async () => {
-    const addToast = vi.fn();
-    const onMoveTask = vi.fn().mockRejectedValue({
-      details: { code: "merge-blocked", messageKey: "board.rejection.mergeBlocked", retryable: false },
-    });
-    render(
-      <Column
-        {...defaultProps}
-        column={"done" as ColumnType}
-        workflowMode
-        columnDisplayName="Done"
-        columnFlags={{ complete: true }}
-        addToast={addToast}
-        onMoveTask={onMoveTask}
-        tasks={[]}
-      />,
-    );
-    const columnEl = document.querySelector('[data-column="done"]') as HTMLElement;
-    fireEvent.drop(columnEl, { dataTransfer: { getData: () => "FN-99" } });
-    await waitFor(() => expect(addToast).toHaveBeenCalled());
-    // The toast surfaces the translated merge-blocked copy (not the raw key).
-    expect(addToast.mock.calls[0][0]).toContain("merge step");
-    expect(addToast.mock.calls[0][1]).toBe("error");
-  });
+
 
   it("renders a Promote affordance on hold-column cards", () => {
     render(
@@ -567,13 +544,13 @@ describe("Column worktree grouping setting", () => {
     expect(screen.queryByTestId("task-FN-003")).toBeNull();
   });
 
-  it("passes workspace tasks to a workspace group instead of Unassigned", () => {
+  it("passes a single acquired workspace repo to a workspace group instead of stale singular routing", () => {
     const workspaceTask = {
       ...makeTask("FN-9044"),
       column: "exec" as ColumnType,
+      worktree: "/ws/unrelated/.worktrees/stale-worktree",
       workspaceWorktrees: {
         "repo-a": { worktreePath: "/ws/repo-a/.worktrees/FN-9044", branch: "fusion/FN-9044" },
-        "repo-b": { worktreePath: "/ws/repo-b/.worktrees/FN-9044", branch: "fusion/FN-9044" },
       },
     };
     render(
@@ -591,6 +568,7 @@ describe("Column worktree grouping setting", () => {
 
     expect(screen.getByTestId("worktree-group")).toHaveAttribute("data-kind", "workspace");
     expect(screen.getByTestId("worktree-group")).toHaveAttribute("data-label", "FN-9044");
+    expect(screen.queryByText("stale-worktree")).toBeNull();
     expect(screen.queryByText("Unassigned")).toBeNull();
     expect(screen.getByTestId("group-active-FN-9044")).toBeInTheDocument();
   });
@@ -687,21 +665,7 @@ describe("Column pagination", () => {
     expect(screen.getAllByTestId(/task-/)).toHaveLength(60);
   });
 
-  it("still handles drops when pagination is enabled", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-    render(<Column {...defaultProps} column="todo" tasks={tasks} onMoveTask={onMoveTask} />);
 
-    const column = screen.getByText("110").closest(".column") as HTMLElement;
-    const dataTransfer = {
-      getData: vi.fn().mockReturnValue("KB-999"),
-      dropEffect: "move",
-    };
-
-    fireEvent.drop(column, { dataTransfer });
-
-    expect(onMoveTask).toHaveBeenCalledWith("KB-999", "todo", undefined);
-  });
 
   it("does not paginate at the threshold boundary", () => {
     const tasks = Array.from({ length: 100 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
@@ -1260,7 +1224,7 @@ describe("Column Done action menu", () => {
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 
-  it("hides Done menu items and leaves no standalone wrappers on non-Done columns", async () => {
+  it("shows the generic sort menu on non-complete columns without standalone wrappers", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <Column
@@ -1275,12 +1239,12 @@ describe("Column Done action menu", () => {
 
     expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
     expect(container.querySelector(".done-sort-control")).toBeNull();
-    expect(container.querySelector("[aria-label='Sort Done tasks']")).toBeNull();
+    expect(container.querySelector("[aria-label='Sort tasks in this column']")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Todo column actions" }));
 
-    expect(screen.queryByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toBeNull();
-    expect(screen.queryByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: /Arrival in this column/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /Archive all done tasks/i })).toBeNull();
   });
 
@@ -1299,67 +1263,6 @@ describe("Column Done action menu", () => {
   });
 });
 
-describe("Column same-column drop", () => {
-  it("does not call onMoveTask when dropping task into its current column", () => {
-    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-    const addToast = vi.fn();
-    const tasks = [{ ...makeTask("FN-001"), column: "todo" as ColumnType }];
-    
-    render(<Column {...defaultProps} column="todo" tasks={tasks} onMoveTask={onMoveTask} addToast={addToast} />);
-
-    const columnEl = screen.getByRole("heading", { name: "Todo" }).closest(".column") as HTMLElement;
-    const dataTransfer = {
-      getData: vi.fn().mockReturnValue("FN-001"),
-      dropEffect: "move",
-    };
-
-    fireEvent.drop(columnEl, { dataTransfer });
-
-    expect(onMoveTask).not.toHaveBeenCalled();
-    expect(addToast).not.toHaveBeenCalled();
-  });
-
-  it("removes drag-over styling after drop even on same column", () => {
-    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-    const tasks = [{ ...makeTask("FN-001"), column: "todo" as ColumnType }];
-    
-    render(<Column {...defaultProps} column="todo" tasks={tasks} onMoveTask={onMoveTask} />);
-
-    const columnEl = screen.getByRole("heading", { name: "Todo" }).closest(".column") as HTMLElement;
-    const dataTransfer = {
-      getData: vi.fn().mockReturnValue("FN-001"),
-      dropEffect: "move",
-    };
-
-    // First trigger dragOver to set drag-over state
-    fireEvent.dragOver(columnEl, { dataTransfer });
-    expect(columnEl.className).toContain("drag-over");
-
-    // Then drop - should remove drag-over class even for same-column drop
-    fireEvent.drop(columnEl, { dataTransfer });
-    expect(columnEl.className).not.toContain("drag-over");
-  });
-
-  it("calls onMoveTask when dropping task into a different column", () => {
-    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-    const addToast = vi.fn();
-    // Task is in "todo" column - but we're dropping it onto "in-review" column
-    // The "in-review" column should have 0 tasks initially
-    const tasksInTargetColumn: Task[] = [];
-    
-    // Dropping into "in-review" column (which has 0 tasks)
-    render(<Column {...defaultProps} column="in-review" tasks={tasksInTargetColumn} onMoveTask={onMoveTask} addToast={addToast} />);
-
-    const columnEl = screen.getAllByText("0")[0].closest(".column") as HTMLElement;
-    const dataTransfer = {
-      getData: vi.fn().mockReturnValue("FN-001"),
-      dropEffect: "move",
-    };
-
-    fireEvent.drop(columnEl, { dataTransfer });
-
-    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "in-review", undefined);
-  });
 
   describe("favorite model prop forwarding (FN-770)", () => {
     it("forwards favoriteProviders, favoriteModels, and toggle callbacks to QuickEntryBox", () => {
@@ -1407,7 +1310,6 @@ describe("Column same-column drop", () => {
       expect(quickEntry.getAttribute("data-has-toggle-model-favorite")).toBe("no");
     });
   });
-});
 
 describe("Column PluginSlot integration", () => {
   it("renders PluginSlot for board-column-footer", () => {

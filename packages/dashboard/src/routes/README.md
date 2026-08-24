@@ -20,6 +20,7 @@ The following is the complete top-level registrar map currently imported by `rou
 - `registerMessagingScriptRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerGitGitHubRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerGitLabRoutes` — domain registrar mounted by `createApiRoutes`.
+- `registerJiraRoutes` — read-only JIRA branch-name derivation endpoint.
 - `registerFilesTerminalWorkspaceRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerAgentsProjectsNodesRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerPluginsAutomationRoutes` — automation and routine CRUD/manual-run/webhook endpoints plus live SSE streams, and plugin-management endpoints. It preserves the `/plugins/:id` registry pass-through; `createPluginRouter` remains mounted later by `routes.ts` so `/plugins/registry` retains precedence. Its co-located `automation-live-run.ts`, `automation-step-execution.ts`, and `plugin-bundled-runtimes.ts` helpers own replayable output, execution, and bundled-runtime fallback metadata.
@@ -87,55 +88,56 @@ Express matches in registration order. `create-api-routes-mount-sequence.ts` is 
 8. `registerMessagingScriptRoutes`
 9. `registerGitGitHubRoutes`
 10. `registerGitLabRoutes`
-11. `registerFilesTerminalWorkspaceRoutes`
-12. `registerAgentsProjectsNodesRoutes`
-13. `registerPluginsAutomationRoutes`
-14. `registerApprovalRoutes`
-15. `registerWorktrunkRoutes`
-16. `registerConfigMcpPiSettingsRoutes`
-17. `registerSystemMaintenanceRoutes`
-18. `registerModelRoutes`
-19. `registerCustomProviderRoutes`
-20. `registerAuthRoutes`
-21. `registerRuntimeProviderRoutes`
-22. `registerFnBinaryRoutes`
-23. `registerAiTextAssistantRoutes`
-24. `registerUsageRoutes`
-25. `registerCommandCenterRoutes`
-26. `registerKnowledgeRoutes`
-27. `registerReportRoutes`
-28. `registerSignalRoutes`
-29. `registerMonitorRoutes`
-30. `registerUpdateCheckRoutes`
-31. `registerVoiceRoutes`
-32. `registerDiagnosticsRoutes`
-33. `registerCliAgentHooksRoute`
-34. `registerCliAgentSettingsRoutes`
-35. `registerActivityLogRoutes`
-36. `registerAgentCoreListCreateRoutes`
-37. `registerAgentImportExportRoutes`
-38. `registerOrgPortabilityRoutes`
-39. `registerAgentCoreRoutes`
-40. `registerAgentRuntimeRoutes`
-41. `registerSystemRoutes`
-42. `registerAgentReflectionRatingRoutes`
-43. `registerAgentGenerationRoutes`
-44. `registerIntegratedRouters`
-45. `registerProjectRoutes`
-46. `registerNodeRoutes`
-47. `registerDockerNodeRoutes`
-48. `registerDockerProvisioningRoutes`
-49. `registerSettingsSyncRoutes`
-50. `registerSecretsSyncRoutes`
-51. `registerMeshRoutes`
-52. `registerDiscoveryRoutes`
-53. `registerUiMetadataRoutes`
-54. `registerSettingsSyncInboundRoutes`
-55. `registerSecretsSyncInboundRoutes`
-56. `registerSetupActivityRoutes`
-57. `registerIntegratedDevServerRouter`
-58. `registerAgentSkillsRoutes`
-59. `registerProxyRoutes`
+11. `registerJiraRoutes`
+12. `registerFilesTerminalWorkspaceRoutes`
+13. `registerAgentsProjectsNodesRoutes`
+14. `registerPluginsAutomationRoutes`
+15. `registerApprovalRoutes`
+16. `registerWorktrunkRoutes`
+17. `registerConfigMcpPiSettingsRoutes`
+18. `registerSystemMaintenanceRoutes`
+19. `registerModelRoutes`
+20. `registerCustomProviderRoutes`
+21. `registerAuthRoutes`
+22. `registerRuntimeProviderRoutes`
+23. `registerFnBinaryRoutes`
+24. `registerAiTextAssistantRoutes`
+25. `registerUsageRoutes`
+26. `registerCommandCenterRoutes`
+27. `registerKnowledgeRoutes`
+28. `registerReportRoutes`
+29. `registerSignalRoutes`
+30. `registerMonitorRoutes`
+31. `registerUpdateCheckRoutes`
+32. `registerVoiceRoutes`
+33. `registerDiagnosticsRoutes`
+34. `registerCliAgentHooksRoute`
+35. `registerCliAgentSettingsRoutes`
+36. `registerActivityLogRoutes`
+37. `registerAgentCoreListCreateRoutes`
+38. `registerAgentImportExportRoutes`
+39. `registerOrgPortabilityRoutes`
+40. `registerAgentCoreRoutes`
+41. `registerAgentRuntimeRoutes`
+42. `registerSystemRoutes`
+43. `registerAgentReflectionRatingRoutes`
+44. `registerAgentGenerationRoutes`
+45. `registerIntegratedRouters`
+46. `registerProjectRoutes`
+47. `registerNodeRoutes`
+48. `registerDockerNodeRoutes`
+49. `registerDockerProvisioningRoutes`
+50. `registerSettingsSyncRoutes`
+51. `registerSecretsSyncRoutes`
+52. `registerMeshRoutes`
+53. `registerDiscoveryRoutes`
+54. `registerUiMetadataRoutes`
+55. `registerSettingsSyncInboundRoutes`
+56. `registerSecretsSyncInboundRoutes`
+57. `registerSetupActivityRoutes`
+58. `registerIntegratedDevServerRouter`
+59. `registerAgentSkillsRoutes`
+60. `registerProxyRoutes`
 <!-- mount-sequence:end -->
 
 ## Ordering rules
@@ -178,3 +180,24 @@ return 404. Download returns 202 with queued/downloading state; poll status for 
 
 `server.ts` excludes only `/api/voice/transcribe` from its global 100 KiB JSON parser so the
 route's 2 MiB parser can return JSON 413/400 errors; other routes retain raw-body HMAC capture.
+
+## Large text JSON parsing
+
+`server.ts` preserves raw bodies and selects a finite parser before metrics, authentication, and
+all API registrars. The default remains 100 KiB. Only `POST /api/chat/sessions/:id/messages` and
+`POST /api/chat/rooms/:id/messages` (including optional trailing slashes) receive a 2 MiB JSON
+limit. Multipart requests on those paths are not parsed by `express.json()` and continue to Multer.
+
+Only non-empty `POST /api/tasks/:id/files/{*filepath}` and generic
+`POST /api/files/{*filepath}` saves receive `6 * MAX_FILE_SIZE + 1024` bytes (6,292,480 bytes).
+A supported 1 MiB UTF-8 string can expand to six bytes per control character in canonical JSON;
+the extra 1 KiB covers object framing. `/api/files/mkdir` and literal terminal `/copy`, `/move`,
+`/delete`, and `/rename` operation paths retain 100 KiB, including optional trailing slashes. The
+selector uses query-free, undecoded `req.path`, so an encoded filepath such as `src%2Fcopy` remains
+a generic save rather than an operation.
+
+The roughly 6 MiB file envelope is a deliberate exact-route trade-off: Express warns that larger
+bodies consume memory and can add latency. It is not derived from model context windows, because
+HTTP parsing precedes model selection, bytes are not tokens, and model context also includes
+history, system/tool input, reasoning, and output. GitHub raw webhook parsing stays first;
+Voice keeps its route-owned 2 MiB parser and Planning keeps its route-owned 5 MiB parser.

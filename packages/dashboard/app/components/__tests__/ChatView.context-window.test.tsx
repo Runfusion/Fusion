@@ -47,6 +47,7 @@ vi.mock("../../api", () => ({
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 installChatViewEnv();
@@ -57,23 +58,21 @@ function expectNoContextWindowShell() {
 }
 
 /*
-FNXC:ChatHeader 2026-07-16-00:00:
-The mobile and floating-narrow session switcher is rendered only in the direct-thread pane. Tests exercising its header must select the session from the list first, matching the mobile drill-in flow.
+FNXC:ChatNavigation 2026-08-19-21:10:
+FN-054 keeps the context indicator tests on the selected thread while the conversation list owns all switching and management. Opening detail through a list row verifies the constrained host without restoring a selector.
 */
-async function openMobileDirectThread(sessionId = "session-001") {
+async function openDirectThread(sessionId = "session-001") {
   await userEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
-  await waitFor(() => {
-    expect(screen.getByTestId("chat-mobile-session-trigger")).toBeInTheDocument();
-  });
+  await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
 }
 
-function setupDirectChat(options: { content?: string; streamingText?: string } = {}) {
+function setupDirectChat(options: { content?: string; streamingText?: string; messages?: Array<Record<string, unknown>> } = {}) {
   const content = options.content ?? "abcd";
   setupMockChat({
     sessions: [activeSessionFixture],
     filteredSessions: [activeSessionFixture],
     activeSession: activeSessionFixture,
-    messages: [
+    messages: options.messages ?? [
       {
         id: "msg-001",
         sessionId: activeSessionFixture.id,
@@ -92,9 +91,11 @@ describe("ChatView context-window indicator", () => {
     setupDirectChat({ content: "abcd" });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
 
     const indicator = await screen.findByTestId("chat-thread-context-window");
     expect(indicator).toHaveTextContent("1 / 200k");
+    expect(indicator).toHaveAttribute("data-context-source", "estimated");
     expect(indicator).toHaveAttribute("aria-label", "Estimated 1 of 200k context tokens");
   });
 
@@ -104,7 +105,7 @@ describe("ChatView context-window indicator", () => {
       setupDirectChat({ content: "abcd" });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-      await openMobileDirectThread();
+      await openDirectThread();
 
       /*
       FNXC:DashboardTests 2026-07-14-20:15:
@@ -144,11 +145,11 @@ describe("ChatView context-window indicator", () => {
       setupDirectChat({ content: "abcd" });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} floating />);
-      await openMobileDirectThread();
+      await openDirectThread();
 
       /*
       FNXC:DashboardTests 2026-07-14-20:15:
-      Floating narrow chat is marked chat-view--floating + --narrow; do not require the mobile session trigger (only present after explicit mobile-direct-thread entry).
+      Floating narrow chat is marked chat-view--floating + --narrow; do not require the mobile session trigger (after explicit list-to-detail entry).
       */
       expect(document.querySelector(".chat-view--floating.chat-view--narrow")).toBeTruthy();
       expectNoContextWindowShell();
@@ -180,11 +181,91 @@ describe("ChatView context-window indicator", () => {
     const expectedUsed = formatTokenCount(estimateChatTokens([{ content }], streamingText));
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
 
     const indicator = await screen.findByTestId("chat-thread-context-window");
     expect(expectedUsed).toBe("~1k");
+    expect(indicator).toHaveAttribute("data-context-source", "estimated");
     expect(indicator).toHaveTextContent(`${expectedUsed} / 200k`);
     expect(indicator).not.toHaveTextContent("999 / 200k");
+  });
+
+  it("renders pi-reported context instead of the character estimate", async () => {
+    setupDirectChat({ messages: [{
+      id: "assistant-001", sessionId: activeSessionFixture.id, role: "assistant", content: "abcd",
+      metadata: { contextUsage: { tokens: 61_234, contextWindow: 200_000, percent: 30.617 } },
+      createdAt: "2026-04-08T00:00:00.000Z",
+    }] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
+
+    const indicator = await screen.findByTestId("chat-thread-context-window");
+    expect(indicator).toHaveAttribute("data-context-source", "measured");
+    expect(indicator).toHaveTextContent("61.2k / 200k");
+    expect(indicator).not.toHaveTextContent("1 / 200k");
+  });
+
+  it("falls back to the labelled estimate when persisted context metadata is malformed", async () => {
+    setupDirectChat({ messages: [{
+      id: "assistant-001", sessionId: activeSessionFixture.id, role: "assistant", content: "abcd",
+      metadata: { contextUsage: { tokens: "invalid", contextWindow: 0 } },
+      createdAt: "2026-04-08T00:00:00.000Z",
+    }] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
+
+    const indicator = await screen.findByTestId("chat-thread-context-window");
+    expect(indicator).toHaveAttribute("data-context-source", "estimated");
+    expect(indicator).toHaveTextContent("1 / 200k");
+  });
+
+  it("marks measured context approximate for trailing messages and streaming text", async () => {
+    setupDirectChat({
+      streamingText: "abcdefgh",
+      messages: [
+        { id: "assistant-001", sessionId: activeSessionFixture.id, role: "assistant", content: "", metadata: { contextUsage: { tokens: 1000, contextWindow: 200_000, percent: 0.5 } }, createdAt: "2026-04-08T00:00:00.000Z" },
+        { id: "user-002", sessionId: activeSessionFixture.id, role: "user", content: "abcd", createdAt: "2026-04-08T00:00:01.000Z" },
+      ],
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
+
+    expect(await screen.findByTestId("chat-thread-context-window")).toHaveTextContent("~1k / 200k");
+  });
+
+  it("shows pi's pending post-compaction state", async () => {
+    setupDirectChat({ messages: [{
+      id: "assistant-001", sessionId: activeSessionFixture.id, role: "assistant", content: "",
+      metadata: { contextUsage: { tokens: null, contextWindow: 200_000, percent: null } },
+      createdAt: "2026-04-08T00:00:00.000Z",
+    }] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
+
+    const indicator = await screen.findByTestId("chat-thread-context-window");
+    expect(indicator).toHaveAttribute("data-context-source", "pending");
+    expect(indicator).toHaveTextContent("— / 200k");
+  });
+
+  it("uses measured pi context when the model catalogue has no window", async () => {
+    mockFetchModels.mockResolvedValue({
+      ...defaultModelsResponse,
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 0 }],
+    });
+    setupDirectChat({ messages: [{
+      id: "assistant-001", sessionId: activeSessionFixture.id, role: "assistant", content: "",
+      metadata: { contextUsage: { tokens: 100, contextWindow: 200_000, percent: 0.05 } },
+      createdAt: "2026-04-08T00:00:00.000Z",
+    }] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
+
+    expect(await screen.findByTestId("chat-thread-context-window")).toHaveTextContent("100 / 200k");
   });
 
   it("does not render an indicator shell in rooms scope", async () => {
@@ -209,6 +290,7 @@ describe("ChatView context-window indicator", () => {
     });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+    await userEvent.click(screen.getByTestId("chat-room-item-context-room"));
 
     expect(document.querySelector(".chat-room-thread-header")).toBeInTheDocument();
     expectNoContextWindowShell();

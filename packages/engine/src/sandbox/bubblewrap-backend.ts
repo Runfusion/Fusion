@@ -41,7 +41,7 @@ export class BubblewrapBackend implements SandboxBackend {
       id: "bubblewrap",
       supportsNetworkPolicy: true,
       supportsFilesystemPolicy: true,
-      supportsStreaming: false,
+      supportsStreaming: true,
       platform: ["linux"],
     };
   }
@@ -62,6 +62,20 @@ export class BubblewrapBackend implements SandboxBackend {
     throw new SandboxUnavailableError(
       `bubblewrap backend unavailable (${detect.reason ?? "unknown"}). Install bubblewrap and retry.`,
     );
+  }
+
+  wrapCommand(command: string, options: Pick<SandboxRunOptions, "cwd" | "env">) {
+    if (this.useNativeFallback) return null;
+    const pnpmStorePath = this.pnpmStorePathByCwd.get(options.cwd) ?? `${process.env.HOME ?? ""}/.local/share/pnpm`;
+    const policyArgs = policyToBwrapArgs(this.policy, {
+      worktreePath: options.cwd,
+      repoRootPath: options.cwd,
+      pnpmStorePath,
+      nodeBinPath: process.execPath,
+      homeDir: process.env.HOME ?? "",
+      envSource: options.env ?? process.env,
+    });
+    return { command: "bwrap", args: [...policyArgs, "--", "/bin/sh", "-lc", command] };
   }
 
   async run(command: string, options: SandboxRunOptions): Promise<SandboxRunResult> {
@@ -96,7 +110,40 @@ export class BubblewrapBackend implements SandboxBackend {
   }
 
   async runStreaming(command: string, options: SandboxRunStreamingOptions): Promise<SandboxStreamingResult> {
-    return this.nativeBackend.runStreaming(command, options);
+    if (this.useNativeFallback) return this.nativeBackend.runStreaming(command, options);
+
+    const detect = await detectBwrap();
+    if (!detect.available) {
+      const failureMode = (this.policy as BubblewrapPolicy & { failureMode?: FailureMode }).failureMode ?? "fail-hard";
+      if (failureMode === "fallback-native") return this.nativeBackend.runStreaming(command, options);
+      throw new SandboxUnavailableError(
+        `bubblewrap backend unavailable (${detect.reason ?? "unknown"}). Install bubblewrap and retry.`,
+      );
+    }
+
+    const pnpmStorePath = await this.resolvePnpmStorePath(options.cwd);
+    const policyArgs = policyToBwrapArgs(this.policy, {
+      worktreePath: options.cwd,
+      repoRootPath: options.cwd,
+      pnpmStorePath,
+      nodeBinPath: process.execPath,
+      homeDir: process.env.HOME ?? "",
+      envSource: options.env ?? process.env,
+    });
+    /*
+    FNXC:WorkspaceSandbox 2026-08-22-21:44:
+    FN-158 must execute streaming verification through bubblewrap as well as
+    ordinary commands. The native runner remains the sole process-group owner,
+    but its shell launches bwrap as the group leader instead of an uncontained
+    inner command.
+    */
+    return this.nativeBackend.runStreaming(shellCommand(detect.path ?? "bwrap", [
+      ...policyArgs,
+      "--",
+      "/bin/sh",
+      "-lc",
+      command,
+    ]), options);
   }
 
   async dispose(): Promise<void> {
@@ -184,4 +231,8 @@ export class BubblewrapBackend implements SandboxBackend {
       });
     });
   }
+}
+
+function shellCommand(command: string, args: readonly string[]): string {
+  return [command, ...args].map((part) => `'${part.replace(/'/g, `'\\''`)}'`).join(" ");
 }

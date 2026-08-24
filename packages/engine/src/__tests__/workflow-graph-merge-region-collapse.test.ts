@@ -76,9 +76,16 @@ const SUCCESS_PATH = [
   "plan-review::plan-review-step",
   "execute",
   "browser-verification",
+  /*
+  FNXC:WorkflowGraphTests 2026-08-23-00:40:
+  `completion-summary` runs BEFORE `code-review`, not after. The built-in coding IR wires
+  `browser-verification -> completion-summary -> code-review` (see builtin-coding-workflow-ir.ts),
+  and production task logs show the same order — the summary describes the work, then the review
+  reads it. This list had the two transposed and was asserting a topology the graph never ran.
+  */
+  "completion-summary",
   "code-review",
   "code-review::code-review-step",
-  "completion-summary",
   "review",
   "merge",
   "post-merge-verification",

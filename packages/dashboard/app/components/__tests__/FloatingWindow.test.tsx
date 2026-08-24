@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
@@ -149,24 +151,44 @@ describe("FloatingWindow", () => {
     expectFloatingWindowStructure("beta");
   });
 
-  it("keeps every shared floating-window scrollbar inboard of the right resize hot zones", () => {
-    const bodyRule = floatingWindowCss.match(/(?:^|\n)\.floating-window__body\s*\{[^}]*\}/)?.[0] ?? "";
+  /*
+  FNXC:FloatingWindow 2026-08-17-23:47:
+  RATCHET: the shared body carries NO inline-end gutter, on any breakpoint, for any caller.
+  FN-8015 reserved `margin-inline-end: var(--space-lg)` there so a hosted scrollbar cleared the east
+  resize hot zones; operator removed it because one shared reservation every caller had to know about
+  produced a recurring class of asymmetric-right-inset bugs (FN-8630, FN-8634, FN-8702, FN-8722,
+  FN-8766, the 2026-08-01 tablet fix, and the Set Up AI onboarding report) — the window surface showed
+  through beside each child panel. It was also being zeroed piecemeal in five places, so the "shared"
+  default applied to a shrinking minority.
 
-    // The global scrollbar is 8px wide; the shared body reserves the 12px corner-handle gutter.
+  This asserts the ABSENCE globally rather than per-caller: a reintroduction anywhere — base rule,
+  a caller override, or inside any `@media` block — fails here. Where a scrollbar and a resize target
+  genuinely collide, move that caller's east targets outboard (the FN-8766 pattern asserted below).
+  */
+  it("keeps the shared floating-window body free of any inline-end gutter", () => {
+    const bodyRule = floatingWindowCss.match(/(?:^|\n)\.floating-window__body\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(bodyRule).toContain("overflow: auto;");
+    expect(bodyRule).not.toMatch(/margin-inline-end\s*:/);
+
+    /*
+     * No rule in ANY app stylesheet, at any breakpoint, may set an inline-end margin on the shared
+     * body. Comments are stripped first: the FNXC notes explaining WHY the gutter is gone name the
+     * property, and must not read as a reintroduction.
+     */
+    const appCssWithoutComments = allAppCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    const bodyRulesEverywhere = [...appCssWithoutComments.matchAll(/[^{}]*\.floating-window__body[^{}]*\{[^}]*\}/g)].map((m) => m[0]);
+    expect(bodyRulesEverywhere.length).toBeGreaterThan(0);
+    for (const rule of bodyRulesEverywhere) {
+      expect(/margin-inline-end\s*:/.test(rule), rule.slice(0, 120)).toBe(false);
+    }
+
+    // Shared handles stay flush with the painted edge; only FN-8766's task-detail host moves outboard.
     expect(stylesCss).toContain("*::-webkit-scrollbar {");
     expect(stylesCss).toContain("width: 8px;");
-    expect(bodyRule).toContain("overflow: auto;");
-    expect(bodyRule).toContain("margin-inline-end: var(--space-lg);");
     expect(cssRuleContaining(floatingWindowCss, ".floating-window__resize-handle--e", "right: 0;")).toContain("right: 0;");
     expect(cssRuleContaining(floatingWindowCss, ".floating-window__resize-handle--ne", "right: 0;")).toContain("right: 0;");
     expect(cssRuleContaining(floatingWindowCss, ".floating-window__resize-handle--se", "right: 0;")).toContain("right: 0;");
 
-    /*
-    FNXC:TaskDetailLayout 2026-08-03-19:36:
-    FN-8766 is the sole desktop exception: its header-owned close control requires a symmetric
-    painted edge, so its gutter is removed only while its east resize targets move outboard.
-    Every unrelated consumer keeps the shared scrollbar-clearance geometry.
-    */
     const desktopAppCss = stripAtMediaBlocks(allAppCss);
     for (const callerClass of [
       "floating-window--automation",
@@ -178,71 +200,106 @@ describe("FloatingWindow", () => {
     ]) {
       const rules = cssRulesForClass(desktopAppCss, callerClass);
       const rightHandleRules = rules.filter((rule) => /floating-window__resize-handle(?:--(?:e|ne|se))?/.test(rule));
-      const bodyRules = rules.filter((rule) => rule.includes("floating-window__body"));
-
       expect(rightHandleRules.some((rule) => /(?:right|width)\s*:/.test(rule)), callerClass).toBe(false);
-      expect(bodyRules.some((rule) => /margin-inline-end\s*:/.test(rule)), callerClass).toBe(false);
     }
 
-    const desktopTaskBody = cssRuleContaining(
-      desktopAppCss,
-      ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__body",
-      "margin-inline-end",
-    );
-    expect(desktopTaskBody).toContain("margin-inline-end: 0;");
-    expect(cssRuleContaining(desktopAppCss, ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--e", "right")).toContain("right: calc(var(--space-sm) * -1);");
-    expect(cssRuleContaining(desktopAppCss, ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--ne", "right")).toContain("right: calc(var(--space-lg) * -1);");
-    expect(cssRuleContaining(desktopAppCss, ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--se", "right")).toContain("right: calc(var(--space-lg) * -1);");
+    /*
+    FNXC:FloatingWindow 2026-08-18-00:26:
+    FN-8766's outboard east targets are promoted from a task-detail special case to the SHARED
+    desktop contract: with the gutter gone a hosted scrollbar sits flush against the painted edge,
+    and moving the hit areas outside the shell is what keeps it grabbable (issue #2140) without
+    insetting anything. That needs the host to stop clipping, so the body and its direct child take
+    over the corner radius — only 8 of ~30 callers set that themselves, and the rest would paint
+    square corners over the rounded shell.
+    */
+    expect(cssRuleContaining(desktopAppCss, ".floating-window:not(.floating-window--tablet-viewport)", "overflow: visible;")).toContain("overflow: visible;");
+    expect(cssRuleContaining(desktopAppCss, ".floating-window:not(.floating-window--tablet-viewport) .floating-window__resize-handle--e", "right")).toContain("right: calc(var(--space-sm) * -1);");
+    // The corner targets share one grouped rule, so match the block rather than a bare selector.
+    const outboardCorners = desktopAppCss.match(
+      /\.floating-window:not\(\.floating-window--tablet-viewport\) \.floating-window__resize-handle--ne,[\s\S]*?\}/
+    )?.[0] ?? "";
+    expect(outboardCorners).toContain("right: calc(var(--space-lg) * -1);");
+    expect(outboardCorners).toContain("resize-handle--se");
+    const paintedClipping = floatingWindowCss.match(/\.floating-window__body,\s*\n\.floating-window__body > \*\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(paintedClipping).toContain("border-radius: inherit;");
+
+    // Phones hide every handle, so they need no outboard room and must keep clipping their sheets.
+    const phoneSheet = mediaBlockFor(floatingWindowCss, "(max-width: 767.98px), (max-height: 480px)");
+    expect(cssRuleFor(phoneSheet, ".floating-window")).toContain("overflow: hidden;");
 
     /*
-    FNXC:MobileTaskPopups 2026-08-03-19:36:
-    The full-screen task-detail sheet hides every resize handle, so the inherited gutter must
-    remain zero and the desktop outboard-target host must resume clipping for sheet geometry.
+    FNXC:GitHubImport 2026-08-17-23:47:
+    The import detail panel borrowed its right inset from the gutter (`padding-inline-end: 0` plus a
+    tablet-only restore). With the gutter gone it must own a symmetric inset itself, or its Preview
+    header goes flush against the window edge — the bug the borrowed gutter originally papered over.
     */
-    const mobileTaskDetailBody = cssRuleContaining(
-      allAppCss,
-      ".floating-window--task-detail .floating-window__body",
-      "margin-inline-end",
-    );
-    expect(mobileTaskDetailBody).toContain("margin-inline-end: 0;");
-    expect(cssRuleContaining(allAppCss, ".floating-window--task-detail", "overflow: hidden !important;")).toContain("overflow: hidden !important;");
+    const importPanel = cssRuleFor(allAppCss, ".github-import-detail-panel");
+    expect(importPanel).toContain("padding: var(--space-lg);");
+    expect(importPanel).not.toMatch(/padding-inline-end\s*:/);
 
-    /*
-    FNXC:ModalTouchGeometry 2026-08-01-03:48:
-    Tablet contract: ALL tablet-mode floating windows zero the FN-8015 gutter (it read as a
-    too-big uneven right border in Task Detail popups and the floating terminal — third
-    recurrence of the right-padding bug because tablet renders through FloatingWindow, not
-    `.modal-overlay`). Touch never grabs scrollbar thumbs, so the desktop hot-zone conflict
-    does not apply. GitHubImport relied on the gutter as its right inset and must compensate
-    under the same class.
-    */
-    const tabletBody = cssRuleContaining(
-      floatingWindowCss,
-      ".floating-window--tablet-viewport .floating-window__body",
-      "margin-inline-end",
-    );
-    expect(tabletBody).toContain("margin-inline-end: 0;");
-    const tabletGitHubImportPanel = cssRuleContaining(
-      allAppCss,
-      ".floating-window--tablet-viewport .github-import-detail-panel",
-      "padding-inline-end",
-    );
-    expect(tabletGitHubImportPanel).toContain("padding-inline-end: var(--space-lg);");
-
-    // Headerless and chat variants replace only body overflow; the inherited gutter remains intact for their inner scrollers.
+    // Headerless and chat variants replace only body overflow.
     expect(cssRuleFor(floatingWindowCss, ".floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
     expect(cssRuleFor(floatingWindowCss, ".floating-window--chat.floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
+  });
+
+  /*
+  FNXC:FloatingWindow 2026-08-18-04:20:
+  RATCHET: a portaled `.modal-overlay` must swallow its own pointer events.
+
+  `createPortal` relocates the DOM node but NOT the React tree, so events raised inside a portaled
+  dialog still bubble to whichever component rendered it. Every FloatingWindow raises itself to a
+  fresh `nextFloatingZ()` on pointerdown/focus, so a dialog portaled from inside a window's subtree
+  lifts that window ABOVE itself on first click — after which clicks land on the window behind
+  (reported on the Set Up AI login dialog as "it keeps getting covered … any click goes to the dialog
+  below"). Two things prevent it: render the dialog as a SIBLING of the window, and stop propagation
+  at the overlay. This asserts the second for every such component, since the first is per-caller.
+  */
+  it("keeps every portaled modal overlay from leaking pointer events to its host", () => {
+    const componentsDir = resolve(__dirname, "..");
+    const offenders: string[] = [];
+    let checked = 0;
+
+    for (const file of readdirSync(componentsDir).filter((name) => name.endsWith(".tsx"))) {
+      const source = readFileSync(resolve(componentsDir, file), "utf8");
+      if (!source.includes("createPortal") || !source.includes("modal-overlay")) continue;
+      checked++;
+      if (!source.includes("stopPropagation")) offenders.push(file);
+    }
+
+    expect(checked, "expected portaled overlay components to scan").toBeGreaterThan(0);
+    expect(offenders, "portaled overlays must stop pointer propagation to their React-tree host").toEqual([]);
+  });
+
+  /*
+  FNXC:Onboarding 2026-08-17-23:47:
+  A FloatingWindow paints its own bordered surface, so a hosted child that does not fill it leaves
+  blank window surface around the content — read by the operator as unexplained right/bottom padding
+  on first-run Set Up AI. The onboarding modal's standalone sizing rules tie on specificity with the
+  shared host fill and won on source order, so the fill is re-asserted under the host class.
+  */
+  it("makes the hosted onboarding modal fill its floating window", () => {
+    // The fill is one grouped rule (`:not([style*="width"])`, `:not([style*="height"])`), so match the block.
+    const hostedFill = allAppCss.match(
+      /\.floating-window--model-onboarding \.model-onboarding-modal:not\(\[style\*="width"\]\)[^{]*\{[^}]*\}/
+    )?.[0] ?? "";
+    expect(hostedFill).toContain("width: 100%;");
+    expect(hostedFill).toContain("height: 100%;");
+    expect(hostedFill).toContain("max-height: none;");
+    // The window frame owns resizing once hosted; a 640px floor would push content under the east edge.
+    expect(hostedFill).toContain("min-width: 0;");
+    expect(hostedFill).toContain("resize: none;");
   });
 
   /*
   FNXC:FloatingWindow 2026-07-25-00:00:
   Regression guard for the landscape-tablet right-inset gap: the width-gated
   769-1024px carve-out let iPad Air/Pro landscape (1180-1366 CSS px) fall back to
-  the desktop contract and keep FN-8015's body gutter, so the task pop-up's
-  content stopped short of the right edge while the left edge stayed flush.
-  Assert the input-device-gated block covers the same two declarations at ANY
-  width, and that it stays scoped to task-detail so other floating-window callers
-  (whose right resize handles remain live) keep their scrollbar clearance.
+  the desktop contract, so the task pop-up's content stopped short of the right
+  edge while the left edge stayed flush. Assert the input-device-gated block
+  applies at ANY width and stays scoped to task-detail.
+  The body-gutter half of this guard is retired: the shared gutter that produced
+  the original right-inset gap is deleted outright (see the ratchet above), so
+  there is no longer a desktop-vs-tablet gutter difference to police here.
   */
   it("uses the tablet-touch discriminator instead of bare coarse-pointer suppression", () => {
     expect(floatingWindowCss).not.toContain("@media (pointer: coarse)");
@@ -250,7 +307,6 @@ describe("FloatingWindow", () => {
     expect(floatingWindowCss).toContain("@media (max-width: 767.98px)");
     expect(floatingWindowCss).toContain(".floating-window--touch-geometry .floating-window__resize-handle");
     expect(floatingWindowCss).toContain("width: var(--modal-resize-touch-target);");
-    expect(floatingWindowCss).toContain("margin-inline-end: var(--space-lg);");
 
     const phoneBlock = mediaBlockFor(floatingWindowCss, "(max-width: 767.98px)");
     expect(cssRuleFor(phoneBlock, ".floating-window--task-detail .floating-window__resize-handle")).toContain("display: none;");

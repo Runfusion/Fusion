@@ -13,11 +13,11 @@ Whether these lanes get a real SYSTEM actor is U13's decision; it is deliberatel
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import {
   AiServiceError,
-  MIN_DESCRIPTION_LENGTH,
   columnsWithFlag,
   declaresAnyLifecycleTrait,
   parseRepoSlug,
   resolveTaskGithubTracking,
+  resolveTaskOutputLanguage,
   resolveWorkflowIrForTask,
   summarizeTitle,
   type GlobalSettings,
@@ -445,18 +445,26 @@ export async function maybeCreateTrackingIssue(
 
   const titleMissing = collapseWhitespace(latestTask.title ?? "").length === 0;
   const resolvedSummarizer = resolveTrackingTitleSummarizerModel(deps.projectSettings, deps.globalSettings);
+  /*
+  FNXC:TitleSummarization 2026-08-19-13:43:
+  Tracking title generation uses the shared summarizer for every non-empty titleless task.
+  The project setting controls ordinary create-time automation; this configured tracking lane
+  retains its existing explicit integration behavior without a hidden length threshold.
+  */
   const canSummarizeTitle = titleMissing
     && typeof latestTask.description === "string"
-    && latestTask.description.length >= MIN_DESCRIPTION_LENGTH
+    && latestTask.description.trim().length > 0
     && Boolean(resolvedSummarizer.provider && resolvedSummarizer.modelId);
 
   if (canSummarizeTitle) {
     try {
+      /* FNXC:TaskOutputLanguage 2026-08-19-15:36: GitHub tracking snapshots task prose language before its asynchronous title call. */
       const generatedTitle = await summarizeTitle(
         latestTask.description,
         deps.rootDir,
         resolvedSummarizer.provider,
         resolvedSummarizer.modelId,
+        resolveTaskOutputLanguage({ ...deps.globalSettings, ...deps.projectSettings }, latestTask.description),
       );
 
       if (generatedTitle) {

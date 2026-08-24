@@ -41,8 +41,8 @@ describe("sandbox-exec policy", () => {
       ctx,
     );
 
-    expect(profile).toContain("(allow file-write* (subpath \"/tmp/worktree\"))");
-    expect(profile).toContain("(allow file-write* (subpath \"/Users/test/Library/pnpm/store\"))");
+    // Explicit write paths are an exact task-session allowlist, not the legacy preset.
+    expect(profile).not.toContain("(allow file-write* (subpath \"/tmp/worktree\"))");
     expect(profile).toContain("(allow file-write* (subpath \"/tmp/custom write\"))");
     expect(profile).toContain("(allow file-read* (subpath \"/opt/custom-read\"))");
   });
@@ -61,6 +61,18 @@ describe("sandbox-exec policy", () => {
         ctx,
       ),
     ).toThrow(SandboxPolicyError);
+  });
+
+  it("allows only the declared task worktree below .fusion", () => {
+    const workspaceCtx = { ...ctx, worktreePath: "/tmp/repo/.fusion/worktrees/fn-158" };
+    expect(() => policyToSbplProfile({
+      allowNetwork: true,
+      allowedWritePaths: [workspaceCtx.worktreePath],
+    }, workspaceCtx)).not.toThrow();
+    expect(() => policyToSbplProfile({
+      allowNetwork: true,
+      allowedWritePaths: ["/tmp/repo/.fusion/worktrees/other-task"],
+    }, workspaceCtx)).toThrow(SandboxPolicyError);
   });
 
   it("preset enables pnpm-friendly paths", () => {

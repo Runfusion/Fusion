@@ -43,6 +43,7 @@
 
 import type { TaskStore, RunAuditEventInput, ActorContext, RunMutationContext } from "@fusion/core";
 import { actorContextForAgent } from "@fusion/core";
+import { emitBoundedRunAudit, emitBoundedRunAuditWithOutcome, type BoundedRunAuditResult } from "./emit-bounded-run-audit.js";
 
 /** Structured context for a run correlation ID. */
 export interface EngineRunContext {
@@ -157,6 +158,12 @@ export type GitMutationType =
   // -failed: a sub-repo worktree acquisition threw; surfaced + audited, never swallowed.
   | "worktree:workspace-repo-acquire-busy"
   | "worktree:workspace-repo-acquire-failed"
+  /*
+  FNXC:Workspace 2026-08-20-00:56:
+  Per-repo base decisions carry only { taskId, repoRelPath, stage, source, outcome,
+  fallbackReason? }; operator-supplied ref names are excluded from both metadata and target.
+  */
+  | "worktree:workspace-repo-base-branch"
   /* FNXC:Workspace 2026-08-15-07:05: Main-checkout guard reports only ids/counts/fixed outcomes. */
   | "worktree:workspace-main-checkout-edit"
   /**
@@ -516,6 +523,15 @@ export type DatabaseMutationType =
   | "task:checkout"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
+  /*
+  FNXC:ReviewConvergence 2026-08-22-16:17:
+  FN-149 records review convergence as bounded best-effort telemetry. These events contain only
+  task/gate identifiers, counts, and fixed outcomes; reviewer feedback and dispute rationale stay in task records.
+  */
+  | "task:review-finding-disputed"
+  | "task:review-convergence-escalation"
+  | "task:review-arbitration"
+  | "task:review-convergence-human-escalation"
   /**
    * Planning admission was withheld because no top-level slot was reservable.
    * Metadata: { blockedBy, maxConcurrent, claimed, projectRoom, eligibleCount, eligibleTaskIds,
@@ -554,6 +570,9 @@ export type DatabaseMutationType =
   */
   | "task:auto-recover-terminal-failure"
   | "task:auto-recover-terminal-failure-exhausted"
+  /** Metadata: { taskId, column, attempt, maxAttempts, delayMs?, outcome } — ids/counts/outcomes only. */
+  | "task:no-progress-no-task-done-requeue"
+  | "task:no-progress-no-task-done-requeue-exhausted"
   | "task:auto-recover-finalize-already-on-main"
   /** Metadata: { taskId, previousColumn, targetColumn, commitSha, status, blockedBy, overlapBlockedBy, reason } */
   | "task:auto-merge-finalize-column-mismatch-reconciled"
@@ -593,6 +612,8 @@ export type DatabaseMutationType =
   // task:auto-archived-duplicate metadata: { siblingTaskIds: string[]; scores: Record<string, number> }
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
+  /** Metadata: { taskId, attempts, maxAttempts, reason: "lineage-children" | "task-live" | "dependents" | "not-found" | "unknown" } */
+  | "task:auto-archive-failure-budget-exhausted"
   | "task:auto-reconciled-self-defeating-dep"
   | "task:soft-delete-column-reconciled"
   | "task:dependency-cycle-rejected"
@@ -869,6 +890,16 @@ export type DatabaseMutationType =
   | "task:in-review-stall-terminal-provider-error"
   | "task:finalize-unproven-blocked"
   /**
+   * FNXC:RunAudit 2026-08-20-02:02:
+   * Records one terminal park when a workflow merge boundary cannot be proven, at the retry
+   * boundary or graph-terminal park. Metadata is { taskId, nodeId, failureValue, source,
+   * reasonCode?, missingInstanceCount?, priorColumn, priorStatus, outcome }; it is strictly
+   * ids/counts/outcomes-only and never includes reason prose, instance IDs, or error text.
+   * This is best-effort telemetry: an absent, failed, or hung write must not alter, block, or
+   * stall the terminal park.
+   */
+  | "task:merge-boundary-unproven-parked"
+  /**
    * FN-5490/FN-5517/FN-5526/FN-5540 lost-work guard: the merger or self-heal
    * sweep refused to finalize a task as no-op because its record claimed
    * `modifiedFiles` while no commit landed. Task is moved back to todo with
@@ -1140,6 +1171,15 @@ export interface RunAuditor {
   git(input: GitAuditInput): Promise<void>;
   /** Emit a database-domain audit event. No-op if no run context is available. */
   database(input: DatabaseAuditInput): Promise<void>;
+  /*
+  FNXC:RunAudit 2026-08-23-18:30:
+  Same write as `database`, but it REPORTS whether the row landed. FN-9175 made every audit write
+  swallow its sink failure, which silently broke the emitters that gate their own dedupe marker on
+  a proven write (triage's plan-admission throttle sets its marker only on success so a contended
+  write retries next poll). Optional on the interface so the many RunAuditor-shaped test doubles
+  stay valid; `createRunAuditor` always supplies it, including on its no-op paths.
+  */
+  databaseWithOutcome?(input: DatabaseAuditInput): Promise<BoundedRunAuditResult>;
   /** Emit a filesystem-domain audit event. No-op if no run context is available. */
   filesystem(input: FilesystemAuditInput): Promise<void>;
   /** Emit a sandbox-domain audit event. No-op if no run context is available. */
@@ -1162,6 +1202,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     return {
       git: async () => { /* no-op */ },
       database: async () => { /* no-op */ },
+      databaseWithOutcome: async () => ({ outcome: "absent" as const }),
       filesystem: async () => { /* no-op */ },
       sandbox: async () => { /* no-op */ },
     };
@@ -1175,6 +1216,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     return {
       git: async () => { /* no-op */ },
       database: async () => { /* no-op */ },
+      databaseWithOutcome: async () => ({ outcome: "absent" as const }),
       filesystem: async () => { /* no-op */ },
       sandbox: async () => { /* no-op */ },
     };
@@ -1196,7 +1238,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
 
     database: async (input: DatabaseAuditInput) => {
@@ -1221,7 +1263,32 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
+    },
+
+    /*
+    FNXC:RunAudit 2026-08-23-18:30:
+    Identical write to `database`, returning whether the row landed for the emitters that gate their
+    own state on a proven write (see the interface note). Still bounded and non-throwing.
+    */
+    databaseWithOutcome: async (input: DatabaseAuditInput) => {
+      const inferredTaskId = input.target.startsWith("FN-") || input.target.startsWith("KB-")
+        ? input.target
+        : context.taskId;
+      return await emitBoundedRunAuditWithOutcome(store, {
+        taskId: inferredTaskId,
+        agentId: context.agentId,
+        runId: context.runId,
+        domain: "database",
+        mutationType: input.type,
+        target: input.target,
+        metadata: {
+          phase: context.phase,
+          ...(context.source ? { source: context.source } : {}),
+          ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...input.metadata,
+        },
+      } as RunAuditEventInput);
     },
 
     filesystem: async (input: FilesystemAuditInput) => {
@@ -1239,7 +1306,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
 
     sandbox: async (input: SandboxAuditInput) => {
@@ -1257,7 +1324,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
   };
 }

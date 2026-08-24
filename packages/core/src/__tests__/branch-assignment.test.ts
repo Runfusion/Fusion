@@ -6,6 +6,12 @@ import {
   sanitizeBranchSegment,
   isValidBranchGroupBranchName,
   validateBranchGroupBranchName,
+  isValidTaskBranchName,
+  validateTaskBranchName,
+  classifyTaskBranchOrigin,
+  isFusionDeletableBranch,
+  isOperatorAttachEligibleBranch,
+  resolveTaskPrHeadBranch,
   filterTasksByBranchGroup,
 } from "../branch/branch-assignment.js";
 
@@ -63,6 +69,8 @@ describe("isValidBranchGroupBranchName (Fix #11)", () => {
   it("validateBranchGroupBranchName throws on invalid and returns valid", () => {
     expect(validateBranchGroupBranchName("feature/ok")).toBe("feature/ok");
     expect(() => validateBranchGroupBranchName("$(touch /tmp/x)")).toThrow(/Invalid branch group branch name/);
+    expect(isValidTaskBranchName("feature/PRD-1234-my-slug")).toBe(true);
+    expect(() => validateTaskBranchName("feature/my branch")).toThrow(/Invalid task branch name/);
   });
 });
 
@@ -115,6 +123,7 @@ describe("branch-assignment", () => {
     });
     expect(assignment).toEqual({
       workingBranch: "feature/planning/fn-123-add-parser",
+      branchWriteOrigin: "engine",
       mergeTargetBranch: "feature/planning",
     });
     expect(assignment.workingBranch).not.toBe(resolvedBranch);
@@ -127,6 +136,7 @@ describe("branch-assignment", () => {
       taskSegment: "   ",
     })).toEqual({
       workingBranch: "feature/planning",
+      branchWriteOrigin: "engine",
       mergeTargetBranch: "feature/planning",
     });
   });
@@ -138,6 +148,7 @@ describe("branch-assignment", () => {
       taskSegment: "FN-123",
     })).toEqual({
       workingBranch: undefined,
+      branchWriteOrigin: "engine",
       mergeTargetBranch: undefined,
     });
   });
@@ -149,6 +160,7 @@ describe("branch-assignment", () => {
       taskSegment: "FN-123 add parser",
     })).toEqual({
       workingBranch: "feature/planning/fn-123-add-parser",
+      branchWriteOrigin: "engine",
       mergeTargetBranch: undefined,
     });
   });
@@ -160,6 +172,7 @@ describe("branch-assignment", () => {
       taskSegment: "FN-123 add parser",
     })).toEqual({
       workingBranch: undefined,
+      branchWriteOrigin: "engine",
       mergeTargetBranch: undefined,
     });
   });
@@ -179,5 +192,29 @@ describe("branch-assignment", () => {
       workingBranch: "feature/custom",
       mergeTargetBranch: undefined,
     });
+  });
+});
+
+describe("task branch provenance", () => {
+  it("gives a matching operator marker precedence over the Fusion namespace", () => {
+    const task = {
+      id: "FN-123",
+      branch: "fusion/fn-123",
+      branchContext: {branchOverride: {by: "operator" as const, at: "2026-08-20T03:40:00.000Z", branch: "fusion/fn-123"}},
+    };
+    expect(classifyTaskBranchOrigin(task)).toBe("operator-supplied");
+    expect(isFusionDeletableBranch(task)).toBe(false);
+    expect(isOperatorAttachEligibleBranch(task)).toBe(true);
+  });
+
+  it("keeps canonical and group-derived branches Fusion-owned", () => {
+    expect(classifyTaskBranchOrigin({id: "FN-123", branch: "fusion/fn-123"})).toBe("engine-canonical");
+    expect(classifyTaskBranchOrigin({id: "FN-123", branch: "feature/onboarding/fn-123", branchContext: {assignmentMode: "per-task-derived"}})).toBe("group-derived");
+    expect(classifyTaskBranchOrigin({id: "FN-123", branch: "fusion/fn-999"})).toBe("operator-supplied");
+  });
+
+  it("resolves PR heads from the working branch except shared members", () => {
+    expect(resolveTaskPrHeadBranch({id: "FN-123", branch: "feature/custom"})).toBe("feature/custom");
+    expect(resolveTaskPrHeadBranch({id: "FN-123", branch: "feature/custom", branchContext: {assignmentMode: "shared"}})).toBe("fusion/fn-123");
   });
 });

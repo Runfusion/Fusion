@@ -65,8 +65,15 @@ describe("log severity spam contract (source)", () => {
     const pi = readSrc("pi.ts");
     const resolver = readSrc("cli-runtime/skill-resolver.ts");
     expect(pi).toMatch(/else if \(diag\.type === "info"\) piLog\.debug\(msg\)/);
-    expect(resolver).toMatch(/isSkillInfoDiagnostic/);
-    expect(resolver).toMatch(/else if \(isSkillInfoDiagnostic\(diag\)\) piLog\.debug\(msg\)/);
+    /*
+    FNXC:EngineDiagnostics 2026-08-23-18:46:
+    9f5f981e33 (FN-9114) replaced the named `isSkillInfoDiagnostic` predicate with a strictly
+    BROADER rule: in the resolver every non-warning skill diagnostic mirrors to `piLog.debug`, so no
+    diagnostic type can be added that silently reverts to info-level TUI spam. Pin that rule rather
+    than the deleted helper's spelling — and pin that `warning` is the only severity that escapes it.
+    */
+    expect(resolver).toMatch(/if \(diagnostic\.type === "warning"\) piLog\.warn\(message\);\s*else piLog\.debug\(message\);/);
+    expect(resolver).not.toMatch(/piLog\.log\(message\)/);
     expect(resolver).not.toMatch(/isRequestedSkillListingDiagnostic/);
   });
 
@@ -159,7 +166,9 @@ describe("log severity spam contract (source)", () => {
     expect(triage).toMatch(/planLog\.warn\(`\$\{taskId\}: failed to read PROMPT\.md during \$\{context\}/);
 
     expect(resolver).toMatch(/exists but is disabled by project execution settings/);
-    expect(resolver).toMatch(/type: "info" as ResourceDiagnostic\["type"\],\s*message: `Skill at '\$\{excludedPath\}' exists but is disabled/);
+    // FNXC:EngineDiagnostics 2026-08-23-18:46: FN-9114 renamed the loop variable to `path`; the
+    // diagnostic and its info severity are unchanged.
+    expect(resolver).toMatch(/type: "info" as ResourceDiagnostic\["type"\],\s*message: `Skill at '\$\{path\}' exists but is disabled/);
 
     expect(selfHealing).toMatch(/if \(clearedAgentIds\.size > 0\) \{\s*log\.log\(`Recovered \$\{clearedAgentIds\.size\} drifted/);
     expect(selfHealing).toMatch(/log\.debug\(`Recovered \$\{clearedAgentIds\.size\} drifted durable agent task link/);

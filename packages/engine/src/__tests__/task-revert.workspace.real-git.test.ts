@@ -174,6 +174,31 @@ describeIfGit("task-revert workspace real-git scenarios", { timeout: 30_000 }, (
     expect(git(repoB, "git show HEAD:b.ts")).toBe("line1");
   });
 
+  it("records a revert-stage breadcrumb when a recorded base has vanished", async () => {
+    const { workspaceRoot, repoA, repoB } = workspaceFixture();
+    const shaA = landTaskCommit(repoA, "a.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-a");
+    const shaB = landTaskCommit(repoB, "b.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-b");
+    const task = makeWorkspaceTask(shaA, shaB, {
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: "repo-a", branch: "fusion/FN-A", landedSha: shaA, baseBranch: "release/deleted" },
+        "repo-b": { worktreePath: "repo-b", branch: "fusion/FN-A", landedSha: shaB },
+      },
+    });
+    const logs: string[] = [];
+    const events: Array<{ metadata: Record<string, unknown> }> = [];
+
+    await expect(revertWorkspaceTask({
+      task, workspaceRootDir: workspaceRoot, settings: {},
+      store: { logEntry: async (_id: string, message: string) => { logs.push(message); } } as unknown as import("@fusion/core").TaskStore,
+      audit: { git: async (event: never) => { events.push(event as unknown as { metadata: Record<string, unknown> }); } },
+    })).resolves.toMatchObject({ mode: "git", clean: true });
+
+    expect(logs.some((message) => message.includes("release/deleted"))).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].metadata).toMatchObject({ stage: "revert", outcome: "fallback", fallbackReason: "recorded-base-vanished" });
+    expect(JSON.stringify(events[0].metadata)).not.toContain("release/deleted");
+  });
+
   it("the workspace guard still REFUSES a live lane under a resolved set", async () => {
     const { workspaceRoot, repoA, repoB } = workspaceFixture();
     const shaA = landTaskCommit(repoA, "a.ts", "line1\nfeature-a\n", "feat(FN-A): add feature in repo-a");

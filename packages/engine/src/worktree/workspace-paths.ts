@@ -113,3 +113,29 @@ export function deriveRepoScopeSubset(declaredScope: readonly string[], repoRel:
   }
   return subset;
 }
+
+export type RepoDeclaredScopeResolution = {
+  scope: string[];
+  source: "repo-subset" | "unprefixed-fallback" | "foreign-repo-only";
+};
+
+/**
+ * Resolve File Scope exactly as one workspace repository sees it.
+ *
+ * FNXC:Workspace 2026-08-20-19:45:
+ * Workspace merge, completion, and main-checkout guards must interpret task scope identically.
+ * A matching repo prefix wins; only declarations with no configured repository owner may fall back
+ * to repo-local patterns. A sibling-prefixed declaration is never authority for this repository.
+ */
+export function resolveRepoDeclaredScope(
+  declaredScope: readonly string[],
+  repoRel: string,
+  repoKeys: readonly string[],
+): RepoDeclaredScopeResolution {
+  const subset = deriveRepoScopeSubset(declaredScope, repoRel);
+  if (subset.length > 0) return { scope: subset, source: "repo-subset" };
+  const hasRepoOwnedEntry = declaredScope.some((entry) => deriveRepoForPath(entry, repoKeys) !== UNSCOPED_REPO);
+  return hasRepoOwnedEntry
+    ? { scope: [], source: "foreign-repo-only" }
+    : { scope: [...declaredScope], source: "unprefixed-fallback" };
+}

@@ -8,7 +8,6 @@ interface UseTaskHandlersOptions {
   ingestCreatedTasks: (tasks: Task[]) => void;
   onPlanningTaskCreated: (task: Task, addToast: (msg: string, type?: ToastType) => void) => void;
   onPlanningTasksCreated: (tasks: Task[], addToast: (msg: string, type?: ToastType) => void) => void;
-  onSubtaskTasksCreated: (tasks: Task[], addToast: (msg: string, type?: ToastType) => void) => void;
   addToast: (message: string, type?: ToastType) => void;
 }
 
@@ -17,7 +16,6 @@ export interface UseTaskHandlersResult {
   handleModalCreate: (input: TaskCreateInput) => Promise<Task>;
   handlePlanningTaskCreated: (task: Task) => void;
   handlePlanningTasksCreated: (tasks: Task[]) => void;
-  handleSubtaskTasksCreated: (tasks: Task[]) => void;
   handleGitHubImport: (task: Task) => void;
 }
 
@@ -28,7 +26,6 @@ export function useTaskHandlers(options: UseTaskHandlersOptions): UseTaskHandler
     ingestCreatedTasks,
     onPlanningTaskCreated,
     onPlanningTasksCreated,
-    onSubtaskTasksCreated,
     addToast,
   } = options;
 
@@ -61,11 +58,6 @@ export function useTaskHandlers(options: UseTaskHandlersOptions): UseTaskHandler
     onPlanningTasksCreated(tasks, addToast);
   }, [addToast, ingestCreatedTasks, onPlanningTasksCreated]);
 
-  const handleSubtaskTasksCreated = useCallback((tasks: Task[]) => {
-    ingestCreatedTasks(tasks);
-    onSubtaskTasksCreated(tasks, addToast);
-  }, [addToast, ingestCreatedTasks, onSubtaskTasksCreated]);
-
   const handleGitHubImport = useCallback((task: Task) => {
     addToast(t("taskHandlers.githubImported", "Imported {{id}} from GitHub", { id: task.id }), "success");
   }, [addToast, t]);
@@ -75,7 +67,6 @@ export function useTaskHandlers(options: UseTaskHandlersOptions): UseTaskHandler
     handleModalCreate,
     handlePlanningTaskCreated,
     handlePlanningTasksCreated,
-    handleSubtaskTasksCreated,
     handleGitHubImport,
   };
 }

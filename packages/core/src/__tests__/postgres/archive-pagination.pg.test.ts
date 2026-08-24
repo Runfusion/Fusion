@@ -106,6 +106,33 @@ pgDescribe("archive pagination (PostgreSQL, FN-7659)", () => {
     expect(new Set(allIds).size).toBe(total);
   });
 
+  /*
+  FNXC:ArchivePagination 2026-08-23-16:45:
+  The isolation half of this case needs a REAL partition key. The shared harness runs
+  project-agnostic (`layer.projectId` is undefined), and an empty/undefined project id means
+  "unscoped" everywhere in the data layer (`projectScopeFor`), so reading with it returned the
+  other project's rows too. Write and read this page under an explicit project id instead of the
+  harness's agnostic one; the ordering assertions are unchanged.
+  */
+  it("sorts task IDs numerically before slicing and isolates project pages", async () => {
+    const projectId = "archive-pagination-project";
+    for (let i = 0; i < 105; i++) {
+      const entry = makeEntry(`FN-${i}`, new Date(Date.parse("2026-02-01T00:00:00.000Z") + (104 - i) * 60_000).toISOString());
+      await upsertArchivedTask(ctx.layer.db, entry, projectId);
+      await upsertArchivedTask(ctx.layer.db, makeEntry(`FN-${1000 + i}`, entry.archivedAt), "other-project");
+    }
+
+    const page1 = await listArchivedTaskEntriesPage(ctx.layer.db, 100, 0, projectId, "task-id-desc");
+    const page2 = await listArchivedTaskEntriesPage(ctx.layer.db, 100, 100, projectId, "task-id-desc");
+    expect(page1).toHaveLength(100);
+    expect(page2).toHaveLength(5);
+    expect(page1[0]!.id).toBe("FN-104");
+    expect(page1[1]!.id).toBe("FN-103");
+    expect(page2[0]!.id).toBe("FN-4");
+    expect(new Set([...page1, ...page2].map((entry) => entry.id)).size).toBe(105);
+    expect([...page1, ...page2].every((entry) => Number(entry.id.slice(3)) < 105)).toBe(true);
+  });
+
   it("handles the exact page-boundary cases (total === 100 and 101)", async () => {
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     for (let i = 0; i < 101; i++) {

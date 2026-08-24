@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { GlobalSettingsStore, resolveGlobalDir } from "@fusion/core";
+import { GlobalSettingsStore, resolveGlobalDir, resolveUpdatesExternallyManaged } from "@fusion/core";
 import type { UpdateChannel } from "@fusion/core";
 
 type CachedUpdateStatus = {
@@ -53,6 +53,7 @@ export function getCachedUpdateStatus(currentVersion?: string): CachedUpdateStat
 }
 
 export async function isUpdateCheckEnabled(): Promise<boolean> {
+  if (resolveUpdatesExternallyManaged()) return false;
   const store = new GlobalSettingsStore();
   await store.init();
   const settings = await store.getSettings();

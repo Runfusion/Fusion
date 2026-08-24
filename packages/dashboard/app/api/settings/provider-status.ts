@@ -703,7 +703,6 @@ export function refreshProviderModels(id: string): Promise<RefreshProviderModels
 export interface CustomProviderModelInput {
   id: string;
   name?: string;
-  reasoning?: boolean;
   contextWindow?: number;
   maxTokens?: number;
 }
@@ -776,6 +775,18 @@ export interface GitCliStatus {
   installUrl?: string;
 }
 
+export type BuiltInModelRefreshOutcome = "completed" | "timed_out" | "failed" | "stale_in_flight";
+
+export interface BuiltInModelRefreshResponse {
+  outcome: BuiltInModelRefreshOutcome;
+  error?: string;
+}
+
+/** Force a bounded refresh of the shared built-in model catalog. */
+export function refreshBuiltInModels(): Promise<BuiltInModelRefreshResponse> {
+  return api<BuiltInModelRefreshResponse>("/models/refresh", { method: "POST" });
+}
+
 /** Fetch authentication status for all OAuth providers */
 /*
 FNXC:ProviderAuth 2026-08-01-06:11:
@@ -784,6 +795,8 @@ account rows can receive each other's status payload. The zero-argument request 
 */
 export function fetchAuthStatus(options?: FetchOptions & { provider?: string; instance?: string }): Promise<{
   providers: AuthProvider[];
+  /** True when persisted custom-provider configuration counts as AI setup. */
+  customProvidersConfigured?: boolean;
   ghCli?: { available: boolean; authenticated: boolean };
   gitCli?: GitCliStatus;
 }> {
@@ -795,6 +808,7 @@ export function fetchAuthStatus(options?: FetchOptions & { provider?: string; in
   const key = `${options?.provider ?? "*"}::${options?.instance?.trim() || "default"}`;
   return dedupe(`/auth/status:${key}`, () => api<{
     providers: AuthProvider[];
+    customProvidersConfigured?: boolean;
     ghCli?: { available: boolean; authenticated: boolean };
     gitCli?: GitCliStatus;
   }>(url), options);

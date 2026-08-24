@@ -9,6 +9,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 import { toRunMutationContext } from "../util/run-audit.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { createLogger } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 
 const diagnosticsLog = createLogger("goal-injection-diagnostics");
 
@@ -264,7 +265,7 @@ export async function emitGoalInjectionDiagnostic(
   }
 
   try {
-    await auditStore.recordRunAuditEvent({
+    await emitBoundedRunAudit(auditStore, {
       taskId: input.runContext.taskId,
       agentId: input.runContext.agentId,
       runId: input.runContext.runId,
@@ -284,7 +285,7 @@ export async function emitGoalInjectionDiagnostic(
         ...(record.agentId ? { agentId: record.agentId } : {}),
         ...(record.taskId ? { taskId: record.taskId } : {}),
       },
-    });
+    }, { log: diagnosticsLog });
   } catch (error) {
     diagnosticsLog.warn(
       `failed to append goal-injection run-audit event for lane=${record.lane}: ${error instanceof Error ? error.message : String(error)}`,

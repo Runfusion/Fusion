@@ -135,6 +135,27 @@ export function resolveExecutorEscalationTarget(settings?: {
   };
 }
 
+/** FNXC:ReviewConvergence 2026-08-22-05:42: a target is usable only with a complete provider/model pair, preventing half-configured recovery from claiming a rung. */
+export function resolveReviewConvergenceEscalationTarget(settings?: {
+  reviewConvergenceEscalationEnabled?: unknown;
+  reviewConvergenceEscalationProvider?: unknown;
+  reviewConvergenceEscalationModelId?: unknown;
+} | null): ExecutorEscalationTarget {
+  const provider = typeof settings?.reviewConvergenceEscalationProvider === "string" ? settings.reviewConvergenceEscalationProvider.trim() : "";
+  const modelId = typeof settings?.reviewConvergenceEscalationModelId === "string" ? settings.reviewConvergenceEscalationModelId.trim() : "";
+  return { enabled: settings?.reviewConvergenceEscalationEnabled === true && Boolean(provider && modelId), ...(provider && modelId ? { provider, modelId } : {}) };
+}
+
+export function resolveReviewArbitrationTarget(settings?: {
+  reviewArbitrationEnabled?: unknown;
+  reviewArbitrationProvider?: unknown;
+  reviewArbitrationModelId?: unknown;
+} | null): ExecutorEscalationTarget {
+  const provider = typeof settings?.reviewArbitrationProvider === "string" ? settings.reviewArbitrationProvider.trim() : "";
+  const modelId = typeof settings?.reviewArbitrationModelId === "string" ? settings.reviewArbitrationModelId.trim() : "";
+  return { enabled: settings?.reviewArbitrationEnabled !== false && Boolean(provider && modelId), ...(provider && modelId ? { provider, modelId } : {}) };
+}
+
 export const IN_REVIEW_STALL_LOG_PREFIX = "In-review stall surfaced [";
 export const IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX = "In-review stall auto-disposed [";
 export const IN_REVIEW_STALL_TERMINAL_LOG_PREFIX = "In-review stall terminal disposed [";

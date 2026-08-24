@@ -102,6 +102,15 @@ export interface TerminalSession {
   lastActivityAt: Date;
   shell: string;
   scrollbackBuffer: string;
+  /*
+  FNXC:TerminalSharing 2026-08-19-02:45:
+  Total characters ever emitted by this PTY. scrollbackBuffer holds only the last MAX_SCROLLBACK_SIZE
+  of them, so the retained window is [scrollbackSeq - scrollbackBuffer.length, scrollbackSeq). A
+  reattaching client reports the offset it already rendered and receives only the delta, instead of
+  the whole buffer being replayed into a terminal that already shows it (which duplicated history —
+  visibly, the last prompt twice — on every reconnect after a tab was backgrounded).
+  */
+  scrollbackSeq: number;
   /**
    * Pending output chunks awaiting flush to clients. Stored as an array
    * (not a single concatenated string) so heavy bursts — e.g. a `pnpm test`
@@ -645,6 +654,7 @@ export class TerminalService extends EventEmitter {
       lastActivityAt: new Date(),
       shell,
       scrollbackBuffer: "",
+      scrollbackSeq: 0,
       outputChunks: [],
       outputBytes: 0,
       flushTimeout: null,
@@ -739,6 +749,7 @@ export class TerminalService extends EventEmitter {
 
       // Always append to scrollback buffer so no output is lost
       session.scrollbackBuffer += data;
+      session.scrollbackSeq += data.length;
       if (session.scrollbackBuffer.length > MAX_SCROLLBACK_SIZE) {
         session.scrollbackBuffer = session.scrollbackBuffer.slice(-MAX_SCROLLBACK_SIZE);
       }
@@ -974,7 +985,37 @@ export class TerminalService extends EventEmitter {
   }
 
   /**
+   * Drain every pending output chunk to the session's subscribers, now.
+   *
+   * FNXC:TerminalSharing 2026-08-19-03:05:
+   * Attaching a viewer must not consume output that other viewers have not received yet. The
+   * throttled flush batches by OUTPUT_BATCH_SIZE and reschedules, so a single call can leave chunks
+   * queued; this loops until the queue is empty (bounded, so a pathological producer cannot spin
+   * the event loop) and is what an attach calls INSTEAD of discarding the queue. Delivering first
+   * also means the scrollback the new viewer is about to receive already contains those bytes, so
+   * it sees them exactly once and existing viewers keep their stream intact.
+   */
+  flushPendingOutput(sessionId: string): void {
+    if (!this.isValidSessionId(sessionId)) return;
+    const session = this.sessions.get(sessionId);
+    if (!session?._flushOutput) return;
+
+    const MAX_DRAIN_PASSES = 1000;
+    let passes = 0;
+    while (session.outputChunks.length > 0 && passes < MAX_DRAIN_PASSES) {
+      passes += 1;
+      session._flushOutput();
+    }
+  }
+
+  /**
    * Get scrollback and clear pending output buffer
+   *
+   * FNXC:TerminalSharing 2026-08-19-03:05:
+   * Discards queued output, so it is only safe when the caller is the session's ONLY consumer.
+   * A viewer attach must use flushPendingOutput() + getScrollback() instead: clearing here while a
+   * second browser watches the same PTY silently deletes a slice of the first browser's live
+   * stream, which is invisible in single-viewer testing.
    */
   getScrollbackAndClearPending(sessionId: string): string | null {
     if (!this.isValidSessionId(sessionId)) {
@@ -991,6 +1032,32 @@ export class TerminalService extends EventEmitter {
     }
 
     return session.scrollbackBuffer || null;
+  }
+
+  /**
+   * Resolve what a (re)attaching client still needs to render.
+   *
+   * FNXC:TerminalSharing 2026-08-19-02:45:
+   * `sinceSeq` is the cumulative offset the client last rendered for this session. When that offset
+   * still falls inside the retained scrollback window the client gets ONLY the bytes it missed and
+   * keeps its existing screen (`reset: false`). Otherwise — a first attach, a client that fell too
+   * far behind, or a bogus/rewound offset — it gets the whole retained buffer and is told to reset,
+   * because appending a full replay on top of an already-populated terminal is exactly what
+   * duplicated the visible history.
+   */
+  getScrollbackSince(sessionId: string, sinceSeq?: number): { data: string; seq: number; reset: boolean } | null {
+    if (!this.isValidSessionId(sessionId)) return null;
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+
+    const seq = session.scrollbackSeq;
+    const buffer = session.scrollbackBuffer;
+    const windowStart = seq - buffer.length;
+
+    if (typeof sinceSeq === "number" && Number.isFinite(sinceSeq) && sinceSeq >= windowStart && sinceSeq <= seq) {
+      return { data: buffer.slice(sinceSeq - windowStart), seq, reset: false };
+    }
+    return { data: buffer, seq, reset: true };
   }
 
   /**

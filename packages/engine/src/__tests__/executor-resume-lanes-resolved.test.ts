@@ -253,30 +253,39 @@ describe("resumeOrphaned filters by the board's OWN wip lane, not the literal", 
     const widened = store as unknown as Record<string, unknown>;
     widened.getSettings = async () => ({ globalPause: false, enginePaused: false });
     widened.listTasks = vi.fn(async (options?: { column?: string }) =>
-      (options?.column === undefined || options.column === column ? [task] : []));
+      (options?.column === undefined || options.column === column || options.column === "building"
+        ? [task]
+        : []));
     widened.listWorkflowDefinitions = async () => [{ ir: RENAMED_IR }];
-    const isTaskWorkComplete = vi.fn(() => true);
-    Object.assign(executor, { isTaskWorkComplete, recoverCompletedTask: vi.fn(async () => undefined) });
-    return { executor, isTaskWorkComplete };
+    // FNXC:CodeOrganization 2026-08-18-05:47: resumeOrphaned now calls its extracted
+    // task predicate directly, so observe the injected dispatch seam instead of shadowing
+    // the removed TaskExecutor method.
+    const execute = vi.fn(async () => undefined);
+    Object.assign(executor, { execute, recoverCompletedTask: vi.fn(async () => undefined) });
+    return { executor, execute };
   }
 
   it("reaches an orphan sitting in the RENAMED wip lane", async () => {
-    const { executor, isTaskWorkComplete } = orphanHarness("building");
+    const { executor, execute } = orphanHarness("building");
 
     await executor.resumeOrphaned();
 
-    expect(isTaskWorkComplete).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ORPHAN-RESUME" }));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ORPHAN-RESUME" }));
   });
 
-  it("does not resume a card outside the wip lane", async () => {
-    /*
-    Non-vacuous companion: a card in the board's REVIEW lane is not an orphaned execution — it has no
-    session to resume, and re-dispatching it would restart finished work.
-    */
-    const { executor, isTaskWorkComplete } = orphanHarness("checking");
+  it.each(["backlog", "queued", "checking", "shipped"])(
+    "does not resume a card in the %s lane",
+    async (column) => {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-18-13:29: The harness deliberately returns this non-WIP
+      card from the resolved `building` query so the assertion exercises resumeOrphaned's defensive
+      lane filter instead of passing because the store query produced an empty result.
+      */
+      const { executor, execute } = orphanHarness(column);
 
-    await executor.resumeOrphaned();
+      await executor.resumeOrphaned();
 
-    expect(isTaskWorkComplete).not.toHaveBeenCalled();
-  });
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 });

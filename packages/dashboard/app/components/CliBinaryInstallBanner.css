@@ -1,113 +1,13 @@
-.cli-binary-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 12px 16px 0;
-  padding: 12px 16px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--todo) 12%, transparent),
-    color-mix(in srgb, var(--todo) 4%, transparent)
-  );
-  border: 1px solid color-mix(in srgb, var(--todo) 35%, transparent);
-  border-radius: 8px;
-}
-
-.cli-binary-banner__body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.cli-binary-banner__title {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--text);
-}
-
-.cli-binary-banner__text {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
-.cli-binary-banner__text code {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.92em;
-}
-
-.cli-binary-banner__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.cli-binary-banner__primary,
-.cli-binary-banner__secondary {
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 6px 12px;
-  font-size: 13px;
-  border: 1px solid transparent;
-  transition: background 0.15s ease;
-}
-
-.cli-binary-banner__primary {
-  background: var(--accent, #3b82f6);
-  color: var(--accent-text);
-}
-
-.cli-binary-banner__primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
-}
-
-.cli-binary-banner__primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.cli-binary-banner__secondary {
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 12%, transparent);
-}
-
-.cli-binary-banner__secondary:hover {
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-.cli-binary-banner__error {
-  margin-top: 4px;
-  padding: 6px 10px;
-  background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-error) 55%, transparent);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  color: var(--color-error);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.cli-binary-banner__dismiss {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  color: var(--text-muted);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.cli-binary-banner__dismiss:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  color: var(--text);
-}
+.cli-binary-banner { margin: var(--space-md) var(--space-lg) 0; }
+.cli-binary-banner__body { display: flex; flex: 1; flex-direction: column; gap: var(--space-sm); min-width: 0; }
+.cli-binary-banner__title { font-weight: 600; font-size: var(--font-size-sm); color: var(--text); }
+.cli-binary-banner__text { font-size: var(--font-size-xs); line-height: 1.5; color: var(--text-muted); }
+.cli-binary-banner__text code { background: color-mix(in srgb, var(--text) 6%, transparent); padding: 0 var(--space-sm); border-radius: var(--radius-sm); font-size: 0.92em; }
+.cli-binary-banner__actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-top: var(--space-xs); }
+.cli-binary-banner__primary, .cli-binary-banner__secondary { cursor: pointer; border-radius: var(--radius-md); padding: var(--space-sm) var(--space-md); font-size: var(--font-size-xs); border: var(--btn-border-width) solid transparent; transition: background var(--transition-fast); }
+.cli-binary-banner__primary { background: var(--accent); color: var(--accent-text); }
+.cli-binary-banner__primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%); }
+.cli-binary-banner__primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.cli-binary-banner__secondary { background: color-mix(in srgb, var(--text) 4%, transparent); color: var(--text); border-color: color-mix(in srgb, var(--text) 12%, transparent); }
+.cli-binary-banner__secondary:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.cli-binary-banner__error { margin-top: var(--space-xs); padding: var(--space-sm); background: color-mix(in srgb, var(--color-error) 10%, transparent); border: var(--btn-border-width) solid color-mix(in srgb, var(--color-error) 55%, var(--border)); border-radius: var(--radius-sm); color: var(--color-error); font-size: var(--font-size-xs); line-height: 1.5; }

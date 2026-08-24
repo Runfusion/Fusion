@@ -40,14 +40,27 @@ function configureIdentity(dir: string): void {
 function createStore(): TaskStore & { logs: string[] } {
   const emitter = new EventEmitter();
   const logs: string[] = [];
+  const liveTask: Record<string, unknown> = {
+    id: TASK_ID, column: "in-review", branch: BRANCH, comments: [], steeringComments: [], steps: [], log: [],
+  };
   return Object.assign(emitter, {
     logs,
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false }),
-    updateTask: vi.fn().mockResolvedValue(undefined),
+    updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { Object.assign(liveTask, patch); return liveTask; }),
+    /* FNXC:EngineTests 2026-08-23-18:42: the AI merge review-reconciliation loop persists its episode
+       through the compare-and-set store method and then RE-READS it via getTask to prove the episode
+       was not invalidated. A fake missing the method fails the land outright; a fake whose write does
+       not round-trip through getTask makes every pass look invalidated and the loop never settles.
+       Both are mock drift, not product behaviour, so this fake mutates one live task object. */
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Record<string, unknown>) => Record<string, unknown> | undefined) => {
+      const patch = await updater(liveTask);
+      if (patch) Object.assign(liveTask, patch);
+      return liveTask;
+    }),
     logEntry: vi.fn((_id: string, message: string) => { logs.push(message); return Promise.resolve(undefined); }),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     // mergeAndReview reads store.getTask().comments for prompt context — return a real task shape.
-    getTask: vi.fn().mockResolvedValue({ id: TASK_ID, column: "in-review", branch: BRANCH, comments: [], steeringComments: [], steps: [], log: [] }),
+    getTask: vi.fn(async () => liveTask),
     moveTask: vi.fn().mockResolvedValue({ id: TASK_ID, column: "done" } as Task),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),
@@ -78,6 +91,28 @@ const approveReviewAgent = async (): Promise<string> => "REVIEW_VERDICT: approve
 
 function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
   return {
+    /* FNXC:RepositoryScope 2026-08-23-18:41: FN-120 made landing fail closed on any repository that
+       carries a diff but is absent from the task's CONFIRMED repository scope, so a workspace merge
+       fixture must now state which repositories it meant to change. Both sub-repos here carry the
+       branch commit under test; declaring them confirmed states the intent this fixture always had,
+       and leaving the scope unset would be asserting the out-of-scope refusal instead of the
+       dependency-sync resilience under test. */
+    repositoryScope: {
+      repositories: Object.keys(workspaceWorktrees ?? {}),
+      state: "confirmed",
+      confirmedBy: "plan",
+      revision: 1,
+    },
+    /* FNXC:WorkspaceFinalization 2026-08-23-18:41: landing refuses to convert FRESH boundary evidence
+       into APPROVED evidence — a qualified file at the merge boundary that the persisted review
+       snapshot never saw has no reviewer episode behind it. `addRepoBranchWithEdit` commits exactly
+       one `feature.txt` per repo, so this is the snapshot the (approving) review saw. */
+    modifiedFiles: Object.keys(workspaceWorktrees ?? {}).map((repository) => `${repository}/feature.txt`),
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture, not a review-gating one.
+       The door refuses a card whose enabled optional pre-merge groups produced no result, and the
+       built-in workflow enables Plan and Code Review by default, so an unspecified list failed the
+       door before the behaviour under test ran. An explicit empty list states the intent. */
+    enabledWorkflowSteps: [],
     id: TASK_ID, title: "Workspace merge task", description: "", column: "in-review",
     branch: BRANCH, dependencies: [], steps: [], currentStep: 0, log: [], workspaceWorktrees,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),

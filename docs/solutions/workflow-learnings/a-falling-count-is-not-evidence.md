@@ -190,3 +190,15 @@ the person who had just written it down.
 - Before comparing two numbers: confirm they came from one tree.
 - Before converting a flagged site: read the flag. It is a claim, and it decays — but re-deriving it
   costs minutes and overriding it wrongly has cost three PRs.
+
+## FN-126: 2 → 0 was removed work, not a detection loss
+
+The executor planning-evacuation predicate stopped calling the synchronous workflow resolver. Its
+PostgreSQL selection reader measured as the same legacy defaults already beside the predicate, so it
+could not serve renamed boards. The listener now uses payload lanes, then the TTL `TaskLaneCache`, then
+legacy ids. Before recording the zero baseline, staged `===` and array/filter/`includes` probes each
+failed the ratchet; the scanner now also fails if no `resolveTaskWorkflowIrSync` source exists.
+
+The measured blind-spot table's inert-sync row now catches membership receivers containing tainted role
+reads. The direct `store.resolveTaskWorkflowIrSync(...)` → `resolveLifecycleColumns` form remains out
+of scope here and is separately protected by the core callsite allow-list test.

@@ -177,6 +177,31 @@ describe("a reopen is decided by lifecycle ROLE, not by the default lineage's na
 
     expect(task.workflowStepResults).toBeUndefined();
   });
+
+  /*
+  FNXC:ReviewConvergenceEvidence 2026-08-22-16:54:
+  FN-149 preserves review history only for graph-owned remediation crossings. User and ordinary
+  engine reopens retain the clean-slate behavior, while branch and execution provenance still clear.
+  */
+  it.each(["workflow-remediation", "plan-approval"])("preserves review evidence for %s reopens while clearing execution identity", (workflowMoveSource) => {
+    const task = applyOn(RENAMED_IR, "checking", "queued", { workflowMoveSource });
+    expect(task.workflowStepResults).toHaveLength(1);
+    expect(task.branch).toBeUndefined();
+    expect(task.executionStartBranch).toBeUndefined();
+    expect(task.baseCommitSha).toBeUndefined();
+    expect(task.summary).toBeUndefined();
+  });
+
+  it("preserves graph-owned review-to-WIP evidence without applying planning clears", () => {
+    const task = applyOn(RENAMED_IR, "checking", "building", { workflowMoveSource: "workflow-graph" });
+    expect(task.workflowStepResults).toHaveLength(1);
+    expect(task.branch).toBe("fusion/FN-1");
+  });
+
+  it.each(["user", "engine", undefined])("wipes review evidence for %s reopens", (workflowMoveSource) => {
+    const task = applyOn(RENAMED_IR, "checking", "queued", workflowMoveSource ? { workflowMoveSource } : {});
+    expect(task.workflowStepResults).toBeUndefined();
+  });
 });
 
 describe("no column vocabulary is the only case a legacy name is legitimate", () => {

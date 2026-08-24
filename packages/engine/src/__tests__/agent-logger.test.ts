@@ -440,6 +440,21 @@ describe("AgentLogger", () => {
     expect(store.appendAgentLog).not.toHaveBeenCalled();
   });
 
+  it("persists multi-section thinking byte-for-byte only when enabled", async () => {
+    const fixture = "Preamble.\n\n**Ensuring Docker build includes dev dependencies for tests**\n\nFirst rationale.\n\nSecond rationale.\n\n**Planning deployment commit structure**\n\nDeployment rationale.\n\nSecond deployment rationale.\n\n**Editing README content**\n\nDocumentation rationale.\n\nSecond documentation rationale.";
+    const store = createMockStore();
+    const logger = new AgentLogger({ store, taskId: "FN-155", persistAgentThinkingLog: true, flushSizeBytes: 1_000_000 });
+    for (const delta of [fixture.slice(0, 71), fixture.slice(71, 155), fixture.slice(155)]) logger.onThinking(delta);
+    await logger.flush();
+    expect((store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[2] === "thinking").map((call) => call[1]).join("")).toBe(fixture);
+
+    const disabledStore = createMockStore();
+    const disabled = new AgentLogger({ store: disabledStore, taskId: "FN-155-disabled" });
+    disabled.onThinking(fixture);
+    await disabled.flush();
+    expect(disabledStore.appendAgentLog).not.toHaveBeenCalled();
+  });
+
   it("buffers thinking deltas and flushes on timer when enabled", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({

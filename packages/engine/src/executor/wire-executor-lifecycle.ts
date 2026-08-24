@@ -270,6 +270,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
   asserts every `task:moved` emit site supplies it. Until one of those lands, treat the fallback
   as a live inertness path rather than defensive dead code.
   */
+  /* FNXC:WorkflowResolvedColumns 2026-08-22-00:13: This supersedes the prior residual-risk note: optional emitter payloads now consult TaskLaneCache before legacy ids; making lanes required and bridge forwarding remain separate follow-ups. */
   deps.store.on("task:moved", ({ task, from, to, source, lanes }) => {
     /*
     FNXC:Diagnostics 2026-08-10-18:32:
@@ -293,9 +294,18 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
     of this payload. `wipLane`/`archivedLane`/`holdLane` are read as SINGLE ids rather than sets
     because each branch below is a lane-identity test on one column, which is what the literals were.
     */
-    const wipLane = lanes?.wip ?? "in-progress";
-    const archivedLane = lanes?.archived ?? "archived";
-    const holdLane = lanes?.hold ?? "todo";
+    /*
+    FNXC:WorkflowResolvedColumns 2026-08-22-00:13:
+    Optional payload lanes win, then the store's synchronous TTL cache preserves the last real
+    answer after an emitter resolution miss; literals are only the cold-cache compatibility tier.
+    Runtime/project bridges re-emit on their own EventEmitters, not TaskStore, so they cannot feed
+    this listener and intentionally remain outside this contract.
+    */
+    const effectiveLanes = lanes ?? deps.store.laneCache?.get(task.id);
+    /* FNXC:WorkflowResolvedColumns 2026-08-22-00:28: fall back only when no lane answer exists; an answer with an absent role must not invent a legacy role-named column. */
+    const wipLane = effectiveLanes ? effectiveLanes.wip : "in-progress";
+    const archivedLane = effectiveLanes ? effectiveLanes.archived : "archived";
+    const holdLane = effectiveLanes ? effectiveLanes.hold : "todo";
     if (to === wipLane) {
       deps.userCanceledTaskIds.delete(task.id);
       if (deps.recoveringCompleted.has(task.id)) {
@@ -355,7 +365,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
           }
         }),
       );
-    } else if (deps.isBackwardMoveOutOfPlanning(task.id, from, to, lanes)) {
+    } else if (deps.isBackwardMoveOutOfPlanning(task.id, from, to, effectiveLanes)) {
       /*
       FNXC:PlanningEvacuation 2026-07-25-23:00:
       A card pulled BACKWARD out of a planner lane (the reported case: todo → Ideas) must stop all

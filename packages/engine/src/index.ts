@@ -1,4 +1,8 @@
 export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agents/agent-logger.js";
+export { PlanningResetFence, PLANNING_RESET_HOLD_MS } from "./planning-reset-fence.js";
+export { removeTaskResetWorktree, ResetWorktreeForeignSessionError } from "./worktree/remove-reset-worktree.js";
+export { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
+export { planningLivenessRegistry, registerPlanningLivenessProbe, isPlanningLive } from "./agents/planning-liveness.js";
 export {
   classifyReportHealth,
   type ReportHealthBucket,
@@ -8,6 +12,12 @@ export {
 export { reloadExemptTools, addToExemptTools, getExemptToolNames, evaluateAgentActionGate, resolveGateOutcome } from "./agents/agent-action-gate.js";
 export type { AgentActionGateContext, AgentActionGateDecision } from "./agents/agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
+export {
+  DEFAULT_DASHBOARD_PORT,
+  getLocalDashboardPort,
+  setLocalDashboardPort,
+  resetLocalDashboardPortForTests,
+} from "./local-dashboard-port.js";
 export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
   boundExistingModelRegistryRefresh,
@@ -377,6 +387,7 @@ export { runAiMerge } from "./merge/merger-ai.js";
 // FNXC:Workspace 2026-06-22-14:10 (Phase D review G): canonical landed predicate now lives in its
 // own dependency-free module (self-healing ↔ merger-ai cycle dissolved). Public export preserved.
 export { isRepoLanded } from "./merge/workspace-land-predicate.js";
+export { withWorkspaceMergeDispatchLease, WorkspaceMergeDispatchBusyError } from "./merge/workspace-merge-dispatch-lease.js";
 // FNXC:Workspace 2026-06-21-23:40 (Phase C U1): per-repo workspace merge loop +
 // the extracted per-repo land primitive, exported for the CLI/dashboard merge doors.
 export {
@@ -464,6 +475,11 @@ export {
   type HandoffResult,
   type MergeIntegrationRootResolution,
 } from "./merge/merger-integration-worktree.js";
+export {
+  resolveWorkspaceIntegrationTarget,
+  WorkspaceIntegrationTargetError,
+  type WorkspaceIntegrationTarget,
+} from "./merge/workspace-integration-target.js";
 export {
   smartPull,
   type SmartPullInput,
@@ -643,7 +659,15 @@ export {
   type MockScriptContext,
 } from "./providers/index.js";
 export { activeSessionRegistry } from "./agents/active-session-registry.js";
-export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree/worktree-pool.js";
+export {
+  WorktreePool,
+  scanIdleWorktrees,
+  cleanupOrphanedWorktrees,
+  reapOrphanWorktrees,
+  getRegisteredWorktreeBranches,
+} from "./worktree/worktree-pool.js";
+export { removeWorktree, RemovalReason, type RemovalReason as WorktreeRemovalReason, type WorktreeRemoveOutcome } from "./worktree/worktree-backend.js";
+export { isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 export {
   pruneWorktreeAdminEntries,
   pruneWorktreeAdminEntriesSync,
@@ -662,6 +686,8 @@ export {
   type InspectBranchConflictInput,
 } from "./execution/branch-conflicts.js";
 export { generateReservedWorktreeName, generateWorktreeName, planTaskWorktreePath, slugify } from "./worktree/worktree-names.js";
+export { deriveJiraBranchName, normalizeJiraIssueKey } from "./worktree/jira-branch-name.js";
+export type { JiraBranchNameResult } from "./worktree/jira-branch-name.js";
 export { createLogger, type Logger } from "./logger.js";
 export {
   validateExternalIntegrationManifest,
@@ -926,7 +952,9 @@ export {
   DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
   isMergeActiveStatus,
   isStaleMergeActiveStatus,
+  shouldClearOrphanedMergeStamp,
 } from "./merge/merge-active-status.js";
+export { clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
 export { PluginRunner, type PluginRunnerOptions } from "./plugins/plugin-runner.js";
 export {
   registerPluginTraits,

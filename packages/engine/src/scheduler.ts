@@ -38,6 +38,7 @@ import {
 } from "./concurrency/concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { schedulerLog } from "./logger.js";
+import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import { createRepeatSuppressedLog } from "./util/repeat-suppressed-log.js";
 import { type PrMonitor, type PrComment } from "./merge/pr-monitor.js";
 import { reconcileMissionState, type MissionReconcileSource } from "./missions/mission-state-reconcile.js";
@@ -53,9 +54,10 @@ import { BacklogPressureReporter } from "./scheduling/backlog-pressure-reporter.
 import { UnlinkedMissionsAdvisoryReporter } from "./missions/unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import type { TaskMoveLanes } from "@fusion/core";
-import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveMaxConcurrentSetting, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
+import type { WorkflowIr, WorkflowIrV2, WorkflowSelectionCache } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
-import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
+
 import { checkAndRecordUnplannedExecutionBlock, runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./execution/hold-release.js";
 import { moveTaskToReplanColumn } from "./execution/replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./agents/task-agent-sync.js";
@@ -497,9 +499,23 @@ const LEGACY_PARKED_COLUMNS = {
   terminal: new Set(["done", "archived"]),
 };
 
-async function resolveTaskParkedColumns(store: TaskStore, taskId: string): Promise<{ hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string>; wake: ReadonlySet<string> }> {
+async function resolveTaskParkedColumns(store: TaskStore, taskId: string, selectionCache?: WorkflowSelectionCache): Promise<{ hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string>; wake: ReadonlySet<string> }> {
   try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
+    /*
+    FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
+    Thread the caller's per-tick selectionCache so `resolveWorkflowIrForTask` reads workflow_selection AT
+    MOST ONCE per task per scheduler tick, not once per park resolution. `resolveTaskParkedColumns` is
+    composed up to ~6x per task per poll/event cycle (merge/unpause/planning/approval/deleted/rollback),
+    and without a shared cache each composition was its own Drizzle-build + PostgreSQL select of
+    task_workflow_selection (the RUFU-073 query storm: ~232 idx_scan/s nonstop).
+
+    Cache lifecycle honors the FNXC:WorkflowScheduling invariant: PER-CALL/PER-PASS ONLY — the caller
+    creates the Map fresh for one tick/event and throws it away, so a selection WRITE by a later pass
+    is always observed on the NEXT pass' fresh cache. It is never a global/infinite LRU. A throwing
+    selection read is still deliberately not cached (the resolver retries it), and passing no cache
+    keeps the old read-per-call behaviour byte-for-byte.
+    */
+    const ir = await resolveWorkflowIrForTask(store, taskId, undefined, selectionCache);
     const l = resolveLifecycleColumns(ir);
     const complete = l?.complete ?? LEGACY_PARKED_COLUMNS.complete;
     const archived = l?.archived ?? LEGACY_PARKED_COLUMNS.archived;
@@ -784,13 +800,21 @@ function computeConcurrencyGateDiagnostic(params: {
   };
 }
 
-function formatConcurrencyLimitReason(diagnostic: ConcurrencyGateDiagnostic): string {
+export function formatConcurrencyLimitReason(diagnostic: ConcurrencyGateDiagnostic): string {
   const holdersText = (gate: ConcurrencyGateName): string => {
     const holders = diagnostic.holders[gate];
     return holders && holders.length > 0 ? holders.join(", ") : "none";
   };
   const gateLabel = diagnostic.bindingGates.join(", ");
+  const effectiveLimit = Math.min(
+    diagnostic.maxConcurrentGate.limit,
+    diagnostic.maxWorktreesGate?.limit ?? Infinity,
+  );
+  const bindingKnob = diagnostic.maxWorktreesGate && diagnostic.maxWorktreesGate.limit <= diagnostic.maxConcurrentGate.limit
+    ? "maxWorktrees"
+    : "maxConcurrent";
   const details = [
+    `effectiveLimit=${effectiveLimit} (bindingKnob=${bindingKnob})`,
     `maxConcurrent used=${diagnostic.maxConcurrentGate.used}/${diagnostic.maxConcurrentGate.limit} (holders: ${holdersText("maxConcurrent")})`,
   ];
   /*
@@ -1083,6 +1107,15 @@ export class Scheduler {
      * update feature status and potentially activate next pending slice.
      */
     this.store.on("task:moved", async ({ task, from, to, source, lanes }) => {
+      /*
+      FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
+      A fresh per-event selectionCache shared by every park-resolution in this handler. The same task
+      can be parked-resolved up to 4x in one move (merge, unpause, planning-finished, approval-cleared)
+      and each used to be a separate DB read of task_workflow_selection. One Map per task:moved event
+      collapses them to a single read. Must not outlive this event: a selection write in a later poll
+      is observed on that poll's OWN fresh cache.
+      */
+      const movedSelectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
       this.lastAutoClaimFingerprint.set(task.id, computeAutoClaimFingerprint(task));
       /*
       FNXC:WorkflowResolvedColumns 2026-08-01-05:01:
@@ -1183,7 +1216,7 @@ export class Scheduler {
         }
       }
 
-      const resolvedParked = mergeParkedColumns(await resolveTaskParkedColumns(this.store, task.id), lanes);
+      const resolvedParked = mergeParkedColumns(await resolveTaskParkedColumns(this.store, task.id, movedSelectionCache), lanes);
 
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
       // blocker reconciliation when a potential blocker reaches a terminal completion column.
@@ -1279,6 +1312,15 @@ export class Scheduler {
      * Also detects task-level unpause transitions and triggers immediate scheduling.
      */
     this.store.on("task:updated", (task, meta) => {
+      /*
+      FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
+      A fresh per-update selectionCache shared by every park-resolution wake in this handler (unpause,
+      planning-finished, approval-cleared). One task:updated can clear all three trackers for the same
+      task in a single event, and each wake used to be its own DB read of task_workflow_selection. One
+      Map per task:updated event collapses them to a single read per task per event. Fresh per event so a
+      selection write in a later event/poll is observed on that event's own cache — never a global/infinite LRU.
+      */
+      const updatedSelectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
       const nextFingerprint = computeAutoClaimFingerprint(task);
       const previousFingerprint = this.lastAutoClaimFingerprint.get(task.id);
       if (!previousFingerprint || previousFingerprint !== nextFingerprint) {
@@ -1332,7 +1374,7 @@ export class Scheduler {
         /* FNXC:WorkflowResolvedColumns 2026-07-31-06:35 (fleet): the answer only gates `schedule()`,
            which is async and fire-and-forget, so resolving it properly costs nothing observable. */
         void (async () => {
-          const unpausedParked = await resolveTaskParkedColumns(this.store, task.id);
+          const unpausedParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
           if (this.running && unpausedParked.wake.has(task.column)) {
             schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
             void this.schedule();
@@ -1364,7 +1406,7 @@ export class Scheduler {
            answer only gates `schedule()`. The `planningTaskIds.delete` stays SYNCHRONOUS — it is the
            edge-trigger bookkeeping, and deferring it would let a second update re-enter this branch. */
         void (async () => {
-          const planningParked = await resolveTaskParkedColumns(this.store, task.id);
+          const planningParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
           if (
             this.running
             && !task.status
@@ -1395,7 +1437,7 @@ export class Scheduler {
       ) {
         this.approvalReleasedTaskIds.add(task.id);
         void (async () => {
-          const approvalParked = await resolveTaskParkedColumns(this.store, task.id);
+          const approvalParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
           if (
             this.running
             && !task.status
@@ -1450,7 +1492,9 @@ export class Scheduler {
             return;
           }
 
-          const deletedParked = await resolveTaskParkedColumns(this.store, task.id);
+          /* FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073): per-deleted-event selection cache. */
+          const deletedSelectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
+          const deletedParked = await resolveTaskParkedColumns(this.store, task.id, deletedSelectionCache);
           /*
           FNXC:WorkflowLifecycleColumns 2026-07-30-20:55:
           A HALF-CONVERTED PAIR, one line apart. The hold read above already resolved its lane while
@@ -1540,10 +1584,25 @@ export class Scheduler {
    * Validate that a task's filesystem state is intact.
    * Checks that the task directory exists and PROMPT.md is present and non-empty.
    * 
-   * @param id - The task ID to validate
+   * @param task - The task (id + title) to validate
    * @returns Object with `valid: true` if checks pass, or `valid: false` with a `reason` string if they fail
    */
-  private async validateTaskFilesystem(id: string): Promise<{ valid: boolean; reason?: string }> {
+  private async validateTaskFilesystem(task: Pick<Task, "id" | "title">): Promise<{ valid: boolean; reason?: string }> {
+    const id = task.id;
+    /*
+    FNXC:DuplicateIntake 2026-08-09-01:02:
+    A title redirect is available without filesystem capability or PROMPT.md I/O. Refuse it first
+    so minimal stores and missing artifacts cannot dispatch a task the operator explicitly marked
+    DUPLICATE.
+
+    FNXC:DuplicateIntake 2026-08-23-23:20:
+    RESTORED. Wave 18's "behavior-preserving" peel (1cf86baa1c) reverted this parameter back to a
+    bare id, which silently dropped both the title-first refusal and the title argument below, so a
+    title-only redirect became dispatchable again. `scheduler-explicit-duplicate-marker.test.ts` is
+    the guard that caught it.
+    */
+    const titleRedirect = nonExecutableDuplicateRedirectReason(null, task.title);
+    if (titleRedirect) return { valid: false, reason: titleRedirect };
     if (typeof this.store.getTasksDir !== "function") {
       /*
       FNXC:WorkflowScheduling 2026-06-23-11:38:
@@ -1574,7 +1633,7 @@ export class Scheduler {
       Non-empty is not enough: a sole `DUPLICATE: FN-####` line is a triage redirect, not a
       plan. Admitting it (FN-8704) fails the graph at `parse` and parks failed WIP in a loop.
       */
-      const duplicateOnly = nonExecutableDuplicateRedirectReason(content);
+      const duplicateOnly = nonExecutableDuplicateRedirectReason(content, task.title);
       if (duplicateOnly) {
         return { valid: false, reason: duplicateOnly };
       }
@@ -1689,7 +1748,7 @@ export class Scheduler {
   }
 
   private emitDependencyParityDiff(diff: SchedulingDependencyParityDiff): void {
-    void this.store.recordRunAuditEvent?.({
+    void emitBoundedRunAudit(this.store, {
       taskId: diff.taskId,
       agentId: "scheduler",
       runId: generateSyntheticRunId("scheduler", diff.taskId),
@@ -1701,7 +1760,7 @@ export class Scheduler {
         legacyResult: diff.legacySatisfied,
         markerResult: diff.markerSatisfied,
       },
-    });
+    }, { log: schedulerLog });
   }
 
   private async emitNodeUnreachableRecoveryAudit(
@@ -1764,6 +1823,11 @@ export class Scheduler {
     One IR cache for the sweep, per the caller-owned-cache contract.
     */
     const escalationIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    /* FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073): per-sweep selection cache shared by every
+       task in this board-wide fanout loop, so workflow_selection is read once per task per sweep
+       (the sweep is one poll pass). Must not outlive the pass — a selection write in a later poll
+       is observed on that poll's OWN fresh cache — never a global/infinite LRU. */
+    const escalationSelectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
     /* Per-task, keyed by id — see the `escalationClassify` note in blocker-fanout.ts. The flat set is
        still built alongside it as the legacy fallback for tasks whose workflow will not resolve. */
     const escalationByTaskId = new Map<string, boolean>();
@@ -1786,7 +1850,7 @@ export class Scheduler {
     */
     const blockerReviewColumns = new Set<string>();
     for (const task of tasks) {
-      const ir = await resolveWorkflowIrForTask(this.store, task.id, escalationIrCache).catch(() => undefined);
+      const ir = await resolveWorkflowIrForTask(this.store, task.id, escalationIrCache, escalationSelectionCache).catch(() => undefined);
       if (!ir) continue;
       for (const id of columnsWithFlag(ir, "countsTowardWip")) escalationColumns.add(id);
       for (const id of columnsWithFlag(ir, "mergeOrchestration")) escalationColumns.add(id);
@@ -1863,6 +1927,9 @@ export class Scheduler {
     const runningAgents = await agentStore.listAgents({ state: "running", includeEphemeral: false });
     const linkedAgents = runningAgents.filter((agent) => agent.taskId === taskId);
 
+    /* FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073): per-invocation selection cache — one read per task even when several agents link to it. */
+    const rollbackSelectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
+
     for (const agent of linkedAgents) {
       const activeRun = await agentStore.getActiveHeartbeatRun?.(agent.id);
       /*
@@ -1882,7 +1949,7 @@ export class Scheduler {
       which reads as unparked and clears a live agent's link. That invariant, not
       the conversion, is what the agent-link tests pin.
       */
-      const rollbackParked = await resolveTaskParkedColumns(this.store, taskId);
+      const rollbackParked = await resolveTaskParkedColumns(this.store, taskId, rollbackSelectionCache);
       const proof = evaluateParkedAgentTaskLink({
         agent,
         linkedTask: { column: rollbackParked.hold } as Pick<Task, "column">,
@@ -1956,11 +2023,16 @@ export class Scheduler {
         if (!repo) return;
 
         const hydrationIrCache = new Map<string, WorkflowIr>();
+        /* FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073): per-hydration-pass selection cache shared by
+           every task in the startup PR-hydration sweep, so workflow_selection is read once per task
+           per pass. Fresh for the pass, discarded at its end — a selection write in a later pass is
+           observed there, never a global/infinite LRU. */
+        const hydrationSelectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
         for (const task of tasks) {
           if (!task.prInfo) continue;
           let flags: ColumnRoleTraitFlags | undefined;
           try {
-            const ir = await resolveWorkflowIrForTask(this.store, task.id, hydrationIrCache);
+            const ir = await resolveWorkflowIrForTask(this.store, task.id, hydrationIrCache, hydrationSelectionCache);
             const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === task.column);
             if (column) flags = resolveColumnFlags(column);
           } catch {
@@ -2263,16 +2335,15 @@ export class Scheduler {
     try {
       // FNXC:CapacityModel 2026-07-28-11:35: null = worktrees are not a capacity
       // dimension for this project (worktreeLimitEnabled false), NOT unlimited.
-      const maxWorktrees = resolveWorktreeCapacityLimit({
-        maxWorktrees: settings.maxWorktrees ?? this.options.maxWorktrees ?? 4,
-        worktreeLimitEnabled: settings.worktreeLimitEnabled,
-      });
-      const maxConcurrent = settings.maxConcurrent ?? this.options.maxConcurrent ?? 2;
-      const activeTaskLimit = resolveActiveTaskCapacityLimit({
-        maxConcurrent,
-        maxWorktrees: settings.maxWorktrees ?? this.options.maxWorktrees ?? 4,
-        worktreeLimitEnabled: settings.worktreeLimitEnabled,
-      });
+      /* FNXC:CapacityModel 2026-08-21-15:25: live project settings are authoritative;
+       * scheduler boot options remain fallback-only when a setting is absent. */
+      const capacitySettings = {
+        ...this.options,
+        ...settings,
+      };
+      const maxWorktrees = resolveWorktreeCapacityLimit(capacitySettings);
+      const maxConcurrent = resolveMaxConcurrentSetting(capacitySettings);
+      const activeTaskLimit = resolveActiveTaskCapacityLimit(capacitySettings);
       /*
       FNXC:WorkflowScheduling 2026-07-19-02:35 (U4/KTD-9):
       Count active WIP reservations by the `wip` trait, not the literal
@@ -2576,7 +2647,7 @@ export class Scheduler {
           FNXC:WorkflowScheduling 2026-06-23-11:12:
           The workflow sweep is the only dispatcher, so the scheduler-only pre-dispatch gates must run before a capacity hold moves to an execution column. Keep dependency, filesystem, node-routing, permanent-agent, and oscillation checks on this path instead of relying on the retired todo loop.
           */
-          const validation = await this.validateTaskFilesystem(task.id);
+          const validation = await this.validateTaskFilesystem(task);
           if (!validation.valid) {
             schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
             /*
@@ -2714,7 +2785,7 @@ export class Scheduler {
                   schedulerLog.log(`Task ${task.id} dispatch blocked — ${reason}`);
                   await this.store.logEntry(task.id, reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                   try {
-                    await this.store.recordRunAuditEvent?.({
+                    await emitBoundedRunAudit(this.store, {
                       taskId: freshTask.id,
                       agentId: "scheduler",
                       runId: generateSyntheticRunId("scheduler", freshTask.id),
@@ -2733,7 +2804,7 @@ export class Scheduler {
                         decisionReason: handoffDecision.reason,
                         source: "scheduler.dispatch",
                       },
-                    });
+                    }, { log: schedulerLog });
                   } catch (error) {
                     schedulerLog.warn(`Task ${task.id} failed to emit node:handoff:parked audit: ${error instanceof Error ? error.message : String(error)}`);
                   }
@@ -2743,7 +2814,7 @@ export class Scheduler {
 
               await this.store.logEntry(task.id, `Owning-node handoff applied: ${handoffDecision.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               try {
-                await this.store.recordRunAuditEvent?.({
+                await emitBoundedRunAudit(this.store, {
                   taskId: freshTask.id,
                   agentId: "scheduler",
                   runId: generateSyntheticRunId("scheduler", freshTask.id),
@@ -2762,7 +2833,7 @@ export class Scheduler {
                     decisionReason: handoffDecision.reason,
                     source: "scheduler.dispatch",
                   },
-                });
+                }, { log: schedulerLog });
               } catch (error) {
                 schedulerLog.warn(`Task ${task.id} failed to emit node:handoff audit: ${error instanceof Error ? error.message : String(error)}`);
               }
@@ -2867,7 +2938,7 @@ export class Scheduler {
               "text",
               `cycleCount=${nextDispatchStormCount} windowMs=${dispatchOscillationWindowMs}`,
             );
-            await this.store.recordRunAuditEvent?.({
+            await emitBoundedRunAudit(this.store, {
               taskId: task.id,
               agentId: "scheduler",
               runId: generateSyntheticRunId("scheduler-dispatch-oscillation", task.id),
@@ -2880,7 +2951,7 @@ export class Scheduler {
                 windowMs: dispatchOscillationWindowMs,
                 lastMoveSource: recentEngineTodoMovedAt ? "engine" : "scheduler",
               },
-            });
+            }, { log: schedulerLog });
             schedulerLog.warn(`Task ${task.id} auto-paused after dispatch oscillation threshold ${dispatchOscillationThreshold} was exceeded (${nextDispatchStormCount} cycles)`);
             return null;
           }

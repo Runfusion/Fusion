@@ -32,6 +32,7 @@ import {
   EMBEDDED_PG_ENV,
   NO_EMBEDDED_PG_ENV,
   resolveStartupDatabaseOptions,
+  formatPostgresSchemaBackendBootError,
 } from "../../postgres/startup-factory.js";
 import { resolveBackend } from "../../postgres/backend-resolver.js";
 
@@ -265,6 +266,24 @@ encoding-conversion failure raised when a non-UTF-8 cluster (WIN1252/WIN1254
 from a pre-fix initdb on a non-UTF-8 OS locale) receives the UTF-8 schema
 SQL — and nothing else, so ordinary schema errors never delete a data dir.
 */
+describe("startup-factory Windows antivirus boot hint (#3489)", () => {
+  const issueOutput = 'ERROR OUTPUT: FATAL: could not load library "C:/Users/ppp/.fusion/embedded-postgres/runtime-bin/win32-x64/lib/dict_snowball.dll": unknown error 4551';
+
+  it("adds exactly one actionable hint to the wrapped initdb failure", async () => {
+    const message = await formatPostgresSchemaBackendBootError(
+      new Error(`startup-factory: failed to start embedded PostgreSQL: ${issueOutput}`),
+    );
+    expect(message).toMatch(/^startup-factory: failed to initialize PostgreSQL schema backend:/);
+    expect(message).toContain("dict_snowball.dll");
+    expect(message.match(/Windows antivirus blocked a bundled PostgreSQL library/g)).toHaveLength(1);
+  });
+
+  it("does not add the antivirus hint to unrelated boot failures", async () => {
+    const message = await formatPostgresSchemaBackendBootError(new Error("connection refused"));
+    expect(message).not.toContain("Windows antivirus blocked a bundled PostgreSQL library");
+  });
+});
+
 describe("isEncodingConversionError (#2286 recovery trigger)", () => {
   it("matches the encoding-conversion failure from a non-UTF-8 cluster", () => {
     expect(

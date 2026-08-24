@@ -1,0 +1,7 @@
+# fusion-hygiene-capture v1
+# kind: liveness
+# cluster: 5432|PostgreSQL 16.0|postgres
+# captured_at: 2026-08-19T18:18:00Z
+# query: liveness-v1
+# rows: 0
+# end

@@ -14,6 +14,7 @@ import { graphFailureValue, isMergeGraphFailure, isStalePauseAbortParkFailure } 
 import { isTerminalMergeGraphFailureValue } from "./task-predicates.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { executorLog } from "../logger.js";
 import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-graph-executor.js";
 
@@ -78,8 +79,7 @@ export async function handleStaleInReviewPlanPauseAbortReplay(
       await deps.store.updateTask(live.id, { status: null, error: null }, deps.runContextFor(live.id));
       await deps.store.logEntry(live.id, "Auto-recovered: cleared stale in-review plan pause/resume replay failure — failure notification suppressed", undefined, deps.runContextFor(live.id));
     }
-    try {
-      await deps.store.recordRunAuditEvent?.({
+      await emitBoundedRunAudit(deps.store, {
         taskId: live.id,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-stale-plan-replay", live.id),
@@ -95,9 +95,6 @@ export async function handleStaleInReviewPlanPauseAbortReplay(
           mode: "preserved-in-review",
         },
       });
-    } catch (error) {
-      executorLog.warn(`${live.id}: failed to record stale plan replay audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
     await deps.persistTokenUsage(live.id);
     return true;
 }

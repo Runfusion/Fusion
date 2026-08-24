@@ -14,7 +14,7 @@ import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-state");
-import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskDeleteClosureContext, TaskStore } from "@fusion/core";
+import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
@@ -154,42 +154,9 @@ type GitHubIssueActionEvent = {
 
 type TaskDeletedMeta = {
   githubIssueAction?: GithubIssueAction;
-  closureContext?: TaskDeleteClosureContext;
   observed?: boolean;
 };
 
-type SplitCommentLog = (message: string, details: string) => Promise<void>;
-
-/*
-FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
-A split-close posts exactly one explanation immediately before exactly one close for each issue.
-Both source and tracking paths call this single helper; a comment failure is logged but deliberately
-never blocks the close, preserving the existing lifecycle outcome even when GitHub commenting fails.
-A close retry must never replay this helper because GitHub can accept a comment before returning a
-transient failure, so the comment is deliberately attempted once.
-*/
-async function postSplitCommentBeforeClose(
-  client: GitHubClient,
-  owner: string,
-  repo: string,
-  number: number,
-  taskId: string,
-  closureContext: TaskDeleteClosureContext | undefined,
-  resolvedAction: GithubIssueAction | "close",
-  alreadyClosed: boolean,
-  log: SplitCommentLog,
-): Promise<void> {
-  if (closureContext?.kind !== "split-into-subtasks" || resolvedAction !== "close" || alreadyClosed
-    || !owner || !repo || !Number.isInteger(number) || number <= 0) return;
-
-  const body = `This issue was imported as Fusion task ${taskId}, which has been broken down into subtasks: ${closureContext.childTaskIds.join(", ")}. Closing this issue; work continues in those tasks.`;
-  try {
-    await client.commentOnIssue(owner, repo, number, body);
-    await log("Posted GitHub source issue split comment", `${owner}/${repo}#${number}`);
-  } catch (error) {
-    await log("Failed to post GitHub source issue split comment", error instanceof Error ? error.message : String(error));
-  }
-}
 
 function sourceMatchesTrackingIssue(task: Task, owner: string, repo: string, number: number): boolean {
   const sourceIssue = task.sourceIssue;
@@ -510,10 +477,6 @@ export class GitHubTrackingStateService {
         return;
       }
 
-      await postSplitCommentBeforeClose(
-        client, owner, repo, number, task.id, meta?.closureContext, resolvedAction, false,
-        (message, details) => this.safeLogDeletedTaskEntry(store, task.id, message, details),
-      );
       const closeIssue = async () => {
         // Source-imported issues map to completed work, so closure reason is "completed".
         await client.setIssueState(owner, repo, number, "closed", "completed");
@@ -625,10 +588,6 @@ export class GitHubTrackingStateService {
         return;
       }
 
-      await postSplitCommentBeforeClose(
-        client, owner, repo, number, task.id, meta?.closureContext, githubIssueAction === "auto" ? "close" : githubIssueAction, false,
-        (message, details) => this.safeLogDeletedTaskEntry(store, task.id, message, details),
-      );
       const closeIssue = async () => {
         await client.setIssueState(owner, repo, number, "closed", "not_planned");
       };

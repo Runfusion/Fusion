@@ -27,7 +27,7 @@ is stranded rather than in a planner lane, and rescuing it belongs to the
 undeclared-column sweep, not to these guards. `undefined` is reserved for the case
 where even the default cannot be resolved.
 */
-import { resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, type TaskStore, type WorkflowIr } from "@fusion/core";
+import { resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, type TaskStore, type WorkflowIr, type WorkflowSelectionCache } from "@fusion/core";
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-31-04:10 (PR #2616 review — greptile; a real
@@ -54,8 +54,15 @@ export async function resolvePlannerLanesForTask(
   store: TaskStore,
   taskId: string,
   cache?: Map<string, WorkflowIr>,
+  /*
+  FNXC:MissionReverseLineageSpecAlignment 2026-08-19-21:44 (RUFU-134 / PR #3491):
+  The selection cache (task → workflow selection) is what prevents a second per-task
+  SELECTION read; the IR cache is keyed by workflow id. Sweep callers pre-populate the
+  selection cache with one batched plural read, mirroring resolveTerminalColumnsFor.
+  */
+  selectionCache?: WorkflowSelectionCache,
 ): Promise<readonly string[] | undefined> {
-  const ir = await resolveWorkflowIrForTask(store, taskId, cache).catch(() => undefined);
+  const ir = await resolveWorkflowIrForTask(store, taskId, cache, selectionCache).catch(() => undefined);
   if (!ir) return undefined;
   const roles = resolveLifecycleColumns(ir);
   if (!roles) return undefined;

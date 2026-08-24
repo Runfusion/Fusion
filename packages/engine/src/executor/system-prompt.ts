@@ -87,10 +87,7 @@ This path exists specifically to prevent the executor from looping when PROMPT.m
 
 **Logging important actions:** \`fn_task_log(message="what happened")\`
 
-**Out-of-scope work found during execution:** \`fn_task_create(description="what needs doing")\`
-When creating multiple related tasks, declare dependencies between them:
-\`fn_task_create(description="load door sounds", dependencies=[])\` → returns KB-050
-\`fn_task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
+**Out-of-scope findings:** This session cannot create or delegate tasks. Preserve optional, non-blocking findings as \`fn_task_done(outcome="completed", recommendations=[…])\` completion recommendations, which appear in the task's Recommendations tab. Implement anything required and in scope directly in this task. For a genuine external blocker, use \`fn_task_done(outcome="blocked", reason="…", blockedBy=[…])\` with independently planned existing tasks.
 
 **Discovered a dependency:** \`fn_task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-planning.
 
@@ -164,17 +161,17 @@ If you attempt to write to a path outside the worktree, the file tools will reje
 FNXC:WorkflowRouting 2026-06-22-17:26:
 Executors must not move the workflow of the task they are executing unless the user explicitly asked for that task's workflow. Agents remain free to set workflows on tasks they create because they are the creator for those new tasks.
 -->
-- Do not call \`fn_workflow_select\` to change the workflow of the task you are executing; you did not create that task, the user or triage did. The only exception is when the user explicitly requested a specific workflow for this task in a steering comment, task instruction, or similar direct instruction. You may still set the workflow on tasks you create via \`fn_task_create\` or \`fn_delegate_task\`, because you are the creator of those new tasks.
+- Do not call \`fn_workflow_select\` to change the workflow of the task you are executing; you did not create that task, the user or triage did. The only exception is when the user explicitly requested a specific workflow for this task in a steering comment, task instruction, or similar direct instruction.
 - **NEVER kill processes on port 4040.** Port 4040 is the production dashboard. Do not run \`kill\`, \`pkill\`, \`killall\`, or \`lsof -ti:4040 | xargs kill\` against it. If you need to start a test server, use \`--port 0\` for a random free port. If port 4040 is occupied, pick a different port — do NOT kill the occupant.
 - Treat the File Scope in PROMPT.md as the expected starting scope, not a hard boundary when quality gates fail
 - Read "Context to Read First" files before starting
 - Follow the "Do NOT" section strictly — these are hard constraints, not suggestions
 - If tests, lint, build, or typecheck fail and the fix requires touching code outside the declared File Scope, fix those failures directly and keep the repo green
 - When you must edit files beyond the declared File Scope to complete this task, call \`fn_task_file_scope_add\` to add them to the File Scope as you go — keep the declared scope in sync with what you actually change so your edits are not stranded by the scope-aware squash merge
-- Use \`fn_task_create\` for genuinely separate follow-up work, not for mandatory fixes required to make this task land cleanly
+- Implement mandatory and in-scope fixes directly in this task. Preserve optional out-of-scope follow-ups as completion recommendations; this session cannot create or delegate tasks.
 - Update documentation listed in "Must Update" and check "Check If Affected"
 - NEVER delete, remove, or gut modules, interfaces, settings, exports, or test files outside your File Scope
-- NEVER remove features as "cleanup" — if something seems unused, create a task for investigation instead
+- NEVER remove features as "cleanup" — if something seems unused, record an optional completion recommendation for investigation instead
 - Removing code is acceptable ONLY when it is explicitly part of your task's mission
 - If you remove existing functionality, you MUST create a changeset in \`.changeset/\` explaining the removal and rationale
 
@@ -262,7 +259,7 @@ policy rather than malfunction. It is appended last so it wins over the base tex
 applies to a custom operator prompt too (an operator who overrode the prompt still gets a
 truthful statement of what this session may do).
 */
-function getCompletionRecommendationGuidance(maximum: number): string {
+function getCompletionRecommendationGuidance(maximum: number, required: boolean): string {
   /*
   FNXC:TaskRecommendations 2026-08-09-04:06:
   Engine-appended guidance preserves the accepted-completion recommendation contract even when an
@@ -277,9 +274,14 @@ function getCompletionRecommendationGuidance(maximum: number): string {
 
 Recommendation capture is disabled for this project (maxRecommendationsPerTask is 0). Ignore any earlier generic recommendation guidance: do not send recommendations, including \`recommendations: []\`; use an honest summary or task log for non-blocking context, and do not fabricate a finding.`;
   }
+  if (required) {
+    return `## Completion recommendations
+
+At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, you MUST explicitly evaluate optional, non-blocking work discovered outside this task by sending a \`recommendations\` array. Aim toward ${maximum} distinct, grounded, task-ready recommendations from concrete source-task or worktree findings, but stop before relevance degrades: a shorter list or \`recommendations: []\` is correct when fewer candidates qualify. Reject scope drift, restatements of this task, duplicates, speculation, filler, required current-task work, blockers, secrets, executable commands, and reasoning. Each item needs a stable unique \`id\`, \`title\`, \`description\`, and \`category\`. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Implement required in-scope work directly in this task; use the honest blocked exit only for a real external blocker.`;
+  }
   return `## Completion recommendations
 
-At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, evaluate optional, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide a CSV export for completed tasks.", category: "feature" }]\`. Do not fabricate filler or include required current-task work, blockers, secrets, executable commands, reasoning, or duplicate ids. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
+At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, optionally evaluate grounded, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide CSV export outside the completed task's scope.", category: "feature" }]\`. Stop before relevance degrades: do not fabricate filler or include scope drift, restatements, duplicates, speculation, required current-task work, blockers, secrets, executable commands, or reasoning. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Implement required in-scope work directly in this task; use the honest blocked exit only for a real external blocker.`;
 }
 
 /*
@@ -289,24 +291,26 @@ partial restore recovered this function from a pre-FN-8850 base, so a withheld s
 at fn_task_log instead of the completion recommendation route its validator accepts — and when capture is
 disabled the prompt must say so rather than invite an unavailable write.
 */
-function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean, maximum: number): string {
+function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean, maximum: number, required: boolean): string {
   if (!taskCreateWithheld && !delegateWithheld) return "";
   const withheld = [
     ...(taskCreateWithheld ? ["`fn_task_create`"] : []),
     ...(delegateWithheld ? ["`fn_delegate_task`"] : []),
   ].join(" and ");
   const recommendationRoute = maximum > 0
-    ? `For optional, non-blocking discoveries, use the available completion recommendation route at accepted completion (or \`recommendations: []\` if none qualify).`
+    ? required
+      ? `For non-blocking discoveries, the required completion evaluation must use the available recommendation route at accepted completion; aim toward ${maximum} grounded candidates, but send a shorter list or \`recommendations: []\` when relevance does not support more.`
+      : `For optional, non-blocking discoveries, use the available completion recommendation route at accepted completion (or \`recommendations: []\` if none qualify).`
     : "Recommendation capture is disabled, so retain non-blocking context in an honest task log or completion summary without inventing a follow-up.";
   return `## Follow-up task creation is disabled for this session
 
-This project's "Ephemeral agent follow-up tasks" policy withholds ${withheld}. ${
+Task-execution sessions structurally withhold ${withheld}, regardless of the ephemeral-agent policy or whether the Workflow Executor principal is durable. ${
     taskCreateWithheld && delegateWithheld ? "Those tools are" : "That tool is"
-  } deliberately absent from your tool list — this is an operator setting, not a malfunction or a transient error. Do not attempt to call ${
+  } deliberately absent from your tool list; do not attempt to call ${
     taskCreateWithheld && delegateWithheld ? "them" : "it"
   }, and do not retry.
 
-Ignore any instruction above that tells you to file follow-up work with ${withheld}. ${recommendationRoute} If the work genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
+Ignore any instruction above that tells you to file follow-up work with ${withheld}. ${recommendationRoute} Implement required in-scope work directly here. If an external dependency genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
 }
 
 /** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
@@ -314,7 +318,16 @@ export function getExecutorSystemPrompt(
   settings: Settings,
   toolAvailability?: { taskCreateWithheld?: boolean; delegateWithheld?: boolean },
 ): string {
-  const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
+  /*
+  FNXC:WorkflowRouting 2026-08-23-13:25:
+  Tool availability is opt-out at this production boundary: omitted availability, an empty object,
+  and omitted fields all preserve the core resolver's available-by-default contract. Only an
+  explicit withheld=true removes that tool's created-task workflow guidance.
+  */
+  const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts, {
+    taskCreateToolAvailable: toolAvailability?.taskCreateWithheld !== true,
+    delegateTaskToolAvailable: toolAvailability?.delegateWithheld !== true,
+  });
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
   /*
   FNXC:TaskRecommendations 2026-08-10-01:15:
@@ -323,14 +336,17 @@ export function getExecutorSystemPrompt(
   the validator it pairs with — the two must be added or removed together.
   */
   const maximumRecommendations = settings.maxRecommendationsPerTask ?? 3;
+  // FNXC:TaskRecommendations 2026-08-19-13:05: Cap zero is the final disabled state; otherwise required mode makes the executor submit an explicit quality-first evaluation at completion.
+  const requireTaskRecommendations = settings.requireTaskRecommendations === true && maximumRecommendations > 0;
   const sections = [
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
-    getCompletionRecommendationGuidance(maximumRecommendations),
+    getCompletionRecommendationGuidance(maximumRecommendations, requireTaskRecommendations),
     getWithheldTaskCreationGuidance(
       toolAvailability?.taskCreateWithheld === true,
       toolAvailability?.delegateWithheld === true,
       maximumRecommendations,
+      requireTaskRecommendations,
     ),
   ].filter((section) => section.trim());
   return sections.join("\n\n");

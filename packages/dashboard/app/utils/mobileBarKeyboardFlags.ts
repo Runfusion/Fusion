@@ -1,6 +1,7 @@
 export interface MobileBarKeyboardFlagsInput {
   isMobile: boolean;
   keyboardOpen: boolean;
+  keyboardFocusPending: boolean;
   anyModalOpen: boolean;
   /** True when a fullscreen mobile overlay owns keyboard/viewport layout. */
   overlayOpen: boolean;
@@ -28,14 +29,19 @@ Fullscreen mobile overlays (for example Quick Chat's sheet) own their own visual
 export function computeMobileBarKeyboardFlags({
   isMobile,
   keyboardOpen,
+  keyboardFocusPending,
   anyModalOpen,
   overlayOpen,
   isIOS,
 }: MobileBarKeyboardFlagsInput): MobileBarKeyboardFlags {
+  /*
+  FNXC:MobileChatKeyboardLayout 2026-08-23-18:14:
+  The nav bar's off-screen slide must not wait for a settled visualViewport sample: a withheld or late metric previously left it visible and lifted on individual keyboard opens. The padding strip and iOS footer collapse stay settled-gated because FN-5707 constrained them.
+  */
   const boardLayoutSuppressed = anyModalOpen || overlayOpen;
   const footerHidden = isMobile && keyboardOpen && !boardLayoutSuppressed;
-  const navKeyboardOpen = isMobile && keyboardOpen;
-  const footerKeyboardOpen = navKeyboardOpen && isIOS;
+  const navKeyboardOpen = isMobile && (keyboardOpen || keyboardFocusPending);
+  const footerKeyboardOpen = isMobile && keyboardOpen && isIOS;
 
   return {
     footerHidden,

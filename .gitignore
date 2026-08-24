@@ -129,3 +129,15 @@ packages/core/.gate-bundle/
 # alongside this entry. An operator who does want a snapshot committed can still
 # force it with `git add -f .fusion-knowledge/graph`.
 .fusion-knowledge/
+.pi-subagents/
+packages/core/src/postgres/pg_hba_trust.conf
+
+# FNXC:RecoveryArtifacts 2026-08-14-10:23:
+# Recovery/restore artifacts dumped into the repo root must never be tracked.
+# A `fusion-pg-plain.sql` restore dump hit ~10 GB and a `fusion-pg-*.dump`
+# binary dump hit ~210 MB; both were left untracked by a DB recovery and had
+# to be deleted manually (2026-08-14). Guard the naming pattern so a fresh
+# recovery can't accidentally `git add` a multi-GB dump into history.
+fusion-pg-*.sql
+fusion-pg-*.dump
+

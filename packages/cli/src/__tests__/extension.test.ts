@@ -306,6 +306,8 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_milestone_delete",
         "fn_slice_activate",
         "fn_feature_link_task",
+        "fn_feature_repoint_task",
+        "fn_feature_unlink_task",
         "fn_feature_update",
         "fn_feature_repair_validation",
         "fn_feature_set_status",
@@ -2964,6 +2966,99 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     expect(await missionStore.getFeature(feature.id)).toMatchObject({ status: "defined", loopState: "idle" });
   });
 
+  describe("fn_feature_repoint_task / fn_feature_unlink_task", () => {
+    it("re-points a linked feature to a second delivery task atomically", async () => {
+      const context = makeCtx(tmpDir);
+      const mission = await api.tools.get("fn_mission_create")!.execute("m", { title: "Repoint Mission" }, undefined, undefined, context);
+      const milestone = await api.tools.get("fn_milestone_add")!.execute("ms", { missionId: mission.details.missionId, title: "Milestone" }, undefined, undefined, context);
+      const slice = await api.tools.get("fn_slice_add")!.execute("sl", { milestoneId: milestone.details.milestoneId, title: "Slice" }, undefined, undefined, context);
+      const feature = await api.tools.get("fn_feature_add")!.execute("f", { sliceId: slice.details.sliceId, title: "Feature" }, undefined, undefined, context);
+      const taskA = await api.tools.get("fn_task_create")!.execute("ta", { description: "wrong task" }, undefined, undefined, context);
+      const taskB = await api.tools.get("fn_task_create")!.execute("tb", { description: "right delivery task" }, undefined, undefined, context);
+
+      // Original symptom reproduction: first pin to the wrong task (as fn_feature_link_task
+      // would naively do for the wrong target).
+      const link = await api.tools.get("fn_feature_link_task")!.execute("link", { featureId: feature.details.featureId, taskId: taskA.details.taskId }, undefined, undefined, context);
+      expect(link.isError).not.toBe(true);
+
+      const store = h.store();
+      const missionStore = store.getMissionStore();
+      expect((await missionStore.getFeature(feature.details.featureId))?.taskId).toBe(taskA.details.taskId);
+      const taskARow = (await store.getTask(taskA.details.taskId)) as any;
+      expect(taskARow.sliceId).toBe(slice.details.sliceId);
+      /*
+      FNXC:MissionFeatureRepointContract 2026-08-19-23:26 (RUFU-134 / PR #3491):
+      CodeRabbit flagged that this test asserted only ONE reverse field (`sliceId`).
+      `setTaskMissionLinkage` writes BOTH `missionId` AND `sliceId` onto the task row, so
+      the proof that the repoint moved the reverse link must assert BOTH fields on the new
+      task (set) and on the old task (cleared); asserting only `sliceId` would miss a
+      repoint that silently dropped `missionId`.
+      */
+      expect(taskARow.missionId).toBe(mission.details.missionId);
+
+      const repoint = await api.tools.get("fn_feature_repoint_task")!.execute("repoint", { featureId: feature.details.featureId, taskId: taskB.details.taskId }, undefined, undefined, context);
+      expect(repoint.isError).not.toBe(true);
+      expect(repoint.details.taskId).toBe(taskB.details.taskId);
+
+      const afterFeature = (await missionStore.getFeature(feature.details.featureId))!;
+      expect(afterFeature.taskId).toBe(taskB.details.taskId);
+      expect(afterFeature.status).toBe("triaged");
+      // Old reverse linkage cleared, new set. BOTH reverse fields (missionId + sliceId).
+      const oldTaskRow = (await store.getTask(taskA.details.taskId)) as any;
+      expect(oldTaskRow.sliceId).toBeUndefined();
+      expect(oldTaskRow.missionId).toBeUndefined();
+      const newTaskRow = (await store.getTask(taskB.details.taskId)) as any;
+      expect(newTaskRow.sliceId).toBe(slice.details.sliceId);
+      expect(newTaskRow.missionId).toBe(mission.details.missionId);
+    });
+
+    it("unlinks a linked feature (clearing taskId and demoting to defined) and errors on an already-unlinked feature", async () => {
+      const context = makeCtx(tmpDir);
+      const mission = await api.tools.get("fn_mission_create")!.execute("m", { title: "Unlink Mission" }, undefined, undefined, context);
+      const milestone = await api.tools.get("fn_milestone_add")!.execute("ms", { missionId: mission.details.missionId, title: "Milestone" }, undefined, undefined, context);
+      const slice = await api.tools.get("fn_slice_add")!.execute("sl", { milestoneId: milestone.details.milestoneId, title: "Slice" }, undefined, undefined, context);
+      const feature = await api.tools.get("fn_feature_add")!.execute("f", { sliceId: slice.details.sliceId, title: "Feature" }, undefined, undefined, context);
+      const task = await api.tools.get("fn_task_create")!.execute("t", { description: "linked delivery" }, undefined, undefined, context);
+      const store = h.store();
+      const missionStore = store.getMissionStore();
+
+      await api.tools.get("fn_feature_link_task")!.execute("link", { featureId: feature.details.featureId, taskId: task.details.taskId }, undefined, undefined, context);
+      expect((await missionStore.getFeature(feature.details.featureId))?.status).toBe("triaged");
+
+      const unlink = await api.tools.get("fn_feature_unlink_task")!.execute("unlink", { featureId: feature.details.featureId }, undefined, undefined, context);
+      expect(unlink.isError).not.toBe(true);
+      const after = (await missionStore.getFeature(feature.details.featureId))!;
+      expect(after.taskId).toBeUndefined();
+      expect(after.status).toBe("defined");
+      const taskRow = (await store.getTask(task.details.taskId)) as any;
+      expect(taskRow.sliceId).toBeUndefined();
+
+      const second = await api.tools.get("fn_feature_unlink_task")!.execute("unlink2", { featureId: feature.details.featureId }, undefined, undefined, context);
+      expect(second.isError).toBe(true);
+      expect(second.content[0].text).toContain("not linked");
+    });
+
+    it("re-points to a missing task with a clear error and handles an unknown feature", async () => {
+      const context = makeCtx(tmpDir);
+      const mission = await api.tools.get("fn_mission_create")!.execute("m", { title: "Repoint Err Mission" }, undefined, undefined, context);
+      const milestone = await api.tools.get("fn_milestone_add")!.execute("ms", { missionId: mission.details.missionId, title: "Milestone" }, undefined, undefined, context);
+      const slice = await api.tools.get("fn_slice_add")!.execute("sl", { milestoneId: milestone.details.milestoneId, title: "Slice" }, undefined, undefined, context);
+      const feature = await api.tools.get("fn_feature_add")!.execute("f", { sliceId: slice.details.sliceId, title: "Feature" }, undefined, undefined, context);
+
+      const toMissing = await api.tools.get("fn_feature_repoint_task")!.execute(
+        "repoint-missing-task", { featureId: feature.details.featureId, taskId: "FN-999" }, undefined, undefined, context,
+      );
+      expect(toMissing.isError).toBe(true);
+      expect(toMissing.content[0].text).toMatch(/not found|not on the active board/i);
+
+      const unknownFeature = await api.tools.get("fn_feature_repoint_task")!.execute(
+        "repoint-missing-feature", { featureId: "F-NOPE", taskId: "FN-1" }, undefined, undefined, context,
+      );
+      expect(unknownFeature.isError).toBe(true);
+      expect(unknownFeature.content[0].text).toContain("not found");
+    });
+  });
+
   describe("fn_mission_clear_blocked", () => {
     it("calls the attributed repair primitive and reports residual blockers", async () => {
       const clearMissionBlockedStatus = vi.fn().mockResolvedValue({
@@ -3770,6 +3865,8 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
         error: "Refusing to start coding agent in missing worktree: /tmp/fusion-missing-worktree",
         worktree: "/tmp/fusion-missing-worktree",
         branch: `fusion/${task.id}`,
+        // FNXC:CliTests 2026-08-23-16:02: FN-107 requires branchWriteOrigin provenance on every branch write; this engine-simulated fixture predates that guard.
+        branchWriteOrigin: "engine",
         sessionFile: "/tmp/fusion-session.json",
         mergeRetries: 3,
         worktreeSessionRetryCount: 3,
@@ -4638,7 +4735,15 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       const agentId = await seedAgent(tmpDir, { name: "delegate-resolve-degrades" });
       const store = h.store();
 
-      const resolve = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValueOnce(
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-23-16:03:
+      THE UNREADABLE SELECTION MUST STAY UNREADABLE FOR THE WHOLE CALL. `createTask` itself now
+      resolves the task's workflow IR (`createTaskBackendImpl` -> `resolveWorkflowIrForTask`), so a
+      `...Once` rejection was consumed by the CREATE and the tool's own resolve then succeeded —
+      the degraded-resolve branch under test was never entered. A store whose selection read fails
+      fails it for every reader, which is what this scenario models.
+      */
+      const resolve = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValue(
         new Error("workflow selection unreadable"),
       );
       const tool = api.tools.get("fn_delegate_task")!;

@@ -5,7 +5,14 @@ import type { Settings, Task, TaskStore } from "@fusion/core";
 const { recordRunAuditEventMock } = vi.hoisted(() => ({
   recordRunAuditEventMock: vi.fn(async () => undefined),
 }));
-vi.mock("../run-audit.js", async (importOriginal) => {
+/*
+FNXC:StalledCardWatchdog 2026-08-23-19:02:
+`src/run-audit.ts` was folded into `src/util/run-audit.ts` by the domain-folder move (cb57093d03), so a
+mock aimed at the old specifier intercepted nothing and every audit assertion in this file went silent —
+the detect count still passed while the emission was never observed. Mock the module self-healing.ts
+actually imports.
+*/
+vi.mock("../util/run-audit.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../util/run-audit.js")>();
   return {
     ...actual,

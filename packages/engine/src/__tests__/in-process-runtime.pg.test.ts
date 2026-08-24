@@ -224,9 +224,19 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
         name: "Runtime recall composition agent",
         role: "executor",
       });
-      const reflectedTask = await taskStore.createTask({ description: "runtime recall composition" });
+      /*
+      FNXC:MemoryRecallCapture 2026-08-23-18:30:
+      The card must really BE completed: `captureTaskPerformance` classifies the outcome from the
+      persisted column, and `updateTask` no longer moves a card (column changes are moveTask-owned),
+      so the old `updateTask({ column: "done" })` left it in `todo` and every capture was skipped.
+      `enabledWorkflowSteps: []` states that this fixture is about recall composition, not review
+      gating — the merge door otherwise refuses the move to `done` for unrun pre-merge groups.
+      */
+      const reflectedTask = await taskStore.createTask({ description: "runtime recall composition", enabledWorkflowSteps: [] } as never);
+      await taskStore.moveTask(reflectedTask.id, "in-progress" as never, { moveSource: "user" } as never);
+      await taskStore.moveTask(reflectedTask.id, "in-review" as never, { moveSource: "user" } as never);
+      await taskStore.moveTask(reflectedTask.id, "done" as never, { moveSource: "user" } as never);
       await taskStore.updateTask(reflectedTask.id, {
-        column: "done",
         status: "completed",
         assignedAgentId: reflectionAgent.id,
       });

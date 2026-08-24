@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode, IdeationCandidate, MissionWithHierarchy, DbTransaction } from "@fusion/core";
-import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT, listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT, listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import { promoteHeldTask } from "./execution/hold-release.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research/research-orchestrator.js";
@@ -78,6 +78,13 @@ export const taskCreateParams = Type.Object({
         "Omit to inherit the project default workflow. Use fn_workflow_list to discover valid IDs.",
     }),
   ),
+  repository_scope: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Explicit workspace repositories this task may modify. Names must match configured workspace repositories; " +
+        "omitting this lets the planner confirm a proposed scope.",
+    }),
+  ),
   mission_lineage: Type.Optional(missionLineageParams),
 });
 
@@ -128,6 +135,7 @@ export const acquireRepoWorktreeParams = Type.Object({
       "(e.g. 'wolf-server'). Must be one of the repos listed in the workspace. " +
       "If already acquired, returns the existing worktree path immediately.",
   }),
+  reason: Type.Optional(Type.String({ minLength: 1, description: "Why this repository is needed when it is outside the current task scope." })),
 });
 
 export const taskDocumentWriteParams = Type.Object({
@@ -619,6 +627,7 @@ export const askQuestionParams = Type.Object({
 
 export const memorySearchParams = Type.Object({
   query: Type.String({ description: "Search terms for durable project memory. Use focused keywords, not a full prompt." }),
+  topic: Type.Optional(Type.String({ description: "RUFU-068: optional read-time focus/topic. When set, scopes the project recall to a working topic (a within-project read filter). 'all', empty, or '*' clears to whole-project scope. The Stash backend pushes this as a &topic= query param for SQL-enforced filtering; never post-filter in-memory." })),
   limit: Type.Optional(Type.Number({ description: "Maximum snippets to return (default: 5, max: 20)" })),
 });
 
@@ -689,6 +698,11 @@ type AgentMemoryContext = {
 
 type MemoryToolOptions = {
   agentMemory?: AgentMemoryContext;
+  // FNXC:MemoryFocusEngine 2026-08-13-15:57: optional per-conversation memory
+  // focus/topic from the enclosing session (chat_sessions.memory_focus). When set,
+  // fn_memory_search scopes the project recall to this topic via
+  // resolveMemorySearchTopic → searchProjectMemory (a within-project read filter).
+  focus?: string;
 };
 
 type MemorySearchHit = {
@@ -1065,7 +1079,9 @@ async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryCon
 export function isAgentTaskCreateToolAvailable(
   settings: Pick<Settings, "ephemeralAgentTaskCreationPolicy" | "ephemeralAgentsCanCreateTasks"> | undefined | null,
   callerIsEphemeral: boolean | undefined,
+  lane: "task-execution" | "agent-session" = "agent-session",
 ): boolean {
+  if (lane === "task-execution") return false;
   if (!callerIsEphemeral) return true;
   return fusionCore.resolveEphemeralTaskCreationPolicy(settings ?? {}) !== "deny";
 }
@@ -1088,7 +1104,9 @@ export function isAgentTaskCreateToolAvailable(
 export function isAgentDelegateTaskToolAvailable(
   settings: Pick<Settings, "ephemeralAgentTaskCreationPolicy" | "ephemeralAgentsCanCreateTasks"> | undefined | null,
   callerIsEphemeral: boolean | undefined,
+  lane: "task-execution" | "agent-session" = "agent-session",
 ): boolean {
+  if (lane === "task-execution") return false;
   if (!callerIsEphemeral) return true;
   return fusionCore.resolveEphemeralTaskCreationPolicy(settings ?? {}) === "allow";
 }
@@ -1537,7 +1555,12 @@ export async function createAgentTask(
           ? undefined
           : computeParentIntentClaimId({ title: input.title, description: input.description, sourceParentTaskId }) ?? undefined
       ),
-      summarize: !input.title?.trim() ? true : undefined,
+      /*
+      FNXC:TitleSummarization 2026-08-19-13:43:
+      Agent-created tasks use the same project-scoped automatic title policy as every other
+      create gateway. Do not inject summarize:true for untitled tasks; that flag is reserved for
+      an explicit caller request.
+      */
       source: nextSource,
       githubTracking: shouldPrefillGithubTrackingEnabled
         ? {
@@ -1682,6 +1705,7 @@ export function createTaskCreateTool(
           description: params.description,
           dependencies: params.dependencies,
           priority: params.priority,
+          ...(params.repository_scope ? { repositoryScope: params.repository_scope } : {}),
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
           ...definedFeatureBootstrapInput(store, lineage),
@@ -2149,7 +2173,28 @@ the one caller that could not supply a context; Stage C threaded the executor's 
 fallback had no reachable caller left and an optional parameter would only be a way for a future
 caller to reintroduce an unattributed write silently.
 */
-export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
+/*
+FNXC:RepositoryScope 2026-08-20-23:40:
+A workspace plan confirms a task-level intent once, rather than turning each acquired checkout into
+an independent plan. The heading is mandatory for a workspace plan: retaining a creation proposal
+when a planner omitted or misspelled it would let review approve unconfirmed repository intent.
+*/
+function parsePlanRepositoryScope(content: string, configured: readonly string[]): string[] | undefined {
+  const match = content.match(/^##\s+Repository Scope\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/m);
+  if (!match) return undefined;
+  const repositories = [...match[1].matchAll(/^\s*[-*]\s+`?([^`\n]+?)`?\s*$/gm)]
+    .map((entry) => entry[1].trim())
+    .filter(Boolean);
+  if (repositories.length === 0 || repositories.some((repo) => !configured.includes(repo))) return undefined;
+  return [...new Set(repositories)].sort();
+}
+
+export function createTaskPromptWriteTool(
+  store: TaskStore,
+  taskId: string,
+  runContext: RunMutationContext,
+  canPersist?: () => boolean,
+): ToolDefinition {
   return {
     name: "fn_task_prompt_write",
     label: "Write PROMPT.md",
@@ -2158,22 +2203,116 @@ export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runC
       "Use during fresh triage planning, replanning, or Plan Review repair; provide the complete final PROMPT.md content.",
     parameters: taskPromptWriteParams,
     execute: async (_id: string, params: Static<typeof taskPromptWriteParams>) => {
+      /*
+      FNXC:RepositoryScope 2026-08-21-00:58:
+      updateTask's authoritative prompt path owns the planning lifecycle lock. Do not wrap this
+      tool in that non-reentrant lock: prompt publication would wait on itself before scope
+      confirmation could run, so the validated prompt-then-scope compensation remains sequential.
+      */
       try {
-        await store.updateTask(taskId, { prompt: params.content }, runContext);
-        const persisted = await store.getTask(taskId);
+        const rootDir = typeof (store as unknown as { getRootDir?: unknown }).getRootDir === "function"
+          ? store.getRootDir()
+          : undefined;
+        const configured = rootDir ? (await fusionCore.loadWorkspaceConfig(rootDir))?.repos ?? [] : [];
+        const plannedScope = parsePlanRepositoryScope(params.content, configured);
+        /*
+        FNXC:RepositoryScope 2026-08-20-23:57:
+        Workspace plans cannot persist before their Repository Scope is validated. This blocks a
+        Plan Review from approving a stale creation proposal when the planner omitted an empty, or
+        unknown scope heading; non-workspace plans retain their existing prompt-only contract.
+        */
+        if (configured.length > 0 && !plannedScope) {
+          throw new Error("Workspace PROMPT.md must include a non-empty ## Repository Scope with configured repository names");
+        }
+        const current = await store.getTask(taskId);
+        const hasStartedLanding = Object.values(current?.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
+        if (plannedScope && hasStartedLanding && JSON.stringify(current?.repositoryScope?.repositories ?? []) !== JSON.stringify(plannedScope)) {
+          throw new Error(`Repository scope for ${taskId} cannot change after workspace landing has started`);
+        }
+        /*
+        FNXC:RepositoryScope 2026-08-21-01:18:
+        PROMPT.md and confirmed task intent are one observable generation. The authoritative
+        updateTask path holds the planning lifecycle lock and writes both fields in one task-row
+        transaction, so review, completion, and land readers never observe a new scope heading
+        paired with the prior repository_scope value. File projection follows the committed row.
+        */
+        const repositoryScope = plannedScope
+          ? {
+              repositories: plannedScope,
+              state: "confirmed" as const,
+              revision: (current?.repositoryScope?.revision ?? 0) + 1,
+              confirmedAt: new Date().toISOString(),
+              confirmedBy: "plan" as const,
+              extensions: current?.repositoryScope?.extensions,
+            }
+          : undefined;
+        /*
+        FNXC:TaskReset 2026-08-22-04:49:
+        A triage attempt captured before Reset can outlive the route's non-reentrant planning lock.
+        Check its generation immediately before the authoritative write so a stale planner cannot
+        recreate PROMPT.md after Reset publishes the description-only state.
+        */
+        if (canPersist && !canPersist()) {
+          throw new Error(`Planning for ${taskId} was reset before PROMPT.md could be persisted`);
+        }
+        const promptUpdate = {
+          prompt: params.content,
+          ...(repositoryScope ? { repositoryScope } : {}),
+        };
+        if (canPersist) {
+          /*
+          FNXC:TaskReset 2026-08-22-18:07:
+          Reset serializes its publication with the non-reentrant planning lifecycle lock. A
+          generation check before `updateTask` is insufficient because that writer can queue behind
+          Reset and recreate PROMPT.md after reset commits. Check and write under the same lock,
+          using the lock-held TaskStore variants so this tool never re-enters the advisory lock.
+          */
+          await store.withPlanningLifecycleLock(taskId, async () => {
+            if (!canPersist()) {
+              throw new Error(`Planning for ${taskId} was reset before PROMPT.md could be persisted`);
+            }
+            const updated = await store.withTaskLock(taskId, () => store.updateTaskUnlocked(taskId, promptUpdate, runContext));
+            if (store.isBackendMode()) {
+              await store.reconcileSpecDriftWhilePlanningLocked(updated).catch((error: unknown) => {
+                log.warn(`[spec-lock] deferred drift reconciliation for ${updated.id}: ${error instanceof Error ? error.message : String(error)}`);
+              });
+            }
+            /* FNXC:TaskReset 2026-08-22-18:15: Reset clears agent-authored plan documents under this lifecycle lock. */
+            await mirrorPlanToProjectDb(store, taskId, params.content, {
+              author: runContext?.agentId ?? "agent",
+            });
+          });
+        } else {
+          await store.updateTask(taskId, promptUpdate, runContext);
+        }
+        /*
+        FNXC:PlanArtifactPersistence 2026-08-22-03:37:
+        FN-094 repointed this fail-closed check at updateTask's task-row return value after adding
+        workspace-scope publication. The row has no prompt column, so it can never verify PROMPT.md.
+        Re-read through getTask after the write because it hydrates the filesystem-backed artifact;
+        missing, unreadable, or changed content must still reject publication.
+        */
+        let persisted: Awaited<ReturnType<TaskStore["getTask"]>>;
+        try {
+          persisted = await store.getTask(taskId);
+        } catch {
+          throw new Error("authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified");
+        }
         if (persisted?.prompt !== params.content) {
           throw new Error("authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified");
         }
         /*
         FNXC:PlanArtifactPersistence 2026-07-26-03:55:
         `updateTask({ prompt })` writes the project-root PROMPT.md and task.json, but `project.tasks` has
-        no `prompt` column — the spec would live only as a file in the project checkout. Mirror it into the
-        `plan` task document so the plan is durable in the project database too. Best-effort: a mirror
-        failure must not fail a write whose authoritative persistence was just verified above.
+        no `prompt` column — the spec would live only as a file in the project checkout. Reset-fenced
+        planners mirror it inside the serialized prompt publication above, preventing Reset from clearing
+        the document and then observing a stale mirror recreated after its transaction commits.
         */
-        await mirrorPlanToProjectDb(store, taskId, params.content, {
-          author: runContext?.agentId ?? "agent",
-        });
+        if (!canPersist) {
+          await mirrorPlanToProjectDb(store, taskId, params.content, {
+            author: runContext?.agentId ?? "agent",
+          });
+        }
         return {
           content: [{ type: "text" as const, text: `Updated PROMPT.md for ${taskId}.` }],
           details: {},
@@ -4069,6 +4208,30 @@ export function createWorkflowAuthoringTools(
   ];
 }
 
+/**
+ * Resolve an active memory-search topic/focus to its effective value.
+ *
+ * RUFU-068: a conversation's focus is a within-project read filter that scopes
+ * recall to a working topic. Values that mean "no filter" collapse to `undefined`
+ * so the caller searches whole-project scope (project default):
+ *   - undefined / null → undefined (whole scope)
+ *   - empty or whitespace-only string → undefined
+ *   - "all" or "*" (operator way to clear the filter) → undefined
+ * Any other non-empty trimmed string is the active topic.
+ */
+// FNXC:MemoryFocusEngine 2026-08-13-15:57: per-conversation memory focus (RUFU-068).
+// A conversation can carry an active topic; recall (fn_memory_search) must scope to
+// it as a WITHIN-project read filter. 'all'/'*'/empty/undefined mean no filter →
+// whole-project scope (project default). The resolved topic is pushed through
+// searchProjectMemory → backend.search (Stash REST &topic= for SQL-side filtering),
+// never a client-side post-query filter.
+export function resolveMemorySearchTopic(focus: string | null | undefined): string | undefined {
+  if (focus == null) return undefined;
+  const trimmed = focus.trim();
+  if (trimmed === "" || trimmed === "all" || trimmed === "*") return undefined;
+  return trimmed;
+}
+
 export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
     name: "fn_memory_search",
@@ -4084,9 +4247,18 @@ export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSet
           ? await searchAgentMemoryWithQmd(rootDir, options.agentMemory, params.query, limit)
           : await searchAgentMemoryFile(rootDir, options.agentMemory, params.query, limit)
         : [];
+      // FNXC:MemoryFocusEngine 2026-08-13-15:57: scope the project recall to the
+      // active topic when a focus is set — either explicitly via params.topic, or
+      // from the enclosing conversation's focus (options.focus). 'all'/''/'*' clears
+      // to whole-project scope. This is a WITHIN-project read filter; it never
+      // weakens cross-project scope isolation. The topic reaches searchProjectMemory
+      // → backend.search, which (for Stash) pushes it as a &topic= query param for
+      // SQL-enforced filtering — we never post-filter results in-memory.
+      const activeTopic = resolveMemorySearchTopic(params.topic ?? options?.focus);
       const projectResults = await searchProjectMemory(rootDir, {
         query: params.query,
         limit,
+        ...(activeTopic ? { topic: activeTopic } : {}),
       }, settings);
       const results = [...agentResults, ...projectResults]
         .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
@@ -4458,6 +4630,8 @@ export const featureUpdateParams = Type.Object({ id: Type.String(), title: Type.
 export const featureDeleteParams = Type.Object({ featureId: Type.String(), force: Type.Optional(Type.Boolean()) });
 export const featureSetStatusParams = Type.Object({ id: Type.String(), status: Type.Union(fusionCore.FEATURE_STATUSES.map((status) => Type.Literal(status))), reason: Type.Optional(Type.String()) });
 export const featureLinkTaskParams = Type.Object({ featureId: Type.String(), taskId: Type.String() });
+export const featureRepointTaskParams = featureLinkTaskParams;
+export const featureUnlinkTaskParams = Type.Object({ featureId: Type.String() });
 export const featureRepairValidationParams = Type.Object({ id: Type.String(), action: Type.Union([Type.Literal("clear"), Type.Literal("re_run")]), reason: Type.Optional(Type.String()) });
 export const researchFindingPromoteParams = Type.Object({
   runId: Type.String(),
@@ -4654,6 +4828,8 @@ export function createMissionTools(store: TaskStore, context: MissionToolActorCo
     }),
     tool("fn_feature_delete", "Delete Feature", "Delete a feature, respecting linked-task guards.", featureDeleteParams, async (p) => { await store.getMissionStore().deleteFeature(p.featureId, p.force ===true); return missionToolResult(`Deleted ${p.featureId}`, { featureId: p.featureId }); }),
     tool("fn_feature_link_task", "Link Feature to Task", "Link a feature to a live project-scoped task.", featureLinkTaskParams, async (p) => { const feature = await store.getMissionStore().linkFeatureToTask(p.featureId, p.taskId); return missionToolResult(`Linked ${feature.id} to ${p.taskId}`, { feature }); }),
+    tool("fn_feature_repoint_task", "Re-point Feature to Task", "Atomically re-point an already-linked feature's single-valued taskId to a different live project-scoped task, correcting a mis-pinned link without the status-lossy unlink then link two-step. Same-task re-point is an idempotent no-op.", featureRepointTaskParams, async (p) => { const feature = await store.getMissionStore().repointFeatureToTask(p.featureId, p.taskId); return missionToolResult(`Re-pointed ${feature.id} to ${p.taskId}`, { feature }); }),
+    tool("fn_feature_unlink_task", "Unlink Feature from Task", "Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status to defined (for use before the documented safe duplicate-cleanup flow). Fails if the feature is not currently linked.", featureUnlinkTaskParams, async (p) => { const feature = await store.getMissionStore().unlinkFeatureFromTask(p.featureId); return missionToolResult(`Unlinked ${feature.id} from its task`, { feature }); }),
     tool("fn_research_promote_finding", "Promote Research Finding", "Promote a completed research finding into a canonical mission feature.", researchFindingPromoteParams, async (p) => {
       const missionStore = store.getMissionStore();
       if (!("addResearchFeature" in missionStore)) return missionToolResult("Research promotion requires the PostgreSQL mission store", { code: "POSTGRES_REQUIRED" }, true);
@@ -6448,9 +6624,48 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
   };
 }
 
+export function isLateAcquireColumnBlocked(workflowIr: fusionCore.WorkflowIr, column: string): boolean {
+  const blockedColumns = new Set<string>([
+    "in-review",
+    "done",
+    "archived",
+    ...fusionCore.resolveReviewColumns(workflowIr),
+    ...fusionCore.columnsWithFlag(workflowIr, "complete"),
+    ...fusionCore.columnsWithFlag(workflowIr, "archived"),
+  ]);
+  return blockedColumns.has(column);
+}
+
+class LateWorkspaceRepoAcquireError extends Error {
+  constructor(public readonly repo: string) {
+    super(`Cannot acquire new repository ${repo} after review or landing has started`);
+    this.name = "LateWorkspaceRepoAcquireError";
+  }
+}
+
+  /*
+  FNXC:WorkspaceLateAcquire 2026-08-20-20:37 DELIBERATE-LITERAL:
+  Late worktree acquisition is refused once the task has left the executable column set
+  (in-review — review/merge owns the worktree; done/archived — terminal) or has started
+  landing (a merging-* status, or any workspace repo with a landedSha). This is a
+  deliberate column+status+workspace condition (FN-9163, upstream 2a3150582) — reviewed
+  and intentionally kept as an honest literal for the lifecycle-column census; no single
+  role helper expresses this three-part condition without inventing a bespoke trait.
+  (2026-08-21, RUFU-146 rebase: after #3492 landed the column half is resolved by
+  isLateAcquireColumnBlocked and the three-part condition now lives in this helper.)
+  */
+async function isWorkspaceRepoLateAcquireBlocked(store: TaskStore, currentTask: import("@fusion/core").Task, repo: string): Promise<boolean> {
+  if (currentTask.workspaceWorktrees?.[repo]) return false;
+  if (["merging", "merging-pr", "merging-fix"].includes(currentTask.status ?? "")) return true;
+  if (Object.values(currentTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha))) return true;
+  const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, currentTask.id);
+  return isLateAcquireColumnBlocked(workflowIr, currentTask.column);
+}
+
 export function createAcquireRepoWorktreeTool(opts: {
   workspaceRootDir: string;
   workspaceRepos: string[];
+  resolveWorkspaceRepos?: () => Promise<string[]>;
   task: import("@fusion/core").Task;
   store: TaskStore;
   settings: Partial<Settings>;
@@ -6475,25 +6690,51 @@ export function createAcquireRepoWorktreeTool(opts: {
 }): ToolDefinition {
   /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): `executor.ts` is the only caller and now carries
      a run context, so the option is required and there is no fallback left to resolve. */
-  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
+  const { workspaceRootDir, workspaceRepos, resolveWorkspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
   return {
     name: "fn_acquire_repo_worktree",
     label: "Acquire Repo Worktree",
     description:
       "Acquire an isolated git worktree for a sub-repo in this workspace. " +
+      "The returned repository-relative path is inside this task's workspace directory. " +
       "Call this before editing files in a sub-repo; work in the returned path. " +
       `Available repos: ${workspaceRepos.join(", ")}.`,
     parameters: acquireRepoWorktreeParams,
     execute: async (_id: string, params: Static<typeof acquireRepoWorktreeParams>) => {
       const { repo } = params;
-      if (!workspaceRepos.includes(repo)) {
+      const freshTask = await store.getTask(task.id);
+      /*
+      FNXC:Workspace 2026-08-20-02:03:
+      Membership can grow on disk during a run. Refresh per acquire, but use a monotone union of
+      startup, fresh, and acquired members so a transient refresh never revokes a usable repo.
+      */
+      let freshRepos: string[] = [];
+      try { freshRepos = await resolveWorkspaceRepos?.() ?? []; } catch { /* optional refresh is fail-safe */ }
+      const allowed = [...new Set([...workspaceRepos, ...freshRepos, ...Object.keys(freshTask.workspaceWorktrees ?? {})])];
+      if (!allowed.includes(repo)) {
         return {
-          content: [{ type: "text" as const, text: `ERROR: Unknown repo: "${repo}". Available: ${workspaceRepos.join(", ")}` }],
+          content: [{ type: "text" as const, text: `ERROR: Unknown repo: "${repo}". Available: ${allowed.join(", ")}. Add it to .fusion/workspace.json in Settings → General → Workspace repositories, then retry without restarting the engine.` }],
           details: {},
           isError: true,
         };
       }
-      const freshTask = await store.getTask(task.id);
+      const refuseLateAcquisition = async () => {
+        await store.logEntry(task.id, `fn_acquire_repo_worktree: refused late acquisition of ${repo}; task is already in review or landing`, undefined, runContext);
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Cannot acquire new repository "${repo}" after review or landing has started. Create a follow-up task with fn_task_create for this repository.` }],
+          details: {},
+          isError: true,
+        };
+      };
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-20-04:35:
+      A renamed review/terminal lane must close late repository admission exactly like the built-in
+      `in-review`/`done`/`archived` lanes. Resolve membership from the task's own workflow while
+      retaining the legacy ids as a fail-safe for malformed or partially migrated task state.
+      */
+      if (await isWorkspaceRepoLateAcquireBlocked(store, freshTask, repo)) {
+        return refuseLateAcquisition();
+      }
       /*
       FNXC:Workspace 2026-06-21-22:30:
       F1 — acquireWorkspaceRepoWorktree can throw WorkspaceRepoAcquireBusyError on
@@ -6517,8 +6758,23 @@ export function createAcquireRepoWorktreeTool(opts: {
           runContext,
           runConfiguredCommand,
           taskEnv,
+          validateTaskBeforeCreate: async (latestTask) => {
+            if (await isWorkspaceRepoLateAcquireBlocked(store, latestTask, repo)) {
+              throw new LateWorkspaceRepoAcquireError(repo);
+            }
+          },
+          // FNXC:WorkspaceWorktree 2026-08-22-22:16: A mid-flight scope extension joins the task's single directory unless this task is already legacy.
+          ...(() => {
+            const taskDir = resolveWorkspaceTaskWorktreeDir(workspaceRootDir, settings, freshTask.id);
+            return isLegacyWorkspaceWorktreeLayout(freshTask, taskDir)
+              ? {}
+              : { worktreePath: resolveWorkspaceRepoWorktreePath(taskDir, repo) };
+          })(),
         });
       } catch (err) {
+        if (err instanceof LateWorkspaceRepoAcquireError) {
+          return refuseLateAcquisition();
+        }
         if (err instanceof WorkspaceRepoAcquireBusyError) {
           return {
             content: [{ type: "text" as const, text: `Sub-repo ${repo} is temporarily locked by another task's acquisition; retry fn_acquire_repo_worktree shortly.` }],
@@ -6533,6 +6789,25 @@ export function createAcquireRepoWorktreeTool(opts: {
           isError: true,
         };
       }
+      /*
+      FNXC:RepositoryScope 2026-08-20-23:40:
+      A successful pre-land acquisition outside explicit intent is an extension request, not evidence
+      that every acquired repository belongs to the task. Persist the accepted extension once so the
+      next review and land pass can deliberately include it.
+      */
+      if (!freshTask.repositoryScope?.repositories.includes(repo)) {
+        /*
+        FNXC:RepositoryScope 2026-08-21-01:53:
+        Acquisition extends intent as a durable delta after the checkout succeeds. A fresh
+        planning-locked read preserves a concurrent plan confirmation or operator decision.
+        */
+        await store.mutateTaskRepositoryScope(task.id, {
+          action: "add",
+          repositories: [repo],
+          reason: params.reason ?? "Executor acquired a repository required for implementation.",
+          actor: runContext?.agentId ?? "executor",
+        });
+      }
       // FNXC:Workspace 2026-06-21-22:30: F2 — register a freshly-acquired sub-repo worktree in the executor's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
       // FNXC:Workspace 2026-06-22-09:00: register UNCONDITIONALLY, including the
       // already-acquired short-circuit. After an executor restart activeWorktrees is an
@@ -6544,8 +6819,8 @@ export function createAcquireRepoWorktreeTool(opts: {
       await store.logEntry(
         task.id,
         result.alreadyAcquired
-          ? `fn_acquire_repo_worktree: reusing existing worktree for ${repo} at ${result.worktreePath}`
-          : `fn_acquire_repo_worktree: created worktree for ${repo} at ${result.worktreePath} (branch: ${result.branch})`,
+          ? `fn_acquire_repo_worktree: reusing existing worktree for ${repo} at repository-relative path ${repo}`
+          : `fn_acquire_repo_worktree: created worktree for ${repo} at repository-relative path ${repo} (branch: ${result.branch})`,
         undefined,
         runContext,
       );

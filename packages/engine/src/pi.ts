@@ -92,11 +92,18 @@ import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp/mcp-runtime-s
 import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp/mcp-session-tools.js";
 export { isModelAuthTierIncompatibilityError } from "./errors/transient-error-detector.js";
 import { buildBashContainmentDenialMessage, evaluateBashContainment } from "./bash-containment.js";
+import type { SessionBoundaryDescriptor } from "./agents/agent-runtime.js";
+import { resolveSandboxBackend, type SandboxBackend, type SandboxPolicy } from "./sandbox/index.js";
 
 const RTK_ACCEPTED_REWRITE_EXIT_CODES = new Set([0, 3]);
 const RTK_EXPECTED_PASSTHROUGH_EXIT_CODES = new Set([1, 2]);
 const RTK_EXPECTED_FAIL_OPEN_ERROR_CODES = new Set(["ABORT_ERR", "ENOENT", "ETIMEDOUT"]);
 const RTK_REWRITE_MAX_BUFFER_BYTES = 64 * 1024;
+
+/** Quote a backend argv for pi's string-shaped bash spawn hook. */
+function shellEscapeCommand(command: string, args: readonly string[]): string {
+  return [command, ...args].map((part) => `'${part.replace(/'/g, `'\\''`)}'`).join(" ");
+}
 
 export type RtkRewriteMode = "off" | "rewrite";
 
@@ -1038,6 +1045,10 @@ export type BuiltinWebToolName = "WebSearch" | "WebFetch";
 
 export interface AgentOptions {
   cwd: string;
+  /** Explicit task boundary; undeclared callers retain legacy path inference. */
+  sessionBoundary?: SessionBoundaryDescriptor;
+  sandboxBackendId?: import("./sandbox/types.js").SandboxCapabilities["id"];
+  sandboxPolicy?: SandboxPolicy;
   systemPrompt: string;
   /** Structured prompt layers for cross-session caching. When provided,
    *  the stable layer is used as systemPromptOverride and the dynamic
@@ -1130,6 +1141,8 @@ export interface AgentOptions {
   onFallbackModelUsed?: (payload: FallbackModelUsedPayload) => Promise<void> | void;
   /** Optional task context for fallback notifications. */
   taskId?: string;
+  /** True only for sessions actively executing a board task (FN-125). */
+  taskExecutionSession?: boolean;
   taskTitle?: string;
   actionGateContext?: AgentActionGateContext;
   /** Permanent-agent action gating context forwarded by runtime/session helpers. */
@@ -1147,15 +1160,22 @@ export interface AgentOptions {
  * provider register but threw "No API provider registered for api: anthropic"
  * the moment a task tried to stream.
  *
+ * FNXC:CustomProviders 2026-08-19-15:28:
+ * Google-compatible custom providers keep the registered Google dialect. This path and dashboard
+ * registration must agree so pi performs the same thinking-level translation for every custom model.
+ *
  * @param apiType - the custom provider's declared compatibility type.
  * @returns the registered pi-ai api key to stream against.
  */
-function resolveCustomProviderApiType(apiType: string): "anthropic-messages" | "openai-responses" | "openai-completions" {
+function resolveCustomProviderApiType(apiType: string): "anthropic-messages" | "openai-responses" | "google-generative-ai" | "openai-completions" {
   if (apiType === "anthropic-compatible") {
     return "anthropic-messages";
   }
   if (apiType === "openai-responses") {
     return "openai-responses";
+  }
+  if (apiType === "google-generative-ai") {
+    return "google-generative-ai";
   }
   return "openai-completions";
 }
@@ -1693,6 +1713,57 @@ async function assertValidWorktreeSession(cwd: string, projectRoot: string): Pro
 }
 
 /**
+ * FNXC:WorkspaceBoundary 2026-08-22-21:58:
+ * FN-158 declares task boundaries at the executor because grouped configured
+ * worktree paths cannot safely be inferred. A workspace task directory is not a
+ * Git checkout: each child is validated against its own repository root instead.
+ */
+export async function resolveSessionBoundaryRoot(
+  cwd: string,
+  descriptor?: SessionBoundaryDescriptor,
+): Promise<{ worktreePath: string | null; worktreeProjectRoot: string | null }> {
+  if (!descriptor) {
+    const worktreeProjectRoot = getProjectRootFromWorktree(cwd);
+    if (worktreeProjectRoot) await assertValidWorktreeSession(cwd, worktreeProjectRoot);
+    return { worktreePath: cwd, worktreeProjectRoot };
+  }
+
+  const root = descriptor.writableRoot ?? cwd;
+  if (!existsSync(root) || !existsSync(descriptor.projectRoot)) {
+    throw new Error(`Refusing to start declared ${descriptor.kind} session: boundary root is missing`);
+  }
+  if (!isSameOrInsidePath(resolve(root), resolve(cwd))) {
+    throw new Error(`Refusing to start declared ${descriptor.kind} session outside its boundary root`);
+  }
+  if (descriptor.kind === "read-only-root") {
+    if (descriptor.writableRoot !== null) {
+      throw new Error("Refusing read-only-root session with a writable root");
+    }
+    return { worktreePath: root, worktreeProjectRoot: descriptor.projectRoot };
+  }
+  if (descriptor.kind === "task-worktree") {
+    await assertValidWorktreeSession(root, descriptor.projectRoot);
+    return { worktreePath: root, worktreeProjectRoot: descriptor.projectRoot };
+  }
+
+  const repoRoots = descriptor.repoRoots ?? [];
+  if (repoRoots.length === 0) {
+    throw new Error("Refusing workspace-task-dir session without declared repository roots");
+  }
+  let validatedChildren = 0;
+  for (const repo of repoRoots) {
+    const child = resolve(root, repo.repoRelPath);
+    if (!isSameOrInsidePath(resolve(root), child) || !existsSync(child)) continue;
+    await assertValidWorktreeSession(child, repo.repoRootDir);
+    validatedChildren += 1;
+  }
+  if (validatedChildren === 0) {
+    throw new Error("Refusing workspace-task-dir session without a valid repository worktree child");
+  }
+  return { worktreePath: root, worktreeProjectRoot: descriptor.projectRoot };
+}
+
+/**
  * Check if a path is allowed to be accessed from a worktree session.
  * Rules:
  * - Paths inside the worktree are always allowed
@@ -1756,7 +1827,7 @@ function isWorktreeAllowedPath(
   // PROMPT.md / task.json of dependency tasks without needing them copied
   // into the worktree. `glob`/`grep` are narrow enough to allow as well so
   // the agent can discover them; writes and bash remain restricted.
-  const readOnlyTools = new Set(["read", "glob", "grep"]);
+  const readOnlyTools = new Set(["read", "glob", "grep", "find", "ls"]);
   if (toolName && readOnlyTools.has(toolName)) {
     if (projectRelativePaths.some((relPath) => /^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relPath))) {
       return true;
@@ -1799,6 +1870,30 @@ function isWorktreeAllowedPath(
  * message with `content: undefined`, which pi's downstream handling later
  * crashes on with "Cannot read properties of undefined (reading 'filter')".
  */
+/*
+FNXC:WorkspaceBoundary 2026-08-22-23:17:
+FN-158 keeps this deliberately limited shell-text inspection as portable defence
+in depth. Shell parsing is not sound; the kernel sandbox is the hard control.
+This catches the known `cd ../../repo && touch` bypass and makes it visible with
+exactly the same boundary rejection as file tools.
+*/
+function bashCommandTargetsOutsideBoundary(
+  command: string,
+  cwd: string,
+  worktreePath: string,
+  projectRoot: string,
+  readOnlyExtraRoots: readonly string[],
+): boolean {
+  const targets = command.matchAll(/(?:\b(?:cd|pushd)\s+|(?<!\S))(\/[^\s;&|]+|\.\.\/[^\s;&|]+)/g);
+  for (const match of targets) {
+    const target = match[1]?.replace(/["']/g, "");
+    if (!target) continue;
+    const resolvedTarget = isAbsolute(target) ? target : resolve(cwd, target);
+    if (!isWorktreeAllowedPath(worktreePath, projectRoot, resolvedTarget, "bash", readOnlyExtraRoots)) return true;
+  }
+  return false;
+}
+
 function boundaryRejection(message: string, details?: Record<string, unknown>) {
   return {
     content: [{ type: "text", text: message }],
@@ -1843,6 +1938,7 @@ export function wrapToolsWithBoundary(
   worktreePath: string | null,
   projectRoot: string | null,
   readOnlyExtraRoots: readonly string[] = [],
+  readOnlyBoundary = false,
 ): ToolDefinition[] {
   if (!worktreePath || !projectRoot) {
     return tools; // Not a worktree session, no wrapping needed
@@ -1852,7 +1948,7 @@ export function wrapToolsWithBoundary(
 
   return tools.map((tool) => {
     // Only wrap tools that access the filesystem
-    const fileToolNames = new Set(["read", "write", "edit", "glob", "grep", "bash"]);
+    const fileToolNames = new Set(["read", "write", "edit", "glob", "grep", "find", "ls", "bash", "fn_run_verification"]);
     if (!fileToolNames.has(tool.name)) {
       return tool;
     }
@@ -1869,6 +1965,10 @@ export function wrapToolsWithBoundary(
         const params = args[1] as Record<string, unknown>;
         const _signal = args[2] as AbortSignal | undefined;
 
+        if (readOnlyBoundary && new Set(["write", "edit", "bash"]).has(tool.name)) {
+          return boundaryRejection("This session has a read-only workspace boundary and cannot modify files or run shell commands.");
+        }
+
         // Check path argument for file operations
         const pathArg = params.path as string | undefined;
         if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg, tool.name, normalizedReadOnlyExtraRoots)) {
@@ -1881,13 +1981,15 @@ export function wrapToolsWithBoundary(
           );
         }
 
-        // For bash, also check the working directory if specified
+        // Bash and bounded verification commands must share the same cwd fence.
         const cwdArg = params.cwd as string | undefined;
-        if (tool.name === "bash" && cwdArg && !isWorktreeAllowedPath(worktreePath, projectRoot, cwdArg, tool.name)) {
-          return boundaryRejection(
-            `Working directory is outside the worktree boundary. ` +
-              `Commands must run inside the worktree.`,
-          );
+        if ((tool.name === "bash" || tool.name === "fn_run_verification") && cwdArg
+          && !isWorktreeAllowedPath(worktreePath, projectRoot, cwdArg, tool.name, normalizedReadOnlyExtraRoots)) {
+          return boundaryRejection("Working directory is outside the worktree boundary. Commands must run inside the worktree.");
+        }
+        if (tool.name === "bash" && typeof params.command === "string"
+          && bashCommandTargetsOutsideBoundary(params.command, cwdArg ?? worktreePath, worktreePath, projectRoot, normalizedReadOnlyExtraRoots)) {
+          return boundaryRejection("Command targets a path outside the worktree boundary. Commands must run inside the worktree.");
         }
 
         // Call the original tool implementation with all arguments passed through
@@ -2483,16 +2585,28 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   // Grep→grep). When a coding session ran via Claude CLI tried `Glob`, pi
   // returned "Tool find not found" and the agent looped. Compose explicitly
   // so every tool referenced by tool-mapping.ts is registered.
-  const bashToolOptions = options.taskEnv
+  /*
+  FNXC:WorkspaceSandbox 2026-08-22-22:15:
+  A task session prepares its explicitly selected backend before exposing bash.
+  Native returns no wrapper, preserving the historical command invocation.
+  */
+  const sessionSandbox: SandboxBackend | undefined = options.sessionBoundary
+    ? resolveSandboxBackend({ backendId: options.sandboxBackendId })
+    : undefined;
+  if (sessionSandbox && options.sandboxPolicy) await sessionSandbox.prepare(options.sandboxPolicy);
+  const bashToolOptions = (options.taskEnv || sessionSandbox)
     ? {
-        spawnHook: ({ command, cwd, env }: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => ({
-          command,
-          cwd,
-          env: {
-            ...env,
-            ...options.taskEnv,
-          },
-        }),
+        spawnHook: ({ command, cwd, env }: { command: string; cwd: string; env: NodeJS.ProcessEnv }) => {
+          const wrapped = sessionSandbox?.wrapCommand?.(command, { cwd, env });
+          return {
+            command: wrapped ? shellEscapeCommand(wrapped.command, wrapped.args) : command,
+            cwd,
+            env: {
+              ...env,
+              ...options.taskEnv,
+            },
+          };
+        },
       }
     : undefined;
 
@@ -2518,13 +2632,9 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   void createCodingTools;
   void createReadOnlyTools;
 
-  // Detect if this is a worktree session and apply path boundaries
-  const worktreePath = options.cwd;
-  const worktreeProjectRoot = getProjectRootFromWorktree(worktreePath);
-  if (worktreeProjectRoot) {
-    await assertValidWorktreeSession(worktreePath, worktreeProjectRoot);
-  }
-  const boundaryContext = { worktreePath, worktreeProjectRoot };
+  // Declared task boundaries fail closed; only ordinary undeclared sessions retain
+  // legacy inference so durable-agent heartbeats at the project root stay unchanged.
+  const boundaryContext = await resolveSessionBoundaryRoot(options.cwd, options.sessionBoundary);
 
   // resolvedProjectRoot was computed above (before registerExtensionProviders)
   // and is reused here for resource loader and skill discovery.
@@ -2786,6 +2896,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       boundaryContext.worktreePath,
       boundaryContext.worktreeProjectRoot,
       normalizedAdditionalSkillPaths,
+      options.sessionBoundary?.kind === "read-only-root",
     );
     // FNXC:ToolOutputBudget 2026-08-03-16:00:
     // Keep this outermost so policy-gate and boundary rejection text is bounded too;
@@ -3085,11 +3196,22 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       ...(principalAgentName ? { agentName: principalAgentName } : {}),
       ...(options.taskId ? { taskId: options.taskId } : {}),
       ...(options.sessionPurpose ? { purpose: options.sessionPurpose } : {}),
+      ...(options.taskExecutionSession ? { taskExecutionSession: true } : {}),
     };
   })();
   const sessionIdentityKeys = [...new Set([options.cwd, resolvedProjectRoot].filter((key): key is string => Boolean(key)))];
   const attachSessionIdentity = (session: PromptableSession & { dispose?: () => void | Promise<void> }): void => {
-    const identityDisposers = sessionIdentityKeys.map((key) => registerFusionSessionIdentity(key, sessionIdentity));
+    /*
+    FNXC:TaskExecutionTaskCreation 2026-08-21-23:16:
+    Task-execution markers must not occupy the shared project-root registry key:
+    concurrent heartbeat or triage lookup would become ambiguous and fail closed.
+    ALS retains the marker during this session's own invocation.
+    */
+    const identityDisposers = sessionIdentityKeys.map((key) => {
+      if (key === options.cwd || !options.taskExecutionSession) return registerFusionSessionIdentity(key, sessionIdentity);
+      const { taskExecutionSession: _marker, ...projectRootIdentity } = sessionIdentity;
+      return registerFusionSessionIdentity(key, projectRootIdentity);
+    });
     const sessionInvocations = session as unknown as Partial<Record<"prompt" | "promptWithFallback", (...args: unknown[]) => unknown>>;
     const wrapInvocation = (methodName: "prompt" | "promptWithFallback"): void => {
       const original = sessionInvocations[methodName];

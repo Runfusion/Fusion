@@ -2,7 +2,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Task } from "@fusion/core";
-import { TaskContextMenu, buildTaskActionMenuModel } from "../TaskContextMenu";
+import { TaskContextMenu, buildTaskActionMenuModel, buildTaskMoveMenuItems } from "../TaskContextMenu";
 
 const t = ((key: string, fallback: string, vars?: Record<string, string>) => {
   if (!vars) return fallback;
@@ -331,6 +331,59 @@ describe("TaskContextMenu shared task action model", () => {
     expect(del).toHaveFocus();
     fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" });
     expect(pause).toHaveFocus();
+  });
+
+  /*
+  FNXC:TaskCardMovement 2026-08-19-18:35:
+  Multiple contextual transitions must use one expandable parent rather than flattening repeated
+  Move to actions. The hierarchy is tested at the shared menu seam so Board and List stay aligned.
+  */
+  it("groups unique multiple moves in one accessible submenu and dispatches a child once", () => {
+    const onMove = vi.fn();
+    const items = buildTaskMoveMenuItems([
+      { column: "todo", label: "Move to Todo", primaryLabel: "Move to Todo" },
+      { column: "in-review", label: "Move to Review", primaryLabel: "Move to Review" },
+      { column: "todo", label: "Duplicate should be ignored", primaryLabel: "Duplicate should be ignored" },
+    ], onMove, "Move to");
+    expect(items).toHaveLength(1);
+    expect("items" in items[0] && items[0].items.map((item) => item.id)).toEqual(["move-todo", "move-in-review"]);
+
+    render(<TaskContextMenu actions={items} />);
+    const parent = screen.getByRole("menuitem", { name: "Move to", exact: true });
+    fireEvent.keyDown(parent, { key: "ArrowRight" });
+    const todo = screen.getByRole("menuitem", { name: "Move to Todo" });
+    expect(todo).toHaveFocus();
+    fireEvent.pointerUp(todo, { pointerType: "touch", pointerId: 1 });
+    fireEvent.click(todo);
+    expect(onMove).toHaveBeenCalledTimes(1);
+    expect(onMove).toHaveBeenCalledWith("todo");
+  });
+
+  it("opens a Move to submenu left when its right edge would overflow the viewport", () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      right: window.innerWidth + 1,
+    } as DOMRect);
+    const items = buildTaskMoveMenuItems([
+      { column: "todo", label: "Move to Todo", primaryLabel: "Move to Todo" },
+      { column: "in-review", label: "Move to Review", primaryLabel: "Move to Review" },
+    ], vi.fn(), "Move to");
+
+    render(<TaskContextMenu actions={items} />);
+    const parent = screen.getByRole("menuitem", { name: "Move to", exact: true });
+    fireEvent.click(parent);
+
+    expect(parent.parentElement?.querySelector(".task-context-menu__submenu"))
+      .toHaveClass("task-context-menu__submenu--opens-left");
+    rectSpy.mockRestore();
+  });
+
+  it("keeps zero moves absent and a single move direct", () => {
+    expect(buildTaskMoveMenuItems([], vi.fn(), "Move to")).toEqual([]);
+    const [item] = buildTaskMoveMenuItems([
+      { column: "todo", label: "Move to Todo", primaryLabel: "Move to Todo" },
+    ], vi.fn(), "Move to");
+    expect(item).toMatchObject({ id: "move-todo", label: "Move to Todo" });
+    expect("items" in item).toBe(false);
   });
 });
 

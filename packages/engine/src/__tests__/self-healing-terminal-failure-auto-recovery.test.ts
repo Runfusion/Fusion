@@ -136,8 +136,17 @@ pgDescribe("terminal-failure auto recovery production lifecycle", () => {
   it("withholds a generic failure, retries it durably, then escalates once", async () => {
     const store = harness.store();
     await store.updateSettings({ autoRecovery: { mode: "on" }, maintenanceIntervalMs: 60_000 } as never);
+    await store.updateGlobalSettings({ wedgeNotificationSettleMs: 0 } as never);
     const sendMessageOnce = vi.fn().mockResolvedValue({ message: {}, inserted: true });
-    const service = new NotificationService(store, { messageStore: { on: () => undefined, sendMessageOnce } as never });
+    /*
+    FNXC:TaskWedgeNotifications 2026-08-23-19:30:
+    FN-8953 (6ae9299576) later gave wedge delivery a 5-minute settle hold, so a default service
+    marks the alert `pending` and arms a timer instead of dispatching. This test owns the
+    auto-recovery budget and its service-first escalation ordering, not the settle hold (which has
+    its own coverage in self-healing-pending-wedge-notification.test.ts), so it opts out of the
+    hold rather than waiting on a timer.
+    */
+    const service = new NotificationService(store, { messageStore: { on: () => undefined, sendMessageOnce } as never, wedgeNotificationSettleMs: 0 });
     const notifier = new NtfyNotifier(store, {}, service);
     await notifier.start();
     const notify = vi.spyOn(service, "notifyTaskWedge");
@@ -179,7 +188,19 @@ pgDescribe("terminal-failure auto recovery production lifecycle", () => {
       expect(current.status).toBeUndefined();
     }
 
-    await store.updateTask(task.id, { status: "failed", error: "opaque terminal failure" } as never);
+    /*
+    FNXC:TaskWedgeNotifications 2026-08-23-19:25:
+    The fourth re-failure must expire the retry display mirror exactly as the loop above does. A
+    live `nextRecoveryAt` means the card still has a scheduled recovery owner, so the sweep
+    deliberately leaves it alone — the at-budget escalation is only owed once the last attempt's
+    cooldown has elapsed. Without the backdate this step asserted exhaustion against a card the
+    engine was still waiting on, which is a fixture gap, not a missing product behavior.
+    */
+    await store.updateTask(task.id, {
+      status: "failed",
+      error: "opaque terminal failure",
+      nextRecoveryAt: new Date(Date.now() - 1).toISOString(),
+    } as never);
     await new Promise((resolve) => setImmediate(resolve));
     await manager.autoRecoverTerminalFailures();
     current = await store.getTask(task.id);

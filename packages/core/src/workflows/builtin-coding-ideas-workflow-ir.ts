@@ -104,8 +104,13 @@ const RAW_BUILTIN_CODING_IDEAS_WORKFLOW_IR: WorkflowIr = (() => {
   ]);
   v2.nodes = v2.nodes.filter((node) => !removedNodeIds.has(node.id));
   v2.edges = v2.edges.filter((edge) => !removedNodeIds.has(edge.from) && !removedNodeIds.has(edge.to));
-  if (!v2.edges.some((edge) => edge.from === "steps" && edge.to === "code-review")) {
-    v2.edges.push({ from: "steps", to: "code-review", condition: "success" });
+  /*
+  FNXC:WorkspaceReviewSeal 2026-08-21-19:36:
+  This reduced preset removes browser verification but keeps the shared seal: completion summary
+  precedes the final Code Review instead of reopening the reviewed branch afterwards.
+  */
+  if (!v2.edges.some((edge) => edge.from === "steps" && edge.to === "completion-summary")) {
+    v2.edges.push({ from: "steps", to: "completion-summary", condition: "success" });
   }
   if (!v2.edges.some((edge) => edge.from === "merge-attempt" && edge.to === "end" && edge.condition === "success")) {
     v2.edges.push({ from: "merge-attempt", to: "end", condition: "success" });

@@ -9,7 +9,9 @@
 
 .compose-chat-panel__input {
   min-height: calc(var(--space-xl) * 3);
-  resize: vertical;
+  max-height: none;
+  overflow-y: hidden;
+  resize: none;
 }
 
 .compose-chat-panel__output {

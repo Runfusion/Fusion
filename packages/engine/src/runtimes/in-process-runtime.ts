@@ -23,6 +23,7 @@ import type {
 } from "@fusion/core";
 import {
   AsyncCentralClaimStore,
+  bulkDeleteStashChatSessions,
   ChatStore,
   isEphemeralAgent,
   isPlanReviewSatisfied,
@@ -68,6 +69,7 @@ import { TriageProcessor } from "../triage.js";
 import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation, type PlanReviewSeedBailReason } from "../plan-review-continuation.js";
 import {
@@ -617,8 +619,8 @@ export async function admitPlanningContinuation(input: {
   await projectAdmissionCoordinator.admitNext({
     projectId: input.projectId,
     maxConcurrent: resolveActiveTaskCapacityLimit({
-      maxConcurrent: settings.maxConcurrent ?? 2,
-      maxWorktrees: settings.maxWorktrees ?? 4,
+      maxConcurrent: settings.maxConcurrent,
+      maxWorktrees: settings.maxWorktrees,
       worktreeLimitEnabled: settings.worktreeLimitEnabled,
     }),
     claimed: async () => (await getAdmissionSnapshot()).count,
@@ -665,8 +667,8 @@ export async function admitPlanningContinuation(input: {
   }
   const snapshot = await getAdmissionSnapshot();
   const limit = resolveActiveTaskCapacityLimit({
-    maxConcurrent: settings.maxConcurrent ?? 2,
-    maxWorktrees: settings.maxWorktrees ?? 4,
+    maxConcurrent: settings.maxConcurrent,
+    maxWorktrees: settings.maxWorktrees,
     worktreeLimitEnabled: settings.worktreeLimitEnabled,
   });
   if (snapshot.count >= limit) {
@@ -677,8 +679,8 @@ export async function admitPlanningContinuation(input: {
     execute, triage, and merge admission; unchanged retries remain deduplicated.
     */
     const reason = formatAdmissionCapacityQueuedReason({
-      maxConcurrent: settings.maxConcurrent ?? 2,
-      maxWorktrees: settings.maxWorktrees ?? 4,
+      maxConcurrent: settings.maxConcurrent,
+      maxWorktrees: settings.maxWorktrees,
       worktreeLimitEnabled: settings.worktreeLimitEnabled,
       claimed: snapshot.count,
       holderTaskIds: snapshot.ids,
@@ -850,6 +852,25 @@ function formatRuntimeGitDetectionWarning(workingDirectory: string, detection: E
     `Task execution will fail until the Git error is resolved. Git reported: ${stderr}.${remedy}`;
 }
 
+/**
+ * FNXC:RunAudit 2026-08-20-06:06:
+ * Credential rotation is runtime-owned recovery plumbing. Its optional audit adapter must use the
+ * bounded seam so an unavailable telemetry sink cannot delay a production rotation candidate.
+ */
+export function createRuntimeCredentialRotationAuditAdapter(taskStore: TaskStore) {
+  return async (mutationType: string, metadata: Record<string, unknown>): Promise<void> => {
+    await emitBoundedRunAudit(taskStore, {
+      taskId: typeof metadata.taskId === "string" ? metadata.taskId : undefined,
+      agentId: typeof metadata.agentId === "string" ? metadata.agentId : "runtime",
+      runId: generateSyntheticRunId("credential-instance-rotation", typeof metadata.taskId === "string" ? metadata.taskId : String(metadata.providerId ?? "unknown")),
+      domain: "database",
+      mutationType,
+      target: String(metadata.providerId ?? "unknown"),
+      metadata,
+    });
+  };
+}
+
 export class InProcessRuntime
   extends EventEmitter<ProjectRuntimeEvents>
   implements ProjectRuntime
@@ -921,6 +942,14 @@ export class InProcessRuntime
   /** FNXC:TaskRecommendations 2026-08-13-03:56: identity-guarded teardown for the store-scoped recommendation notice seam. */
   private unregisterTaskRecommendationNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
+  /**
+   * FNXC:RUFU121RuntimeProjectIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: cached project-identity resolution (ONCE per runtime start).
+   * Both attach call sites share this promise so the central-core name lookup
+   * runs a single time; a resolution failure degrades to { projectId, null }
+   * and NEVER blocks runtime start.
+   */
+  private projectIdentityCache: Promise<{ projectId: string | null; projectName: string | null }> | null = null;
   private detachAgentLinkSync?: () => void;
   /**
    * Optional callback the runtime forwards to SelfHealingManager so that
@@ -1032,17 +1061,7 @@ export class InProcessRuntime
         // Rotation evidence is emitted through the runtime-owned audit seam. Metadata
         // is supplied by the rotator as ids/counts/outcomes only; audit failures stay
         // non-fatal so an observability outage cannot prevent rate-limit recovery.
-        recordRunAuditEvent: async (mutationType, metadata) => {
-          await this.taskStore.recordRunAuditEvent?.({
-            taskId: typeof metadata.taskId === "string" ? metadata.taskId : undefined,
-            agentId: typeof metadata.agentId === "string" ? metadata.agentId : "runtime",
-            runId: generateSyntheticRunId("credential-instance-rotation", typeof metadata.taskId === "string" ? metadata.taskId : String(metadata.providerId ?? "unknown")),
-            domain: "database",
-            mutationType,
-            target: String(metadata.providerId ?? "unknown"),
-            metadata,
-          });
-        },
+        recordRunAuditEvent: createRuntimeCredentialRotationAuditAdapter(this.taskStore),
       });
       this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore, {
         credentialRotator: this.credentialRotator,
@@ -1642,6 +1661,7 @@ export class InProcessRuntime
         if (!chatLayer) throw new Error("Heartbeat ChatStore requires the project PostgreSQL AsyncDataLayer");
         /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Engine chat services share the authoritative project PostgreSQL layer and never reopen SQLite. */
         this.chatStore ??= new ChatStore(chatLayer);
+        await this.attachChatMemoryCaptureToExecutor();
         this.heartbeatMonitor = new HeartbeatMonitor({
           store: this.agentStore,
           agentStore: this.agentStore, // enables per-agent config resolution
@@ -1772,8 +1792,8 @@ export class InProcessRuntime
           agentStore: this.agentStore,
           messageStore: this.messageStore,
           pluginRunner: this.pluginRunner,
-          // FNXC:NodeWorktreeIsolation 2026-07-25-22:10: planning acquires (or reuses) the task's own
-          // worktree through the executor's acquisition path, so no lane runs in the shared checkout.
+          // FNXC:WorkspaceBoundary 2026-08-22-22:54: single-repo planning acquires its
+          // known scope; workspace planning receives a declared read-only root until it confirms scope.
           acquirePlanningWorktree: (taskId) => this.executor.ensureTaskWorktreeForPlanning(taskId),
           onSpecifyStart: (t) => {
             this.recordActivity();
@@ -1879,6 +1899,7 @@ export class InProcessRuntime
         const chatLayer2 = this.taskStore.getAsyncLayer();
         if (!chatLayer2) throw new Error("Self-healing ChatStore requires the project PostgreSQL AsyncDataLayer");
         this.chatStore ??= new ChatStore(chatLayer2);
+        await this.attachChatMemoryCaptureToExecutor();
       }
       /*
       FNXC:PlanReviewLease 2026-07-26-20:40:
@@ -2551,6 +2572,62 @@ export class InProcessRuntime
   }
 
   /**
+   * FNXC:RUFU121RuntimeProjectIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: resolve this runtime's project identity ONCE per start —
+   * projectId from the runtime config, projectName from CentralCore.getProject
+   * (the Step 3 central accessor). Best-effort: an unreachable central DB, an
+   * unknown project id, or a name-less row degrades projectName to null; the
+   * per-project Stash session folder still resolves by the stable external_key
+   * fusion-<projectId>. The cached promise is reused by both attach call sites.
+   */
+  private resolveProjectIdentity(): Promise<{ projectId: string | null; projectName: string | null }> {
+    if (!this.projectIdentityCache) {
+      const projectId = this.config.projectId ?? null;
+      this.projectIdentityCache = (async () => {
+        let projectName: string | null = null;
+        if (projectId) {
+          try {
+            const project = await this.centralCore.getProject(projectId);
+            if (project && typeof project.name === "string" && project.name.length > 0) {
+              projectName = project.name;
+            }
+          } catch {
+            // Central DB unreachable or not initialized — never block runtime start.
+            projectName = null;
+          }
+        }
+        return { projectId, projectName };
+      })();
+    }
+    return this.projectIdentityCache;
+  }
+
+  /**
+   * FNXC:MemoryCapture 2026-08-13-18:05:
+   * RUFU-068: Once the project ChatStore exists, wire the executor's complete-chat memory
+   * capture onto it so live conversations flow into the Stash memory backend as they happen
+   * (best-effort / fail-closed). The facade attach is idempotent, so double-invocation from the
+   * two `chatStore ??=` construction sites is safe.
+   *
+   * FNXC:RUFU121AttachIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: now async — resolves the project identity (cached, best-effort) and
+   * passes it to the attach so captured events are stamped to the per-project Stash session
+   * folder. Awaited at both runtime-start call sites; a resolution failure degrades to a
+   * null name and never blocks startup.
+   */
+  private async attachChatMemoryCaptureToExecutor(): Promise<void> {
+    if (!this.executor || !this.chatStore) return;
+    try {
+      const projectIdentity = await this.resolveProjectIdentity();
+      this.executor.attachChatMemoryCapture(this.chatStore, projectIdentity);
+    } catch (error) {
+      runtimeLog.warn(
+        `Chat memory capture attach failed (best-effort, non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
    * Get the project-scoped PluginRunner (if initialized).
    * Dashboard chat needs this runner, not the top-level PluginLoader, so
    * runtime hints such as `hermes` can resolve plugin runtimes correctly.
@@ -2972,10 +3049,64 @@ export class InProcessRuntime
         /* Resolved archive lane UNION the legacy id — the guard already accepted either. */
         const archivedLanes = new Set<string>([archivedColumn, ...LEGACY_ARCHIVE_LANES]);
         if (!archivedLanes.has(data.to)) return;
-        await this.chatStore?.deleteSessionsForAgentId(
-          `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`,
-          { projectId: this.config.projectId },
-        );
+        const plannerAgentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`;
+        try {
+          /*
+          FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+          RUFU-125: snapshot the doomed local session ids BEFORE the local bulk delete, scoped to
+          this runtime's project. The read is fail-open: a listSessions failure degrades to an
+          empty list and must never prevent the local delete below. chatStore optional — an
+          undefined chatStore means no chat calls at all (pre-RUFU-125 behavior preserved).
+          */
+          const doomed = (await this.chatStore?.listSessions({
+            agentId: plannerAgentId,
+            projectId: this.config.projectId,
+          }).catch(() => [])) ?? [];
+          const deletedCount = await this.chatStore?.deleteSessionsForAgentId(plannerAgentId, {
+            projectId: this.config.projectId,
+          });
+          if ((deletedCount ?? 0) === 0 || doomed.length === 0) return;
+          /*
+          FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+          RUFU-125: the bulk local delete above bypasses the per-session DELETE route RUFU-121
+          hooks, so soft-delete the matching Stash rows in a SEPARATE fire-and-forget IIFE — a
+          Stash stall can never delay local archival bookkeeping, and the forwarded task:moved
+          runtime event (emitted after this chain is SCHEDULED, below) is unaffected either way.
+          Mirrors the RUFU-121 route sync (skip-guards, url fallback, never-throws): a skip is
+          debug-logged with its reason, and a partial window match (matched < doomed.length) is
+          debug-logged as a window miss with matched/total + truncated (the bounded lookback's
+          documented residual — rows older than 10 × 200 recent rows remain in Stash).
+          */
+          void (async () => {
+            try {
+              const summary = await bulkDeleteStashChatSessions(this.taskStore, doomed.map((s) => s.id));
+              if (summary.skipped) {
+                runtimeLog.debug(
+                  `[RUFU-125] stash bulk sync skipped on archive task=${data.task.id} reason=${summary.skipReason}`,
+                );
+                return;
+              }
+              if (summary.result.matched < doomed.length) {
+                const r = summary.result;
+                runtimeLog.debug(
+                  `[RUFU-125] stash bulk sync window miss task=${data.task.id} matched=${r.matched}/${doomed.length} deleted=${r.deleted} truncated=${r.truncated} pagesScanned=${r.pagesScanned}`,
+                );
+              }
+            } catch (err: unknown) {
+              // bulkDeleteStashChatSessions never throws by core contract; this is the
+              // never-reject safety net for any future regression.
+              runtimeLog.warn(
+                `[RUFU-125] stash bulk sync failed task=${data.task.id} (best-effort, non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          })();
+        } catch (err: unknown) {
+          // Unexpected failure in the archival chain (e.g. the local delete throwing):
+          // warn, never reject the task:moved chain.
+          runtimeLog.warn(
+            `[RUFU-125] archive chat cleanup failed task=${data.task.id} (non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       })();
       this.emit("task:moved", data);
     });

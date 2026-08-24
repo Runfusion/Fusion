@@ -57,22 +57,24 @@ describe("board-mobile-overscroll-containment (FN-6378)", () => {
     expect(boardBlock).not.toContain("scroll-snap-type: x");
   });
 
-  it("workflow columns and multi-lane column strips contain horizontal overscroll and do not snap on desktop", () => {
+  it("live workflow Board columns contain horizontal overscroll and do not snap on desktop", () => {
     const workflowColumnsBlock = extractRuleBlock(baseCss, ".board.board-workflow-columns");
-    const laneColumnsBlock = extractRuleBlock(baseCss, ".lane-columns");
 
-    for (const block of [workflowColumnsBlock, laneColumnsBlock]) {
-      expect(block).toContain("overflow-x: auto");
-      expect(block).toContain("overscroll-behavior-x: contain");
-      expect(block).toContain("scroll-snap-type: none");
-      expect(block).not.toContain("scroll-snap-type: x");
-    }
+    expect(workflowColumnsBlock).toContain("overflow-x: auto");
+    expect(workflowColumnsBlock).toContain("overscroll-behavior-x: contain");
+    expect(workflowColumnsBlock).toContain("scroll-snap-type: none");
+    expect(workflowColumnsBlock).not.toContain("scroll-snap-type: x");
   });
 
-  it("phone tier re-enables proximity snapping for workflow columns and lane strips", () => {
-    // Both live in Lane.css's mobile block; assert against the mobile slice of all app CSS.
-    expect(mobileCss).toContain("scroll-snap-type: x proximity");
-    expect(mobileCss).not.toContain("scroll-snap-type: x mandatory");
-    expect(mobileCss).toMatch(/\.board\.board-workflow-columns,\s*\n?\s*\.lane-columns\s*\{[^}]*scroll-snap-type: x proximity/);
+  it("does not ship the retired lane selector in base or phone CSS", () => {
+    expect(baseCss).not.toMatch(/\.lane-columns\b/);
+    expect(mobileCss).not.toMatch(/\.lane-columns\b/);
+  });
+
+  it("phone tier re-enables proximity snapping for the live workflow Board", () => {
+    const workflowColumnsBlock = extractRuleBlock(mobileCss, ".board.board-workflow-columns");
+
+    expect(workflowColumnsBlock).toContain("scroll-snap-type: x proximity");
+    expect(workflowColumnsBlock).not.toContain("scroll-snap-type: x mandatory");
   });
 });

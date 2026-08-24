@@ -4,10 +4,16 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, mockedCreateFnAgent, mockedExec, resetExecutorMocks } from "./executor-test-helpers.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
+import { resolveContaminationBaseRef } from "../executor/worktree-git-refs.js";
 
 /**
  * FN-4417 regression: the contamination check must compute its own fresh
  * merge-base against the integration branch, not reuse `task.baseCommitSha`.
+ *
+ * FNXC:EngineTests 2026-08-23-18:30: `resolveContaminationBaseRef` is no longer a
+ * TaskExecutor method — U4 Slice B peeled it into `executor/worktree-git-refs.ts`
+ * as a free function taking only a worktree path. The contract is unchanged, so
+ * these assertions target the module export directly instead of an instance.
  */
 describe("resolveContaminationBaseRef (FN-4417)", () => {
   beforeEach(() => {
@@ -23,8 +29,7 @@ describe("resolveContaminationBaseRef (FN-4417)", () => {
       return {} as any;
     }) as any);
 
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    const result = await (executor as any).resolveContaminationBaseRef("/tmp/test/.worktrees/swift-delta");
+    const result = await resolveContaminationBaseRef("/tmp/test/.worktrees/swift-delta");
 
     expect(result).toBe("fresh_main_sha");
     const mergeBaseCall = calls.find((c) => c.includes("merge-base"));
@@ -42,8 +47,7 @@ describe("resolveContaminationBaseRef (FN-4417)", () => {
       return {} as any;
     }) as any);
 
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    const result = await (executor as any).resolveContaminationBaseRef("/tmp/test/.worktrees/swift-delta");
+    const result = await resolveContaminationBaseRef("/tmp/test/.worktrees/swift-delta");
     expect(result).toBeUndefined();
   });
 
@@ -53,11 +57,10 @@ describe("resolveContaminationBaseRef (FN-4417)", () => {
       return {} as any;
     }) as any);
 
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    const result = await (executor as any).resolveContaminationBaseRef("/tmp/test/.worktrees/swift-delta");
+    const result = await resolveContaminationBaseRef("/tmp/test/.worktrees/swift-delta");
 
     expect(result).toBe("currentMainSHA");
-    expect((executor as any).resolveContaminationBaseRef.length).toBe(1);
+    expect(resolveContaminationBaseRef.length).toBe(1);
   });
 });
 

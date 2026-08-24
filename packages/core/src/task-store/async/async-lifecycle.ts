@@ -63,6 +63,25 @@ export function projectPartition(projectId?: string): string {
   return projectId?.trim() || "__legacy_unscoped__";
 }
 
+/**
+ * Find active same-project rows that still carry an incoming dependency edge.
+ * The project predicate is mandatory because task IDs are project-local.
+ */
+export async function findLiveDependencyDependents(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  dependencyId: string,
+  projectId?: string,
+): Promise<string[]> {
+  const rows = await db.select({ id: schema.project.tasks.id })
+    .from(schema.project.tasks)
+    .where(and(
+      eq(schema.project.tasks.projectId, projectPartition(projectId)),
+      ACTIVE_TASK_FILTER,
+      sql`${schema.project.tasks.dependencies} @> ${JSON.stringify([dependencyId])}::jsonb`,
+    ));
+  return rows.map((row) => row.id);
+}
+
 export function liveLineageChildFilter(
   parentId: string,
   projectId?: string,

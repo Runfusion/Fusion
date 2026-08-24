@@ -106,7 +106,7 @@ export async function verifyWorktreeInvariants(
       return {
         ok: false, reason: "main_checkout_edit", repo: firstMainCheckoutViolation.repo,
         observed: `${firstMainCheckoutViolation.evidence}: ${observed}`,
-        expected: `move task work into the acquired fusion/${task.id} worktree for ${firstMainCheckoutViolation.repo} (acquire it first if needed), restore its main checkout, then retry fn_task_done; only 3 requeue attempts are available`,
+        expected: `move task work into the acquired fusion/${task.id} worktree for ${firstMainCheckoutViolation.repo} (acquire it first if needed), restore its main checkout, then ask an operator to retry fn_task_done`,
       };
     }
     const zeroAcquire = classifyWorkspaceZeroAcquire(task, {

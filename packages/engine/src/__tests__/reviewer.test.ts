@@ -1303,39 +1303,18 @@ describe("reviewStep — validator model overrides", () => {
 });
 
 describe("default reviewer prompt", () => {
-  it("includes subtask breakdown criterion in spec review", () => {
-    expect(DEFAULT_REVIEWER_PROMPT).toContain("Subtask breakdown");
-    expect(DEFAULT_REVIEWER_PROMPT).toContain(
-      "12+ implementation steps",
-    );
-  });
-
-  it("biases the reviewer toward keeping tasks whole", () => {
-    expect(DEFAULT_REVIEWER_PROMPT).toContain("The bar for splitting is high");
-    expect(DEFAULT_REVIEWER_PROMPT).toContain(
-      "Default position:** do NOT flag undersplit",
-    );
-    expect(DEFAULT_REVIEWER_PROMPT).toContain("12+ implementation steps");
-  });
-
-  it("downgrades borderline undersplit findings to non-blocking suggestions", () => {
-    expect(DEFAULT_REVIEWER_PROMPT).toContain(
-      "Suggestions** section instead of REVISE",
-    );
-  });
-
-  it("instructs planner to use fn_task_create for genuinely oversized tasks", () => {
-    // The reviewer's REVISE feedback must explicitly direct the planner to
-    // create child tasks via fn_task_create rather than just flagging the issue.
-    expect(DEFAULT_REVIEWER_PROMPT).toContain("fn_task_create");
-    expect(DEFAULT_REVIEWER_PROMPT).toContain(
-      "create 2–5 child tasks",
-    );
-    expect(DEFAULT_REVIEWER_PROMPT).toContain(
-      "Not write a parent PROMPT.md",
-    );
-  });
-
+  /*
+  FNXC:ReviewerPrompt 2026-08-23-01:10:
+  FOUR TESTS REMOVED, not repaired. They asserted that DEFAULT_REVIEWER_PROMPT still carried the
+  task-SPLITTING contract — "Subtask breakdown", "12+ implementation steps", "The bar for splitting
+  is high", and a REVISE that directs the planner to `fn_task_create` 2-5 child tasks. FN-074
+  ("remove task splitting and parent deletion") deleted that feature across core, dashboard, and
+  engine, and FN-125 ("prevent workflow agents from creating tasks") removed the reviewer's ability
+  to create tasks at all. FN-074's own message says it updated affected tests; these were missed, so
+  they sat red asserting a contract the product deliberately dropped. Restoring the prompt text to
+  make them pass would re-add removed behaviour; keeping them red guards nothing. The two tests
+  below cover the prompt contract that DOES still exist.
+  */
   it("includes user comment coverage criterion in spec review format", () => {
     expect(DEFAULT_REVIEWER_PROMPT).toContain("User comment coverage");
     expect(DEFAULT_REVIEWER_PROMPT).toContain("missing coverage is a blocking REVISE");

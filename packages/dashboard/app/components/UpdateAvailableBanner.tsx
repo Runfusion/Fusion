@@ -1,10 +1,13 @@
 import "./UpdateAvailableBanner.css";
 import { useEffect, useState } from "react";
-import { Power, RefreshCw, X } from "lucide-react";
+import { Power, RefreshCw } from "lucide-react";
 import { useTranslation, Trans } from "react-i18next";
 import { getErrorMessage } from "@fusion/core";
 import { fetchSystemInfo, installUpdate, requestSystemRestart } from "../api";
 import type { UpdateInstallResponse } from "../api";
+import { systemRestartRecovery, useSystemRestartRecovery } from "../hooks/useSystemRestartRecovery";
+import { pendingUpdateInstallState, usePendingUpdateInstall } from "../hooks/usePendingUpdateInstall";
+import { Banner } from "./Banner";
 
 interface UpdateAvailableBannerProps {
   latestVersion: string;
@@ -17,16 +20,23 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
   const [installLoading, setInstallLoading] = useState(false);
   const [installResult, setInstallResult] = useState<UpdateInstallResponse | null>(null);
   const [restartSupported, setRestartSupported] = useState<boolean | undefined>();
+  const [priorPid, setPriorPid] = useState<number | undefined>();
   const [restartLoading, setRestartLoading] = useState(false);
   const [restartScheduled, setRestartScheduled] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  const recovery = useSystemRestartRecovery();
+  // Root useUpdateCheck hydrates the shared host snapshot; this consumer only subscribes.
+  const pendingInstall = usePendingUpdateInstall({ hydrate: false });
 
   useEffect(() => {
     let active = true;
 
     void fetchSystemInfo()
       .then((info) => {
-        if (active) setRestartSupported(info.restartSupported);
+        if (active) {
+          setRestartSupported(info.restartSupported);
+          setPriorPid(info.pid);
+        }
       })
       .catch(() => {
         // Fail closed: an unavailable capability response must not offer a restart that cannot run.
@@ -43,7 +53,13 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
     setInstallResult(null);
 
     try {
-      setInstallResult(await installUpdate());
+      const result = await installUpdate();
+      pendingUpdateInstallState.record(result);
+      setInstallResult(result);
+      if (result.restartScheduled && result.latestVersion) {
+        setRestartScheduled(true);
+        systemRestartRecovery.arm(result.latestVersion, result.priorPid ?? priorPid);
+      }
     } catch (error) {
       setInstallResult({
         currentVersion,
@@ -76,6 +92,8 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
       const result = await requestSystemRestart("update-banner");
       if (result.scheduled) {
         setRestartScheduled(true);
+        const targetVersion = pendingInstall?.latestVersion ?? installResult?.latestVersion ?? latestVersion;
+        if (targetVersion) systemRestartRecovery.arm(targetVersion, priorPid);
       } else {
         setRestartError(t("updateBanner.restartFailed", "Restart could not be scheduled. Try restarting Fusion manually."));
       }
@@ -87,15 +105,23 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
   };
 
   /* FNXC:UpdateBanner 2026-08-14-19:31: an Update now result always remains visible; failed checks are errors, never up-to-date reassurance. */
-  const installSucceeded = installResult?.updated === true;
-  const installError = installResult?.error;
-  const installMessage = installResult?.message ?? installError ?? (installResult && !installResult.updated ? t("updateBanner.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
-  const installIsError = installResult?.outcome === "check-failed" || installResult?.outcome === "failed" || Boolean(installError && installResult?.outcome !== "unsupported-install-method");
+  const effectiveInstallResult = pendingInstall ?? installResult;
+  const installSucceeded = effectiveInstallResult?.updated === true;
+  const installError = effectiveInstallResult?.error;
+  const installMessage = effectiveInstallResult?.message ?? installError ?? (effectiveInstallResult && !effectiveInstallResult.updated ? t("updateBanner.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
+  const installIsError = effectiveInstallResult?.outcome === "check-failed" || effectiveInstallResult?.outcome === "failed" || Boolean(installError && effectiveInstallResult?.outcome !== "unsupported-install-method");
   // Advisory guidance only — shown when the host explicitly reported no supervising parent.
   const restartUnavailable = restartSupported === false;
 
   return (
-    <div className="update-available-banner" role="status" aria-live="polite">
+    <Banner
+      className="update-available-banner"
+      tone="info"
+      role="status"
+      aria-live="polite"
+      onDismiss={onDismiss}
+      dismissLabel={t("updateBanner.dismissLabel", "Dismiss update notice")}
+    >
       <div className="update-available-banner__content">
         <p className="update-available-banner__text">
           <Trans
@@ -122,13 +148,24 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
             <>
               <span className="update-available-banner__install-status update-available-banner__install-status--success" aria-live="polite">
                 {t("updateBanner.updateSuccess", "Updated to v{{version}} — restart Fusion to apply", {
-                  version: installResult.latestVersion ?? latestVersion,
+                  version: effectiveInstallResult.latestVersion ?? latestVersion,
                 })}
               </span>
-              {restartScheduled ? (
-                <span className="update-available-banner__install-status" aria-live="polite">
-                  {t("updateBanner.restarting", "Restarting… Your connection will close shortly.")}
-                </span>
+              {restartScheduled || pendingInstall?.restartScheduled ? (
+                <>
+                  <span className="update-available-banner__install-status" aria-live="polite">
+                    {recovery.phase === "back"
+                      ? t("updateBanner.backOnline", "Fusion v{{version}} is back online — reloading…", { version: recovery.version })
+                      : recovery.phase === "timeout"
+                        ? t("updateBanner.restartTimedOut", "Fusion did not return in time. Refresh when it is back online.")
+                        : t("updateBanner.restarting", "Restarting… Your connection will close shortly.")}
+                  </span>
+                  {recovery.phase === "timeout" && (
+                    <button type="button" className="btn btn-sm update-available-banner__restart-btn" onClick={() => systemRestartRecovery.retry()}>
+                      {t("updateBanner.retryRestart", "Retry readiness check")}
+                    </button>
+                  )}
+                </>
               ) : (
                 <button
                   type="button"
@@ -188,14 +225,6 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
           )}
         </div>
       </div>
-      <button
-        type="button"
-        className="update-available-banner__dismiss touch-target"
-        aria-label={t("updateBanner.dismissLabel", "Dismiss update notice")}
-        onClick={onDismiss}
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
-    </div>
+    </Banner>
   );
 }

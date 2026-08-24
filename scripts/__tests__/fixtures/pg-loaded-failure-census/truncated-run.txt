@@ -1,0 +1,2 @@
+ FAIL  src/__tests__/postgres/partial.test.ts > partial
+Error: beforeAll hook timed out in 15000ms.

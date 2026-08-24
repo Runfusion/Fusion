@@ -126,6 +126,9 @@ function setActiveSession(sessionId: string): void {
     restartActiveTab: vi.fn(),
     retryBootstrap: vi.fn(),
     replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+    detachedSessions: [],
+    refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+    reopenSession: vi.fn(),
   } as never);
 }
 

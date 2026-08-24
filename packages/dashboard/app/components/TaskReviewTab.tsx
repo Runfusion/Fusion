@@ -56,7 +56,7 @@ type DisplayReviewItem = {
   path?: string;
   line?: number;
   severity?: "low" | "medium" | "high" | "critical";
-  resolution?: "open" | "resolved-in-review" | "superseded";
+  resolution?: "open" | "resolved-in-review" | "superseded" | "dispute-upheld";
   createdAt?: string;
   status: "queued" | "in-progress" | "addressed" | "failed";
   addressing?: AddressingRecord;
@@ -575,7 +575,9 @@ export function TaskReviewTab({
             const isOpen = !item.resolution || item.resolution === "open";
             const resolutionLabel = item.resolution === "resolved-in-review"
               ? t("taskReview.fixedInReview", "Fixed in review")
-              : t("taskReview.superseded", "Superseded");
+              : item.resolution === "dispute-upheld"
+                ? t("taskReview.disputeUpheld", "Dispute upheld")
+                : t("taskReview.superseded", "Superseded");
 
             return (
               <li key={item.id} className={`task-review-tab__item card${isOpen ? "" : " task-review-tab__item--informational"}`} data-review-comment-author-type={authorType} {...(!isOpen ? { "data-review-resolution": item.resolution } : {})}>

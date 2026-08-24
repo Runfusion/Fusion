@@ -1,9 +1,9 @@
 /**
  * FNXC:CodeOrganization 2026-08-04-09:20:
  * Workflow graph / merge-boundary / graph-failure routing facades peeled from TaskExecutor (U4).
- * isBackwardMoveOutOfPlanning stays on TaskExecutor for inert-sync-lane (2 guards).
+ * isBackwardMoveOutOfPlanning stays on TaskExecutor for payload/cache/legacy lane tiering; no sync lane resolver is permitted.
  */
-import type { Task, TaskDetail, Settings, Agent, WorkflowIr, WorkflowColumnAgent } from "@fusion/core";
+import type { Task, TaskDetail, Settings, Agent, ResolvedTaskOutputLanguage, WorkflowIr, WorkflowColumnAgent } from "@fusion/core";
 import * as impl from "./impl-bindings.js";
 import * as bags from "./deps-bags.js";
 import { type FacadeRestArgs, type FacadeAfterFirst } from "./facade-methods.js";
@@ -27,15 +27,15 @@ export abstract class TaskExecutorGraphFacades extends TaskExecutorSessionFacade
   protected async runGraphTaskStep(...args: FacadeRestArgs<typeof impl.runGraphTaskStepImpl>): ReturnType<typeof impl.runGraphTaskStepImpl> { return impl.runGraphTaskStepImpl(bags.buildRunGraphTaskStepDeps(this), ...args); }
   protected foreachActiveForTask(taskId: string, instanceId?: string): ReturnType<typeof impl.foreachActiveForTaskImpl> { return impl.foreachActiveForTaskImpl({ graphStepActiveContext: this.graphStepActiveContext }, taskId, instanceId); }
   protected async runProjectedGraphTaskStep(...args: FacadeRestArgs<typeof impl.runProjectedGraphTaskStepImpl>): ReturnType<typeof impl.runProjectedGraphTaskStepImpl> { return impl.runProjectedGraphTaskStepImpl(bags.buildRunProjectedGraphTaskStepDeps(this), ...args); }
-  public createAuthoritativeWorkflowPrimitives(settings: Settings) { return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings)).create(settings); }
-  protected createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): ReturnType<typeof impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl> { return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings); }
+  public createAuthoritativeWorkflowPrimitives(settings: Settings, outputLanguage?: ResolvedTaskOutputLanguage) { return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings, outputLanguage)).create(settings); }
+  protected createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings, outputLanguage?: ResolvedTaskOutputLanguage): ReturnType<typeof impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl> { return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings, outputLanguage); }
   protected async resolveMergeBoundaryColumn(taskId: string, nodeId: string): ReturnType<typeof impl.resolveMergeBoundaryColumnImpl> { return impl.resolveMergeBoundaryColumnImpl({ store: this.store }, taskId, nodeId); }
   protected async ensureWorkflowMergeBoundaryTask(...args: FacadeRestArgs<typeof impl.ensureWorkflowMergeBoundaryTaskImpl>): ReturnType<typeof impl.ensureWorkflowMergeBoundaryTaskImpl> { return impl.ensureWorkflowMergeBoundaryTaskImpl(bags.buildEnsureWorkflowMergeBoundaryTaskDeps(this), ...args); }
   protected async evaluateWorkflowMergeBoundary(...args: FacadeRestArgs<typeof impl.evaluateWorkflowMergeBoundaryImpl>): ReturnType<typeof impl.evaluateWorkflowMergeBoundaryImpl> { return impl.evaluateWorkflowMergeBoundaryImpl(bags.buildEvaluateWorkflowMergeBoundaryDeps(this), ...args); }
   protected async loadMergeBoundaryInstances(...args: FacadeRestArgs<typeof impl.loadMergeBoundaryInstancesImpl>): ReturnType<typeof impl.loadMergeBoundaryInstancesImpl> { return impl.loadMergeBoundaryInstancesImpl({ store: this.store }, ...args); }
   protected async getWorkflowMergeImplementationProofFailure(...args: FacadeRestArgs<typeof impl.getWorkflowMergeImplementationProofFailureImpl>): ReturnType<typeof impl.getWorkflowMergeImplementationProofFailureImpl> { return impl.getWorkflowMergeImplementationProofFailureImpl(bags.buildWorkflowMergeImplementationProofFailureDeps(this), ...args); }
   protected shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): ReturnType<typeof impl.shouldCompleteChecklistAtWorkflowMergeImpl> { return impl.shouldCompleteChecklistAtWorkflowMergeImpl(task, proof); }
-  public createAuthoritativeWorkflowSeams(_settings: Settings) { return impl.createAuthoritativeWorkflowSeamsImpl(bags.buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings); }
+  public createAuthoritativeWorkflowSeams(_settings: Settings, outputLanguage?: ResolvedTaskOutputLanguage) { return impl.createAuthoritativeWorkflowSeamsImpl(bags.buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings, outputLanguage); }
   protected async updateStepGraph(...args: FacadeRestArgs<typeof impl.updateStepGraphImpl>): ReturnType<typeof impl.updateStepGraphImpl> { return impl.updateStepGraphImpl({ store: this.store }, ...args); }
   protected async runAwaitInputNode(node: Parameters<typeof impl.runAwaitInputNodeImpl>[1], live: TaskDetail): ReturnType<typeof impl.runAwaitInputNodeImpl> { return impl.runAwaitInputNodeImpl(bags.buildStoreRunContextDeps(this), node, live); }
   protected async pauseForCliApproval(node: Parameters<typeof impl.pauseForCliApprovalImpl>[1], live: TaskDetail, command: string): ReturnType<typeof impl.pauseForCliApprovalImpl> { return impl.pauseForCliApprovalImpl(bags.buildStoreRunContextDeps(this), node, live, command); }
@@ -72,7 +72,32 @@ export abstract class TaskExecutorGraphFacades extends TaskExecutorSessionFacade
   protected async routeGraphMergeFailureToRetry(...args: FacadeRestArgs<typeof impl.routeGraphMergeFailureToRetryImpl>): ReturnType<typeof impl.routeGraphMergeFailureToRetryImpl> { return impl.routeGraphMergeFailureToRetryImpl(bags.buildRouteGraphMergeFailureToRetryDeps(this), ...args); }
   protected async routeImplementationIncompleteMergeGraphFailure(...args: FacadeRestArgs<typeof impl.routeImplementationIncompleteMergeGraphFailureImpl>): ReturnType<typeof impl.routeImplementationIncompleteMergeGraphFailureImpl> { return impl.routeImplementationIncompleteMergeGraphFailureImpl(bags.buildRouteImplementationIncompleteMergeGraphFailureDeps(this), ...args); }
   protected async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): ReturnType<typeof impl.hasTrailingConsecutiveToolFailuresImpl> { return impl.hasTrailingConsecutiveToolFailuresImpl({ store: this.store }, taskId, cursor, threshold); }
-  protected async handleGraphFailure(task: Task, result: Parameters<typeof impl.handleGraphFailureImpl>[2]): ReturnType<typeof impl.handleGraphFailureImpl> { return impl.handleGraphFailureImpl(bags.buildHandleGraphFailureDeps(this), task, result); }
+  protected async handleGraphFailure(task: Task, result: Parameters<typeof impl.handleGraphFailureImpl>[2]): ReturnType<typeof impl.handleGraphFailureImpl> {
+    const implResult = await impl.handleGraphFailureImpl(bags.buildHandleGraphFailureDeps(this), task, result);
+    /*
+    FNXC:StashSessionCapture 2026-08-19-06:40:
+    (RUFU-122) Graph terminal-failure capture seam (requirement 3): this facade is the
+    single choke point for GRAPH-LEVEL terminal failures — drift parks, settings-load
+    failures, and non-execute-node failures — which terminalize the task `status: "failed"`
+    OUTSIDE runImplementation's post-loop finally (the graph driver calls
+    handleGraphFailure from execute-workflow-graph.ts, not from within a run). Re-read the
+    fresh task and, when it is terminally failed, fire the SAME shared
+    triggerTaskMemoryCapture the completion and in-run-failure seams use (fire-and-forget —
+    the trigger never throws): the shared capturedMemoryTaskIds gate suppresses any task
+    already captured at another seam (at most once per task, regardless of seam order).
+    Best-effort: a read or capture failure never alters the graph-failure outcome — the
+    impl result is returned unchanged.
+    */
+    try {
+      const freshTask = await this.store.getTask(task.id);
+      if (freshTask?.status === "failed") {
+        void this.signalTaskTerminalFailed(freshTask);
+      }
+    } catch {
+      // Capture is best-effort and non-blocking; the graph failure itself is fully handled.
+    }
+    return implResult;
+  }
   protected async routeGraphFailureToExecutionResume(...args: FacadeRestArgs<typeof impl.routeGraphFailureToExecutionResumeImpl>): ReturnType<typeof impl.routeGraphFailureToExecutionResumeImpl> { return impl.routeGraphFailureToExecutionResumeImpl(bags.buildRouteGraphFailureToExecutionResumeDeps(this), ...args); }
   protected async routeResetParsePinMismatchToRetry(live: TaskDetail): ReturnType<typeof impl.routeResetParsePinMismatchToRetryImpl> { return impl.routeResetParsePinMismatchToRetryImpl(bags.buildRouteResetParsePinMismatchToRetryDeps(this), live); }
   protected async maybeDispatchWorkflowWorkEngine(task: Task): ReturnType<typeof impl.maybeDispatchWorkflowWorkEngineImpl> { return impl.maybeDispatchWorkflowWorkEngineImpl({ store: this.store }, task); }

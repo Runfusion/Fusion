@@ -55,7 +55,15 @@ it("routes a CLI pi mock through dashboard chat and engine source", async () => 
   __setCreateResolvedAgentSession(async (options) => createFnAgent({ ...options, tools: "coding" }) as any);
 
   const chatStore = {
-    getSession: vi.fn(() => ({ id: "mock-scope", agentId: "agent-mock-scope", status: "active" })),
+    /*
+    FNXC:CliTests 2026-08-23-16:12:
+    TITLED SESSION ON PURPOSE. An untitled chat session makes `ChatManager.sendMessage` fire a
+    non-blocking title summarizer, which creates a SECOND pi session through the same factory — a
+    race whose timing decides the call count. Seeding a title suppresses that side-channel so this
+    guard keeps measuring the one thing it exists for: the CLI `vi.mock` reaching the dashboard and
+    engine copies of the runtime.
+    */
+    getSession: vi.fn(() => ({ id: "mock-scope", agentId: "agent-mock-scope", status: "active", title: "Mock scope session" })),
     addMessage: vi.fn((message) => ({ id: `message-${message.role}`, ...message })),
     getMessages: vi.fn(() => []),
     setCliSessionFile: vi.fn(async () => undefined),

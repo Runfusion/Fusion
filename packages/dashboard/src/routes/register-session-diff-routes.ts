@@ -249,6 +249,8 @@ async function isReachableFromHead(sha: string, rootDir: string): Promise<boolea
 type DoneTaskAggregationTask = {
   id: string;
   lineageId?: string | null;
+  /** Executor-captured paths used only when landed-file capture cannot prove ownership. */
+  modifiedFiles?: string[];
   mergeDetails?: {
     commitSha?: string;
     rebaseBaseSha?: string;
@@ -258,6 +260,7 @@ type DoneTaskAggregationTask = {
     landedFiles?: string[];
     landedFilesAttributionRestricted?: boolean;
     noOpVerifiedShortCircuit?: boolean;
+    landedFilesCaptureFallback?: "attribution-failed";
   } | null;
 };
 
@@ -818,30 +821,39 @@ async function restrictRebaseRangeFiles(
     return rebaseRangeFiles.filter((file) => landedSet.has(file.path));
   }
 
-  if (Array.isArray(landed) && landed.length > 0) {
-    return rebaseRangeFiles.filter((file) => landedSet.has(file.path));
-  }
-
+  let attribution: Awaited<ReturnType<typeof filterFilesToOwnTaskCommits>> | undefined;
   try {
-    const attribution = await filterFilesToOwnTaskCommits({
+    attribution = await filterFilesToOwnTaskCommits({
       worktreePath: deps.rootDir,
       baseRef: deps.rebaseBaseShaForAggregation,
       taskId: task.id,
       runGit: deps.runGit,
     });
-    if (attribution.files.length === 0) {
-      // Read-only done-task diff display should still surface the rebase range
-      // when commit attribution cannot prove ownership from subjects/trailers.
-      return rebaseRangeFiles;
-    }
-    const ownSet = new Set(attribution.files);
-    return rebaseRangeFiles.filter((file) => ownSet.has(file.path));
   } catch (err) {
     severityAuditLog.warn(
-      `[diff] FN-5154 attribution failed for ${task.id}: ${(err as Error).message}; falling back to unrestricted range`,
+      `[diff] FN-5154 attribution failed for ${task.id}: ${(err as Error).message}`,
     );
-    return rebaseRangeFiles;
   }
+
+  if (attribution?.files.length) {
+    const ownSet = new Set(attribution.files);
+    return rebaseRangeFiles.filter((file) => ownSet.has(file.path));
+  }
+
+  /*
+  FNXC:TaskDiffAttribution 2026-08-18-18:44:
+  A rebase range describes repository history, not task ownership. Prefer commit attribution,
+  then the executor's persisted snapshot only when landed-file capture is absent or explicitly
+  failed; never widen to foreign range files when neither source proves ownership.
+  */
+  const captureFailed = task.mergeDetails?.landedFilesCaptureFallback === "attribution-failed";
+  const mergeCaptureAbsent = !Array.isArray(landed);
+  if (captureFailed || mergeCaptureAbsent) {
+    const executionFiles = new Set(task.modifiedFiles ?? []);
+    return rebaseRangeFiles.filter((file) => executionFiles.has(file.path));
+  }
+
+  return [];
 }
 
 /**
@@ -1114,8 +1126,15 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         }
 
         const doneFiles = await collectDoneRangeFiles(diffSpec.range, rootDir).catch(() => []);
-        if (doneFiles.length > 0) {
-          const files = doneFiles.map((file) => ({
+        const scopedDoneFiles = diffSpec.mode === "rebase-range"
+          ? await restrictRebaseRangeFiles(task, doneFiles, {
+              rootDir,
+              rebaseBaseShaForAggregation: diffSpec.base,
+              runGit: (args: string[]) => runGitCommand(args, rootDir, 10000),
+            })
+          : doneFiles;
+        if (scopedDoneFiles.length > 0) {
+          const files = scopedDoneFiles.map((file) => ({
             ...file,
             status: file.status === "renamed" ? "modified" : file.status,
           }));
@@ -1127,6 +1146,12 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
               deletions: files.reduce((sum, file) => sum + file.deletions, 0),
             },
           });
+          return;
+        }
+
+        // A failed or foreign-only rebase range has no task-owned shortstat to report.
+        if (diffSpec.mode === "rebase-range") {
+          res.json({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
           return;
         }
 
@@ -1310,7 +1335,14 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
 
         try {
           const doneFiles = await collectDoneRangeFiles(diffSpec.range, rootDir);
-          res.json(doneFiles.map((file) => ({ path: file.path, status: file.status, diff: file.patch })));
+          const scopedDoneFiles = diffSpec.mode === "rebase-range"
+            ? await restrictRebaseRangeFiles(task, doneFiles, {
+                rootDir,
+                rebaseBaseShaForAggregation: diffSpec.base,
+                runGit: (args: string[]) => runGitCommand(args, rootDir, 10000),
+              })
+            : doneFiles;
+          res.json(scopedDoneFiles.map((file) => ({ path: file.path, status: file.status, diff: file.patch })));
         } catch {
           res.json([]);
         }

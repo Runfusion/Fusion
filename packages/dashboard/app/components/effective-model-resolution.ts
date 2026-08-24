@@ -2,10 +2,15 @@ import type { Agent, AgentLogEntry, ResolvedModelSelection, Settings, Task, Task
 import { isWipColumnRole } from "../utils/columnRoles";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
-import { PLANNER_AGENT_ROLE, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
+import { PLANNER_AGENT_ROLE, resolveProjectDefaultModel, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
 import { ACTIVE_STATUSES } from "../utils/taskActivity";
 
 export type ModelSelection = ResolvedModelSelection;
+
+export type TaskChatModelSelection = ModelSelection & {
+  thinkingLevel?: string;
+};
+
 export { ACTIVE_STATUSES };
 
 const STRING_OBJECT_TAG = "[object String]";
@@ -204,4 +209,27 @@ export function resolveEffectivePlanning(
     return fromLog;
   }
   return resolveTaskPlanningModel(task, settings);
+}
+
+/**
+ * Resolve task-detail Chat from the project Direct Chat default, not a workflow
+ * planning lane. Agent-mode Direct Chat defaults intentionally fall through to
+ * the effective project model because task Chat keeps its synthetic task-bound
+ * identity and permissions.
+ */
+export function resolveEffectiveTaskChat(settings?: Settings): TaskChatModelSelection {
+  /*
+  FNXC:TaskChatDefaultModel 2026-08-19-12:12:
+  Task-detail Chat follows the project Direct Chat model target while retaining the synthetic task session so server-built task context and scoped tools remain unchanged. A configured Direct Chat agent is not impersonated; test mode continues through resolveProjectDefaultModel.
+  */
+  const directModel = settings?.chatDefaultKind === "model"
+    && settings.chatDefaultModelProvider
+    && settings.chatDefaultModelId
+    ? {
+        provider: settings.chatDefaultModelProvider,
+        modelId: settings.chatDefaultModelId,
+      }
+    : resolveProjectDefaultModel(settings);
+  const thinkingLevel = settings?.chatDefaultThinkingLevel ?? settings?.defaultThinkingLevel;
+  return thinkingLevel ? { ...directModel, thinkingLevel } : directModel;
 }

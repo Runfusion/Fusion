@@ -92,6 +92,9 @@ export const schedulerLog = createLogger("scheduler");
 /** Logger for the task executor subsystem. */
 export const executorLog = createLogger("executor");
 
+/** Logger for best-effort run-audit emission failures. */
+export const runAuditLog = createLogger("run-audit");
+
 /** Logger for the plan processor subsystem. */
 export const planLog = createLogger("plan");
 

@@ -37,6 +37,8 @@ export interface WorkspaceFixture {
   repoPath(rel: string): string;
   /** Run a git command inside a sub-repo. */
   git(rel: string, command: string): string;
+  /** Create a live linked task worktree and capture its immutable acquisition baseline. */
+  createLinkedTaskWorktree(rel: string, branch: string): { worktreePath: string; baseCommitSha: string };
   /** Remove all on-disk fixture state. */
   cleanup(): void;
 }
@@ -62,6 +64,19 @@ export async function createWorkspaceFixture(
     repos,
     repoPath: (rel: string) => path.join(rootDir, rel),
     git: (rel: string, command: string) => git(path.join(rootDir, rel), command),
+    /*
+    FNXC:WorkspaceMergeEvidence 2026-08-21-17:33:
+    FN-112 needs real-Git coverage where the persisted path is the live task worktree and HEAD
+    equals its task branch. Main-checkout stand-ins hid the invalid self-comparison that erased
+    merge evidence, so this fixture captures the acquisition baseline before the task commit.
+    */
+    createLinkedTaskWorktree: (rel: string, branch: string) => {
+      const repoDir = path.join(rootDir, rel);
+      const worktreePath = path.join(rootDir, `.task-worktree-${rel.replace(/[^a-z0-9]+/gi, "-")}`);
+      const baseCommitSha = git(repoDir, "git rev-parse HEAD");
+      git(repoDir, `git worktree add -b ${branch} ${worktreePath} HEAD`);
+      return { worktreePath, baseCommitSha };
+    },
     cleanup: () => rmSync(rootDir, { recursive: true, force: true }),
   };
 }

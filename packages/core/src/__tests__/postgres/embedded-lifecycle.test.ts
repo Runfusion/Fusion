@@ -56,6 +56,14 @@ import {
   materializeEmbeddedPostgresRuntimeBinaries,
   installElectronAsarNativePathPatch,
   uninstallElectronAsarNativePathPatchForTests,
+  isWindowsBlockedNativeLibraryError,
+  describeWindowsBlockedNativeLibraryError,
+  EmbeddedPostgresPayloadBlockedError,
+  recordEmbeddedPayloadIntegrityFailure,
+  getEmbeddedPayloadIntegrityFailure,
+  clearEmbeddedPayloadIntegrityFailure,
+  decorateWindowsBlockedNativeLibraryError,
+  embeddedPostgresRuntimeBinRoot,
   type EmbeddedLifecycleOptions,
 } from "../../postgres/embedded-lifecycle.js";
 
@@ -75,6 +83,7 @@ afterEach(async () => {
   __setWindowsElevatedAdminForTests(null);
   __setWindowsEmbeddedPostgresNativeRootForTests(null);
   __setWindowsLauncherForTests(null);
+  clearEmbeddedPayloadIntegrityFailure();
   vi.useRealTimers();
   while (tracked.length > 0) {
     const { lifecycle, dataDir } = tracked.pop()!;
@@ -121,6 +130,27 @@ describe("embedded-lifecycle: isDataDirInitialized (PG_VERSION marker)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("embedded-lifecycle: Windows blocked native library classifier", () => {
+  const issueOutput = `ERROR OUTPUT: 2026-08-19 09:20:48.546 CEST [23152] FATAL: could not load library "C:/Users/ppp/.fusion/embedded-postgres/runtime-bin/win32-x64/lib/dict_snowball.dll": unknown error 4551`;
+
+  it("classifies the Defender ERROR_VIRUS_DELETED failure from issue #3489", () => {
+    expect(isWindowsBlockedNativeLibraryError(issueOutput)).toBe(true);
+    expect(describeWindowsBlockedNativeLibraryError(issueOutput)).toContain("dict_snowball.dll");
+    expect(describeWindowsBlockedNativeLibraryError(issueOutput)).toContain(
+      "%USERPROFILE%\\.fusion\\embedded-postgres",
+    );
+  });
+
+  it("does not misclassify unrelated library or encoding errors", () => {
+    expect(isWindowsBlockedNativeLibraryError(
+      "could not load library: The specified module could not be found",
+    )).toBe(false);
+    expect(isWindowsBlockedNativeLibraryError(
+      "invalid byte sequence for encoding UTF8",
+    )).toBe(false);
   });
 });
 
@@ -303,6 +333,33 @@ describe("embedded-lifecycle: Electron asar unpacked path rewrite", () => {
   });
 });
 
+describe("embedded-lifecycle: payload integrity diagnosis lifecycle", () => {
+  const verification = { acceptable: false, mismatches: ["lib/dict_snowball.dll"], mismatchCount: 1 };
+
+  it("is root-scoped, latest-wins, and resettable", () => {
+    const first = new EmbeddedPostgresPayloadBlockedError("/native-a", "/runtime-a", verification);
+    const second = new EmbeddedPostgresPayloadBlockedError("/native-b", "/runtime-b", verification);
+    recordEmbeddedPayloadIntegrityFailure(first);
+    recordEmbeddedPayloadIntegrityFailure(second);
+    expect(getEmbeddedPayloadIntegrityFailure("/runtime-a")).toBeNull();
+    expect(getEmbeddedPayloadIntegrityFailure("/runtime-b")).toBe(second);
+    clearEmbeddedPayloadIntegrityFailure();
+    expect(getEmbeddedPayloadIntegrityFailure()).toBeNull();
+  });
+
+  it("decorates only matching-root start failures and preserves unrelated failures", () => {
+    const root = embeddedPostgresRuntimeBinRoot();
+    const failure = new EmbeddedPostgresPayloadBlockedError("/native", root, verification);
+    recordEmbeddedPayloadIntegrityFailure(failure);
+    expect(decorateWindowsBlockedNativeLibraryError(new Error("initdb failed"), root).message).toContain(
+      "Windows antivirus blocked a bundled PostgreSQL library",
+    );
+    expect(decorateWindowsBlockedNativeLibraryError(new Error("initdb failed"), "/other-root").message).toBe(
+      "initdb failed",
+    );
+  });
+});
+
 describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)", () => {
   /*
    * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
@@ -327,6 +384,7 @@ describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)"
     writeFileSync(join(root, "bin", initdbBin), "initdb-stub");
     writeFileSync(join(root, "bin", pgCtlBin), "pg_ctl-stub");
     writeFileSync(join(root, "lib", "postgresql", "plpgsql.so"), "ext-v1");
+    writeFileSync(join(root, "lib", "dict_snowball.dll"), "snowball-v1");
     writeFileSync(join(root, "share", "postgresql", "postgres.bki"), "share-v1");
   }
 
@@ -400,7 +458,7 @@ describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)"
       seedNativeRoot(nativeRoot, "postgres-body");
       const marker = buildEmbeddedPostgresMaterializationMarker(nativeRoot);
       const fingerprint = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
-      expect(marker.startsWith("v2\n")).toBe(true);
+      expect(marker.startsWith("v3\n")).toBe(true);
       expect(marker).toContain(nativeRoot);
       expect(marker).toContain(fingerprint);
       // Path alone must not equal the full marker (legacy path-only markers rematerialize).
@@ -437,6 +495,62 @@ describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)"
     }
   });
 
+  it("clears a recorded integrity failure after a verified repair", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-repair-src-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-repair-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      recordEmbeddedPayloadIntegrityFailure(
+        new EmbeddedPostgresPayloadBlockedError(nativeRoot, destRoot, {
+          acceptable: false,
+          mismatches: ["lib/dict_snowball.dll"],
+          mismatchCount: 1,
+        }),
+      );
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(existsSync(join(destRoot, ".materialized-from"))).toBe(true);
+      expect(getEmbeddedPayloadIntegrityFailure(destRoot)).toBeNull();
+      expect(decorateWindowsBlockedNativeLibraryError(new Error("unrelated failure"), destRoot).message).toBe(
+        "unrelated failure",
+      );
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a Defender-quarantined dict_snowball.dll on the next launch", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-av-src-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-av-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      rmSync(join(destRoot, "lib", "dict_snowball.dll"));
+
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(readFileSync(join(destRoot, "lib", "dict_snowball.dll"), "utf8")).toBe("snowball-v1");
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a zero-byte truncated postgres executable", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-av-bin-src-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-av-bin-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      writeFileSync(join(destRoot, "bin", postgresBin), "");
+
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(readFileSync(join(destRoot, "bin", postgresBin), "utf8")).toBe("postgres-stable");
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
   it("re-copies when payload changes even though nativeRoot path is unchanged", () => {
     const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-update-"));
     const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-update-dst-"));
@@ -454,6 +568,29 @@ describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)"
       expect(readFileSync(join(destRoot, "bin", postgresBin), "utf8")).toBe("postgres-release-2");
       // Rematerialization clears dest first so orphans from prior releases do not linger.
       expect(existsSync(join(destRoot, "bin", "orphan-from-old-release"))).toBe(false);
+      expect(readFileSync(join(destRoot, ".materialized-from"), "utf8")).toBe(
+        buildEmbeddedPostgresMaterializationMarker(nativeRoot),
+      );
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("treats v2 markers as stale and rematerializes", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-v2-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-v2-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-current");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      writeFileSync(
+        join(destRoot, ".materialized-from"),
+        buildEmbeddedPostgresMaterializationMarker(nativeRoot).replace("v3\n", "v2\n"),
+      );
+      writeFileSync(join(destRoot, ".reuse-sentinel"), "must-be-removed");
+
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(existsSync(join(destRoot, ".reuse-sentinel"))).toBe(false);
       expect(readFileSync(join(destRoot, ".materialized-from"), "utf8")).toBe(
         buildEmbeddedPostgresMaterializationMarker(nativeRoot),
       );

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import type { ColumnId, GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
+import type { ChatSessionInfo } from "../hooks/useChat";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
 import type { RevertTaskOptions, RevertTaskResult } from "../api";
@@ -34,6 +35,7 @@ export interface RightDockControllerInput {
   subscribePluginEvents: (pluginId: string, onEvent: (event: { event: string; payload: unknown }) => void) => () => void;
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   openTaskPopup: (task: Task | TaskDetail) => void;
+  onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   openMobileTasksInPopup: boolean;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
@@ -186,7 +188,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
       onDeleteTask={input.onDeleteTask}
       addToast={input.addToast}
-      disableDrag={true}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
       nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
@@ -244,6 +245,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     onReviseTask: (task: Task | TaskDetail) => input.onSendSelectionToTask(task.description),
     onDeleteTask: input.onDeleteTask,
     onOpenDetail: input.openDetailTask,
+    onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
     onSendSelectionToTask: input.onSendSelectionToTask,
     onCreateTaskFromInsight: input.onCreateTaskFromInsight,
     onNavigateToMission: input.onNavigateToMission,
@@ -280,6 +282,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onResetTask={input.onResetTask}
       onDuplicateTask={input.onDuplicateTask}
       onTaskUpdated={input.onTaskUpdated}
+      onRefinementCreated={input.onTaskCreated}
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}

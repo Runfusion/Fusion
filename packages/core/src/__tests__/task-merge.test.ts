@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { PrInfo, StepStatus } from "../types.js";
 import {
+  getMergeConfirmedFinalizationBlocker,
+  getUnfinishedStepTitles,
+  isPreMergeStepsNotRunBlocker,
+  PreMergeStepsNotRunError,
+  PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
   BLOCKING_TASK_STATUSES,
   collectLandedMemberReviewAdvisories,
   HARD_BLOCKING_TASK_STATUSES,
@@ -510,6 +515,33 @@ describe("getTaskMergeBlocker", () => {
     expect(getTaskMergeBlocker(baseTask)).toBeUndefined();
   });
 
+  it("blocks an enabled pre-merge group that has no result only at a merge door", () => {
+    const requiredPreMergeStepIds = new Set(["code-review"]);
+    expect(getTaskMergeBlocker(baseTask, { requiredPreMergeStepIds }))
+      .toBe("task has enabled pre-merge workflow steps that never ran");
+    // Recovery callers deliberately omit the resolved input so they can find the card.
+    expect(getTaskMergeBlocker(baseTask)).toBeUndefined();
+  });
+
+  /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: the blocker text is a shared contract — the
+     auto-merge error path classifies on the typed error built from it, so it may not drift. */
+  it("exposes the unrun-gate reason as a classifiable constant", () => {
+    expect(getTaskMergeBlocker(baseTask, { requiredPreMergeStepIds: new Set(["code-review"]) }))
+      .toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+    expect(isPreMergeStepsNotRunBlocker(PRE_MERGE_STEPS_NOT_RUN_BLOCKER)).toBe(true);
+    expect(isPreMergeStepsNotRunBlocker("task has failed pre-merge workflow steps")).toBe(false);
+    expect(isPreMergeStepsNotRunBlocker(undefined)).toBe(false);
+    expect(new PreMergeStepsNotRunError("FN-9191").message)
+      .toBe(`Cannot merge FN-9191: ${PRE_MERGE_STEPS_NOT_RUN_BLOCKER}`);
+  });
+
+  it("accepts a skipped result for a required pre-merge group", () => {
+    expect(getTaskMergeBlocker({
+      ...baseTask,
+      workflowStepResults: [{ workflowStepId: "code-review", workflowStepName: "Code Review", status: "skipped" }],
+    }, { requiredPreMergeStepIds: new Set(["code-review"]) })).toBeUndefined();
+  });
+
   it("returns reason when task is not in review", () => {
     expect(getTaskMergeBlocker({ ...baseTask, column: "todo" }))
       .toContain("must be in 'in-review'");
@@ -814,6 +846,11 @@ describe("getTaskHardMergeBlocker", () => {
     })).toBe("task has failed pre-merge workflow steps");
   });
 
+  it("blocks a resultless required pre-merge group", () => {
+    expect(getTaskHardMergeBlocker(baseTask, { requiredPreMergeStepIds: new Set(["code-review"]) }))
+      .toBe("task has enabled pre-merge workflow steps that never ran");
+  });
+
   it("still blocks when task is not in-review", () => {
     expect(getTaskHardMergeBlocker({ ...baseTask, column: "todo" }))
       .toContain("must be in 'in-review'");
@@ -823,6 +860,27 @@ describe("getTaskHardMergeBlocker", () => {
 describe("isTaskReadyForMerge", () => {
   it("returns true for a clean task in review", () => {
     expect(isTaskReadyForMerge(baseTask)).toBe(true);
+  });
+
+  it("uses the caller's resolved review lanes", () => {
+    expect(isTaskReadyForMerge(
+      { ...baseTask, column: "signoff" },
+      { reviewColumns: new Set(["signoff"]) },
+    )).toBe(true);
+  });
+
+  /*
+  FNXC:MergeReadiness 2026-08-23-18:49:
+  A resolved workflow can return an empty review-lane set when it has no usable trait answer. Empty is
+  therefore "unresolved", not an authoritative board with no review lane; keep the legacy `in-review`
+  identity fallback until the caller can supply at least one resolved lane.
+  */
+  it("preserves the legacy review lane fallback for an empty resolved set", () => {
+    expect(isTaskReadyForMerge(baseTask, { reviewColumns: new Set() })).toBe(true);
+    expect(isTaskReadyForMerge(
+      { ...baseTask, column: "signoff" },
+      { reviewColumns: new Set() },
+    )).toBe(false);
   });
 
   it("returns false when pre-merge step failed", () => {
@@ -835,6 +893,10 @@ describe("isTaskReadyForMerge", () => {
         status: "failed",
       }],
     })).toBe(false);
+  });
+
+  it("returns false for a required pre-merge group with no result", () => {
+    expect(isTaskReadyForMerge(baseTask, { requiredPreMergeStepIds: new Set(["code-review"]) })).toBe(false);
   });
 
   it("returns true when only post-merge step failed", () => {
@@ -1044,5 +1106,105 @@ describe("isTaskBlockedOnApproval", () => {
 
   it("is false when pausedReason is the approval reason but paused is not true", () => {
     expect(isTaskBlockedOnApproval({ paused: false, pausedReason: AWAITING_APPROVAL_PAUSE_REASON, status: undefined })).toBe(false);
+  });
+});
+
+/*
+FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193 aftermath).
+
+ORIGINAL SYMPTOM: FN-9193's branch landed on main as eaa1d47c, but a Code Review revision request
+had reset its steps while the approved merge was in flight. The card was left `mergeConfirmed: true`
+WITH incomplete steps, every finalization site refused with "task has incomplete steps", and it sat
+`failed` for five hours. Restarting it made it worse: replanning issued seven fresh `pending` steps,
+so the retry re-created the exact condition that was blocking it — a loop with no exit.
+
+ASSERTION: incomplete steps never block a finalization whose landing the caller has already proven,
+while a genuinely rejecting pre-merge review still does.
+*/
+describe("getMergeConfirmedFinalizationBlocker", () => {
+  const landedWithUnfinishedWork = {
+    ...baseTask,
+    mergeDetails: { mergeConfirmed: true, commitSha: "eaa1d47c" } as never,
+    steps: [
+      { name: "Preflight", status: "in-progress" as StepStatus },
+      { name: "Remove the dead CSS custom-property reference", status: "pending" as StepStatus },
+    ],
+  };
+
+  it("does not block finalization for incomplete steps", () => {
+    // The hard blocker still refuses these — that difference IS the fix.
+    expect(getTaskHardMergeBlocker(landedWithUnfinishedWork)).toBe("task has incomplete steps");
+    expect(getMergeConfirmedFinalizationBlocker(landedWithUnfinishedWork)).toBeUndefined();
+  });
+
+  it("survives the restart loop that re-plans fresh pending steps", () => {
+    const replanned = {
+      ...baseTask,
+      mergeDetails: { mergeConfirmed: true, commitSha: "eaa1d47c" } as never,
+      steps: Array.from({ length: 7 }, (_, i) => ({ name: `Step ${i}`, status: "pending" as StepStatus })),
+    };
+    expect(getMergeConfirmedFinalizationBlocker(replanned)).toBeUndefined();
+  });
+
+  /*
+  FNXC:MergeConfirmedFinalization 2026-08-23-17:55:
+  The exemption needs a DURABLE merge record naming the landed commit. A no-op merge with no sha
+  landed nothing, and the content-scan recovery path (mergeDetails absent, landing inferred from
+  branch content) must keep the blocker or it would launder an unfinished task to done on a
+  heuristic — see `landed-content-soft-blocker.real-git.test.ts`.
+  */
+  it("still blocks incomplete steps without a durable merge record", () => {
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...landedWithUnfinishedWork,
+      mergeDetails: { mergeConfirmed: true, noOpMerge: true } as never,
+    })).toBe("task has incomplete steps");
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...landedWithUnfinishedWork,
+      mergeDetails: undefined,
+    })).toBe("task has incomplete steps");
+    // A no-op that still produced a commit did land something; the exemption applies.
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...landedWithUnfinishedWork,
+      mergeDetails: { mergeConfirmed: true, noOpMerge: true, commitSha: "abc123" } as never,
+    })).toBeUndefined();
+  });
+
+  /*
+  FNXC:MergeConfirmedFinalization 2026-08-23-09:48:
+  Resolved review lanes and required pre-merge steps must reach the hard blocker on both durable-merge and non-durable finalization paths; neither path may fall back to default lane vocabulary.
+  */
+  it("forwards resolved lane options across durable and non-durable finalization", () => {
+    const customReviewTask = {
+      ...baseTask,
+      column: "approval",
+    };
+    const options = {
+      reviewColumns: new Set(["approval"]),
+      requiredPreMergeStepIds: new Set(["code-review"]),
+    };
+
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...customReviewTask,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abc123" } as never,
+    }, options)).toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...customReviewTask,
+      mergeDetails: { mergeConfirmed: true, noOpMerge: true } as never,
+    }, options)).toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+  });
+
+  it("still blocks on a failed pre-merge review", () => {
+    // A review that actually rejected this content is a real signal even after landing; the
+    // FN-7720 operator bypass is the sanctioned way past it.
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...landedWithUnfinishedWork,
+      workflowStepResults: [{ workflowStepId: "code-review", workflowStepName: "Code Review", status: "failed", phase: "pre-merge" }],
+    })).toBe("task has failed pre-merge workflow steps");
+  });
+
+  it("names the unfinished steps so they are recorded, not dropped", () => {
+    expect(getUnfinishedStepTitles(landedWithUnfinishedWork))
+      .toEqual(["Preflight", "Remove the dead CSS custom-property reference"]);
+    expect(getUnfinishedStepTitles({ steps: [{ name: "done work", status: "done" as StepStatus }] })).toEqual([]);
   });
 });

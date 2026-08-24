@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import * as mergerAiPrompts from "../merge/merger-ai-prompts.js";
+
 import {
+  PRIOR_FINDING_DISPOSITIONS_MARKER,
   REVIEW_VERDICT_MARKER,
+  RESOLVED_PRIOR_FINDINGS_MARKER,
   buildMergeSystemPrompt,
   buildReviewSystemPrompt,
   parseReviewVerdict,
@@ -13,6 +17,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
       verdict: "reject",
       reasons: ["reviewer produced no output"],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -23,6 +28,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
         `reviewer did not emit a "${REVIEW_VERDICT_MARKER} approve|reject" line`,
       ],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -35,6 +41,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
       verdict: "reject",
       reasons: ["dropped a conflict hunk"],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -47,6 +54,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
       verdict: "reject",
       reasons: ["commit message is vague"],
       severity: "advisory",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -56,6 +64,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
     ).toEqual({
       verdict: "approve",
       reasons: [],
+      resolvedPriorReasons: [],
     });
   });
 
@@ -72,7 +81,49 @@ describe("merger-ai prompt/verdict re-exports", () => {
         "skipped docs update",
       ],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
+  });
+
+  it("parses explicitly acknowledged resolved prior findings", () => {
+    expect(parseReviewVerdict([
+      `${RESOLVED_PRIOR_FINDINGS_MARKER}`,
+      "- Missing generated types.",
+      "- Drops task export",
+      "SEVERITY: blocking",
+      "- newly found defect",
+      `${REVIEW_VERDICT_MARKER} reject`,
+    ].join("\n"))).toMatchObject({
+      resolvedPriorReasons: ["Missing generated types.", "Drops task export"],
+      reasons: ["newly found defect"],
+    });
+  });
+
+  it("keeps prior-finding dispositions out of reject reasons while retaining their structure", () => {
+    const result = parseReviewVerdict([
+      "The squash adds an unaccounted 30 ms async teardown delay to",
+      "`AddMarkerModal-info-service-runtime.spec.ts`.",
+      "",
+      PRIOR_FINDING_DISPOSITIONS_MARKER,
+      "finding-1-1: still-present",
+      `${REVIEW_VERDICT_MARKER} reject`,
+    ].join("\n"));
+    expect(result).toMatchObject({ verdict: "reject", severity: "blocking", priorFindingDispositions: [{ id: "finding-1-1", disposition: "still-present" }] });
+    expect(result.reasons).toEqual(["The squash adds an unaccounted 30 ms async teardown delay to `AddMarkerModal-info-service-runtime.spec.ts`."]);
+    expect(result.reasons.join("\n")).not.toMatch(/PRIOR_FINDING_DISPOSITIONS|finding-1-1: still-present/);
+  });
+
+  it("keeps every exported protocol marker out of rejection prose", () => {
+    const exportedMarkers = Object.entries(mergerAiPrompts)
+      .filter(([name, value]): value is string => name.endsWith("_MARKER") && typeof value === "string")
+      .map(([, marker]) => marker);
+
+    expect(exportedMarkers).not.toHaveLength(0);
+    for (const marker of exportedMarkers) {
+      expect(mergerAiPrompts.isAiMergeProtocolLine(`${marker} anything`)).toBe(true);
+      const result = parseReviewVerdict(`${marker} anything\n${REVIEW_VERDICT_MARKER} reject`);
+      expect(result.reasons.some((reason) => reason.includes(marker))).toBe(false);
+    }
   });
 
   it("keeps non-negotiable clean-room and verdict-marker prompt content", () => {
@@ -82,6 +133,8 @@ describe("merger-ai prompt/verdict re-exports", () => {
     );
     expect(buildReviewSystemPrompt()).toContain(REVIEW_VERDICT_MARKER);
     expect(buildReviewSystemPrompt()).toContain("Do NOT edit, stage, commit");
+    expect(buildReviewSystemPrompt()).toContain("Whole-tree semantic");
+    expect(buildReviewSystemPrompt()).toContain("never a blocking veto");
   });
 });
 
@@ -118,6 +171,15 @@ describe("parseReviewVerdict — reason recovery (FN-8004)", () => {
     expect(result.reasons).not.toContain(
       "reviewer rejected the merge without a stated reason"
     );
+  });
+
+  it("groups contiguous prose into one readable finding", () => {
+    const result = parseReviewVerdict([
+      "The squash adds an unaccounted 30 ms async teardown delay to",
+      "`AddMarkerModal-info-service-runtime.spec.ts`.",
+      `${REVIEW_VERDICT_MARKER} reject`,
+    ].join("\n"));
+    expect(result.reasons).toEqual(["The squash adds an unaccounted 30 ms async teardown delay to `AddMarkerModal-info-service-runtime.spec.ts`."]);
   });
 
   it("orders recovered reasons nearest-the-verdict first (the closing argument)", () => {
@@ -191,7 +253,7 @@ describe("parseReviewVerdict — reason recovery (FN-8004)", () => {
     const result = parseReviewVerdict(
       `Everything checks out.\n${REVIEW_VERDICT_MARKER} approve`
     );
-    expect(result).toEqual({ verdict: "approve", reasons: [] });
+    expect(result).toEqual({ verdict: "approve", reasons: [], resolvedPriorReasons: [] });
   });
 
   it("gives the reviewer an unambiguous, self-consistent ordering instruction", () => {

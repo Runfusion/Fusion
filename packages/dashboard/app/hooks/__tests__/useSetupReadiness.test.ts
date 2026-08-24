@@ -55,9 +55,23 @@ describe("useSetupReadiness", () => {
     expect(result.current.hasAiProvider).toBe(true);
   });
 
+  it("returns hasAiProvider=true when persisted custom providers exist without authenticated built-ins", async () => {
+    mockFetchAuthStatus.mockResolvedValueOnce({
+      providers: [makeProvider("anthropic", false), makeProvider("github", true)],
+      customProvidersConfigured: true,
+    });
+
+    const { result } = renderHook(() => useSetupReadiness());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.hasAiProvider).toBe(true);
+    expect(result.current.hasWarnings).toBe(false);
+  });
+
   it("returns hasAiProvider=false when no non-GitHub providers are authenticated", async () => {
     mockFetchAuthStatus.mockResolvedValueOnce({
       providers: [makeProvider("anthropic", false), makeProvider("github", true)],
+      customProvidersConfigured: false,
     });
 
     const { result } = renderHook(() => useSetupReadiness());

@@ -156,8 +156,18 @@ export function createTaskUpdateTool(
               };
             }
             const invalidIds: string[] = [];
+            const selfSpawnedIds: string[] = [];
             for (const depId of dependencies) {
-              try { await store.getTask(depId); } catch { invalidIds.push(depId); }
+              try {
+                const dependency = await store.getTask(depId);
+                if (dependency.sourceParentTaskId === taskId) selfSpawnedIds.push(depId);
+              } catch { invalidIds.push(depId); }
+            }
+            if (selfSpawnedIds.length > 0) {
+              return {
+                content: [{ type: "text" as const, text: `Cannot depend on self-spawned task(s): ${selfSpawnedIds.join(", ")}. Implement required work directly in ${taskId}.` }],
+                details: { code: "SELF_SPAWNED_DEPENDENCY", dependencyIds: selfSpawnedIds },
+              };
             }
             if (invalidIds.length > 0) {
               return {

@@ -2,6 +2,7 @@ import type { TaskStore } from "@fusion/core";
 
 import type { RunAuditor } from "../util/run-audit.js";
 import { createLogger } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 const log = createLogger("goal-anchoring-audit");
 
 /** Goal context was injected into heartbeat/executor prompts for the Slice 2 cite-rate experiment. */
@@ -74,8 +75,7 @@ export function emitGoalRetrievalAudit(
 ): void {
   if (!ctx.runId || !ctx.agentId) return;
 
-  try {
-    void store.recordRunAuditEvent({
+  void emitBoundedRunAudit(store, {
       runId: ctx.runId,
       agentId: ctx.agentId,
       taskId: ctx.taskId,
@@ -88,8 +88,5 @@ export function emitGoalRetrievalAudit(
         goalIds: input.goalIds ?? [],
         notFound: input.notFound ?? false,
       },
-    });
-  } catch (error) {
-    log.debug("goal retrieval audit emission skipped", error);
-  }
+  }, { log: { warn: (message: string) => log.debug("goal retrieval audit emission skipped", message) } });
 }

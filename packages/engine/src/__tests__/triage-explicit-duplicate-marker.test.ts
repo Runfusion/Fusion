@@ -233,7 +233,17 @@ describe("triage explicit duplicate marker short-circuit", () => {
 
     await expect(runExplicitDuplicateMarker(store, task, "DUPLICATE: FN-001\n")).resolves.toBe(true);
 
-    expect(store.updateTask).not.toHaveBeenCalled();
+    /*
+     * FNXC:DuplicateIntake 2026-08-23-18:30:
+     * FN-8911 (8a7ab1dedc) made the duplicate branch clear its planning-lifecycle-lock
+     * transport-failure marker from `customFields` before any decision, so "no write at all" is no
+     * longer the contract. The invariant this test owns is the PAUSE: a user pause must survive
+     * marker reprocessing untouched, so the only permitted write is that customFields cleanup —
+     * never `paused`, `pausedReason`, `userPaused`, or a duplicate `sourceMetadataPatch`.
+     */
+    for (const [, patch] of (store.updateTask as ReturnType<typeof vi.fn>).mock.calls as [string, Record<string, unknown>][]) {
+      expect(Object.keys(patch)).toEqual(["customFields"]);
+    }
   });
   it.each([
     ["missing", null],

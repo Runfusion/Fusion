@@ -137,7 +137,7 @@ describe("MobileNavBar", () => {
     vi.useRealTimers();
   });
 
-  it("renders seven top-level tab buttons (command center + tasks + agents + missions + chat + mailbox + more) and keeps skills in More when showSkillsTab is true", () => {
+  it("renders eight top-level tab buttons including dedicated List and keeps skills in More when showSkillsTab is true", () => {
     render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} />);
 
     expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeDefined();
@@ -146,6 +146,7 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-chat")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
+    expect(screen.getByTestId("mobile-nav-tab-list")).toBeDefined();
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-roadmaps")).toBeNull();
     expect(screen.getByTestId("mobile-nav-tab-more")).toBeDefined();
@@ -243,14 +244,14 @@ describe("MobileNavBar", () => {
         mailboxPendingApprovalCount={2}
       />,
     );
-    expectUniformMobileNavColumns(sevenTabRender.container, 7);
+    expectUniformMobileNavColumns(sevenTabRender.container, 8);
     expect(screen.getByTestId("mobile-nav-tab-command-center").className).toContain("mobile-nav-tab--active");
     expect(screen.getByLabelText("Unread chat response")).toBeInTheDocument();
     expect(screen.getByLabelText("Pending approvals")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")?.textContent).toBe("7");
     sevenTabRender.unmount();
 
-    // Skills is never a top-level tab, so enabling it keeps the top-level column count at seven
+    // Skills is never a top-level tab, so enabling it keeps the top-level column count at eight
     // and the skills destination, plus its active view, lives in the More sheet.
     const skillsEnabledRender = render(
       <MobileNavBar
@@ -262,7 +263,7 @@ describe("MobileNavBar", () => {
         mailboxPendingApprovalCount={1}
       />,
     );
-    expectUniformMobileNavColumns(skillsEnabledRender.container, 7);
+    expectUniformMobileNavColumns(skillsEnabledRender.container, 8);
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
     expect(screen.getByTestId("mobile-nav-tab-more").className).toContain("mobile-nav-tab--active");
     expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")?.textContent).toBe("99+");
@@ -282,7 +283,7 @@ describe("MobileNavBar", () => {
         ]}
       />,
     );
-    expectUniformMobileNavColumns(pluginVariantRender.container, 7);
+    expectUniformMobileNavColumns(pluginVariantRender.container, 8);
     expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-spacing-check-wide")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-spacing-check-wide")).toBeDefined();
@@ -573,12 +574,12 @@ describe("MobileNavBar", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("board");
   });
 
-  it("tasks tab calls onChangeView with 'list' when already on list", () => {
+  it("tasks tab returns to board when currently on list", () => {
     const props = createDefaultProps();
     render(<MobileNavBar {...props} view="list" />);
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
-    expect(props.onChangeView).toHaveBeenCalledWith("list");
+    expect(props.onChangeView).toHaveBeenCalledWith("board");
   });
 
   it("tasks tab is active when view is 'board'", () => {
@@ -586,9 +587,12 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-tasks").className).toContain("mobile-nav-tab--active");
   });
 
-  it("tasks tab is active when view is 'list'", () => {
-    render(<MobileNavBar {...createDefaultProps()} view="list" />);
-    expect(screen.getByTestId("mobile-nav-tab-tasks").className).toContain("mobile-nav-tab--active");
+  it("list tab is active and routes to list when view is 'list'", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} view="list" />);
+    expect(screen.getByTestId("mobile-nav-tab-list").className).toContain("mobile-nav-tab--active");
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-list"));
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
   it("missions tab calls onChangeView with 'missions'", () => {

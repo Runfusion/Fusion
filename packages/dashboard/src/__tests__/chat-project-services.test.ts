@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetScopedChatManagerCache,
   getOrCreateScopedChatManager,
+  resolveProjectChatContext,
 } from "../chat-project-services.js";
 
 function createStore(fusionDir = "/tmp/fusion-project") {
@@ -51,6 +52,23 @@ describe("project-scoped ChatManager cache", () => {
     expect(upgradedManager).toBe(preBootManager);
     expect((upgradedManager as any).pluginRunner).toBe(enginePluginRunner);
     expect((upgradedManager as any).messageStore).toBe(messageStore);
+  });
+
+  it("keeps a request's secondary store when its engine is unavailable", async () => {
+    const defaultStore = createStore("/tmp/default/.fusion");
+    const secondaryStore = createStore("/tmp/secondary/.fusion");
+    const defaultChatStore = createChatStore();
+
+    const context = await resolveProjectChatContext({
+      projectId: "secondary-project",
+      defaultStore,
+      defaultChatStore,
+      requestStore: secondaryStore,
+      engineManager: { getEngine: vi.fn(() => undefined) } as any,
+    });
+
+    expect(context.store).toBe(secondaryStore);
+    expect(context.chatStore).not.toBe(defaultChatStore);
   });
 
   it("preserves plugin-runner refresh semantics alongside MessageStore refresh", () => {

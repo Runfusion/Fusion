@@ -32,7 +32,8 @@ const BOUNDED_GIT_DIFF = "bounded data-dependent git diff plumbing";
 const allowlist: AllowlistEntry[] = [
   // FNXC:FullSuiteBookkeeping 2026-08-05-00:25: Re-pin after code-organization peels moved git plumbing under merge/, worktree/, execution/ and shifted self-healing/executor line numbers. Identity remains file+primitive+signature; lines are documentation only.
   { file: "src/execution/review-checkout.ts", line: 35, primitive: "execFileSync", signature: "const topLevel = execFileSync(\"git\", [\"rev-parse\", \"--show-toplevel\"], {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/executor.ts", line: 18450, primitive: "execSync", signature: "execSync(`git merge-base --is-ancestor ${task.baseCommitSha} HEAD`, {", reason: SHORT_GIT_PLUMBING },
+  // FNXC:EngineProcessRules 2026-08-23-18:30: the executor ancestry check moved to src/executor/worktree-git-refs.ts in the wave-18 executor pure peels (1cf86baa1c). Identity is file+primitive+signature; re-pin the path, not the behavior.
+  { file: "src/executor/worktree-git-refs.ts", line: 121, primitive: "execSync", signature: "execSync(`git merge-base --is-ancestor ${task.baseCommitSha} HEAD`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/already-merged-detector.ts", line: 204, primitive: "execSync", signature: "branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/already-merged-detector.ts", line: 223, primitive: "execSync", signature: "execSync(`git merge-base --is-ancestor ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/already-merged-detector.ts", line: 270, primitive: "execSync", signature: "branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {", reason: SHORT_GIT_PLUMBING },

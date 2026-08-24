@@ -27,7 +27,6 @@ import { PrCreateModal } from "./PrCreateModal";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
-import { useCoarsePointer } from "../hooks/useCoarsePointer";
 import { plannerOverseerBadgeTooltip, plannerOverseerStateLabel } from "./plannerOverseerBadge";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
@@ -75,9 +74,10 @@ import { useColumnLabel } from "../i18n/labels";
 import { formatCompactLifecycleDate, useLocaleFormat } from "../i18n/format";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { WorkflowIcon } from "./WorkflowIcon";
-import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuActionDescriptor } from "./TaskContextMenu";
+import { TaskContextMenu, buildTaskActionMenuModel, buildTaskMoveMenuItems, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
 import { formatCost, hasTaskCost, taskTotalCost } from "../utils/taskTokenCost";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
+import { getTaskTitleDisplay } from "../utils/taskTitleDisplay";
 import {
   WORKFLOW_SETTING_VALUES_UPDATED_EVENT,
   getWorkflowSettingValuesKey,
@@ -661,8 +661,6 @@ interface TaskCardProps {
   isPromoting?: boolean;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
-  /** Disable card drag semantics when embedding in custom draggable containers (e.g. dependency graph). */
-  disableDrag?: boolean;
   /** Downstream fan-out entry for this task, computed at board-level. */
   fanout?: BlockerFanoutEntry;
   /** Whether GitHub CLI auth is available for creating PRs from task cards. */
@@ -875,7 +873,6 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onMoveTask === next.onMoveTask &&
     previous.onPromote === next.onPromote &&
     previous.isPromoting === next.isPromoting &&
-    previous.disableDrag === next.disableDrag &&
     previous.fanout?.totalCount === next.fanout?.totalCount &&
     previous.fanout?.activeTodoCount === next.fanout?.activeTodoCount &&
     previous.fanout?.isHighFanout === next.fanout?.isHighFanout &&
@@ -919,7 +916,6 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
       JSON.stringify(nextTask.workspaceWorktrees ?? null) &&
     previousTask.branch === nextTask.branch &&
     previousTask.baseBranch === nextTask.baseBranch &&
-    previousTask.breakIntoSubtasks === nextTask.breakIntoSubtasks &&
     previousTask.currentStep === nextTask.currentStep &&
     previousTask.modelProvider === nextTask.modelProvider &&
     previousTask.modelId === nextTask.modelId &&
@@ -1025,7 +1021,6 @@ function TaskCardComponent({
   onPromote,
   isPromoting = false,
   lastFetchTimeMs,
-  disableDrag,
   fanout,
   prAuthAvailable,
   autoMergeEnabled = false,
@@ -1040,7 +1035,6 @@ function TaskCardComponent({
   const { t } = useTranslation("app");
   const { locale } = useLocaleFormat();
   const columnLabel = useColumnLabel();
-  const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(task.description || "");
@@ -1345,21 +1339,6 @@ function TaskCardComponent({
     return () => observer.disconnect();
   }, [isEditing, task.id]);
 
-  const handleDragStart = useCallback((e: React.DragEvent) => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-      longPressStartRef.current = null;
-    }
-    e.dataTransfer.setData("text/plain", task.id);
-    e.dataTransfer.effectAllowed = "move";
-    setDragging(true);
-  }, [task.id]);
-
-  const handleDragEnd = useCallback(() => {
-    setDragging(false);
-  }, []);
-
   const isFileDrag = useCallback((e: React.DragEvent) => {
     return e.dataTransfer.types.includes("Files");
   }, []);
@@ -1559,7 +1538,6 @@ function TaskCardComponent({
   const isAwaitingApproval = isTaskAwaitingPlanApproval(task, isIntakeColumn);
   const isBlockedOnApprovalHold = isTaskBlockedOnApprovalHold(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
-  const isArchived = isArchivedColumn;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
   Pass the card's column traits. Without them the planner-lane clause falls back to the
@@ -1638,12 +1616,11 @@ function TaskCardComponent({
   structural rather than a property of the step count that two independent conditions had to agree on.
   */
   const showQueuedToPlanBadge = showIdleTodoBadge && !queued && awaitingPlanning;
-  // Native HTML5 drag is desktop-mouse only — it doesn't move cards via touch.
-  // On touch-primary devices the `draggable` attribute still arms the browser's
-  // touch-drag heuristic, which intermittently hijacks horizontal swipes meant
-  // to scroll the board. Drop drag on coarse pointers so panning stays reliable.
-  const isCoarsePointer = useCoarsePointer();
-  const isDraggable = !disableDrag && !queued && !isPaused && !isEditing && !isArchived && !isCoarsePointer; // Disable drag during edit/archived, host embedding, or touch
+  /*
+  FNXC:TaskCardMovement 2026-08-19-18:32:
+  Native task movement is intentionally absent from cards. File drops remain below because
+  attaching files is a separate card interaction, while task transitions stay in the context menu.
+  */
 
   // Check if this card can be edited inline
   /*
@@ -2845,11 +2822,11 @@ function TaskCardComponent({
     task.column,
     task.prInfo,
   ]);
-  const contextMenuActions = useMemo<TaskMenuActionDescriptor[]>(() => {
+  const contextMenuActions = useMemo<TaskMenuItemDescriptor[]>(() => {
     if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onMoveTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
       return [];
     }
-    const actions = [...taskActionMenuModel.actions];
+    const actions: TaskMenuItemDescriptor[] = [...taskActionMenuModel.actions];
     if (isCompleteColumn && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: handleTaskActionArchive });
     }
@@ -2881,31 +2858,18 @@ function TaskCardComponent({
       The retired in-review Move dropdown offered Done (no merge) and Triage in addition to the shared menu model's Todo/In Progress defaults. Fold those targets into this TaskCard-only menu so card consolidation retains every move capability without changing ListView or TaskDetail menus.
       */
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (CORRECTION of the note this replaced):
-      The previous version of this comment claimed `triage` was a column U11/#2515 had DELETED, making
-      this a live stale-target bug. THAT WAS WRONG, and it shipped. `triage` is a real, present column:
-
-        builtin-coding-workflow-ir.ts:49  { id: "triage", name: "Planning", traits: [{ trait: "intake" }] }
-
-      `triage` (intake) and `todo` (hold) are still SEPARATE columns on the default board, and `triage`
-      also exists in builtin-pr and builtin-lead-generation. I was carrying a merged-planning-column
-      shape from other work in this program and asserted it against the tree without checking the IR.
-      The move target is valid; there is no stale-target bug here.
-
-      WHAT IS ACTUALLY TRUE OF THIS SITE, and why it stays a literal. `column` below is the loop variable
-      over this function's OWN hardcoded `["done", "triage"]` array. The comparison asks "which entry of
-      my own list am I on" in order to pick a label — not "what role does this card's column play".
-      Resolving a trait for a string this code just wrote itself would be meaningless.
-
-      The ARRAY is the part worth revisiting, because it names move targets by id rather than by role,
-      so a workflow that renames those lanes gets targets it cannot show. That is a behaviour question
-      about which targets a review card should offer — and removing or changing a visible menu entry is
-      the UI-affordance change AGENTS requires a Surface Enumeration for (the workflow-row chevron took
-      FN-6115 -> FN-6118 -> FN-6123 for skipping it). Out of scope for a vocabulary conversion, but a
-      real question, unlike the one the old comment invented.
+      FNXC:BoardCardActions 2026-08-18-06:18 (FN-005):
+      Supplemental in-review targets are named by legacy id so card menus retain
+      Done (no merge) and legacy workflow parity. The default workflow no longer
+      declares `triage`; its `todo` column is labelled Planning. Without filtering,
+      COLUMN_LABELS.triage also reads as Planning and duplicates the declared todo
+      target. Only offer a supplemental target when loaded workflow metadata declares
+      a visible column; retain both legacy targets while metadata is unavailable.
       */
       if (isReviewColumn) {
         for (const column of ["done", "triage"] as const) {
+          const workflowColumn = taskMoveColumns?.find((candidate) => candidate.id === column);
+          if (taskMoveColumns && (!workflowColumn || workflowColumn.flags?.hiddenFromBoard)) continue;
           if (moveTransitions.some((transition) => transition.column === column)) continue;
           moveTransitions.push({
             column,
@@ -2918,16 +2882,14 @@ function TaskCardComponent({
           });
         }
       }
-      for (const transition of moveTransitions) {
-        actions.push({
-          id: `move-${transition.column}`,
-          label: transition.label,
-          onSelect: () => handleTaskActionMove(transition.column),
-        });
-      }
+      actions.push(...buildTaskMoveMenuItems(
+        moveTransitions,
+        handleTaskActionMove,
+        t("taskDetail.move.moveToParent", "Move to"),
+      ));
     }
-    return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionArchive, handleTaskActionMove, handleTaskActionRevert, handleTaskActionUnarchive, isRevertable, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onMoveTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionColumnLabel, taskActionMenuModel.actions, taskActionMenuModel.moveTransitions, taskActionMenuModel.reviewAction]);
+    return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
+  }, [handleTaskActionArchive, handleTaskActionMove, handleTaskActionRevert, handleTaskActionUnarchive, isRevertable, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onMoveTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionColumnLabel, taskActionMenuModel.actions, taskActionMenuModel.moveTransitions, taskActionMenuModel.reviewAction, taskMoveColumns]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -3152,7 +3114,7 @@ function TaskCardComponent({
     }
   }, [addToast, isRetrying, onRetryTask, task.id]);
 
-  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
+  const cardClass = `card${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   const filesChangedButton = (() => {
     if (isWipColumn) {
@@ -3564,9 +3526,6 @@ function TaskCardComponent({
       className={cardClass}
       data-id={task.id}
       data-column={task.column}
-      draggable={isDraggable}
-      onDragStart={isDraggable ? handleDragStart : undefined}
-      onDragEnd={isDraggable ? handleDragEnd : undefined}
       onDragOver={handleFileDragOver}
       onDragLeave={handleFileDragLeave}
       onDrop={handleFileDrop}
@@ -4073,9 +4032,20 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      <div className="card-title" title={task.title || task.description || undefined}>
-        {truncate(task.title, MAX_TITLE_LENGTH) || truncate(task.description, MAX_TITLE_LENGTH) || task.id}
-      </div>
+      {(() => {
+        const titleDisplay = getTaskTitleDisplay(task);
+        const titleText = titleDisplay.source === "title"
+          ? truncate(titleDisplay.text, MAX_TITLE_LENGTH)
+          : titleDisplay.text;
+        return (
+          <div
+            className={`card-title${titleDisplay.isBoundedDescription ? " card-title--bounded-description" : ""}`}
+            title={titleDisplay.fullText}
+          >
+            {titleText}
+          </div>
+        );
+      })()}
       {(() => {
         // Card-placed custom field badges (U13/KTD-14). Bounded to MAX_CARD_FIELDS
         // with a "+N" overflow chip. Nothing renders when no card fields are

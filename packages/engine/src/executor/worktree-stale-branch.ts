@@ -5,12 +5,14 @@
  */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { isFusionDeletableBranch, type Task } from "@fusion/core";
 
 const execAsync = promisify(exec);
 
 export type StaleBranchCleanupStore = {
   logEntry: (taskId: string, action: string, outcome?: string) => Promise<unknown>;
   clearStaleExecutionStartBranchReferences: (branches: string[], excludingTaskId?: string) => Promise<unknown>;
+  getTask?: (taskId: string) => Promise<Task | undefined>;
 };
 
 /**
@@ -32,6 +34,13 @@ export async function cleanupStaleBranch(
   branch: string,
   taskId: string,
 ): Promise<boolean> {
+  // Branch names alone cannot disprove an operator provenance marker.
+  const task = await store.getTask?.(taskId);
+  if (!task || !isFusionDeletableBranch(task, branch)) {
+    await store.logEntry(taskId, `Kept branch with unknown or operator provenance`, branch);
+    return false;
+  }
+
   // Step 1: Prune stale worktree metadata that may hold a lock on the branch
   try {
     await execAsync("git worktree prune", { cwd: rootDir });

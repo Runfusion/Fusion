@@ -85,21 +85,6 @@ describe("mission + planning modal mobile CSS", () => {
     expect(missionBlock).not.toMatch(/\.mission-detail\s*\{[^}]*safe-area-inset-bottom/s);
   });
 
-  it("SubtaskBreakdown: drag handle is touch-friendly (36px)", () => {
-    const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.subtask-drag-handle\s*\{[^}]*min-width:\s*36px;[^}]*min-height:\s*36px;/s);
-  });
-
-  it("SubtaskBreakdown: subtask action icon buttons are 36px", () => {
-    const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.subtask-item-actions \.btn-icon\s*\{[^}]*min-width:\s*36px;[^}]*min-height:\s*36px;/s);
-  });
-
-  it("SubtaskBreakdown: dependency chips are touch-friendly", () => {
-    const planningBlock = findMobileBlockContaining(".planning-modal");
-    expect(planningBlock).toMatch(/\.planning-dep-chip\s*\{[^}]*min-height:\s*36px;/s);
-  });
-
   it("PlanningMode: confirm buttons meet touch targets", () => {
     const planningBlock = findMobileBlockContaining(".planning-modal");
     expect(planningBlock).toMatch(/\.planning-confirm-btn\s*\{[^}]*min-height:\s*36px;/s);

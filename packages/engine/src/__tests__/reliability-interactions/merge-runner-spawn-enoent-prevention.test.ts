@@ -45,6 +45,14 @@ async function setupReuseMergeFixture(opts: {
 }> {
   const fixture = await makeReliabilityFixture({
     taskId: opts.taskId,
+    /*
+    FNXC:MergeFixtures 2026-08-23-18:30:
+    This fixture exercises merge-runner cwd preflight mechanics, not review gating. The merge door
+    refuses a task whose ENABLED optional pre-merge groups produced no result and the built-in
+    workflow enables Plan Review + Code Review by default, so declare no enabled steps rather than
+    letting an unrelated gate mask the preflight assertions.
+    */
+    task: { enabledWorkflowSteps: [] },
     settings: {
       baseBranch: "master",
       mergeIntegrationWorktree: "reuse-task-worktree",
@@ -62,6 +70,8 @@ async function setupReuseMergeFixture(opts: {
   await store.updateTask(task.id, {
     baseBranch: "master",
     branch,
+    // FNXC:BranchWriteProvenance 2026-08-23-18:30: an engine-side fixture branch write must declare its origin.
+    branchWriteOrigin: "engine",
     steps: completedSteps,
     currentStep: completedSteps.length,
   } as any);
@@ -71,7 +81,7 @@ async function setupReuseMergeFixture(opts: {
 
   await mkdir(worktreeRoot, { recursive: true });
   git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
-  await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
+  await store.updateTask(task.id, { worktree: worktreePath, branch, branchWriteOrigin: "engine" } as any);
   if (!opts.skipEnqueue) {
     await store.enqueueMergeQueue(task.id);
   }
@@ -182,7 +192,7 @@ describe("FN-6278 reliability interactions: merge runner cwd preflight", () => {
       git(rootDir, `git worktree remove --force ${JSON.stringify(worktreePath)}`);
       await mkdir(unregisteredPath, { recursive: true });
       await writeFile(join(unregisteredPath, ".git"), "gitdir: /tmp/fusion-unregistered-placeholder\n", "utf-8");
-      await store.updateTask(taskId, { worktree: unregisteredPath, branch } as any);
+      await store.updateTask(taskId, { worktree: unregisteredPath, branch, branchWriteOrigin: "engine" } as any);
 
       const result = await aiMergeTask(store, rootDir, taskId);
       const taskAfter = await store.getTask(taskId);

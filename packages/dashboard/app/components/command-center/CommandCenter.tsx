@@ -398,8 +398,8 @@ function OverviewTab({
   const verificationSection = verificationRequests.length > 0 ? (
     <section className="cc-verification-requests card" data-testid="command-center-verification-requests">
       <div className="cc-overview-chart-header">
-        <h3 className="cc-area-section-title">Task verification</h3>
-        <p>Latest executor-owned verification requests</p>
+        <h3 className="cc-area-section-title">{t("commandCenter.taskVerification", "Task verification")}</h3>
+        <p>{t("commandCenter.verificationRequests", "Latest executor-owned verification requests")}</p>
       </div>
       {verificationRequests.map((request) => (
         <div key={request.requestId} className="cc-verification-requests__item">

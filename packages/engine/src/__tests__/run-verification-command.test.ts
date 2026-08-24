@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { SandboxBackend } from "../sandbox/types.js";
 import { fileURLToPath } from "node:url";
 import {
   BOUNDED_VERIFICATION_GUIDANCE,
@@ -24,6 +27,17 @@ const itPosix = onPosix ? it : it.skip;
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
+    /*
+    FNXC:Verification 2026-08-22-22:35:
+    Reaping asserts that no executable child survives. Linux can retain a killed
+    child as a zombie until its external init reaps it; kill(pid, 0) still succeeds
+    for that inert process and must not turn a successful process-group reap into a
+    false failure.
+    */
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return /^\d+\s+\(.+\)\s+Z\b/.test(stat) === false;
+    }
     return true;
   } catch {
     return false;
@@ -48,6 +62,77 @@ function sleep(ms: number): Promise<void> {
 // so we fall back to os.tmpdir() which is always C:\Users\…\Temp there.
 describe("runVerificationCommand", { timeout: 30000 }, () => {
   const tempDir = onPosix ? "/tmp" : tmpdir();
+
+  it("fans workspace verification out over each modified repository", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fusion-verify-"));
+    const repoA = join(root, "repo-a");
+    const repoB = join(root, "repo-b");
+    mkdirSync(repoA);
+    mkdirSync(repoB);
+    const tool = createRunVerificationTool({
+      worktreePath: root,
+      rootDir: root,
+      workspaceRepos: [
+        { repo: "repo-a", worktreePath: repoA, modified: true },
+        { repo: "repo-b", worktreePath: repoB, modified: true },
+        { repo: "repo-clean", worktreePath: root, modified: false },
+      ],
+      taskId: "FN-158",
+      recordActivity: vi.fn(),
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+    const result = await tool.execute!("call", { command: "pwd", scope: "package" });
+    expect(result.details).toMatchObject({ success: true, repositories: [{ repo: "repo-a" }, { repo: "repo-b" }] });
+    expect(result.content.map((entry) => entry.text).join("\n")).toContain(`Repository: repo-a`);
+    expect(result.content.map((entry) => entry.text).join("\n")).toContain(`Repository: repo-b`);
+  });
+
+  it("uses invocation-time workspace diffs instead of the pre-session modifiedFiles snapshot", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fusion-verify-fresh-"));
+    const repo = join(root, "repo-edited-during-session");
+    mkdirSync(repo);
+    const resolveWorkspaceRepos = vi.fn(async () => [
+      { repo: "repo-edited-during-session", worktreePath: repo, modified: true },
+    ]);
+    const tool = createRunVerificationTool({
+      worktreePath: root,
+      rootDir: root,
+      // This stale snapshot models task.modifiedFiles before the agent session ends.
+      workspaceRepos: [{ repo: "repo-edited-during-session", worktreePath: repo, modified: false }],
+      resolveWorkspaceRepos,
+      taskId: "FN-158",
+      recordActivity: vi.fn(),
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    const result = await tool.execute!("call-fresh", { command: "pwd", scope: "package" });
+
+    // The fan-out and its repository-targeted invocation each resolve live diffs.
+    expect(resolveWorkspaceRepos).toHaveBeenCalledTimes(2);
+    expect(result.details).toMatchObject({ success: true, repositories: [{ repo: "repo-edited-during-session" }] });
+    expect(result.content.map((entry) => entry.text).join("\n")).toContain("Repository: repo-edited-during-session");
+  });
+
+  it("routes task-tool verification through the selected streaming sandbox", async () => {
+    const backend: SandboxBackend = {
+      capabilities: () => ({ id: "bubblewrap", supportsNetworkPolicy: true, supportsFilesystemPolicy: true, supportsStreaming: true, platform: "any" }),
+      prepare: vi.fn(async () => {}),
+      run: vi.fn(),
+      runStreaming: vi.fn(async () => ({ outcome: "success" as const, stdout: "sandboxed", stderr: "", bufferOverflow: false })),
+      dispose: vi.fn(async () => {}),
+    };
+    const result = await runVerificationCommand({
+      command: "echo sandboxed",
+      cwd: tempDir,
+      timeoutMs: 1_000,
+      onHeartbeat: vi.fn(),
+      sandboxBackend: backend,
+      sandboxPolicy: { allowNetwork: false, allowedWritePaths: [] },
+    });
+    expect(backend.prepare).toHaveBeenCalledWith(expect.objectContaining({ allowedWritePaths: [] }));
+    expect(backend.runStreaming).toHaveBeenCalledWith("echo sandboxed", expect.objectContaining({ cwd: tempDir }));
+    expect(result).toMatchObject({ success: true, stdout: "sandboxed" });
+  });
   const workspaceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
   describe("command normalization", () => {
@@ -798,7 +883,7 @@ describe("runVerificationCommand", { timeout: 30000 }, () => {
       // POSIX shell expansion ($USER) differs from Windows (%USERNAME%).
       const onHeartbeat = vi.fn();
       const opts: RunVerificationOptions = {
-        command: "echo $USER",
+        command: "FUSION_VERIFY_ENV=present; echo $FUSION_VERIFY_ENV",
         cwd: tempDir,
         timeoutMs: 30000,
         onHeartbeat,
@@ -807,8 +892,7 @@ describe("runVerificationCommand", { timeout: 30000 }, () => {
       const result = await runVerificationCommand(opts);
 
       expect(result.success).toBe(true);
-      // Should have output (USER is typically set)
-      expect(result.stdout.trim().length).toBeGreaterThan(0);
+      expect(result.stdout.trim()).toBe("present");
     });
   });
 });
