@@ -56,22 +56,27 @@ export async function reclaimExistingWorktree(
 ): Promise<void> {
   const targetPath = preservedWorktreeTargetPathForTask(task.id, livePath, settings, deps.rootDir);
   const normalizedPath = await deps.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Branch-conflict recovery logs (reclaim, refusal, sticky) use `runContextFor` so the mutation
+  breadcrumb is attributable to the live executor run.
+
+  FNXC:Identity 2026-08-24-02:57:
+  The reclaim persist write is the same attributed mutation as the recovery log. 4/5 asserts
+  ANY_MUTATION_CONTEXT on this updateTask (engine vs operator branchWriteOrigin from #3507);
+  omitting the context would keep the provenance patch and still look unattributed.
+  */
   await deps.store.updateTask(task.id, {
     worktree: normalizedPath,
     branch,
     branchWriteOrigin: classifyTaskBranchOrigin(task, branch) === "operator-supplied" ? "operator" : "engine",
-  });
+  }, deps.runContextFor(task.id));
   const latestTask = await deps.store.getTask(task.id);
   const baseRef = await resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
   if (baseRef) {
     await assertCleanBranchAtBase(deps.rootDir, branch, baseRef, task.id);
   }
   const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
-  /*
-  FNXC:Identity 2026-08-24-02:18:
-  Branch-conflict recovery logs (reclaim, refusal, sticky) use `runContextFor` so the mutation
-  breadcrumb is attributable to the live executor run.
-  */
   await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
 }
