@@ -48,6 +48,11 @@ export async function persistTaskTokenUsage(
   taskId: string,
   tokenUsage: TaskTokenUsage,
 ): Promise<void> {
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Token-usage persist and budget enforcement share `runContextFor` so both writes stay on the live
+  executor run instead of the deprecated unattributed overload.
+  */
   const runContext = deps.runContextFor(taskId);
   await deps.store.updateTask(taskId, { tokenUsage }, runContext);
   await enforceTaskTokenBudgetForPersist(deps.store, taskId, runContext);

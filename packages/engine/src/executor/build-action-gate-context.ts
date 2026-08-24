@@ -174,6 +174,11 @@ export function buildActionGateContext(
       if (taskId) {
         deps.approvalSuspended.add(taskId);
         try {
+          /*
+          FNXC:Identity 2026-08-24-02:18:
+          Approval-pause mutations and the matching logEntry use `runContextFor` so the hold is
+          attributed to the agent that requested the gated action.
+          */
           await deps.store.pauseTask(taskId, true, deps.runContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         } catch (error) {
           deps.approvalSuspended.delete(taskId);

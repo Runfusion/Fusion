@@ -89,6 +89,11 @@ export async function evaluateTaskDoneScopeLeak(
 ): Promise<{ blocked: false } | { blocked: true; message: string }> {
   if (task.scopeOverride === true) {
     executorLog.debug(`${task.id}: scope-leak guard bypassed (scopeOverride=true)`);
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Scope-leak audit breadcrumbs (bypass, blocked, allowed) use `runContextFor` so completion-guard
+    attribution matches the live executor run.
+    */
     await deps.store.logEntry(task.id, "[scope-leak] scope guard bypassed via task.scopeOverride", undefined, deps.runContextFor(task.id));
     return { blocked: false };
   }

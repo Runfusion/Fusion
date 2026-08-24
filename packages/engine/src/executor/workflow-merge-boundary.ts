@@ -204,13 +204,20 @@ export async function ensureWorkflowMergeBoundaryTask(
     ) => Promise<TaskDetail | undefined>;
   };
   if (typeof storeWithMove.moveTask === "function") {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    PR 3430 review (Greptile P1 / CodeRabbit major): a three-argument `moveTask` here audited as
+    `system`/`unknown` while the adjacent log used the live run. Pass the same total carrier as the
+    follow-up log so the merge-column move is attributable.
+    */
+    const mergeMoveContext = runContextForTotal(deps.getRunContextFor, live.id);
     const moved = await storeWithMove.moveTask(
       live.id,
       targetColumn,
       moveOptions,
-      runContextForTotal(deps.getRunContextFor, live.id),
+      mergeMoveContext,
     );
-    await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, runContextForTotal(deps.getRunContextFor, live.id));
+    await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, mergeMoveContext);
     return { task: moved ?? { ...live, column: targetColumn } };
   }
   await deps.store.updateTask(live.id, { column: targetColumn } as Partial<TaskDetail>, deps.runContextFor(live.id));

@@ -52,6 +52,11 @@ export async function prepareGraphNodeExecution(
     ? ({ ...live, worktree: undefined, sessionFile: undefined } as TaskDetail)
     : live;
   if (live.worktree) {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Missing-worktree reacquire logs are attributed through `runContextFor` so the graph node's live
+    run owns the breadcrumb.
+    */
     await deps.store.logEntry(
       live.id,
       `Workflow node '${node.id}' assigned worktree is missing — reacquiring before node execution`,

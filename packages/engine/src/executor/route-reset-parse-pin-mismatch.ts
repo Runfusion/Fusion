@@ -44,6 +44,11 @@ export async function routeResetParsePinMismatchToRetry(
   }
   deps.clearPausedAborted(live.id);
   deps.activeWorktrees.delete(live.id);
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Parse-pin reset clears graph resume state through `runContextFor` so the auto-recovery write is
+  attributed to the live executor run.
+  */
   await deps.store.updateTask(live.id, {
     status: null,
     error: null,

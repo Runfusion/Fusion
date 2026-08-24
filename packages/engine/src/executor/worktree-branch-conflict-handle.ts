@@ -67,6 +67,11 @@ export async function reclaimExistingWorktree(
     await assertCleanBranchAtBase(deps.rootDir, branch, baseRef, task.id);
   }
   const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Branch-conflict recovery logs (reclaim, refusal, sticky) use `runContextFor` so the mutation
+  breadcrumb is attributable to the live executor run.
+  */
   await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
 }

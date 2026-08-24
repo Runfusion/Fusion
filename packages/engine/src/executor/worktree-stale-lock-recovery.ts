@@ -91,6 +91,11 @@ export async function recoverIndexLockIfStale(
     const removed = await tryRemoveStaleLock({ lockPath: resolvePath(deps.rootDir, lockPath) });
     if (removed.removed) {
       await emitStaleLockAudit(deps, taskId, "worktree:stale-lock-recovered", path, { lockPath });
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Stale-lock and stale-registration recovery logs use `runContextFor` so the retry breadcrumb is
+      attributed to the live executor run instead of an unattributed fallback.
+      */
       await deps.store.logEntry(
         taskId,
         `Recovered stale worktree index.lock and retrying`,

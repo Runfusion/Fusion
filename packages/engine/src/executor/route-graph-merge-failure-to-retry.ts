@@ -124,6 +124,11 @@ export async function routeGraphMergeFailureToRetry(
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
     executorLog.warn(`${live.id}: ${message}`);
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Merge-failure retry routing logs through `runContextFor` so the bounded auto-merge retry is
+    attributed to the live graph run.
+    */
     await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
 
     /*

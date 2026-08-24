@@ -149,6 +149,12 @@ export async function captureBaseCommitSha(
     omits it wrote `undefined` and the base-SHA capture landed unattributed. The total form falls
     back to the derived executor-lane actor, which is what the base-commit-capture tests assert and
     what the rebase reverted.
+
+    FNXC:Identity 2026-08-24-02:18:
+    PR 3430 review: production callers (`run-implementation`, `ensure-graph-custom-node-worktree`)
+    pass the live task run context. The parameter stays optional so isolated capture tests can omit
+    it; when supplied, `runContextForTotal(() => runContext, task.id)` returns that carrier (including
+    its runId) instead of reconstructing from `agentId` alone.
     */
     await store.updateTask(task.id, { baseCommitSha }, runContextForTotal(() => runContext, task.id));
     /*
