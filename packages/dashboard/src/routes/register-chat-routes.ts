@@ -1589,15 +1589,24 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
       // Resolve per-project ChatManager before opening the SSE stream so
       // failures (e.g. project DB cannot be opened) produce a proper HTTP error.
-      const engine = projectId ? options?.engineManager?.getEngine(projectId) : undefined;
-      const projectPluginRunner = engine?.getPluginRunner?.();
-      chatManager = getOrCreateScopedChatManager(
-        scopedStore,
-        chatStore,
-        projectPluginRunner ?? options?.pluginRunner,
-        Boolean(projectPluginRunner),
-        engine?.getMessageStore(),
-      );
+      /*
+      FNXC:ProjectChatRuntime 2026-08-23-23:35:
+      Send must resolve the SAME ChatManager instance as `resolveScopedChatManager` (used by stream, cancel, and session reads); generation state lives on the instance, so a split identity makes cancel a silent no-op and `isGenerating` wrong. With no selected project the host manager is authoritative — only a project-scoped request builds/reuses a scoped manager. FN-047 dropped this unscoped branch on the send path alone.
+      */
+      if (!projectId) {
+        if (!options?.chatManager) throw new ApiError(503, "Chat manager not available");
+        chatManager = options.chatManager;
+      } else {
+        const engine = options?.engineManager?.getEngine(projectId);
+        const projectPluginRunner = engine?.getPluginRunner?.();
+        chatManager = getOrCreateScopedChatManager(
+          scopedStore,
+          chatStore,
+          projectPluginRunner ?? options?.pluginRunner,
+          Boolean(projectPluginRunner),
+          engine?.getMessageStore(),
+        );
+      }
 
       // The internal limiter is shared with GET stream subscribers. Keep its rejection
       // before headers so a replacement cannot be accepted without a prepared send.

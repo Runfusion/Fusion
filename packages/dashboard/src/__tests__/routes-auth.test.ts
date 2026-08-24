@@ -380,9 +380,13 @@ describe("GET /models", () => {
     const res = await GET(buildApp(modelRegistry), "/api/models");
 
     expect(res.status).toBe(200);
+    /*
+    FNXC:ModelThinkingCapabilities 2026-08-23-23:50:
+    FN-021 derives `supportedThinkingLevels` for every /api/models row; a non-reasoning model derives ["off"], while a reasoning model with no thinkingLevelMap derives nothing.
+    */
     expect(res.body.models).toEqual([
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
-      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000, supportedThinkingLevels: ["off"] },
     ]);
     expect(modelRegistry.refresh).toHaveBeenCalled();
   });
@@ -1079,6 +1083,8 @@ describe("GET /auth/status", () => {
       "kimi-coding",
       "minimax",
       "openrouter",
+      // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
+      "orcarouter",
       "opencode-go",
       "tavily",
       "zai",
@@ -1195,6 +1201,8 @@ describe("GET /auth/status", () => {
       "kimi-coding",
       "minimax",
       "openrouter",
+      // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
+      "orcarouter",
       "opencode-go",
       "tavily",
       "zai",
@@ -1663,6 +1671,8 @@ describe("GET /auth/status", () => {
       "kimi-coding",
       "minimax",
       "openrouter",
+      // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
+      "orcarouter",
       "opencode-go",
       "tavily",
       "zai",

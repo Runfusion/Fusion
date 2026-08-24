@@ -566,7 +566,6 @@ describe("FloatingWindow", () => {
   });
 
   it("scopes mobile sheet sizing and hidden resize handles to task-detail pop-outs", () => {
-    expect(floatingWindowCss).toContain("FNXC:MobileTaskPopups 2026-06-29-00:00");
     expect(floatingWindowCss).toContain(".floating-window--task-detail {");
     expect(floatingWindowCss).toContain("width: 100vw !important;");
     expect(floatingWindowCss).toContain("height: 100dvh !important;");

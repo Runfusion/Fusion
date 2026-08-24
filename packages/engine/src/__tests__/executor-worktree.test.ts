@@ -1176,7 +1176,60 @@ describe("TaskExecutor worktree recovery", () => {
 
     expect(result).toBe("reclaimed");
     expect(normalize).toHaveBeenCalledWith(conflictPath, targetPath, "FN-8400", expect.objectContaining({ worktreesDir: ".worktrees" }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: targetPath }), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-8400",
+      expect.objectContaining({
+        worktree: targetPath,
+        branch: "fusion/fn-8400",
+        branchWriteOrigin: "engine",
+      }),
+      ANY_MUTATION_CONTEXT,
+    );
+  });
+
+  it("preserves operator provenance when reclaiming an operator-owned Fusion-namespaced branch", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees" } as any);
+    const executor = createWorktreeExecutor(store, "/tmp/test");
+    const conflictPath = "/tmp/legacy-worktrees/recover-fn-8401";
+    const targetPath = "/tmp/test/.worktrees/recover-fn-8401";
+    const branch = "fusion/fn-8401";
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: conflictPath,
+      tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8401): preserve implementation" }],
+    } as any);
+    vi.spyOn(executor as any, "normalizeReclaimableWorktreePath").mockResolvedValue(targetPath);
+
+    const result = await (executor as any).handleBranchConflict(
+      {
+        ...makeTask("FN-8401"),
+        branch,
+        worktree: conflictPath,
+        branchContext: { branchOverride: { by: "operator", at: "2026-08-22T22:00:00.000Z", branch } },
+      },
+      new BranchConflictError({
+        branchName: branch,
+        conflictingWorktreePath: conflictPath,
+        existingTipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
+        strandedCommits: [],
+        startPoint: "main",
+        recommendedAction: "reclaim",
+      }),
+    );
+
+    expect(result).toBe("reclaimed");
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-8401",
+      expect.objectContaining({
+        worktree: targetPath,
+        branch,
+        branchWriteOrigin: "operator",
+      }),
+      ANY_MUTATION_CONTEXT,
+    );
   });
 
   it("uses the task-pinned target when normalizing a branch-conflict reclaim", async () => {

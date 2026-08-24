@@ -27,7 +27,7 @@ import { useRightDockController } from "./components/useRightDockController";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
-import { useGitHubStarPromptShown, markGitHubStarPromptShown } from "./hooks/useGitHubStarPrompt";
+import { useGitHubStarPromptState, markGitHubStarPromptShown, refreshGitHubStarPromptDismissal } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
 import { mergeTaskSnapshot, useTasks } from "./hooks/useTasks";
 import { useBoardWorkflows } from "./hooks/useBoardWorkflows";
@@ -822,12 +822,32 @@ function AppInner() {
   const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, { taskView, quickChatOpen });
   const { stashOrphanCount } = useStashOrphanCount(currentProject?.id);
   const [showGitHubStarPrompt, setShowGitHubStarPrompt] = useState(false);
-  const gitHubStarPromptShown = useGitHubStarPromptShown();
-  const handleStarPrompt = useCallback(() => setShowGitHubStarPrompt(true), []);
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:35:
+  The banner gate hides the ask while the durable answer is unknown, but the done-transition TRIGGER
+  below reads the durable answer alone. That transition is one-shot: gating it on the unknown state
+  would drop it for good, so a fresh browser profile would never show the ask even when nobody had
+  dismissed it.
+  */
+  const { dismissed: gitHubStarPromptDismissed, resolved: gitHubStarPromptResolved } = useGitHubStarPromptState();
+  const gitHubStarPromptShown = gitHubStarPromptDismissed || !gitHubStarPromptResolved;
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:43:
+  Every trigger that would SHOW the ask re-reads the durable answer first — both of them route through
+  here: a task first reaching done, and onboarding completing. The mount-time lookup can be stale by
+  then (first-run setup routinely has this tab open while the operator answers `fn onboard` in a
+  terminal), and showing an ask the operator already dismissed elsewhere is the exact duplicate the
+  shared record exists to prevent.
+  */
+  const handleStarPrompt = useCallback(() => {
+    void refreshGitHubStarPromptDismissal().then((alreadyAnswered) => {
+      if (!alreadyAnswered) setShowGitHubStarPrompt(true);
+    });
+  }, []);
   const { candidate: approvalBannerCandidate, dismissApproval } = useApprovalBanner({
     tasks,
     currentProjectId: currentProject?.id,
-    gitHubStarPromptShown,
+    gitHubStarPromptShown: gitHubStarPromptDismissed,
     onStarPrompt: handleStarPrompt,
   });
 
@@ -1113,6 +1133,8 @@ function AppInner() {
     closeSetupWizard: modalManager.closeSetupWizard,
     closeModelOnboarding: modalManager.closeModelOnboarding,
     closeProjectScopedModals: closeProjectScopedUi,
+    // FNXC:GithubStarAsk 2026-08-19-03:59: finishing onboarding is the first moment we ask for a GitHub star.
+    onOnboardingCompleted: handleStarPrompt,
   });
 
   const { handleDetailClose } = useDeepLink({

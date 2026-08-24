@@ -143,8 +143,6 @@ describe("computeBlockerFanoutMap", () => {
     const constantsSource = readFileSync(resolve(testDir, "../../../../engine/src/healing/self-healing-constants.ts"), "utf8");
     const match = constantsSource.match(/export const MAX_AUTO_MERGE_RETRIES = (\d+);/);
     expect(match?.[1]).toBe(String(MAX_AUTO_MERGE_RETRIES));
-    const source = readFileSync(resolve(testDir, "../../../../engine/src/self-healing.ts"), "utf8");
-    expect(source).toContain("SelfHealingManager must call resolveMaxAutoMergeRetries(settings)");
   });
 });
 

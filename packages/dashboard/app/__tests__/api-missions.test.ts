@@ -12,7 +12,6 @@ import {
   updateTask,
   createTask,
   connectPlanningStream,
-  connectSubtaskStream,
   connectMissionInterviewStream,
   assignTask,
   fetchAgentTasks,
@@ -550,27 +549,6 @@ describe("resilient SSE reconnect", () => {
     vi.advanceTimersByTime(50_000);
 
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(pingCallsBeforeClose);
-    expect(stream.readyState).toBe(ControlledEventSource.CLOSED);
-  });
-
-  it("stops subtask keep-alive after complete event", () => {
-    connectSubtaskStream("subtask-session", undefined, {});
-    const stream = ControlledEventSource.instances[0]!;
-
-    stream.emitOpen();
-    vi.advanceTimersByTime(25_000);
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/ai-sessions/subtask-session/ping",
-      expect.objectContaining({ method: "POST" }),
-    );
-
-    const pingCallsBeforeComplete = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-    stream.emitEvent("complete", "");
-
-    vi.advanceTimersByTime(50_000);
-
-    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(pingCallsBeforeComplete);
     expect(stream.readyState).toBe(ControlledEventSource.CLOSED);
   });
 

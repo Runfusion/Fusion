@@ -61,9 +61,14 @@ function expectNoContextWindowShell() {
 FNXC:ChatNavigation 2026-08-19-21:10:
 FN-054 keeps the context indicator tests on the selected thread while the conversation list owns all switching and management. Opening detail through a list row verifies the constrained host without restoring a selector.
 */
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+FN-9193 docks the conversation list beside the thread on desktop, and the Back affordance renders
+only while that list is hidden — so detail entry is confirmed by the thread, not by `chat-back-btn`.
+*/
 async function openDirectThread(sessionId = "session-001") {
   await userEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
-  await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
+  await waitFor(() => expect(document.querySelector(".chat-thread")).toBeInTheDocument());
 }
 
 function setupDirectChat(options: { content?: string; streamingText?: string; messages?: Array<Record<string, unknown>> } = {}) {

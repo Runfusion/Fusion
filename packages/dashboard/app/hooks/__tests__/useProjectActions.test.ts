@@ -267,4 +267,39 @@ describe("useProjectActions", () => {
     expect(options.toggleFavoriteModel).toHaveBeenCalledWith("claude-sonnet-4-5");
     expect(options.addToast).toHaveBeenCalledWith("Failed to update model favorites", "error");
   });
+
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  The post-onboarding GitHub star ask is earned by FINISHING onboarding. Closing the flow is the
+  operator saying "leave me alone", so the dismissal path must close the modal and ask nothing.
+  */
+  it("reports a finished onboarding so the star ask can fire, but not a dismissed one", () => {
+    const onOnboardingCompleted = vi.fn();
+    const options = createOptions({ onOnboardingCompleted });
+    const { result } = renderHook(() => useProjectActions(options));
+
+    act(() => {
+      result.current.handleModelOnboardingComplete();
+    });
+    expect(options.closeModelOnboarding).toHaveBeenCalledTimes(1);
+    expect(onOnboardingCompleted).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.handleModelOnboardingComplete("dismissed");
+    });
+    expect(options.closeModelOnboarding).toHaveBeenCalledTimes(2);
+    expect(onOnboardingCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes onboarding without a completion listener wired", () => {
+    const options = createOptions();
+    const { result } = renderHook(() => useProjectActions(options));
+
+    expect(() => {
+      act(() => {
+        result.current.handleModelOnboardingComplete("completed");
+      });
+    }).not.toThrow();
+    expect(options.closeModelOnboarding).toHaveBeenCalledTimes(1);
+  });
 });
