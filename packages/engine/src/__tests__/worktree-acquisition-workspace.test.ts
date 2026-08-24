@@ -866,6 +866,38 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     expect(existsSync(result.taskWorktreeDir)).toBe(true);
   });
 
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  The mint is a compare-and-set, so a store whose row ALREADY carries a pin (another node, or the
+  sibling acquisition that won the race) must be adopted rather than overwritten — the losing caller
+  has to build its paths from the winner's segment or the two disagree about one task's directory.
+  */
+  it("adopts a pin another writer already recorded instead of overwriting it", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const racing = makeTask("FN-PIN-5");
+    (racing as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current } = makeFakeStore(racing);
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        expect(segment).toBe("prd-1234-my-slug");
+        // The winner already pinned a different segment for this task.
+        await store.updateTask(id, { workspaceWorktreeDirSegment: "won-by-another-writer" });
+        return { task: current(), segment: "won-by-another-writer", minted: false };
+      };
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "won-by-another-writer"));
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
+  });
+
   it("reuses an existing pin verbatim instead of re-deriving it from the task", async () => {
     fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
     const pinned = makeTask("FN-PIN-2");
