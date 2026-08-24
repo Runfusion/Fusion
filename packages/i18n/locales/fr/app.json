@@ -6300,6 +6300,8 @@
       "usedAutomaticallyIfThePrimaryDefaultModelHits": "",
       "useDefault": "",
       "whenEnabledStartupFetchesTheLatestAvailableModels": "",
+      "syncOrcaRouterModelListAtStartup": "",
+      "whenEnabledStartupFetchesTheLatestOrcaRouterModels": "",
       "whenEnabledStartupRefreshesModelsThroughTheLocal": "",
       "commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities": "",
       "openRouterRoutingOrderHint": "",
@@ -6307,8 +6309,7 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": "",
-      "modelOverrides": ""
+      "requireParametersHint": ""
     },
     "header": {
       "discord": "Discord",
@@ -6781,11 +6782,7 @@
       "executorEscalationModel": "",
       "executorEscalationModelHelp": "",
       "selectExecutorEscalationModel": "",
-      "noExecutorEscalationModel": "",
-      "modelOverrides": "",
-      "projectLanesSubheading": "",
-      "workflowLanesSubheading": "",
-      "summarizationPointer": ""
+      "noExecutorEscalationModel": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -8439,6 +8436,13 @@
       "lockState": "",
       "relockChanged": "",
       "retainedHistory": ""
+    },
+    "aiMergeReview": {
+      "title": "",
+      "approvedWithPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalGuidance": ""
     }
   },
   "taskDocuments": {
@@ -9753,5 +9757,11 @@
     "untitledSection": "Raisonnement sans titre",
     "sectionCount": "{{count}} section",
     "sectionCountPlural": "{{count}} sections"
+  },
+  "artifactImageViewer": {
+    "openTask": "",
+    "close": "",
+    "loading": "",
+    "retry": ""
   }
 }

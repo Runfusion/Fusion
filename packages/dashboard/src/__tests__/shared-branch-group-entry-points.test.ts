@@ -292,4 +292,39 @@ describe("shared branch-group entry-point invariants", () => {
     app.use("/api", createApiRoutes(store));
     return app;
   }
+
+  /*
+  FNXC:BranchSelection 2026-08-23-23:50:
+  FN-074 (eb3eeb887a) deleted BOTH cases in this file because each opened with a `/api/subtasks/*` call, and that route was removed with task splitting. The new-task half of "preserves non-shared selection semantics" never depended on subtasks: project-default, existing, custom-new, and auto-new are live `POST /api/tasks` behavior, and their deletion left this describe with zero cases (which vitest fails as "No test found"). Restored without the removed planning/subtasks assertions.
+  */
+  it("preserves non-shared new-task selection semantics", async () => {
+    const app = buildApp();
+
+    await REQUEST(app, "POST", "/api/tasks", { description: "project default", branchSelection: { mode: "project-default" } });
+    await REQUEST(app, "POST", "/api/tasks", { description: "existing", branchSelection: { mode: "existing", branchName: "feature/existing", baseBranch: "main" } });
+    await REQUEST(app, "POST", "/api/tasks", { description: "custom", branchSelection: { mode: "custom-new", branchName: "feature/custom", baseBranch: "main" } });
+    await REQUEST(app, "POST", "/api/tasks", { title: "Auto task", description: "auto", branchSelection: { mode: "auto-new" } });
+
+    const calls = (store.createTask as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as TaskCreateInput);
+
+    expect(calls[0].branch).toBeUndefined();
+    expect(calls[0].branchContext).toBeUndefined();
+
+    expect(calls[1].branch).toBe("feature/existing");
+    expect(calls[1].branchContext).toBeUndefined();
+
+    expect(calls[2].branch).toBe("feature/custom");
+    expect(calls[2].branchContext).toBeUndefined();
+
+    // auto-new derives its branch after creation, in a follow-up updateTask that must declare an engine origin.
+    expect(calls[3].branch).toBeUndefined();
+    expect((store.updateTask as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toMatchObject({
+      branch: expect.stringMatching(/^fusion\/fn-/),
+      branchWriteOrigin: "engine",
+    });
+
+    // No non-shared mode may create or join a branch group.
+    expect(store.ensureBranchGroupForSource).not.toHaveBeenCalled();
+    expect(store.setTaskBranchGroup).not.toHaveBeenCalled();
+  });
 });

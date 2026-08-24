@@ -296,6 +296,8 @@ See [Settings Reference](./settings-reference.md) for the `mcpServers` settings 
 
 When MCP is enabled, Fusion automatically resolves the `fusion-memory` stdio server for project-rooted sessions. It exposes `graph_query`, `graph_neighbors`, and `graph_shortest_path` for the knowledge graph, plus `recall_search` and `recall_append` for durable recall. Graph edges preserve `provenance` (`extracted` or `inferred`) in JSON result text.
 
+Its `initialize` response advertises a conformant `serverInfo` with both `name` and `version`. MCP clients validate this response against the SDK schema; a missing required field makes them retry and then skip the server with only an opaque error category. The dashboard stdio probe currently verifies only that the process starts, not the initialize handshake, so it cannot detect this class of protocol defect.
+
 The server emits one bounded text block containing `{ tool, results, truncated, omittedCount }`. It drops complete trailing results before using a clearly marked non-JSON fallback. Its cap follows `agentToolOutputMaxChars`; `0` remains unlimited and small configured values are raised to the server's safe minimum. The budget is read from the project store once per MCP process, so restart a session after changing it. If the store is unavailable, graph tools still answer under the default cap and recall tools return an `isError` result. Protocol errors use JSON-RPC errors, while valid tool calls that fail during execution return `isError` so a model can react.
 
 A built CLI entry is required; `FUSION_MEMORY_MCP_ENTRY` can provide an explicit entry for packaged or development installations. A source checkout without a resolvable entry shows the built-in as unavailable rather than breaking MCP resolution.

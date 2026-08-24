@@ -62,6 +62,7 @@ Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Referenc
 | [Dashboard Real-Time](./dashboard-realtime.md) | Canonical event-stream architecture contract (shared `/api/events` bus + dedicated stream boundaries), with project/node scoping, reconnect/cleanup behavior, and realtime pitfalls |
 | [Agent Activity Contract](./agent-activity-contract.md) | Canonical wire, cursor, and retention contract for the project-scoped `GET /api/agent-activity` durable activity-history API |
 | [Storage](./storage.md) | PostgreSQL runtime storage, archive, migration compatibility, and file-backed payloads |
+| [Memory Backend Integration](./memory-backend-integration.md) | Stash memory backend persistence: session capture, per-chat transcript backfill, and opt-in vector search |
 | [DAG Architecture Deliverables](./dag/) | Milestone A DAG architecture documents plus Milestone B prototype scaffold docs (schema migration plan, DagCoordinator design, implementation checklist) |
 | [Dev Server Module Audit](./dev-server-modules.md) | Analysis of parallel dashboard dev-server module families, production wiring, and consolidation guidance |
 | [Shared Cluster Protocol](./shared-mesh-protocol.md) | Shared PostgreSQL multi-node contract: claims/leases, membership, auth, and retired multi-leader mesh replication |
@@ -152,6 +153,8 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 | [Full-loop Agent Tool-Surface Audit and Delivery Plan](./agent-tool-surface-full-loop.md) | Source-grounded audit of engine-agent and dashboard chat tool factories, gap analysis for mission hierarchy integration, and delivery plan (FN-8280) |
 | [Dashboard Modal Inventory](./dashboard-modal-inventory.md) | Canonical classification of all 45 dashboard modal surfaces (classes A–D) with file:line evidence, FloatingWindow migration targets, and the shared migration contract (FN-8605 → FN-8617) |
 | [Workflow-Owned Lifecycle Closing Verification](./workflow-owned-lifecycle-closing-verification.md) | Closing-bar verification runbook and recorded pass history for the workflow-owned lifecycle cutover programme — gate, verify:fast, E2E families, and census |
+| [Native `spawn@:-1` Storm Source Attribution (RUFU-077)](./performance/spawn-storm-attribution.md) | Measured local contribution plus out-of-repo/native-dependency attribution for native spawn storms |
+| [Stash Vector/Semantic Search Evaluation (RUFU-126)](./research/stash-vector-search-evaluation.md) | Decision record and opt-in prototype for Stash-backed vector/semantic recall; live-instance rollout is operator-gated |
 
 ## External Resources
 

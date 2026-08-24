@@ -96,6 +96,9 @@ describe("ChatView hash mentions", () => {
       </FileBrowserProvider>,
     );
 
+    /* FNXC:ChatNavigation 2026-08-23-18:40: FN-054 made Chat list-first, so the composer exists only inside an opened conversation. */
+    fireEvent.click(screen.getByTestId(`chat-session-${activeSession.id}`));
+
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     fireEvent.change(textarea, {
       target: { value: "#FN", selectionStart: 3, selectionEnd: 3 },

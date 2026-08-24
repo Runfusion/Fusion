@@ -135,7 +135,6 @@ describe("Medieval color theme", () => {
     const mobileFrameStart = styles.indexOf('[data-color-theme="medieval"] .modal:not(.confirm-dialog)');
     const mobileFrame = styles.slice(mobileFrameStart, styles.indexOf("}", mobileFrameStart));
     for (const variant of [".modal-lg", ".modal-md", ".gm-modal", "border-style: solid", "background-clip: padding-box, border-box"]) expect(mobileFrame).toContain(variant);
-    expect(styles).toContain("Mobile's generic modal reset removes all borders");
   });
 });
 

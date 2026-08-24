@@ -274,27 +274,37 @@ function mockMessagesContainerMetrics({
 /*
 FNXC:ChatNavigation 2026-08-19-22:12:
 The conversation UI now opens list-first. Composer and thread assertions must enter the selected room or direct conversation before exercising detail behavior.
+
+FNXC:ChatNavigation 2026-08-23-23:20:
+FN-9193 docks the conversation list beside the thread on non-floating tablet/desktop hosts, so the
+Back affordance renders ONLY while the list is hidden. Detail entry must therefore be detected by the
+thread itself, not by `chat-back-btn`, or every desktop room assertion waits for a button the docked
+layout deliberately omits.
 */
+function isConversationDetailOpen() {
+  return Boolean(document.querySelector(".chat-thread, .chat-room-thread-header"));
+}
+
 async function renderRoomDetailWithAct(ui: React.ReactElement) {
   const result = await renderWithAct(ui);
-  if (!screen.queryByTestId("chat-input")) {
+  if (!isConversationDetailOpen()) {
     const item = document.querySelector<HTMLElement>('[data-testid^="chat-room-item-"]');
     if (item) {
       await userEvent.click(item);
-      await waitFor(() => expect(screen.getByTestId("chat-input")).toBeInTheDocument());
+      await waitFor(() => expect(isConversationDetailOpen()).toBe(true));
     }
   }
   return result;
 }
 
 async function getChatInput() {
-  if (!screen.queryByTestId("chat-input")) {
+  if (!isConversationDetailOpen()) {
     const item = document.querySelector<HTMLElement>(
       '[data-testid^="chat-room-item-"], [data-testid^="chat-session-session-"]',
     );
     if (!item) throw new Error("Expected a conversation list item before entering detail");
     await userEvent.click(item);
-    await waitFor(() => expect(screen.getByTestId("chat-input")).toBeInTheDocument());
+    await waitFor(() => expect(isConversationDetailOpen()).toBe(true));
   }
   return screen.getByTestId("chat-input");
 }

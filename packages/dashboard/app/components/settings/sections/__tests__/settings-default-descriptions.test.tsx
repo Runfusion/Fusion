@@ -119,6 +119,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   defaultThinkingLevel: "globalModels.controlsHowMuchReasoningEffortTheAIModel",
   openrouterModelSync: "globalModels.whenEnabledStartupFetchesTheLatestAvailableModels",
   opencodeGoModelSync: "globalModels.flowAndPublishesThemUnderTheOpencodeGo",
+  /* FNXC:SettingsHelp 2026-08-23-20:45: OrcaRouter catalog sync ships its own SettingsToggleRow help in GlobalModelsSection. */
+  orcarouterModelSync: "globalModels.whenEnabledStartupFetchesTheLatestOrcaRouterModels",
   openrouterAppAttribution: "globalModels.leaveEmptyToOmitThisHeaderDefaultHttps",
   openrouterModelFilters: "globalModels.commaSeparatedValuesSentToOpenRouterModelSync",
   openrouterProviderPreferences: "globalModels.openRouterRoutingOrderHint",

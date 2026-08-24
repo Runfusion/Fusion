@@ -8421,6 +8421,13 @@
       "lockState": "Lock state",
       "relockChanged": "Re-lock changed: {{sections}}",
       "retainedHistory": "Retained history: {{locks}}; {{plans}}; {{reports}} reports"
+    },
+    "aiMergeReview": {
+      "title": "AI merge review reconciliation",
+      "approvedWithPending": "Approved — {{count}} prior finding(s) unconfirmed",
+      "candidate": "Candidate:",
+      "dismissFinding": "Dismiss this finding",
+      "terminalGuidance": "Rebase or re-push the branch, dismiss a finding with justification, or land manually."
     }
   },
   "taskDocuments": {
@@ -9725,5 +9732,11 @@
     "untitledSection": "Untitled reasoning",
     "sectionCount": "{{count}} section",
     "sectionCountPlural": "{{count}} sections"
+  },
+  "artifactImageViewer": {
+    "openTask": "Open task",
+    "close": "Close artifact preview",
+    "loading": "Loading image artifact…",
+    "retry": "Retry"
   }
 }

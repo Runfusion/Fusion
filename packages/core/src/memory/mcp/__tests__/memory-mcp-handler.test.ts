@@ -9,7 +9,12 @@ describe("MemoryMcpHandler", () => {
   it("negotiates and executes every declared tool with the MCP result envelope", async () => {
     const handler = new MemoryMcpHandler(backends);
     const init = await handler.handle({ jsonrpc: "2.0", id: 1, method: "initialize" });
-    expect(init?.result).toMatchObject({ protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+    expect(init?.result).toMatchObject({
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "fusion-memory", version: expect.any(String) },
+    });
+    expect((init?.result as { serverInfo?: { version?: string } }).serverInfo?.version).not.toBe("");
     const calls = [
       ["graph_query", {}], ["graph_neighbors", { nodeId: "n" }], ["graph_shortest_path", { fromId: "a", toId: "b" }], ["recall_search", { query: "q" }], ["recall_append", { kind: "decision", content: "c", source: { origin: "manual" } }],
     ] as const;

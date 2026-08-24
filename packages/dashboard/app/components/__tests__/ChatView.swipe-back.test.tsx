@@ -223,7 +223,14 @@ describe("ChatView mobile swipe-back", () => {
     expect(window.history.pushState).not.toHaveBeenCalled();
   });
 
-  it("uses the same Back history entry for desktop selection", async () => {
+  /*
+  FNXC:ChatNavigation 2026-08-23-16:35:
+  FN-9193 docks the conversation list on tablet-or-wider hosts. While that list stays visible,
+  drilling into a thread is not a navigation step: no history entry is pushed and no in-thread Back
+  control renders, because the list the Back would return to never left the screen. Collapsing the
+  docked list restores the one-pane list/detail contract, and with it the drill-in history entry.
+  */
+  it("pushes no drill-in history entry while the docked desktop list stays visible", async () => {
     mockViewport("desktop");
 
     render(
@@ -232,6 +239,26 @@ describe("ChatView mobile swipe-back", () => {
       </HistoryHarness>,
     );
 
+    fireEvent.click(screen.getByTestId("chat-session-session-001"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-thread-header-identity")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("chat-session-session-001")).toBeInTheDocument();
+    expect(window.history.pushState).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+  });
+
+  it("uses the same Back history entry for desktop selection with the docked list collapsed", async () => {
+    mockViewport("desktop");
+
+    render(
+      <HistoryHarness>
+        <StatefulChatView />
+      </HistoryHarness>,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-docked-sidebar-toggle"));
     fireEvent.click(screen.getByTestId("chat-session-session-001"));
 
     await waitFor(() => {
