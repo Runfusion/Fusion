@@ -229,6 +229,21 @@ jobs:
           python3 << 'PYEOF'
           import json, os
 
+          def cell(value):
+              # FNXC:ThreatCrushComment 2026-08-24-02:14:
+              # uri and ruleId come from scanned content. A filename with `|`,
+              # backticks, backslashes, or a newline breaks the Markdown table
+              # and can impersonate bot-authored rows. Escape those delimiters
+              # before interpolation. Same-repo PRs can still introduce them.
+              return (
+                  str(value)
+                  .replace("\\", "\\\\")
+                  .replace("`", "'")
+                  .replace("|", "\\|")
+                  .replace("\r", " ")
+                  .replace("\n", " ")
+              )
+
           status = os.environ.get("SCAN_STATUS", "")
           try:
               with open("threatcrush.sarif") as handle:
@@ -290,7 +305,10 @@ jobs:
                       label = {"error": "HIGH", "warning": "MEDIUM", "note": "LOW"}.get(
                           result.get("level", "warning"), "INFO"
                       )
-                      lines.append(f"| {label} | `{result.get('ruleId','?')}` | `{uri}`:{line_no} |")
+                      lines.append(
+                          f"| {label} | `{cell(result.get('ruleId', '?'))}` "
+                          f"| `{cell(uri)}`:{line_no} |"
+                      )
                   if len(results) > 50:
                       # Say so. A silent truncation reads as "that was everything".
                       lines += ["", f"_…and {len(results) - 50} more. Full results in the Security tab._"]

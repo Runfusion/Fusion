@@ -41,9 +41,20 @@ INFO_LINE = re.compile(r"^\s*Info:\s*(.+?)\s*$")
 
 # Proof that a scan ran to completion. Without one of these we are looking at a
 # crash, a help screen, or an unrecognised release — never at a clean result.
+#
+# FNXC:ThreatCrushFooter 2026-08-24-02:14:
+# The last non-empty line must full-match a documented completion footer.
+# `match()` plus `.*No security issues found` accepted any line that merely
+# contained the phrase — a truncated crash quoting the clean message then
+# produced empty SARIF and a green check. ThreatCrush 0.11.0 `printHuman()`
+# emits `✓ No security issues found!` or `N issue(s) found across M files`.
+# Optional bang / missing checkmark stay accepted; `--fail-on` trailer lines
+# are skipped so a requested failure cannot look like an unrecognised scan.
 FOOTER = re.compile(
-    r"^\s*(?:(?P<count>\d+)\s+issue\(s\)\s+found|.*No security issues found)"
+    r"\s*(?:✓\s+No security issues found!|No security issues found!?|"
+    r"(?P<count>\d+)\s+issue\(s\)\s+found(?:\s+across\s+\d+\s+files)?)\s*"
 )
+_FAIL_ON_TRAILER = re.compile(r"^\s*✗\s+findings at or above\b")
 
 LEVELS = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning", "LOW": "note", "INFO": "none"}
 SECURITY_SEVERITY = {"CRITICAL": "9.0", "HIGH": "7.0", "MEDIUM": "5.0", "LOW": "3.0", "INFO": "1.0"}
@@ -65,9 +76,17 @@ def rule_id(title: str) -> str:
     return f"threatcrush-{slug}" if slug else "threatcrush-finding"
 
 
+def _completion_line(lines: list[str]) -> str:
+    for line in reversed(lines):
+        if not line.strip() or _FAIL_ON_TRAILER.match(line):
+            continue
+        return line
+    return ""
+
+
 def parse(text: str) -> list[dict]:
     lines = ANSI.sub("", text).splitlines()
-    footer = next((m for line in lines if (m := FOOTER.match(line))), None)
+    footer = FOOTER.fullmatch(_completion_line(lines))
     if footer is None:
         raise Unrecognised("no scan-completion footer found")
     # "No security issues found" has no number; that branch means zero.
@@ -79,6 +98,15 @@ def parse(text: str) -> list[dict]:
     for line in lines:
         severity_match = SEVERITY_LINE.match(line)
         if severity_match:
+            # FNXC:ThreatCrushParse 2026-08-24-02:14:
+            # A later severity used to overwrite `pending`. An incomplete
+            # earlier block then vanished, and if the remaining complete
+            # findings happened to match the footer count the converter
+            # reported a successful under-count. Fail closed before replace.
+            if pending is not None:
+                raise Unrecognised(
+                    f"incomplete finding block: {pending.get('title', 'untitled')!r}"
+                )
             severity = severity_match.group(1) or severity_match.group(2)
             pending = {"severity": severity.upper(), "title": severity_match.group(3).strip()}
             continue
@@ -98,16 +126,9 @@ def parse(text: str) -> list[dict]:
             findings.append(pending)
             pending = None
 
-    # Fail closed on anything left half-read.
-    #
-    # A footer proves the scan finished. It does not prove this converter
-    # understood what the scan printed. A finding whose Info: line moved, or
-    # whose block gained a field, is dropped silently here — the next severity
-    # line overwrites `pending` and nobody hears about it. The workflow then
-    # reports a clean or under-counted scan, which is the failure this file
-    # exists to prevent rather than cause.
-    #
-    # Raised by CodeRabbit on ShadowSafin/AndroLLM#7.
+    # Fail closed on a trailing half-read block. Mid-scan overwrites are
+    # rejected at the next severity line so they cannot be laundered by a
+    # later complete finding that happens to match the footer count.
     if pending is not None:
         raise Unrecognised(f"incomplete finding block: {pending.get('title', 'untitled')!r}")
     if len(findings) != expected:
