@@ -457,11 +457,40 @@
   z-index: 100;
   min-width: 200px;
   max-width: 280px;
+  /*
+  FNXC:MobileProjectSwitchScroll 2026-08-24-20:07:
+  RUFU-170: the mobile switcher list must scroll internally instead of overflowing the
+  viewport. The mobile-only dropdown previously had no max-height/overflow-y, so with 8+
+  projects items below the viewport bottom were unreachable. Cap it with the desktop
+  selector's exact viewport-aware declarations (see .project-selector-dropdown above)
+  rather than a new variant, and contain overscroll so wheeling to the list end does not
+  scroll the page. The cap lives on the base class (not a media query) so a short-landscape
+  phone in JS mobile mode with a 769-1024px CSS width gets it too.
+  */
+  max-height: min(480px, calc(100vh - 120px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-dim) transparent;
   padding: var(--space-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
+}
+
+/* RUFU-170: thin scrollbar mirroring .project-selector__dropdown::-webkit-scrollbar. */
+.mobile-project-switch-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mobile-project-switch-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mobile-project-switch-dropdown::-webkit-scrollbar-thumb {
+  background-color: var(--text-dim);
+  border-radius: 3px;
 }
 
 .mobile-project-switch-item {
