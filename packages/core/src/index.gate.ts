@@ -2530,5 +2530,6 @@ export {
   UNATTRIBUTED_RUN_AGENT_ID,
   UNATTRIBUTED_RUN_ID,
   mutationContextForAgent,
+  toRunMutationContext,
 } from "./identity/mutation-context.js";
 export { isIdentityEnabled, setIdentityEnabled } from "./identity/identity-enabled.js";

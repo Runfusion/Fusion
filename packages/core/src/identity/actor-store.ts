@@ -335,7 +335,9 @@ export interface ActorRoleGrant {
  * short-circuit.
  *
  * The grant is upserted on the `(project_id, actor_id, role)` primary key so re-granting a
- * previously revoked role clears `revoked_at` rather than colliding.
+ * previously revoked role clears `revoked_at` rather than colliding. That table is effective
+ * state, not an append-only history (schema-applier requires project_id in every project PK);
+ * grant-period events are a follow-up table, not a 1/5 key change.
  *
  */
 export async function grantActorRole(

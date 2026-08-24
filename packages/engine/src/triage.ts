@@ -56,6 +56,8 @@ import {
   ApprovalRequestStore,
   AWAITING_APPROVAL_PAUSE_REASON,
   isEphemeralAgent,
+  toRunMutationContext,
+  actorContextForAgent,
   resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
   deriveFallbackTaskTitle,
@@ -569,7 +571,7 @@ export class TriageProcessor {
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
-        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage" }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+        await this.store.pauseTask(taskId, true, toRunMutationContext({ runId, agentId: actorId, source: "triage" }), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`);
         if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
@@ -2760,14 +2762,14 @@ export class TriageProcessor {
           ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
           : null;
 
-        const triageRunContext = {
+        const triageRunContext = toRunMutationContext({
           runId: generateSyntheticRunId("triage", task.id),
           agentId: assignedAgent?.id ?? "triage",
           taskId: task.id,
           taskLineageId: task.lineageId,
           phase: "plan",
           source: "triage",
-        };
+        });
 
         /*
         FNXC:WorkflowAgentRouting 2026-08-07-06:27:
@@ -2835,6 +2837,7 @@ export class TriageProcessor {
           if (routed.status === "routed") {
             assignedAgent = routed.route.agent;
             triageRunContext.agentId = assignedAgent.id;
+            triageRunContext.actor = actorContextForAgent(assignedAgent.id);
             workflowCapacityAttemptId = `${triageRunContext.runId}:${planningNode.id}`;
             workflowCapacityProjectId = this.options.agentStore.workflowProjectId ?? this.rootDir;
             /*
@@ -2943,10 +2946,7 @@ export class TriageProcessor {
           }),
           ...createIdeationTools(this.store),
           ...createGoalRetrievalTools(this.store, {
-            runContext: {
-              runId: triageRunContext.runId,
-              agentId: triageRunContext.agentId,
-            },
+            runContext: triageRunContext,
             taskId: task.id,
           }),
           ...createMemoryTools(this.rootDir, settings, assignedAgent
@@ -4856,7 +4856,7 @@ export class TriageProcessor {
         const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
           removeLineageReferences: true,
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" },
+          auditContext: toRunMutationContext({ agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" as const }),
         });
         if (!result.deleted) return;
         await this.store.recordActivity({

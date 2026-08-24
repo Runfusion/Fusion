@@ -925,9 +925,11 @@ const AMBIGUOUS_AGENT_PRINCIPAL_ID = "unknown-agent";
  */
 function resolveSecretAccessPrincipal(ctx: ExtensionCallerContext):
   | { kind: "resolved"; actor: ApprovalRequestActorSnapshot; agentId: string | null; agentName?: string; taskId?: string }
-  | { kind: "ambiguous" } {
+  | { kind: "ambiguous" }
+  | { kind: "unresolved" } {
   const principal = resolveExtensionCallerPrincipal(ctx);
   if (principal.kind === "ambiguous") return { kind: "ambiguous" };
+  if (principal.kind === "unresolved") return { kind: "unresolved" };
   if (principal.kind === "operator") {
     return {
       kind: "resolved",
@@ -3018,7 +3020,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         allowResurrection: params.allowResurrection === true,
         removeLineageReferences: params.removeLineageReferences === true,
         removeDependencyReferences: params.removeDependencyReferences === true,
-        auditContext: {
+        auditContext: fusionCore.toRunMutationContext({
           /*
           FNXC:TaskDeleteAttribution 2026-07-26-14:30:
           `agentId` names the TOOL SURFACE, not the actor. Before callerKind/callerTaskId were
@@ -3029,8 +3031,8 @@ export default function kbExtension(pi: ExtensionAPI) {
           agentId: "pi-extension",
           runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,
           taskId: callerTaskId,
-          callerKind: "agent-tool",
-        },
+          callerKind: "agent-tool" as const,
+        }),
       });
 
       return {
@@ -3584,6 +3586,18 @@ export default function kbExtension(pi: ExtensionAPI) {
           content: [{ type: "text", text: "Secret access was not requested because the calling agent identity is ambiguous. End one concurrent session and retry." }],
           isError: true,
           details: { error: "ambiguous-caller-identity", key: params.key, scope: params.scope ?? null },
+        };
+      }
+      /*
+      FNXC:Identity 2026-08-24-02:20 (KTD16):
+      With identity on, an unregistered cwd is `unresolved`, not the operator. Secret access
+      must fail closed rather than minting a grant for an unknown principal.
+      */
+      if (secretPrincipal.kind === "unresolved") {
+        return {
+          content: [{ type: "text", text: "Secret access was not requested because the calling identity is unresolved." }],
+          isError: true,
+          details: { error: "unresolved-caller-identity", key: params.key, scope: params.scope ?? null },
         };
       }
       const effectiveCtx: { agentId?: string; agentName?: string; taskId?: string; runId?: string } = {

@@ -686,7 +686,7 @@ export async function listArchivedTasksImpl(store: TaskStore, options?: {
     return { tasks, total, hasMore: offset + tasks.length < total };
 }
 
-export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<Task> {
+export async function unarchiveTaskImpl(store: TaskStore, id: string, runContext?: RunMutationContext): Promise<Task> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-25:
      * Backend-mode unarchiveTask: uses async archive helpers to read from PG
@@ -781,8 +781,13 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
     const updatedTask = await store.getTask(id);
 
     // Log the unarchive action.
-    // FNXC:Identity 2026-08-09-03:04 (U18): unarchive is reached from dashboard/CLI restore; actor arrives with U9/U11.
-    await store.logEntry(id, "Task unarchived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    /*
+    FNXC:Identity 2026-08-24-02:20:
+    Unarchive is reached from dashboard/CLI restore. Thread the caller's `runContext` when present;
+    the unattributed marker is only the fallback for a caller that has not been converted yet
+    (U9/U11). Using the marker unconditionally made every restore look like an unwired write.
+    */
+    await store.logEntry(id, "Task unarchived", undefined, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
 
     // Remove from archive table.
     await deleteArchivedTaskEntry(layer.db, id, layer.projectId);
