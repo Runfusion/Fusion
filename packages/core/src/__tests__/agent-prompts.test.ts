@@ -240,6 +240,30 @@ describe("resolveAgentPrompt", () => {
     }
   });
 
+  it("renders created-task workflow guidance only for creation tools on the resolved surface", () => {
+    const unavailable = resolveAgentPrompt("executor", undefined, {
+      taskCreateToolAvailable: false,
+      delegateTaskToolAvailable: false,
+    });
+    expect(unavailable).not.toContain("set the workflow on tasks you create");
+
+    const taskCreateOnly = resolveAgentPrompt("executor", undefined, {
+      taskCreateToolAvailable: true,
+      delegateTaskToolAvailable: false,
+    });
+    expect(taskCreateOnly).toContain("set the workflow on tasks you create via `fn_task_create`");
+    expect(taskCreateOnly).not.toContain("set the workflow on tasks you create via `fn_delegate_task`");
+
+    const seniorDelegateOnly = resolveAgentPrompt("executor", {
+      roleAssignments: { executor: "senior-engineer" },
+    }, {
+      taskCreateToolAvailable: false,
+      delegateTaskToolAvailable: true,
+    });
+    expect(seniorDelegateOnly).toContain("set the workflow on tasks you create via `fn_delegate_task`");
+    expect(seniorDelegateOnly).not.toContain("set the workflow on tasks you create via `fn_task_create`");
+  });
+
   it("senior-engineer prompt limits fixes to impacted failures and follow-ups unrelated broad-suite failures", () => {
     const config: AgentPromptsConfig = {
       roleAssignments: {

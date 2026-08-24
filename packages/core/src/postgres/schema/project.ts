@@ -2193,6 +2193,12 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   // FNXC:ChatPinned 2026-07-16-12:00: nullable timestamp persists the active
   // Direct-session pin; the ChatStore enforces the per-scope max-three invariant.
   pinnedAt: text("pinned_at"),
+  // FNXC:MemoryFocus 2026-08-13-15:57: per-conversation read-time memory FOCUS/TOPIC
+  // (migration 0059). NULL/empty ('' normalized to NULL) means the conversation
+  // inherits the whole-project scope; otherwise it scopes fn_memory_search +
+  // proactive recall to this topic. It is a read-time filter only — Stash capture
+  // stays write-anywhere across every conversation.
+  memoryFocus: text("memory_focus"),
   cliSessionFile: text("cli_session_file"),
   inFlightGeneration: jsonb("in_flight_generation"),
   cliExecutorAdapterId: text("cli_executor_adapter_id"),

@@ -178,6 +178,10 @@ If there are merge conflicts:
 5. Run \`git add <file>\` for each resolved file
 6. Do NOT change anything beyond what's needed to resolve the conflict`,
   },
+  /*
+  FNXC:PromptOverrides 2026-08-23-23:25:
+  THIS defaultContent is the prompt agent generation actually ships: `resolvePrompt` returns it whenever no operator override exists, so the identical literal exported as `AGENT_GENERATION_SYSTEM_PROMPT` in the dashboard is only the fallback-of-a-fallback. FN-021 added the xhigh/max thinking levels to that copy alone, which left every real generation run advertising levels that stop at "high". Any edit to one copy must be made to both.
+  */
   "agent-generation-system": {
     key: "agent-generation-system",
     name: "Agent Generation System",
@@ -202,7 +206,7 @@ You MUST respond with ONLY valid JSON (no markdown, no explanation):
   "role": "The most appropriate capability: triage | executor | reviewer | merger | scheduler | engineer | custom",
   "description": "A brief 1-2 sentence description of the agent's purpose and expertise",
   "systemPrompt": "A detailed markdown system prompt for the agent. This should be comprehensive and include:\\n- Role definition\\n- Core responsibilities\\n- Specific areas of expertise\\n- Behavioral guidelines\\n- Output format expectations\\n- Edge case handling instructions",
-  "thinkingLevel": "off | minimal | low | medium | high",
+  "thinkingLevel": "off | minimal | low | medium | high | xhigh | max",
   "maxTurns": 1000
 }
 
@@ -220,6 +224,7 @@ You MUST respond with ONLY valid JSON (no markdown, no explanation):
 - "low": For moderate complexity tasks
 - "medium": For complex analysis, code review, architecture decisions
 - "high": For critical decisions, security analysis, complex debugging
+- "xhigh" or "max": For the hardest problems when the selected model advertises that level
 
 ## Max Turns Guidelines
 - 5-10: Simple, focused tasks (quick reviews, status checks)

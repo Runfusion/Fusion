@@ -34,8 +34,40 @@ import {
   listAgentMemoryFiles,
   readAgentMemoryFile,
   writeAgentMemoryFile,
+  // FNXC:MemoryFocus 2026-08-13-16:35: (RUFU-068 Step 1) capture seam types + harness
+  // live on the memory-backend interface; asserting they are exposed and typed.
+  type MemoryCaptureEvent,
+  type MemoryCaptureResult,
+  type MemoryCaptureEventType,
+  captureMemory,
 } from "../memory/memory-backend.js";
 import type { MemoryBackend } from "../memory/memory-backend.js";
+// FNXC:MemoryBackend 2026-08-13-16:35: (RUFU-068 Step 1) both the main and the
+// engine-core gate barrel must re-export the capture seam + error types; a
+// one-sided edit fails the gate's sync check. Static named imports (dynamic
+// import() with a relative path resolves against the vitest virtual root).
+import {
+  captureMemory as captureMemoryIndex,
+  MemoryBackendError as MemoryBackendErrorIndex,
+} from "../index.js";
+import {
+  captureMemory as captureMemoryGate,
+  MemoryBackendError as MemoryBackendErrorGate,
+} from "../index.gate.js";
+// Compile-time assertions that the type-only members are exported from both
+// barrels; erased at build so they add no runtime weight.
+import type {
+  MemoryCaptureEvent as MemoryCaptureEventIndex,
+  MemoryCaptureResult as MemoryCaptureResultIndex,
+  MemoryCaptureEventType as MemoryCaptureEventTypeIndex,
+  MemoryBackendErrorCode as MemoryBackendErrorCodeIndex,
+} from "../index.js";
+import type {
+  MemoryCaptureEvent as MemoryCaptureEventGate,
+  MemoryCaptureResult as MemoryCaptureResultGate,
+  MemoryCaptureEventType as MemoryCaptureEventTypeGate,
+  MemoryBackendErrorCode as MemoryBackendErrorCodeGate,
+} from "../index.gate.js";
 
 describe("memory-backend", () => {
   let tempDir: string;
@@ -1182,6 +1214,92 @@ describe("memory-backend", () => {
       const result = await readMemory(nestedDir);
       expect(result.content).toBe("Nested content");
       expect(existsSync(longTermMemoryPath(nestedDir))).toBe(true);
+    });
+  });
+
+  // ── Capture seam (RUFU-068 Step 1) ─────────────────────────────────
+
+  describe("capture seam", () => {
+    it("accepts a backend with optional capture/endSession seams present", async () => {
+      const captureBackend: MemoryBackend = {
+        type: "capture-test",
+        name: "Capture Test",
+        capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: true, persistent: true },
+        async read(rootDir: string) { return { content: "", exists: false, backend: "capture-test" }; },
+        async write(rootDir: string, content: string) { return { success: true, backend: "capture-test" }; },
+        async capture(sessionId: string, events: MemoryCaptureEvent[]) {
+          return { ok: true, inserted: events.length, deduped: 0 };
+        },
+        async endSession(sessionId: string) {},
+      };
+      // The seam is optional on the interface; a backend that declares it satisfies MemoryBackend.
+      expect(captureBackend.capture).toEqual(expect.any(Function));
+      expect(captureBackend.endSession).toEqual(expect.any(Function));
+      const result = await captureBackend.capture!("sess-1", [{ event_type: "note", content: "x" }]);
+      expect(result.ok).toBe(true);
+      expect(result.inserted).toBe(1);
+    });
+
+    it("capture-event carries event-type / agent-name / session payload fields", () => {
+      const evt: MemoryCaptureEvent = {
+        event_type: "tool_use",
+        content: "ran the build",
+        agent_name: "executor",
+        tool_name: "bash",
+        metadata: { session_id: "CHAT-1" },
+        created_at: "2026-08-16T06:00:00Z",
+      };
+      expect(evt.event_type).toBe("tool_use");
+      expect(evt.agent_name).toBe("executor");
+      expect(evt.tool_name).toBe("bash");
+      expect(evt.metadata?.["session_id"]).toBe("CHAT-1");
+    });
+
+    it("exposes the capture-event-type union with message|tool_use|note", () => {
+      const kinds: MemoryCaptureEventType[] = ["message", "tool_use", "note"];
+      expect(kinds).toContain("message");
+      expect(kinds).toContain("tool_use");
+      expect(kinds).toContain("note");
+    });
+
+    it("captureMemory helper no-ops for a backend without the capture seam", async () => {
+      const result = await captureMemory(tempDir, { memoryEnabled: true, memoryBackendType: "file" }, "sess-1", [{ event_type: "note", content: "x" }]);
+      expect(result.ok).toBe(false);
+      expect(result.inserted).toBe(0);
+    });
+
+    it("captureMemory resolves (never throws) when a capture backend throws", async () => {
+      registerMemoryBackend({
+        type: "throwing-capture",
+        name: "Throwing Capture",
+        capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: true, persistent: true },
+        async read(rootDir: string) { return { content: "", exists: false, backend: "throwing-capture" }; },
+        async write(rootDir: string, content: string) { return { success: true, backend: "throwing-capture" }; },
+        async capture() { throw new Error("backend down"); },
+        async endSession() {},
+      });
+      const result = await captureMemory(tempDir, { memoryEnabled: true, memoryBackendType: "throwing-capture" }, "sess-1", [{ event_type: "note", content: "x" }]);
+      expect(result.ok).toBe(false);
+      expect(result.inserted).toBe(0);
+    });
+
+    it("exposes the capture seam from BOTH barrels (index + index.gate stay in sync)", () => {
+      // Value exports (function/class) are runtime-verifiable here; the type-only
+      // exports (MemoryCaptureEvent/Result/EventType, MemoryBackendErrorCode) are
+      // asserted at compile time by the `import type` surface. Both barrels are
+      // exercised so a one-sided barrel edit fails the gate build.
+      expect(typeof captureMemoryIndex).toBe("function");
+      expect(typeof captureMemoryGate).toBe("function");
+      expect(MemoryBackendErrorIndex.name).toBe("MemoryBackendError");
+      expect(MemoryBackendErrorGate.name).toBe("MemoryBackendError");
+      expect(MemoryBackendErrorIndex).toBe(MemoryBackendErrorGate);
+      // Reference the type-only members so an unused-import lint cannot fire and
+      // a missing barrel export fails the typecheck.
+      const _t1: MemoryCaptureEventIndex | MemoryCaptureEventGate | undefined = undefined;
+      const _t2: MemoryCaptureResultIndex | MemoryCaptureResultGate | undefined = undefined;
+      const _t3: MemoryCaptureEventTypeIndex | MemoryCaptureEventTypeGate | undefined = undefined;
+      const _t4: MemoryBackendErrorCodeIndex | MemoryBackendErrorCodeGate | undefined = undefined;
+      expect([_t1, _t2, _t3, _t4]).toHaveLength(4);
     });
   });
 });

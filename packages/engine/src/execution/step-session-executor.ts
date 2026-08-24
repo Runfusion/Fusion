@@ -1427,7 +1427,12 @@ export class StepSessionExecutor {
               ]
             : [];
           const webFetchTool = createWebFetchTool();
-          const memoryTools = createMemoryTools(this.options.rootDir, settings);
+          // FNXC:MemoryFocusEngine 2026-08-13-16:35 (RUFU-068): a workflow
+          // step-execution lane has no per-conversation /focus topic (unless the
+          // task/session carries one) → whole-project scope today. The optional
+          // MemoryToolOptions.focus seam is wired explicitly so a step session bound
+          // to a topic-scoped conversation can scope fn_memory_search.
+          const memoryTools = createMemoryTools(this.options.rootDir, settings, { focus: undefined });
 
           // Task log and create tools — task context for step sessions.
           const taskLogTool = this.options.store

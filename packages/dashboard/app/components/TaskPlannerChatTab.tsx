@@ -24,6 +24,7 @@ import {
   createChatInputAutosizeController,
   type ChatInputAutosizeController,
 } from "../utils/chatInputAutosize";
+import { ChatFocusSelector } from "./ChatFocusSelector";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -342,6 +343,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   const [sessionId, setSessionId] = useState<string | null>(null);
+  /*
+  FNXC:ChatMemoryFocus 2026-08-13:
+  RUFU-068: local mirror of chat_sessions.memory_focus for the planner-chat composer. Read
+  once at session load and updated by ChatFocusSelector.onPersist so the chip reflects the
+  persisted per-conversation focus without a full session refetch.
+  */
+  const [sessionMemoryFocus, setSessionMemoryFocus] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
@@ -756,6 +764,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         setSessionId(null);
         setSessionModel(taskChatModelRef.current);
         replacePendingMessages([], null);
+        setSessionMemoryFocus(null);
         setMessages([]);
         setHistoryLoaded(true);
         return;
@@ -778,6 +787,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             }
           : taskChatModelRef.current,
       );
+      setSessionMemoryFocus(resolvedSession.memoryFocus ?? null);
       setMessages(sortMessages(loadedMessages));
       setHistoryLoaded(true);
       if (resolvedSession.isGenerating || resolvedSession.inFlightGeneration) {
@@ -816,6 +826,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     pendingMessagesRef.current = [];
     setPendingMessages([]);
     setQueueActionPending(false);
+    setSessionMemoryFocus(null);
+    setMessages([]);
     setDraft("");
     composerStateRef.current = "idle";
     setStreamingThinking("");
@@ -971,6 +983,9 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       // Planner queue entries are browser-local and keyed by the resolved session. Persist any
       // follow-up typed before session creation completes only after that session becomes known.
       replacePendingMessages(pendingMessagesRef.current, resolvedSessionId);
+      // A brand-new planner session has no focus yet (whole-project scope); seed the
+      // mirror from whatever the created session carries (always null today).
+      setSessionMemoryFocus((session as { memoryFocus?: string | null }).memoryFocus ?? null);
       setMessages((current) => [...current, makeOptimisticUserMessage(resolvedSessionId, content)]);
       if (!isCurrentStreamRequest()) return;
       startPlannerStream({
@@ -1076,19 +1091,34 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     */
     setDraft("");
     try {
-      await command.run({ taskId: task.id, projectId, remainder });
-      // Reuse the existing steering-refresh path (same toast + task refresh already
-      // used by the tool-call-driven steering flow above) instead of a second,
-      // divergent success toast for the same underlying action.
-      await refreshTaskAfterSteering();
+      await command.run({ taskId: task.id, sessionId: sessionId ?? "", projectId, remainder });
+      if (command.name === "focus") {
+        /*
+        FNXC:ChatMemoryFocus 2026-08-13:
+        The /focus command persists the topic directly; reflect it locally so the chip
+        matches. "all"/"*"/empty collapse to whole-project scope on display by the selector.
+        */
+        setSessionMemoryFocus(remainder);
+        addToastRef.current(t("taskDetail.plannerChat.focusSetToast", "Memory focus updated"), "success");
+      } else {
+        // Reuse the existing steering-refresh path (same toast + task refresh already
+        // used by the tool-call-driven steering flow above) instead of a second,
+        // divergent success toast for the same underlying action.
+        await refreshTaskAfterSteering();
+      }
     } catch (err) {
       const message = getErrorMessage(err) || t("taskDetail.plannerChat.commandSteerFailed", "Failed to send to the running agent");
       addToastRef.current(message, "error");
     }
-  }, [agentRunning, projectId, refreshTaskAfterSteering, t, task.id]);
+  }, [agentRunning, projectId, refreshTaskAfterSteering, sessionId, t, task.id]);
 
   const handleCommandMenuSelect = useCallback((command: ChatCommand) => {
-    if (!agentRunning) {
+    /*
+    FNXC:ChatMemoryFocus 2026-08-13:
+    The /focus command is not agent-gated, so it remains selectable and dispatchable
+    when no agent is running (it is a local session-setting command).
+    */
+    if (command.requiresAgent && !agentRunning) {
       addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
       return;
     }
@@ -1568,29 +1598,48 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           {filteredCommands.length === 0 ? (
             <div className="chat-skill-menu-empty">{t("chat.noCommandsFound", "No commands found")}</div>
           ) : (
-            filteredCommands.map((command, index) => (
+            filteredCommands.map((command, index) => {
+              /*
+              FNXC:ChatMemoryFocus 2026-08-13:
+              RUFU-068: disable only agent-gated commands (steer) when no agent is
+              running. The /focus command is a local session-setting command and never
+              appears disabled. Only the disabled item shows the no-running-agent hint so
+              the focus menu entry keeps its real description.
+              */
+              const commandDisabled = command.requiresAgent && !agentRunning;
+              return (
               <button
                 key={command.trigger}
                 type="button"
                 role="option"
                 aria-selected={index === highlightedCommandIndex}
-                aria-disabled={!agentRunning}
-                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${!agentRunning ? " chat-command-menu-item--disabled" : ""}`}
+                aria-disabled={commandDisabled}
+                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${commandDisabled ? " chat-command-menu-item--disabled" : ""}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setHighlightedCommandIndex(index)}
                 onClick={() => handleCommandMenuSelect(command)}
               >
                 <span className="chat-skill-menu-item-name">{command.trigger}</span>
                 <span className="chat-skill-menu-item-description">
-                  {agentRunning
-                    ? command.description
-                    : t("chat.commandNoRunningAgentHint", "No running agent to steer")}
+                  {commandDisabled
+                    ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
+                    : command.description}
                 </span>
               </button>
-            ))
+              );
+            })
           )}
         </div>
       )}
+      <div className="task-planner-chat-focus-row">
+        <ChatFocusSelector
+          sessionId={sessionId}
+          projectId={projectId}
+          memoryFocus={sessionMemoryFocus}
+          onPersist={(focus) => setSessionMemoryFocus(focus)}
+          addToast={(message, type) => addToastRef.current(message, type)}
+        />
+      </div>
       <div className="task-planner-chat-composer">
         <div className="task-planner-chat-target-controls" data-testid="task-planner-chat-target-controls">
           <CustomModelDropdown

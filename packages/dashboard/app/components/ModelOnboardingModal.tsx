@@ -609,9 +609,18 @@ import {
 } from "./model-onboarding-state";
 import { trackOnboardingEvent } from "./onboarding-events";
 
+/** FNXC:GithubStarAsk 2026-08-19-03:59: "dismissed" means the operator closed onboarding rather than finishing it. */
+export type OnboardingCompletionOutcome = "completed" | "dismissed";
+
 export interface ModelOnboardingModalProps {
-  /** Called when onboarding is complete or dismissed */
-  onComplete: () => void;
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  The outcome distinguishes finishing onboarding from walking out of it, because the post-onboarding
+  "star us on GitHub" ask is only earned by the former. Someone who dismissed the setup flow has
+  already said they want to be left alone; asking them for a favour on the way out is the nag.
+  Optional so existing callers that do not care about the distinction keep compiling.
+  */
+  onComplete: (outcome?: OnboardingCompletionOutcome) => void;
   /** Toast helper */
   addToast: (message: string, type?: ToastType) => void;
   /** Currently selected project ID (required for first-task actions) */
@@ -2143,7 +2152,7 @@ export function ModelOnboardingModal({
       // Best-effort: still close even if save fails
     }
     setIsOpen(false);
-    onComplete();
+    onComplete("dismissed");
   }, [step, completedSteps, skippedSteps, onComplete]);
 
   // Close from the completion step

@@ -36,13 +36,13 @@ vi.mock("../Header", () => ({
 vi.mock("lucide-react", () => ({
   X: () => <span data-testid="icon-x">X</span>,
   Mail: () => <span data-testid="icon-mail">Mail</span>,
-  Send: () => <span data-testid="icon-send">Send</span>,
-  Inbox: () => <span data-testid="icon-inbox">Inbox</span>,
-  Bot: () => <span data-testid="icon-bot">Bot</span>,
+  Send: () => <svg data-testid="icon-send" />,
+  Inbox: () => <svg data-testid="icon-inbox" />,
+  Bot: () => <svg data-testid="icon-bot" />,
   Trash2: () => <span data-testid="icon-trash">Trash</span>,
   Archive: () => <span data-testid="icon-archive">Archive</span>,
   Check: () => <span data-testid="icon-check">Check</span>,
-  CheckCheck: () => <span data-testid="icon-checkcheck">CheckCheck</span>,
+  CheckCheck: () => <svg data-testid="icon-checkcheck" />,
   Loader2: ({ className }: { className?: string }) => (
     <span data-testid="icon-loader" className={className}>Loader</span>
   ),
@@ -1009,6 +1009,28 @@ describe("MailboxModal", () => {
     expect(screen.getByTestId("mailbox-agent-subtab-outbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-agent-subtab");
   });
 
+  it("keeps modal agent sub-tab icons and badges from shrinking", async () => {
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001", ownerType: "agent", unreadCount: 120, messages: [], inbox: [], outbox: [],
+    });
+    const style = document.createElement("style");
+    style.textContent = loadAllAppCss();
+    document.head.append(style);
+    try {
+      render(<MailboxModal {...defaultProps} />);
+      fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
+      await screen.findByTestId("mailbox-agent-select");
+      fireEvent.change(screen.getByTestId("mailbox-agent-select"), { target: { value: "agent-001" } });
+      const inbox = await screen.findByTestId("mailbox-agent-subtab-inbox");
+      const outbox = screen.getByTestId("mailbox-agent-subtab-outbox");
+      expect(getComputedStyle(inbox.querySelector("svg")!).flexShrink).toBe("0");
+      expect(getComputedStyle(outbox.querySelector("svg")!).flexShrink).toBe("0");
+      expect(getComputedStyle(inbox.querySelector(".mailbox-tab-badge")!).flexShrink).toBe("0");
+    } finally {
+      style.remove();
+    }
+  });
+
   it("shows compose button in Agents tab", async () => {
     render(<MailboxModal {...defaultProps} />);
     fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
@@ -1431,7 +1453,7 @@ describe("MailboxModal", () => {
     });
 
     it("mailbox tab badge uses theme-aware text token", () => {
-      const blockMatch = css.match(/\.mailbox-tab-badge\s*\{([^}]*)\}/);
+      const blockMatch = css.match(/(?:^|\n)\.mailbox-tab-badge\s*\{([^}]*)\}/);
       expect(blockMatch).toBeTruthy();
       expect(blockMatch![1]).toContain("var(--fab-text)");
       expect(blockMatch![1]).not.toContain("color: white");

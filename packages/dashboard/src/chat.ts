@@ -528,6 +528,17 @@ export interface ChatFusionToolsetOptions {
   missionMutationGated?: boolean;
   /** Required for command-execution requests; status remains safely readable without it. */
   actionGateContext?: AgentActionGateContext;
+  /*
+  FNXC:ChatMemoryFocus 2026-08-13:
+  Per-conversation memory focus (RUFU-068). When the enclosing chat session carries an active
+  topic (chat_sessions.memory_focus, set via /focus or the per-chat selector), thread it into
+  createMemoryTools so fn_memory_search scopes project recall to that topic. This is a
+  WITHIN-project read filter only: the topic reaches backend.search (the SQL enforcement point)
+  and is never a client-side post-query filter. undefined/'all'/empty/'*' → whole-project scope.
+  Rooms have no per-room focus field yet, so room-responder tool sites pass undefined and recall
+  stays whole-project; only direct chat (sendMessage) carries session.memoryFocus today.
+  */
+  focus?: string;
 }
 
 const CHAT_MISSION_READ_TOOL_NAMES = new Set(["fn_mission_list", "fn_mission_show"]);
@@ -684,7 +695,7 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
 }
 
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
-  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false, actionGateContext } = options;
+  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false, actionGateContext, focus } = options;
   const tools: ChatCustomTool[] = [];
 
   if (taskStore) {
@@ -729,7 +740,7 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),
       /* FNXC:ChatAgentTools 2026-07-15-00:00: Chat exposes memory retrieval only and respects the workspace memory-enabled setting; prompt-triggered persistent writes stay excluded without an action-gate context. */
-      ...createMemoryTools(rootDir, settings).filter((tool) => tool.name !== "fn_memory_append"),
+      ...createMemoryTools(rootDir, settings, focus ? { focus } : undefined).filter((tool) => tool.name !== "fn_memory_append"),
       ...createResearchTools({ store: taskStore, rootDir, getSettings: () => taskStore.getSettings() }),
     );
   }
@@ -3081,6 +3092,15 @@ export class ChatManager {
         agentId: agent?.id,
         missionMutationGated: missionGateContexts.missionMutationGated,
         actionGateContext: missionGateContexts.actionGateContext,
+        /*
+        FNXC:ChatMemoryFocus 2026-08-13:
+        Direct-chat recall scopes fn_memory_search to the session's persisted topic
+        (chat_sessions.memory_focus). This is the production path that makes the /focus
+        command's persisted value actually reach the tool's search options — without it the
+        operator would see the chip but receive whole-project recall. Rooms have no focus
+        field yet, so the room-responder toolset passes undefined (whole-project scope).
+        */
+        focus: session?.memoryFocus ?? undefined,
       });
       const customTools = dedupeChatTools([
         createAskQuestionTool(),

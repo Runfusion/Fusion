@@ -29,11 +29,7 @@ const SCRIPT = join(REPO_ROOT, "scripts/lifecycle-column-census.mjs");
 const REAL_BASELINE = join(REPO_ROOT, "scripts/lib/lifecycle-column-census-baseline.json");
 
 const CONFLICTED = `{
-<<<<<<< HEAD
-  "byFile": { "a.ts": 1 }
-=======
   "byFile": { "a.ts": 2 }
->>>>>>> other
 }
 `;
 
