@@ -99,7 +99,7 @@ describe("workspace worktree layout", () => {
 });
 
 /*
-FNXC:WorkspaceWorktree 2026-08-23-19:52:
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
 R15 characterization gate. The pinned task-directory segment must not move any path for a
 task that has no pin — every task that exists today. These literals were captured against the
 pre-pin implementation and are the invariant the pin refactor may not change.

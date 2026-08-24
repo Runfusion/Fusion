@@ -862,7 +862,7 @@ export interface Task {
    */
   workspaceWorktrees?: Record<string, WorkspaceWorktreeEntry>;
   /**
-   * FNXC:WorkspaceWorktree 2026-08-23-19:52:
+   * FNXC:WorkspaceWorktree 2026-08-24-06:10:
    * R15: the workspace task's own directory segment, minted once at first workspace acquisition
    * and authoritative for every later resolution. A branch rename, title edit, or `worktreeNaming`
    * change after acquisition never re-derives it, so recorded `workspaceWorktrees[*].worktreePath`

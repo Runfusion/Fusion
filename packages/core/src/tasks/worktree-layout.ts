@@ -124,7 +124,7 @@ export function resolveWorkspaceTaskWorktreeDir(
 }
 
 /*
-FNXC:WorkspaceWorktree 2026-08-23-19:52:
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
 R15 pins a workspace task's directory segment on the task at first acquisition, so a later
 branch rename, title edit, or `worktreeNaming` change never moves, re-derives, or invalidates
 its recorded paths. Every call site that resolves a workspace task directory reads the pin
@@ -140,6 +140,84 @@ export function resolveWorkspaceTaskDirSegment(
   const pinned = task.workspaceWorktreeDirSegment;
   if (typeof pinned === "string" && pinned.length > 0) return pinned;
   return task.id.toLowerCase();
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14/KTD15: workspace checkouts are named through the project's existing `worktreeNaming` setting
+rather than a new key, so an operator who already derives `feature/PRD-1234-my-slug` from a ticket
+gets `prd-1234-my-slug` as the directory name with nothing else to configure. Naming applies in both
+layouts; only the grouping level above it is opt-in behind a configured `worktreesDir` (KTD8).
+
+R16/KTD11: derivation degrades, it never rejects. A branch-derived name is operator convenience, so
+an unusable candidate falls back to the task id and the caller records why. The reserved-name check
+is case-insensitive and dot-insensitive on both sides: the default macOS filesystem treats
+`.AI-Merge` and `.ai-merge` as one directory while `isAiMergeContainerDir` compares the name
+case-sensitively, so a surviving case variant would stop being filtered out of the one-level sweeps
+KTD8 depends on.
+*/
+export const WORKSPACE_RESERVED_TASK_DIR_SEGMENTS = [
+  ".ai-merge",
+  ".fusion-recovery",
+  ".worktrees",
+  WORKSPACE_GROUP_MARKER_FILENAME,
+] as const;
+
+export type WorkspaceTaskDirSegmentFallbackReason = "empty-slug" | "reserved-name" | "sibling-collision";
+
+/**
+ * Lowercase hyphenated slug shared with the engine's `slugify` so a workspace task directory and a
+ * single-repository worktree directory can never drift apart in spelling.
+ */
+export function slugifyWorktreeSegment(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function reservedSegmentKey(value: string): string {
+  return value.toLowerCase().replace(/^\.+/, "");
+}
+
+export function deriveWorkspaceTaskDirSegment(input: {
+  taskId: string;
+  /** The project's `worktreeNaming` setting; unknown and absent values keep the historic task-id segment. */
+  worktreeNaming?: string;
+  /** The task's resolved working branch, so an operator-supplied or JIRA-derived branch is the input. */
+  branch?: string | null;
+  title?: string | null;
+  description?: string | null;
+  /** Live segments already pinned by sibling tasks under the same group. */
+  siblingSegments?: Iterable<string>;
+}): { segment: string; fallbackReason?: WorkspaceTaskDirSegmentFallbackReason } {
+  const taskIdSegment = input.taskId.toLowerCase();
+  let candidate: string;
+  switch (input.worktreeNaming) {
+    case "branch":
+      // Drop the namespace: `feature/PRD-1234-my-slug` identifies the ticket, not the prefix.
+      candidate = slugifyWorktreeSegment((input.branch ?? "").split("/").filter(Boolean).pop() ?? "");
+      break;
+    case "task-title":
+      candidate = slugifyWorktreeSegment(input.title || (input.description ?? "").slice(0, 60));
+      break;
+    default:
+      return { segment: taskIdSegment };
+  }
+
+  if (!candidate) return { segment: taskIdSegment, fallbackReason: "empty-slug" };
+  const candidateKey = reservedSegmentKey(candidate);
+  if (WORKSPACE_RESERVED_TASK_DIR_SEGMENTS.some((reserved) => reservedSegmentKey(reserved) === candidateKey)) {
+    return { segment: taskIdSegment, fallbackReason: "reserved-name" };
+  }
+  for (const sibling of input.siblingSegments ?? []) {
+    if (sibling.toLowerCase() === candidate.toLowerCase()) {
+      return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
+    }
+  }
+  return { segment: candidate };
 }
 
 /** Resolves a repository child without flattening nested workspace repository names. */

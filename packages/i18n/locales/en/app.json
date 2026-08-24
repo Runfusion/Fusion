@@ -7073,6 +7073,9 @@
       "selectWorktreesDir": "Select worktrees directory",
       "shellCommandToRunInEachNewWorktree": "Shell command to run in each new worktree after creation. No default — unset.",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": " stops on worktrunk errors for explicit operator recovery; ",
+      "taskIDEGFN042": "Task ID (e.g., FN-042)",
+      "taskTitleEGFixLoginBug": "Task title (e.g., fix-login-bug)",
+      "branchTicketEGPRD1234MySlug": "Branch / ticket (e.g., prd-1234-my-slug)",
       "tryAgain": "Try again",
       "useGitDefault": "Use git default",
       "whenEnabledTheMergerFetchesFromTheConfigured": "When enabled, the merger fetches from the configured remote and rebases the task branch onto the latest default-branch tip before merging — catching concurrent pushes from other collaborators or fusion workers. Any conflicts the rebase surfaces flow into the existing smart/AI resolve pipeline. Default: enabled.",
@@ -7087,7 +7090,9 @@
       "worktrunkIntegration": "Worktrunk integration",
       "worktreesPickerNote": "Navigate to the folder where Fusion should create task worktrees, then select the current directory.",
       "showWorktreeGroupingHelp": "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.",
-      "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied)."
+      "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).",
+      "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.",
+      "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). \"Branch / ticket\" names the directory after the working branch, dropping its namespace, so a JIRA-derived branch names the checkout after its ticket; it is the only mode that also names workspace-project checkouts. Default: random."
     },
     "fileBrowser": {
       "currentDirectory": "Current directory:",

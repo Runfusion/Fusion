@@ -6482,7 +6482,10 @@
       "worktrunkIntegration": "Integração com o worktrunk",
       "worktreesPickerNote": "Navegue até a pasta onde o Fusion deve criar as worktrees das tarefas e selecione o diretório atual.",
       "showWorktreeGroupingHelp": "Desativado por padrão. Quando ativado, as colunas de WIP e de processamento sempre agrupam as tarefas por worktree e exibem os nomes das worktrees, incluindo colunas de processamento no modo fluxo de trabalho.",
-      "copyFilesHelp": "Opcional. Arquivos comuns relativos à raiz do repositório são copiados para worktrees novas antes da execução dos comandos de inicialização. Arquivos ou diretórios ausentes são ignorados sem expor o conteúdo. Padrão: vazio (nenhum arquivo copiado)."
+      "copyFilesHelp": "Opcional. Arquivos comuns relativos à raiz do repositório são copiados para worktrees novas antes da execução dos comandos de inicialização. Arquivos ou diretórios ausentes são ignorados sem expor o conteúdo. Padrão: vazio (nenhum arquivo copiado).",
+      "namingStyleNotApplicableWhenRecycling": "O estilo de nomeação não se aplica ao reciclar worktrees — as worktrees do pool mantêm os nomes existentes. \"ID da tarefa\" não está disponível aqui porque worktrees fixadas a uma tarefa são mutuamente exclusivas com a reciclagem; desative Reciclar worktrees para usá-lo.",
+      "howToNameFreshWorktreeDirectories": "Como nomear novos diretórios de worktree. Aplica-se apenas quando a reciclagem está desativada. \"ID da tarefa\" também fixa cada tarefa ao seu próprio diretório de worktree durante todo o seu ciclo de vida (mutuamente exclusivo com a reciclagem). Padrão: aleatório.",
+      "branchTicketEGPRD1234MySlug": ""
     },
     "configVersions": {
       "title": "Versões de configuração",

@@ -4,8 +4,8 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile 
 import { exec } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
-import { resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
+import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, deriveWorkspaceTaskDirSegment, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
+import { resolveTaskWorkingBranch, resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "../logger.js";
@@ -1947,7 +1947,7 @@ export class WorkspaceRepoAcquireBusyError extends Error {
 }
 
 /*
-FNXC:WorkspaceWorktree 2026-08-23-19:52:
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
 R15 mints the workspace task's directory segment exactly once, at its first workspace
 acquisition, and every later resolution reads the pin instead of re-deriving. Deriving on every
 resolution would make the directory time-varying: a mid-flight branch rename or a
@@ -1960,15 +1960,69 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   task: Task;
   store: TaskStore;
   settings: Partial<Settings>;
+  /** The task's working branch read BEFORE singular routing normalization clears it (see resolveWorkspaceNamingBranch). */
+  namingBranch: string;
   logger?: { log: (m: string) => void };
   runContext?: RunMutationContext;
 }): Promise<Task> {
   const existing = input.task.workspaceWorktreeDirSegment;
   if (typeof existing === "string" && existing.length > 0) return input.task;
-  const segment = resolveWorkspaceTaskDirSegment(input.task);
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  R14/R16: mint through the project's `worktreeNaming` setting, after the working branch is
+  resolved, so an operator-supplied or JIRA-derived branch is the input. Sibling segments come from
+  live tasks so two branches that slug identically cannot claim one directory; an unreadable
+  sibling list degrades to "no siblings" rather than failing the acquisition, since the collision
+  check is a convenience guard and the reservation layer still refuses a duplicate path.
+  */
+  const { segment, fallbackReason } = deriveWorkspaceTaskDirSegment({
+    taskId: input.task.id,
+    worktreeNaming: input.settings.worktreeNaming,
+    branch: input.namingBranch,
+    title: input.task.title,
+    description: input.task.description,
+    siblingSegments: await collectLiveSiblingTaskDirSegments(input.store, input.task.id),
+  });
   await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
   input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
+  if (fallbackReason) {
+    await input.store.logEntry(
+      input.task.id,
+      `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
+    ).catch(() => {});
+  }
   return await input.store.getTask(input.task.id);
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14: the naming input is the task's working branch, but `normalizeWorkspaceTaskRouting` clears the
+singular `task.branch` at the top of every workspace acquisition — a workspace task's branches live
+per repository. So the branch must be read from the pre-normalization row, with a recorded
+per-repository branch as the fallback for a task that reaches acquisition with its singular field
+already cleared. Reading it after normalization would silently name every checkout `fusion/<task-id>`
+and make the mode look broken.
+*/
+function resolveWorkspaceNamingBranch(task: Task): string {
+  if (task.branch) return task.branch;
+  const recorded = Object.values(task.workspaceWorktrees ?? {})
+    .map((entry) => entry?.branch)
+    .find((branch): branch is string => typeof branch === "string" && branch.length > 0);
+  return recorded ?? resolveTaskWorkingBranch(task);
+}
+
+/** Live pinned segments of other tasks, so a derived name cannot collide with a sibling's directory. */
+async function collectLiveSiblingTaskDirSegments(store: TaskStore, taskId: string): Promise<string[]> {
+  try {
+    if (typeof store.listTasks !== "function") return [];
+    const tasks = await store.listTasks({ slim: true, includeArchived: false });
+    return tasks
+      .filter((sibling) => sibling.id !== taskId && sibling.column !== "done")
+      .map((sibling) => sibling.workspaceWorktreeDirSegment)
+      .filter((segment): segment is string => typeof segment === "string" && segment.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -1986,6 +2040,7 @@ export async function acquireWorkspaceTaskWorktrees(
     throw new Error(`Workspace task ${opts.task.id} has no configured repositories`);
   }
 
+  const preNormalizationTask = await opts.store.getTask(opts.task.id);
   let current = await normalizeWorkspaceTaskRouting(opts.store, opts.task.id);
   const hasLandedRepository = Object.values(current.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
   const currentRepositories = [...new Set((current.repositoryScope?.repositories ?? []).map((repo) => repo.trim()).filter(Boolean))].sort();
@@ -2011,6 +2066,7 @@ export async function acquireWorkspaceTaskWorktrees(
   resolveWorkspaceReviewRemediationRepository(current, repoRelPaths);
   current = await ensureWorkspaceTaskDirSegmentPin({
     task: current,
+    namingBranch: resolveWorkspaceNamingBranch(preNormalizationTask),
     store: opts.store,
     settings: opts.settings,
     logger: opts.logger,

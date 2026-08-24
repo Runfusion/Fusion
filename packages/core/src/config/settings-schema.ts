@@ -661,6 +661,14 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   taskDetailChatFirst: false,
   executorAllowSiblingBranchRename: false,
+  /*
+  FNXC:WorkspaceWorktree 2026-09-04-04:42:
+  FN-258 shipped task-ID worktree directories with no operator naming setting. Restoring
+  `worktreeNaming` keeps that shipped default (`task-id`) so existing checkouts do not jump to
+  random names, while `"branch"` is the ticket-derived mode this PR adds for workspace and
+  single-repo checkouts.
+  */
+  worktreeNaming: "task-id",
   worktrunk: {
     enabled: false,
     binaryPath: undefined,
