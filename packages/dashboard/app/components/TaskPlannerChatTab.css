@@ -236,12 +236,14 @@ Task Chat keeps model and thinking controls reachable beside the composer, reusi
 }
 
 /*
-FNXC:ChatMemoryFocus 2026-08-13:
-Spacing row holding the per-conversation memory focus chip above the planner
-composer. The chip inherits its control-size token from the composer below so
-it aligns with the send/stop buttons.
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:40:
+The planner focus popover must be contained by this full-width composer row, never the
+chip or the full chat pane. The chip-anchored mobile override collapsed the popover into
+a sliver; a future ChatFocusSelector host must likewise provide a positioned full-width
+composer ancestor. The chip inherits its control-size token from the composer below.
 */
 .task-planner-chat-focus-row {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;

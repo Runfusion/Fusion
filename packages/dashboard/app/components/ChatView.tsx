@@ -34,7 +34,7 @@ import { useChatUnread } from "../hooks/useChatUnread";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
 import { fetchSettings, fetchChatSession, updateGlobalSettings, type DiscoveredSkill } from "../api";
-import { type Agent, type ChatTag, type Settings } from "@fusion/core";
+import { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, type Agent, type ChatTag, type Settings } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { MicButton } from "./MicButton";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
@@ -70,7 +70,7 @@ import {
   formatModelTag,
 } from "./StandardChatSurface";
 import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHandoff";
-import { CHAT_COMMANDS, matchChatCommand, filterChatCommands, getSlashTriggerMatch, type ChatCommand } from "./chat-commands";
+import { matchChatCommand, filterChatCommands, getSlashTriggerMatch, selectChatCommands, type ChatCommand } from "./chat-commands";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
@@ -647,6 +647,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     };
   }, [projectId]);
   const resolvedDefaultThinkingLevel = chatSettings?.defaultThinkingLevel ?? "off";
+  const chatFocusEnabled = isExperimentalFeatureEnabled(chatSettings ?? undefined, CHAT_FOCUS_FLAG);
+  const selectedChatCommands = useMemo(() => selectChatCommands({ chatFocusEnabled }), [chatFocusEnabled]);
   const chatDefaultTarget = useMemo(() => {
     /*
     FNXC:ChatModels 2026-07-12-20:45:
@@ -1128,8 +1130,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // Chat surface never shows/dispatches them, so its skill-only behavior is unchanged.
   const filteredCommands = useMemo(() => {
     if (!chatCommandContext) return [] as ChatCommand[];
-    return filterChatCommands(skillFilter, CHAT_COMMANDS);
-  }, [chatCommandContext, skillFilter]);
+    return filterChatCommands(skillFilter, selectedChatCommands);
+  }, [chatCommandContext, skillFilter, selectedChatCommands]);
 
   const skillMenuEntries = useMemo<SkillMenuEntry[]>(() => {
     const commandEntries: SkillMenuEntry[] = filteredCommands.map((command) => ({
@@ -2051,7 +2053,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     if ((!trimmed && files.length === 0) || !activeSession) return;
 
     if (chatCommandContext) {
-      const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
+      const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
       if (commandMatch) {
         // FNXC:ChatMemoryFocus (RUFU-068): only agent-gated commands (steer) are
         // refused without a running agent. /focus is a local session-setting command
@@ -2180,6 +2182,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     chatCommandContext,
     isStreaming,
     releaseSentAttachments,
+    selectedChatCommands,
     t,
   ]);
 
@@ -3325,19 +3328,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           <Paperclip size={16} />
         </button>
         {/*
-        FNXC:ChatMemoryFocus 2026-08-13:
-        RUFU-068: per-conversation memory focus chip for direct chat sessions. Persists
-        on chat_sessions.memory_focus so it survives reconnect; recall scoping is server-side
-        (within-project read filter), never a client post-query filter. Only the direct composer
-        shows it — rooms have no per-conversation focus.
+        FNXC:ChatMemoryFocus 2026-08-24-04:21:
+        Per-conversation memory focus is opt-in. Hide its direct-session chip until Settings
+        enables experimentalFeatures.chatFocus; persisted values remain inert while hidden.
         */}
-        <ChatFocusSelector
-          sessionId={activeSession?.id ?? null}
-          projectId={projectId}
-          memoryFocus={resolvedChatFocus}
-          onPersist={(focus) => setChatFocusOverride(focus)}
-          addToast={addToast}
-        />
+        {chatFocusEnabled && (
+          <ChatFocusSelector
+            sessionId={activeSession?.id ?? null}
+            projectId={projectId}
+            memoryFocus={resolvedChatFocus}
+            onPersist={(focus) => setChatFocusOverride(focus)}
+            addToast={addToast}
+          />
+        )}
         {/*
         FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
         FN-8030: direct sessions retain model/agent targeting here, while room composers reuse

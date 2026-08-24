@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { ChatFocusSelector } from "../ChatFocusSelector";
+import { loadAllAppCss } from "../../test/cssFixture";
 
 vi.mock("../../api", () => ({
   updateChatSession: vi.fn(),
@@ -10,6 +11,7 @@ vi.mock("../../api", () => ({
 import { updateChatSession } from "../../api";
 
 const mockUpdateChatSession = vi.mocked(updateChatSession);
+const originalInnerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
 
 /*
 FNXC:ChatMemoryFocusSelectorTest 2026-08-13:
@@ -43,31 +45,57 @@ describe("ChatFocusSelector", () => {
     addToast.mockReset();
   });
 
+  afterEach(() => {
+    document.head.querySelector("[data-testid='chat-focus-selector-css']")?.remove();
+    if (originalInnerWidthDescriptor) {
+      Object.defineProperty(window, "innerWidth", originalInnerWidthDescriptor);
+    }
+  });
+
   it("shows the active topic on the chip when the session has a focus", () => {
     renderSelector({ memoryFocus: "auth-northstar" });
     expect(screen.getByTestId("chat-focus-chip")).toHaveTextContent("auth-northstar");
   });
 
-  it("shows a cleared/absent state when the session focus is null (no dangling topic chip)", () => {
-    renderSelector({ memoryFocus: null });
-    const chip = screen.getByTestId("chat-focus-chip");
-    expect(chip).toHaveTextContent("Focus");
-    expect(chip).not.toHaveTextContent("auth-northstar");
+  it.each([null, "", "all", "*"])("renders memoryFocus=%j as an icon-only whole-project control", (memoryFocus) => {
+    renderSelector({ memoryFocus });
+    const chip = screen.getByRole("button", { name: "Memory focus topic" });
+
+    expect(chip.textContent?.trim()).toBe("");
+    expect(chip).not.toHaveTextContent(/Focus/);
+    expect(chip.querySelector("svg")).toBeTruthy();
+    expect(chip).toHaveClass("chat-focus-chip--icon-only");
   });
 
-  it("treats an empty-string and whole-project-collapse focus as cleared", () => {
-    renderSelector({ memoryFocus: "" });
-    expect(screen.getByTestId("chat-focus-chip")).toHaveTextContent("Focus");
-    // "all" and "*" collapse to whole-project scope on display.
-    const { unmount } = renderSelector({ memoryFocus: "all" });
-    unmount();
-    void renderSelector({ memoryFocus: "*" });
-    expect(screen.getAllByTestId("chat-focus-chip")[0]).toHaveTextContent("Focus");
+  it("keeps the disabled no-session control icon-only and accessible", () => {
+    renderSelector({ sessionId: null });
+    const chip = screen.getByRole("button", { name: "Memory focus topic" });
+
+    expect(chip).toBeDisabled();
+    expect(chip.textContent?.trim()).toBe("");
+    expect(chip).not.toHaveTextContent(/Focus/);
   });
 
   it("preserves a set topic verbatim (whitespace-trimmed active chip)", () => {
     renderSelector({ memoryFocus: "  spaced topic  " });
-    expect(screen.getByTestId("chat-focus-chip")).toHaveTextContent("spaced topic");
+    const chip = screen.getByTestId("chat-focus-chip");
+    expect(chip).toHaveTextContent("spaced topic");
+    expect(chip).toHaveClass("chat-focus-chip--active");
+  });
+
+  it.each(["desktop", "mobile"])("keeps the icon-only chip square without label spacing at the %s cascade", (viewport) => {
+    Object.defineProperty(window, "innerWidth", { value: viewport === "mobile" ? 768 : 1024, configurable: true });
+    const style = document.createElement("style");
+    style.dataset.testid = "chat-focus-selector-css";
+    style.textContent = loadAllAppCss();
+    document.head.appendChild(style);
+    renderSelector({ memoryFocus: null });
+
+    const computed = getComputedStyle(screen.getByTestId("chat-focus-chip"));
+    expect(computed.paddingLeft).toBe("0px");
+    expect(computed.paddingRight).toBe("0px");
+    expect(computed.gap).toBe("0px");
+    expect(computed.inlineSize).toContain("var(--chat-input-control-size");
   });
 
   it("persists a typed topic via updateChatSession and reflects the persisted state", async () => {
@@ -107,8 +135,4 @@ describe("ChatFocusSelector", () => {
     await waitFor(() => expect(mockUpdateChatSession).toHaveBeenCalledWith("SES-1", { memoryFocus: null }, "proj-123"));
   });
 
-  it("is hidden/disabled when there is no session id", () => {
-    renderSelector({ sessionId: null });
-    expect(screen.getByTestId("chat-focus-chip")).toBeDisabled();
-  });
 })

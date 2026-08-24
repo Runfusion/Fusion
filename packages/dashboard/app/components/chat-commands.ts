@@ -104,6 +104,17 @@ export const CHAT_COMMANDS: readonly ChatCommand[] = [
   },
 ];
 
+/*
+FNXC:ChatMemoryFocus 2026-08-24-04:21:
+/focus remains registered for persistence compatibility but is withheld from both menu listing and
+submit dispatch while experimentalFeatures.chatFocus is off, so flag-off composers cannot invoke it.
+*/
+export function selectChatCommands(options: { chatFocusEnabled: boolean }): readonly ChatCommand[] {
+  return options.chatFocusEnabled
+    ? CHAT_COMMANDS
+    : CHAT_COMMANDS.filter((command) => command.name !== "focus");
+}
+
 export interface ChatCommandMatch {
   command: ChatCommand;
   remainder: string;

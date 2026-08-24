@@ -519,6 +519,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   leftSidebarNav: "Left Sidebar Navigation",
   sandbox: "Sandbox (command isolation)",
   chatRooms: "Chat Rooms",
+  chatFocus: "Chat Focus (per-conversation memory recall)",
   agentOnboarding: "Planning-style Agent Onboarding",
   workflowInterpreterDualObserve: "Workflow Graph Engine — dual-observe parity (diagnostic)",
 };

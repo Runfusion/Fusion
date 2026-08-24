@@ -1560,6 +1560,13 @@ export { PROMPT_KEY_CATALOG } from "./tasks/prompt-overrides.js";
 // Re-exported here so the dashboard's `@fusion/core` → types.ts alias resolves
 // client-side consumers (see packages/dashboard/vite.config.ts).
 export { getErrorMessage } from "./process/error-message.js";
+
+/*
+FNXC:ChatMemoryFocus 2026-08-24-04:21:
+Dashboard client imports resolve @fusion/core to this browser-safe leaf, so expose the pure
+experimental flag reader here. Its Settings dependency is type-only and introduces no browser runtime cycle.
+*/
+export { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "./config/experimental-features.js";
 export {
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,

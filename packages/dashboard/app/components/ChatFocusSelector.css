@@ -1,29 +1,22 @@
 /*
-FNXC:ChatMemoryFocusSelector 2026-08-13:
-Styling for the per-conversation memory focus selector chip + popover. Uses only
-design tokens (--space-*, --color/--surface/--border/--text-muted/--accent,
---radius-*, --shadow-lg, --font-size-*, --font-weight-*) per the styling guide —
-no hardcoded px (except 0), no hex/rgba. A null/empty session focus renders a
-cleared "Focus" chip (never a dangling topic chip); a set topic renders an active
-chip whose label is the topic. Mobile (max-width 768px) widens the popover to the
-viewport minus padding so the inline input stays usable on narrow screens. The
-chip matches --chat-input-control-size (the composer's send/attach control
-height) so it centers with the single-line textarea.
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:40:
+The focus popover must use a positioned, full-width composer ancestor as its containing
+block, never the chip wrapper. A chip-anchored mobile breakpoint resolved its insets
+against the trigger and collapsed the popover into a vertical sliver. Every future
+ChatFocusSelector host must provide that positioned composer ancestor. The bounded,
+scrollable box keeps its title and controls available when the chat pane clips overflow.
 
-FNXC:ChatMemoryFocusSelector 2026-08-21-13:35:
-RUFU-146 review (PRRT_kwDOSA-8Y86a7RZo): raw literals replaced with existing
-semantic tokens — --btn-border-width (borders), --transition-fast
-(chip transition), --opacity-disabled (disabled chip), --focus-ring-strong
-(focus-visible, previously an invalid `outline: 2px solid var(--focus-ring)`
-declaration since --focus-ring is a box-shadow token), calc(var(--space-xl) * 8)
-(12rem label cap), --z-popover (popover layer), --line-height-normal (help text).
-The 768px breakpoint stays literal by design: --mobile-breakpoint is documented
-in styles.css as documentation-only (custom properties cannot appear in
-@media conditions) and every other component CSS uses the same literal.
+The chip matches --chat-input-control-size (the composer's send/attach control height)
+so it centers with the single-line textarea. Styling uses only existing design tokens.
+
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:59:
+A cleared focus is an icon-only control: its aria-label and title supply the accessible
+name, while a selected topic retains its visible chip label. The modifier removes label
+padding and gap so the cleared control stays square at every breakpoint.
 */
 
 .chat-focus-root {
-  position: relative;
+  position: static;
   flex: none;
 }
 
@@ -57,8 +50,14 @@ in styles.css as documentation-only (custom properties cannot appear in
   border-color: var(--accent);
 }
 
-.chat-focus-chip-topic,
-.chat-focus-chip-label {
+.chat-focus-chip--icon-only {
+  inline-size: var(--chat-input-control-size, 2.25rem);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+.chat-focus-chip-topic {
   max-inline-size: calc(var(--space-xl) * 8);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -68,11 +67,13 @@ in styles.css as documentation-only (custom properties cannot appear in
 
 .chat-focus-popover {
   position: absolute;
-  left: 0;
-  bottom: calc(100% + var(--space-xs));
-  width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
-  max-width: calc(100vw - (var(--space-lg) * 2));
-  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+  inset-inline-start: var(--space-md);
+  inset-inline-end: auto;
+  inset-block-end: calc(100% + var(--space-xs));
+  inline-size: min(calc(var(--space-xl) * 15), calc(100% - (var(--space-md) * 2)));
+  max-inline-size: calc(100% - (var(--space-md) * 2));
+  max-block-size: min(calc(var(--space-xl) * 16), calc(100vh - (var(--space-xl) * 6)));
+  overflow-y: auto;
   padding: var(--space-sm);
   background: var(--surface);
   border: var(--btn-border-width) solid var(--border);
@@ -102,20 +103,11 @@ in styles.css as documentation-only (custom properties cannot appear in
 
 .chat-focus-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-xs);
 }
 
 .chat-focus-save,
 .chat-focus-clear {
   flex: 0 0 auto;
-}
-
-@media (max-width: 768px) {
-  .chat-focus-popover {
-    left: var(--space-md);
-    right: var(--space-md);
-    width: auto;
-    max-width: none;
-    max-inline-size: none;
-  }
 }

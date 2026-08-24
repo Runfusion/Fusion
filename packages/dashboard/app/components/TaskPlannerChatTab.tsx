@@ -1,6 +1,6 @@
-import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Task, TaskDetail } from "@fusion/core";
+import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
 import { isWipColumnRole } from "../utils/columnRoles";
-import { getErrorMessage } from "@fusion/core";
+import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,7 @@ import { useComposerDictation } from "../hooks/useComposerDictation";
 import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
-import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
+import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchSettings, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
@@ -18,7 +18,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { useModelsCache } from "../hooks/useModelsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
-import { CHAT_COMMANDS, filterChatCommands, getSlashTriggerMatch, matchChatCommand, type ChatCommand } from "./chat-commands";
+import { filterChatCommands, getSlashTriggerMatch, matchChatCommand, selectChatCommands, type ChatCommand } from "./chat-commands";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
@@ -350,6 +350,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   persisted per-conversation focus without a full session refetch.
   */
   const [sessionMemoryFocus, setSessionMemoryFocus] = useState<string | null>(null);
+  const [chatSettings, setChatSettings] = useState<Settings | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
@@ -396,6 +397,23 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     taskChatModelRef.current = taskChatModel;
   }, [addToast, onTaskUpdated, taskChatModel]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setChatSettings(null);
+    fetchSettings(projectId)
+      .then((settings) => {
+        if (!cancelled) setChatSettings(settings);
+      })
+      .catch(() => {
+        if (!cancelled) setChatSettings(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const chatFocusEnabled = isExperimentalFeatureEnabled(chatSettings ?? undefined, CHAT_FOCUS_FLAG);
+  const selectedChatCommands = useMemo(() => selectChatCommands({ chatFocusEnabled }), [chatFocusEnabled]);
   const [sessionModel, setSessionModel] = useState<ResolvedModelSelection & { thinkingLevel?: string }>(taskChatModel);
   const hasLocalTargetOverrideRef = useRef(false);
   const { models, favoriteProviders, favoriteModels } = useModelsCache();
@@ -532,7 +550,10 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   planner edits could land against a task already being implemented.
   */
   const agentRunning = isWipColumnRole(columnFlags, task.column);
-  const filteredCommands = useMemo(() => filterChatCommands(commandFilter, CHAT_COMMANDS), [commandFilter]);
+  const filteredCommands = useMemo(
+    () => filterChatCommands(commandFilter, selectedChatCommands),
+    [commandFilter, selectedChatCommands],
+  );
 
   useEffect(() => {
     setHighlightedCommandIndex(0);
@@ -1078,7 +1099,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   }, [messages, refreshMessagesForSession, refreshTaskAfterEdit, sessionId, startPlannerStream, t]);
 
   const dispatchSlashCommand = useCallback(async (command: ChatCommand, remainder: string) => {
-    if (!agentRunning) {
+    if (command.requiresAgent && !agentRunning) {
       // Do not silently fall back to a normal chat message: /steer with no
       // running agent is a no-op with feedback, not a plain send.
       addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
@@ -1137,13 +1158,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
 
   const sendMessage = useCallback(() => {
     const trimmed = draft.trim();
-    const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
+    const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
     if (commandMatch) {
       setShowCommandMenu(false);
       return dispatchSlashCommand(commandMatch.command, commandMatch.remainder);
     }
     return sendMessageContent(draft);
-  }, [draft, dispatchSlashCommand, sendMessageContent]);
+  }, [draft, dispatchSlashCommand, selectedChatCommands, sendMessageContent]);
 
   const handleDraftChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextValue = event.target.value;
@@ -1631,15 +1652,22 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           )}
         </div>
       )}
-      <div className="task-planner-chat-focus-row">
-        <ChatFocusSelector
-          sessionId={sessionId}
-          projectId={projectId}
-          memoryFocus={sessionMemoryFocus}
-          onPersist={(focus) => setSessionMemoryFocus(focus)}
-          addToast={(message, type) => addToastRef.current(message, type)}
-        />
-      </div>
+      {/*
+      FNXC:ChatMemoryFocus 2026-08-24-04:21:
+      Suppress the focus chip and its padded wrapper together until experimentalFeatures.chatFocus
+      is enabled, so default-off planner chat leaves no empty composer shell.
+      */}
+      {chatFocusEnabled && (
+        <div className="task-planner-chat-focus-row">
+          <ChatFocusSelector
+            sessionId={sessionId}
+            projectId={projectId}
+            memoryFocus={sessionMemoryFocus}
+            onPersist={(focus) => setSessionMemoryFocus(focus)}
+            addToast={(message, type) => addToastRef.current(message, type)}
+          />
+        </div>
+      )}
       <div className="task-planner-chat-composer">
         <div className="task-planner-chat-target-controls" data-testid="task-planner-chat-target-controls">
           <CustomModelDropdown

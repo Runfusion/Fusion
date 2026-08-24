@@ -26,7 +26,7 @@
 
 import { execSync } from "node:child_process";
 import { setImmediate as setImmediateCb } from "node:timers";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -16729,7 +16729,9 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         continue;
       }
       try {
-        rmSync(path, { recursive: true, force: true });
+        // FNXC:WorktreeCleanup: rmdir is deliberately non-recursive. Any content
+        // makes it fail closed and preserves the unregistered checkout.
+        rmdirSync(path);
         log.log(`Cleaned unregistered worktree dir: ${path}`);
         cleaned++;
       } catch (err: unknown) {

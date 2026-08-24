@@ -2396,7 +2396,7 @@ export type {
   ResearchCancellationState,
 } from "./research/research-types.js";
 
-export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG } from "./config/experimental-features.js";
+export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, CHAT_FOCUS_FLAG } from "./config/experimental-features.js";
 export {
   DEFAULT_MOBILE_NAV_PRIMARY_ITEMS,
   MAX_MOBILE_NAV_PRIMARY_ITEMS,
