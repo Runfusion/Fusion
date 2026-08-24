@@ -1558,7 +1558,6 @@ describe("SettingsModal", () => {
       for (const featureLabel of [
         "Research View",
         "Evals View",
-        "Subtask Breakdown",
         "Sandbox (command isolation)",
         "Planning-style Agent Onboarding",
       ]) {
@@ -1571,7 +1570,12 @@ describe("SettingsModal", () => {
       expect(screen.getAllByLabelText("Dev Server")).toHaveLength(1);
     });
 
-    it("shows the Subtask Breakdown toggle as off when the setting is missing", async () => {
+    /*
+    FNXC:SubtaskBreakdownRemoval 2026-08-23-19:40:
+    Subtask Breakdown is no longer a dashboard flow (see useBackgroundSessions' removal note), so it
+    is no longer an Experimental toggle and must not be reinstated by a test.
+    */
+    it("does not offer a removed Subtask Breakdown toggle", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,
         experimentalFeatures: {},
@@ -1580,7 +1584,7 @@ describe("SettingsModal", () => {
       renderModal();
       await openExperimentalFeaturesSection();
 
-      expect(screen.getByLabelText("Subtask Breakdown")).not.toBeChecked();
+      expect(screen.queryByLabelText("Subtask Breakdown")).not.toBeInTheDocument();
     });
 
     it("does not render duplicate Dev Server rows when legacy and canonical keys are both present", async () => {

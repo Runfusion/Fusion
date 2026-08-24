@@ -517,6 +517,12 @@ describe("Terminal WebSocket close handler", () => {
     const mockService = {
       getSession: getSessionMock,
       getScrollbackAndClearPending: getScrollbackAndClearPendingMock,
+      /*
+      FNXC:TerminalSharing 2026-08-23-23:05:
+      A shared-terminal attach now flushes pending output to already-attached viewers and then serves a `sinceSeq` scrollback delta; a double missing these methods throws inside the connection handler before any subscription is registered, silently disarming every assertion below.
+      */
+      flushPendingOutput: vi.fn(),
+      getScrollbackSince: vi.fn().mockReturnValue(null),
       killSession: killSessionMock,
       write: vi.fn(),
       resize: vi.fn(),
@@ -571,6 +577,12 @@ describe("Terminal WebSocket close handler", () => {
     const mockService = {
       getSession: getSessionMock,
       getScrollbackAndClearPending: getScrollbackAndClearPendingMock,
+      /*
+      FNXC:TerminalSharing 2026-08-23-23:05:
+      A shared-terminal attach now flushes pending output to already-attached viewers and then serves a `sinceSeq` scrollback delta; a double missing these methods throws inside the connection handler before any subscription is registered, silently disarming every assertion below.
+      */
+      flushPendingOutput: vi.fn(),
+      getScrollbackSince: vi.fn().mockReturnValue(null),
       killSession: killSessionMock,
       write: vi.fn(),
       resize: vi.fn(),
@@ -629,6 +641,12 @@ describe("Terminal WebSocket close handler", () => {
     const mockService = {
       getSession: getSessionMock,
       getScrollbackAndClearPending: getScrollbackAndClearPendingMock,
+      /*
+      FNXC:TerminalSharing 2026-08-23-23:05:
+      A shared-terminal attach now flushes pending output to already-attached viewers and then serves a `sinceSeq` scrollback delta; a double missing these methods throws inside the connection handler before any subscription is registered, silently disarming every assertion below.
+      */
+      flushPendingOutput: vi.fn(),
+      getScrollbackSince: vi.fn().mockReturnValue(null),
       killSession: killSessionMock,
       write: vi.fn(),
       resize: vi.fn(),

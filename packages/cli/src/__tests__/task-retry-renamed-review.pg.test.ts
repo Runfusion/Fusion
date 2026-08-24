@@ -185,6 +185,8 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
       error: "Refusing to start coding agent in missing worktree: /tmp/fusion-missing-worktree",
       worktree: "/tmp/fusion-missing-worktree",
       branch: `fusion/${task.id}`,
+      // FNXC:CliTests 2026-08-23-16:07: FN-107 requires branchWriteOrigin provenance on every branch write; this engine-simulated fixture predates that guard.
+      branchWriteOrigin: "engine" as const,
     } as never);
     store.taskCache.delete(task.id);
 

@@ -737,8 +737,10 @@ describe("TaskDetailModal Summary tab", () => {
     const css = readDashboardStylesSource();
     const tokenTableRule = css.match(/\.task-summary-token-table\s*\{[^}]*\}/)?.[0] ?? "";
     const modelNameRule = css.match(/\.task-summary-model-label span:last-child\s*\{[^}]*\}/)?.[0] ?? "";
-    const tokenTableSectionStart = css.lastIndexOf("FNXC:TaskDetailSummaryTokenCost");
-    const tokenTableSectionEnd = css.indexOf("/* Spec tab layout", tokenTableSectionStart);
+    const tokenTableSectionStart = css.indexOf(".task-summary-token-table-wrap {");
+    const tokenTableSectionEnd = css.indexOf(".detail-section--spec {", tokenTableSectionStart);
+    expect(tokenTableSectionStart).toBeGreaterThanOrEqual(0);
+    expect(tokenTableSectionEnd).toBeGreaterThan(tokenTableSectionStart);
     const tokenTableSection = css.slice(tokenTableSectionStart, tokenTableSectionEnd);
     const mobileTokenBlock = tokenTableSection.slice(tokenTableSection.indexOf("@media (max-width: 768px)"));
 

@@ -1381,6 +1381,34 @@ export const BUILTIN_AGENT_PROMPTS: readonly AgentPromptTemplate[] = [
  */
 export interface ResolveAgentPromptOptions {
   plannerHeartbeatPatrolEnabled?: boolean;
+  taskCreateToolAvailable?: boolean;
+  delegateTaskToolAvailable?: boolean;
+}
+
+const EXECUTOR_WORKFLOW_SELECTION_GUARDRAIL = "- Do not call `fn_workflow_select` to change the workflow of the task you are executing; you did not create that task, the user or triage did. The only exception is when the user explicitly requested a specific workflow for this task in a steering comment, task instruction, or similar direct instruction.";
+
+/*
+FNXC:WorkflowRouting 2026-08-23-18:49:
+Workflow assignment guidance must match the executor's real tool surface. Built-in creator-capable
+personas may set workflows on tasks they create, while task-execution sessions omit this permission
+because they structurally withhold both creation tools. Render the clause at resolution time so the
+default and senior-engineer variants cannot drift from session capabilities.
+*/
+function renderExecutorWorkflowRoutingToolSurface(
+  prompt: string,
+  options: ResolveAgentPromptOptions,
+): string {
+  const availableCreationTools = [
+    ...(options.taskCreateToolAvailable !== false ? ["`fn_task_create`"] : []),
+    ...(options.delegateTaskToolAvailable !== false ? ["`fn_delegate_task`"] : []),
+  ];
+  if (availableCreationTools.length === 0) return prompt;
+
+  const toolList = availableCreationTools.join(" or ");
+  return prompt.replace(
+    EXECUTOR_WORKFLOW_SELECTION_GUARDRAIL,
+    `${EXECUTOR_WORKFLOW_SELECTION_GUARDRAIL}\n- You may still set the workflow on tasks you create via ${toolList}.`,
+  );
 }
 
 export function resolveAgentPrompt(
@@ -1410,6 +1438,9 @@ export function resolveAgentPrompt(
     if (role === PLANNER_AGENT_ROLE && template.builtIn && template.id === "concise-triage") {
       return `${CONCISE_TRIAGE_PROMPT_TEXT}\n\n${buildConciseTriageHeartbeatGuidance(options)}`;
     }
+    if (role === "executor" && template.builtIn) {
+      return renderExecutorWorkflowRoutingToolSurface(template.prompt, options);
+    }
     return template.prompt;
   }
 
@@ -1417,6 +1448,9 @@ export function resolveAgentPrompt(
   const builtIn = BUILTIN_AGENT_PROMPTS.find((t) => t.role === role && t.id === `default-${role}`);
   if (role === PLANNER_AGENT_ROLE && builtIn?.id === "default-triage") {
     return `${TRIAGE_PROMPT_TEXT}\n\n${buildTriageHeartbeatGuidance(options)}`;
+  }
+  if (role === "executor" && builtIn) {
+    return renderExecutorWorkflowRoutingToolSurface(builtIn.prompt, options);
   }
   return builtIn?.prompt ?? "";
 }

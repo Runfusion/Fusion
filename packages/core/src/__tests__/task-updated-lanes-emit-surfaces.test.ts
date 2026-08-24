@@ -25,6 +25,15 @@ const PRODUCERS = {
   "packages/core/src/task-store/merge-queue-ops.ts": ["emit"],
   "packages/core/src/task-store/moves.ts": ["emit"],
   "packages/core/src/task-store/project-store-ops.ts": ["emit"],
+  /*
+  FNXC:WorkflowEvents 2026-08-23-15:58:
+  Two safe-route producers joined the seam after this inventory was written: the fresh-planning reset
+  publication (`resetTaskPublicationImpl`) and the deferred title backfill that names an untitled card
+  once summarization resolves. Both publish through `emitTaskLifecycleEventSafely`, so they are
+  registered here rather than relaxing the census.
+  */
+  "packages/core/src/task-store/reset-lifecycle.ts": ["safe"],
+  "packages/core/src/task-store/task-creation.ts": ["safe"],
   "packages/core/src/task-store/task-artifacts-ops.ts": ["emit"],
   "packages/core/src/task-store/task-mutation-ops.ts": ["emit", "safe"],
   "packages/core/src/task-store/task-update.ts": ["safe"],

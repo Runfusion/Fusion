@@ -49,6 +49,13 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
     /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: the prop the host card already accepts; without it
        declared here a plugin-drawn card could not be given the board's traits at all. */
     taskColumnFlags?: Partial<TraitFlags>;
+    /*
+    FNXC:PluginInteropDrift 2026-08-20-21:01:
+    FN-051 removed TaskCard's `disableDrag` prop (native task dragging is gone entirely),
+    but this mirror kept declaring it — check:plugin-interop-drift flags the phantom member,
+    and the plugin's own tsc build rejected the pass-through at GraphTaskNode. Drag state
+    is now unconditionally off inside TaskCard, so the prop is deleted here and at the call site.
+    */
   }
 
   export function TaskCard(props: TaskCardProps): ReactElement;
@@ -56,11 +63,12 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
 
 declare module "@fusion/dashboard/app/utils/projectStorage" {
   export function getScopedItem(baseKey: string, projectId?: string): string | null;
-  export function setScopedItem(
-    baseKey: string,
-    value: string,
-    projectId?: string,
-    options?: { maxBytes?: number },
-  ): boolean;
+  /*
+  FNXC:PluginInteropDrift 2026-08-20-21:01:
+  FN-9160 (#3477) added the optional `options.maxBytes` cap and made setScopedItem report
+  write success; the mirror kept the old 3-param/void shape, so check:plugin-interop-drift
+  failed the Lint gate on every PR. Mirrors the real signature exactly.
+  */
+  export function setScopedItem(baseKey: string, value: string, projectId?: string, options?: { maxBytes?: number }): boolean;
   export function removeScopedItem(baseKey: string, projectId?: string): void;
 }

@@ -12,7 +12,8 @@ import { installChatViewEnv, mockTabletClassTouchViewport, mockViewportMode, set
 vi.mock("../../hooks/useChat");
 vi.mock("../../hooks/useChatRooms");
 vi.mock("../../hooks/useNavigationHistory", () => ({ useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }) }));
-vi.mock("../../api", () => ({ fetchSettings: vi.fn().mockResolvedValue({}), fetchModels: vi.fn().mockResolvedValue({ models: [] }), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }) }));
+// FNXC:ChatMemoryFocus 2026-08-23-23:20: ChatView fetches the active session detail for its memory-focus chip, so this partial api factory must stub fetchChatSession.
+vi.mock("../../api", () => ({ fetchSettings: vi.fn().mockResolvedValue({}), fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }), fetchModels: vi.fn().mockResolvedValue({ models: [] }), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }) }));
 
 installChatViewEnv();
 afterEach(() => { document.head.querySelector("#chat-docked-css")?.remove(); });

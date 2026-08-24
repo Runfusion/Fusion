@@ -13,6 +13,18 @@ import { readFile, writeFile, mkdir, access, constants, readdir, stat } from "no
 import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
+// FNXC:MemoryBackend 2026-08-13-16:35:
+// MemoryBackendError lives in its dependency-free module so per-backend
+// implementations (e.g. memory-backend-stash.ts) can import it as a runtime
+// value without an ESM circular-init break against memory-backend.ts. We import
+// it here (local binding for this module's own throws) and re-export so the
+// public surface is unchanged.
+import { MemoryBackendError } from "./memory-backend-error.js";
+// FNXC:StashBackend 2026-08-13-16:35:
+// Import the Stash backend as a runtime value (registration + per-project URL/key
+// materialization in resolveMemoryBackend). memory-backend-stash.ts imports ONLY
+// types from this module (erased at build), so there is no ESM circular-init.
+import { StashMemoryBackend, DEFAULT_STASH_URL } from "./memory-backend-stash.js";
 
 export const MEMORY_WORKSPACE_PATH = ".fusion/memory";
 export const MEMORY_LONG_TERM_FILENAME = "MEMORY.md";
@@ -101,6 +113,22 @@ export interface MemoryGetResult {
 export interface MemorySearchOptions {
   query: string;
   limit?: number;
+  /**
+   * FNXC:MemoryFocus 2026-08-08-00:00:
+   * (RUFU-035/RUFU-068) optional read-time focus/topic. Backends that support
+   * topic scoping push `options.topic` down to their search transport;
+   * topic-agnostic backends ignore it. Focus is strictly a WITHIN-project read
+   * filter — it never affects cross-project scope isolation.
+   *
+   * FNXC:RUFU121TopicRemoval 2026-08-18-19:53:
+   * RUFU-121: the Stash backend no longer pushes `topic` down to its search
+   * URL — the param was inert (Stash `search_events` accepts only q+limit and
+   * the route has no topic filter; verified 2026-08-18 against
+   * /home/schindler/git/stash). The option stays for the qmd/file/readonly
+   * backends and read-side gating; Stash topic-like recall scoping uses the
+   * structured `queryStashEvents()` filters.
+   */
+  topic?: string;
 }
 
 export interface MemorySearchResult {
@@ -120,32 +148,60 @@ export interface MemoryFileInfo {
   updatedAt: string;
 }
 
-/**
- * Error codes for memory operations.
- */
-export type MemoryBackendErrorCode =
-  | "NOT_FOUND"
-  | "READ_ONLY"
-  | "READ_FAILED"
-  | "WRITE_FAILED"
-  | "UNSUPPORTED"
-  | "CONFLICT"
-  | "QUOTA_EXCEEDED"
-  | "BACKEND_UNAVAILABLE";
+export {
+  MemoryBackendError,
+  type MemoryBackendErrorCode,
+} from "./memory-backend-error.js";
 
 /**
- * Error class for memory backend operations.
+ * Capture event kind. Exported as the contract union that capture-capable
+ * backends accept; the interface field is left permissive (`string`) so
+ * backend-specific kinds (e.g. "user_message"/"assistant_message" for chat
+ * capture) can flow through without a strict-union break.
  */
-export class MemoryBackendError extends Error {
-  readonly code: MemoryBackendErrorCode;
-  readonly backend: string;
+export type MemoryCaptureEventType = "message" | "tool_use" | "note";
 
-  constructor(code: MemoryBackendErrorCode, message: string, backend: string) {
-    super(message);
-    this.name = "MemoryBackendError";
-    this.code = code;
-    this.backend = backend;
-  }
+/**
+ * A single capture event payload sent to a capture-capable backend.
+ */
+export interface MemoryCaptureEvent {
+  /** Machine-readable event kind (e.g. "message", "tool_use", "note"). */
+  event_type: string;
+  /** Event payload/text. */
+  content: string;
+  /** Optional producing agent name. */
+  agent_name?: string;
+  /** Optional tool name when the event is a tool use. */
+  tool_name?: string;
+  /** Optional structured metadata (never secrets). */
+  metadata?: Record<string, unknown>;
+  /** Optional RFC3339 timestamp; defaults to server receive time. */
+  created_at?: string;
+}
+
+/**
+ * Result of a best-effort capture. Always resolves — capture must NEVER throw
+ * or block a run (fail-closed); callers gate on `ok` + counts.
+ */
+export interface MemoryCaptureResult {
+  /** True if the backend accepted the capture. */
+  ok: boolean;
+  /** Events inserted by the backend. */
+  inserted: number;
+  /** Events deduplicated by the backend (idempotent tuple upsert). */
+  deduped: number;
+}
+
+/**
+ * FNXC:RUFU121WriteIdentity 2026-08-18-19:53:
+ * RUFU-121: optional project identity for a memory write. Lets project-scoping
+ * backends (Stash) resolve the per-project session folder and enrich event
+ * metadata. Absent/undefined means "no identity available" — the backend
+ * degrades to the pre-RUFU-121 behavior.
+ */
+export interface MemoryWriteIdentity {
+  projectId?: string | null;
+  projectName?: string | null;
 }
 
 /**
@@ -170,10 +226,14 @@ export interface MemoryBackend {
    * Write memory content.
    * @param rootDir - The project root directory
    * @param content - The content to write
+   * @param meta - FNXC:RUFU121WriteIdentity 2026-08-18-19:53: RUFU-121 optional
+   *   project identity (session-folder classification + metadata enrichment for
+   *   project-scoping backends such as Stash). Existing 2-arg callers are
+   *   unchanged (meta is optional).
    * @returns Promise resolving to the write result
    * @throws MemoryBackendError if writing fails or backend is read-only
    */
-  write(rootDir: string, content: string): Promise<MemoryWriteResult>;
+  write(rootDir: string, content: string, meta?: MemoryWriteIdentity): Promise<MemoryWriteResult>;
   /**
    * Read a specific memory file or line window. Implementations must reject
    * paths outside the memory workspace.
@@ -190,6 +250,35 @@ export interface MemoryBackend {
    * @returns Promise resolving to true if memory exists
    */
   exists?(rootDir: string): Promise<boolean>;
+  /**
+   * Best-effort capture of session events into the backend. Optional seam for
+   * capture-capable backends (e.g. Stash). Called at session end by the engine.
+   * MUST NOT throw or block a run — implementations resolve a MemoryCaptureResult
+   * with `ok:false` on any failure. Content goes to the backend only, never to
+   * the run-audit.
+   */
+  capture?(
+    sessionId: string,
+    events: MemoryCaptureEvent[],
+    metadata?: {
+      taskId?: string;
+      projectRoot?: string;
+      topic?: string;
+      /**
+       * FNXC:RUFU121CaptureIdentity 2026-08-18-19:53:
+       * RUFU-121: optional project/chat identity. `projectId` drives
+       * per-project session-folder classification; `projectName`/`chatTitle`
+       * enrich event metadata (`project_name`/`chat_title`).
+       */
+      projectId?: string;
+      projectName?: string;
+      chatTitle?: string;
+    },
+  ): Promise<MemoryCaptureResult>;
+  /**
+   * Optional session-end flush/hook. Best-effort, never throws.
+   */
+  endSession?(sessionId: string): Promise<void>;
 }
 
 /**
@@ -1384,6 +1473,11 @@ const fileBackendInstance = new FileMemoryBackend();
 backendRegistry.set("file", fileBackendInstance);
 backendRegistry.set("readonly", new ReadOnlyMemoryBackend());
 backendRegistry.set("qmd", new QmdMemoryBackend());
+// FNXC:StashBackend 2026-08-05-16:06: (RUFU-068) register the Stash backend so
+// resolving with memoryBackendType="stash" returns it and it appears in
+// listMemoryBackendTypes(). The shared default instance picks up per-project
+// stashUrl/stashApiKey via resolveMemoryBackend's materialization branch below.
+backendRegistry.set("stash", new StashMemoryBackend());
 
 /**
  * Register a new memory backend.
@@ -1449,6 +1543,27 @@ export function resolveMemoryBackend(settings?: MemorySettings): MemoryBackend {
   const backendType = (settings?.[MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE] as string) || DEFAULT_MEMORY_BACKEND;
   const backend = backendRegistry.get(backendType);
   if (backend) {
+    // FNXC:StashConfig 2026-08-05-16:06: (RUFU-068) Stash's server URL and
+    // optional per-project API key are per-project operational settings, not
+    // baked-in constants. When stashUrl/stashApiKey are set, materialize a
+    // fresh StashMemoryBackend bound to them so search/write/capture/health
+    // target the configured instance; otherwise fall through to the shared
+    // default instance. The API key never sits in settings as plaintext after
+    // write — callers thread the resolved key through at construction time;
+    // here we carry whatever value is present on the settings object.
+    if (backend instanceof StashMemoryBackend) {
+      const url = settings?.["stashUrl"];
+      const key = settings?.["stashApiKey"];
+      const baseUrl = typeof url === "string" && url.trim().length > 0 ? url.trim() : DEFAULT_STASH_URL;
+      const apiKey = typeof key === "string" ? key : "";
+      // FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+      // RUFU-126 (D3): thread the opt-in vector (semantic) search flag from
+      // project settings into the materialized backend. Strict `=== true` —
+      // undefined/false/any other value keeps the keyword-only baseline.
+      // The shared registry default instance (above) stays vector-disabled.
+      const vectorSearch = settings?.["stashVectorSearch"] === true;
+      return new StashMemoryBackend({ baseUrl, apiKey, vectorSearch });
+    }
     return backend;
   }
   // Fall back to the default (qmd) backend if the configured type is unknown
@@ -1547,5 +1662,77 @@ export async function memoryExists(
     return result.exists;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Best-effort capture of session events into the configured memory backend.
+ *
+ * FNXC:StashCaptureSeam 2026-08-05-16:06:
+ * Deterministic, non-LLM, never blocks (modeled on
+ * AgentReflectionService.captureTaskPerformance, FN-7528). This is the engine's
+ * harness-agnostic session-capture seam: it no-ops unless memory is enabled AND
+ * the resolved backend implements the optional `capture` seam. It NEVER throws
+ * and NEVER persists capture content to the run-audit (FN-7158 rule: content
+ * goes to the backend only; only ids/counts might be surfaced by the caller).
+ *
+ * @param rootDir - Project root directory
+ * @param settings - Project settings
+ * @param sessionId - Capturing engine session id (e.g. `fusion-<taskId>-<hash>`)
+ * @param events - Capture events to write
+ * @param meta - Optional task/project context tagged on the events
+ */
+export async function captureMemory(
+  rootDir: string,
+  settings: MemorySettings | undefined,
+  sessionId: string,
+  events: MemoryCaptureEvent[],
+  meta?: {
+    taskId?: string;
+    projectRoot?: string;
+    /**
+     * FNXC:RUFU121CaptureIdentity 2026-08-18-19:53:
+     * RUFU-121: project/chat identity forwarded to backend.capture for
+     * session-folder classification and metadata enrichment.
+     */
+    projectId?: string;
+    projectName?: string;
+    chatTitle?: string;
+  },
+): Promise<MemoryCaptureResult> {
+  if (settings?.memoryEnabled === false) {
+    return { ok: false, inserted: 0, deduped: 0 };
+  }
+  /*
+  FNXC:StashCaptureFacadeOrder 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86a7RZi): an enabled capture with an EMPTY
+  event list is a successful no-op, not a failure — return ok:true BEFORE
+  backend resolution so no transport/secret resolution runs at all. The
+  backend gate is `!backend.capture` only: endSession is an OPTIONAL seam
+  (MemoryBackend.endSession is optional; stateless backends like stash
+  implement it as a no-op but its absence must not block capture), and
+  treating its absence as a failure previously dropped every capture on
+  backends without an explicit endSession.
+  */
+  if (!events || events.length === 0) {
+    return { ok: true, inserted: 0, deduped: 0 };
+  }
+  const backend = resolveMemoryBackend(settings);
+  if (!backend.capture) {
+    // Backend doesn't implement the capture seam -> no-op.
+    return { ok: false, inserted: 0, deduped: 0 };
+  }
+  try {
+    return await backend.capture(sessionId, events, {
+      taskId: meta?.taskId,
+      projectRoot: meta?.projectRoot ?? rootDir,
+      // FNXC:RUFU121CaptureIdentity 2026-08-18-19:53: forward identity only when present.
+      ...(meta?.projectId ? { projectId: meta.projectId } : {}),
+      ...(meta?.projectName ? { projectName: meta.projectName } : {}),
+      ...(meta?.chatTitle ? { chatTitle: meta.chatTitle } : {}),
+    });
+  } catch {
+    // Capture must never block or fail a run.
+    return { ok: false, inserted: 0, deduped: 0 };
   }
 }

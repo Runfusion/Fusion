@@ -106,6 +106,7 @@ vi.mock("../../api", () => ({
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 installChatViewEnv();
@@ -507,11 +508,20 @@ describe("Direct/Rooms scope toggle", () => {
       await userEvent.click(screen.getByTestId("chat-sidebar-scope-direct"));
       await selectFirstConversation();
 
+      /*
+      FNXC:ChatScrollAnchor 2026-08-23-23:20:
+      Re-entering Direct re-anchors the remounted thread to its newest message, so the jump-to-latest
+      affordance is gone and the container sits at the bottom. Before the FN-054 list-first navigation
+      was taught to re-run the anchor effect on detail entry, the stale scrolled-up state survived
+      re-entry and this assertion recorded that gap instead of the re-anchor the test is named for.
+      */
       await waitFor(() => {
         expect(document.querySelector(".chat-messages")).toBeInTheDocument();
         expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
       });
-      expect(screen.getByTestId("chat-jump-to-latest")).toBeInTheDocument();
+      const reenteredContainer = document.querySelector(".chat-messages") as HTMLDivElement;
+      expect(reenteredContainer.scrollTop).toBe(reenteredContainer.scrollHeight);
+      expect(screen.queryByTestId("chat-jump-to-latest")).not.toBeInTheDocument();
     } finally {
       restoreGeometry();
     }

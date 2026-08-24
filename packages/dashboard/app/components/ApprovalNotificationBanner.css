@@ -1,9 +1,3 @@
-.approval-notification-banner {
-  padding: var(--space-sm) var(--space-lg);
-  border-bottom: var(--btn-border-width) solid var(--border);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-}
-
 .approval-notification-banner__content {
   display: flex;
   align-items: center;
@@ -38,10 +32,6 @@
 }
 
 @media (max-width: 768px) {
-  .approval-notification-banner {
-    padding: var(--space-sm) var(--space-md);
-  }
-
   .approval-notification-banner__content {
     flex-direction: column;
     align-items: flex-start;

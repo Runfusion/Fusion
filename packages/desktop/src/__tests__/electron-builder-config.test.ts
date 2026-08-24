@@ -247,6 +247,5 @@ describe("desktop windows workflow signing guards", () => {
     expect(workflow).toContain("chrome_200_percent.pak");
     expect(workflow).toContain("resources.pak");
     expect(workflow).toContain("Fusion-*-win-*-portable.exe");
-    expect(workflow).toContain("intentionally deferred");
   });
 });

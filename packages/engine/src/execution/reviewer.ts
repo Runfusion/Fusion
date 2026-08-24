@@ -454,6 +454,11 @@ export async function reviewStep(
             agentName: memoryAgent.name,
             memory: memoryAgent.memory,
           },
+          // FNXC:MemoryFocusEngine 2026-08-13-16:35 (RUFU-068): review lanes have
+          // no per-conversation /focus topic → whole-project scope. The optional
+          // focus seam stays wired so a review conversation that later acquires a
+          // topic can scope fn_memory_search.
+          focus: undefined,
         } : undefined),
         createMemoryGetTool(options.rootDir, effectiveSettings, memoryAgent ? {
           agentMemory: {
@@ -461,6 +466,9 @@ export async function reviewStep(
             agentName: memoryAgent.name,
             memory: memoryAgent.memory,
           },
+          // FNXC:MemoryFocusEngine 2026-08-13-16:35 (RUFU-068): whole-project scope
+          // (no /focus topic in review lanes).
+          focus: undefined,
         } : undefined),
       ]
     : undefined;

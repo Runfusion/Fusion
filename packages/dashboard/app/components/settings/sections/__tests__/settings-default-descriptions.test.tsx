@@ -119,6 +119,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   defaultThinkingLevel: "globalModels.controlsHowMuchReasoningEffortTheAIModel",
   openrouterModelSync: "globalModels.whenEnabledStartupFetchesTheLatestAvailableModels",
   opencodeGoModelSync: "globalModels.flowAndPublishesThemUnderTheOpencodeGo",
+  /* FNXC:SettingsHelp 2026-08-23-20:45: OrcaRouter catalog sync ships its own SettingsToggleRow help in GlobalModelsSection. */
+  orcarouterModelSync: "globalModels.whenEnabledStartupFetchesTheLatestOrcaRouterModels",
   openrouterAppAttribution: "globalModels.leaveEmptyToOmitThisHeaderDefaultHttps",
   openrouterModelFilters: "globalModels.commaSeparatedValuesSentToOpenRouterModelSync",
   openrouterProviderPreferences: "globalModels.openRouterRoutingOrderHint",
@@ -198,6 +200,13 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryDreamsEnabled: "memory.turnsDailyNotesIntoDREAMSMdAndPromotes",
   memoryDreamsSchedule: "memory.cronExpressionForDreamProcessing",
   memoryBackendType: "memory.agentsGetMemorySearchMemoryGetAndMemory",
+  stashUrl: "memory.stashUrlHelp",
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Task-terminal transcript upload controls (Stash backend only).
+  */
+  executorSessionCaptureEnabled: "memory.uploadTaskAgentLogTranscriptToStash",
+  executorSessionCaptureMaxEvents: "memory.capOnTranscriptEventsUploadedPerTask",
   // MergeSection
   autoMerge: "merge.whenEnabledTasksThatPassReviewAreAutomatically",
   // FN-7557: planApprovalMode defaults to auto-approve-all; the "(default)" marker moved to the auto-approve option.
@@ -355,6 +364,27 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   nested enabled flag rather than a top-level plain description field.
   */
   voiceInput: "nested Voice Input section object; enable toggle owns Default: off for voiceInput.enabled",
+  /*
+  FNXC:StashVectorSearch 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86a7RZs): the duplicate earlier stashApiKey
+  allowlist entry was removed — NOT_SURFACED_ALLOWLIST carried the key twice
+  (the second entry silently overrode the first); the single remaining entry
+  below is the more complete one.
+  */
+  // FNXC:StashVectorSearch 2026-08-20-16:32:
+  // (RUFU-126) schema-only vector search toggle with no Settings UI row
+  // (same treatment as stashApiKey below): config-file-managed knob for the
+  // Stash backend, which is inert without a stashUrl anyway. Registered here
+  // so the FN-7505 guard does not flag the RUFU-126 schema addition.
+  stashVectorSearch: "RUFU-126 schema-only Stash vector search toggle; no Settings UI row",
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Schema-only transcript flag: when enabled, status entries are
+  included in the uploaded agent-log transcript. Deliberately rendered as NO
+  Settings row (operator-managed via the config file), so there is no
+  user-editable description field to document.
+  */
+  executorSessionCaptureIncludeStatus: "schema-only transcript flag (status-entry inclusion); deliberately not rendered as a Settings row",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in `packages/core/src/config/settings-schema.ts`.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
@@ -632,6 +662,28 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   chatDefaultModelProvider: "chat default model provider, configured via the chat defaults picker, not a plain description field",
   chatDefaultModelId: "chat default model id, configured via the chat defaults picker, not a plain description field",
   chatDefaultThinkingLevel: "chat default thinking level, configured via the chat defaults picker, not a plain description field",
+  /*
+   * FNXC:Rufu043MemoryBackends 2026-08-08-17:38:
+   * RUFU-040 foundation commit 8c595f5cd added three project-scoped Stash/TencentDB
+   * memory-backend settings keys to DEFAULT_PROJECT_SETTINGS without registering them
+   * here, breaking this guard's "every DEFAULT_SETTINGS key is either mapped to a
+   * description or explicitly allowlisted" assertion on any base carrying the
+   * foundation. They are allowlisted (not mapped) because their canonical schema
+   * default is the empty string `""` (meaning "use the runtime localhost constant"),
+   * so a description-field `Default:` claim would be a fabricated-default defect that
+   * the guard's canonical-default assertion rejects; their concrete defaults are the
+   * http://127.0.0.1 runtime fallbacks conveyed by each row's placeholder/help, not a
+   * description-field claim.
+   *
+   * FNXC:StashSessionCapture 2026-08-19-05:09:
+   * (RUFU-122) stashUrl left this allowlist: it is now a genuinely rendered
+   * Settings row whose help copy accurately states its empty-string canonical
+   * default ("Default: empty (uses the built-in default Stash URL)"), so it is
+   * mapped in SETTING_DESCRIPTION_KEYS instead — a key in BOTH maps fails the
+   * overlap assertion below.
+   */
+  memoryBackendUrl: "project-scoped TencentDB gateway URL row (rendered in MemorySection only for the tencentdb backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_GATEWAY_URL (http://127.0.0.1:8420), conveyed by the row's placeholder/help, not a description-field claim",
+  stashApiKey: "Stash API-key secret override, not rendered as a settings field (the primary key lives in the global secrets store `stash-api-key` per MemorySection help, never in settings); canonical schema default is empty (`''`) = use the resolved global secret",
 };
 
 describe("FN-7505 settings default-value description guard", () => {

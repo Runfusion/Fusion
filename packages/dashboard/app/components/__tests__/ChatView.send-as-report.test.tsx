@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
 import { mockViewportMode, renderWithAct, setupMockChat, installChatViewEnv } from "./ChatView.test-harness";
@@ -10,7 +10,7 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../hooks/useNavigationHistory")>();
   return { ...actual, useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }) };
 });
-vi.mock("../../api", () => ({ fetchSettings: vi.fn().mockResolvedValue({}), fetchModels: vi.fn().mockResolvedValue({ models: [] }), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }), updateGlobalSettings: vi.fn() }));
+vi.mock("../../api", () => ({ fetchSettings: vi.fn().mockResolvedValue({}), fetchModels: vi.fn().mockResolvedValue({ models: [] }), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }), updateGlobalSettings: vi.fn(), fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }) }));
 installChatViewEnv();
 
 const session = (overrides: Record<string, unknown> = {}) => ({
@@ -27,12 +27,22 @@ function setupAssistantChat(overrides: Record<string, unknown> = {}) {
   });
 }
 
+/*
+FNXC:ChatNavigation 2026-08-23-18:15:
+FN-054 made Chat list-first: the transcript and its per-message actions render only inside an
+explicitly opened conversation, so each case drills in from the list before asserting.
+*/
+function openDirectDetail(sessionId = "s-1") {
+  fireEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
+}
+
 describe("ChatView send as report", () => {
   it("routes a completed assistant response as the canonical object handoff", async () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     setupAssistantChat();
     const onSendAsReport = vi.fn();
     await renderWithAct(<ChatView projectId="project-1" addToast={vi.fn()} onSendAsReport={onSendAsReport} />);
+    openDirectDetail();
     const reportAction = await screen.findByTestId("chat-send-as-report-m-1");
     await user.click(reportAction);
     expect(onSendAsReport).toHaveBeenCalledTimes(1);
@@ -44,6 +54,7 @@ describe("ChatView send as report", () => {
   it("wires completed messages in both streaming branches but never the unfinished streaming item", async () => {
     setupAssistantChat();
     const { rerender } = await renderWithAct(<ChatView projectId="project-1" addToast={vi.fn()} onSendAsReport={vi.fn()} />);
+    openDirectDetail();
     expect(await screen.findByTestId("chat-send-as-report-m-1")).toBeInTheDocument();
 
     setupMockChat({
@@ -60,6 +71,7 @@ describe("ChatView send as report", () => {
     const mobile = mockViewportMode("mobile");
     setupAssistantChat();
     const { rerender } = await renderWithAct(<ChatView projectId="project-1" addToast={vi.fn()} onSendAsReport={vi.fn()} />);
+    openDirectDetail();
     expect(await screen.findByTestId("chat-send-as-report-m-1")).toBeInTheDocument();
 
     mobile.mockRestore();
@@ -88,6 +100,7 @@ describe("ChatView send as report", () => {
     const activeSession = session();
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "long", sessionId: "s-1", role: "assistant", content, createdAt: "2026-01-01" }] });
     await renderWithAct(<ChatView projectId="project-1" addToast={addToast} onSendAsReport={onSendAsReport} />);
+    openDirectDetail();
     await user.click(await screen.findByTestId("chat-send-as-report-long"));
     expect(onSendAsReport.mock.calls[0][0]).toEqual(expect.objectContaining({ title: "Long report" }));
     expect(onSendAsReport.mock.calls[0][0].body).toHaveLength(2000);

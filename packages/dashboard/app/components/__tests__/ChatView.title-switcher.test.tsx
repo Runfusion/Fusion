@@ -30,6 +30,12 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => ({
 vi.mock("../CustomModelDropdown", () => ({ CustomModelDropdown: () => null }));
 vi.mock("../../api", () => ({
   fetchSettings: vi.fn().mockResolvedValue({}),
+  /*
+  FNXC:ChatMemoryFocus 2026-08-23-23:20:
+  ChatView fetches the active session's `memoryFocus` on every conversation change, so a partial
+  `../../api` factory must stub `fetchChatSession` or the mock throws on mount.
+  */
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
   fetchAgents: vi.fn().mockResolvedValue([]),
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),

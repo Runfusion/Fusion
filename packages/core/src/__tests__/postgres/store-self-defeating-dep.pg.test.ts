@@ -44,14 +44,25 @@ pgTest("TaskStore create-time self-defeating dep guard (PostgreSQL)", () => {
     expect(tasks).toHaveLength(0);
   });
 
+  /*
+  FNXC:SelfDefeatingDependency 2026-08-23-16:28:
+  FN-073 made creation validate that every declared dependency target exists, so the "allowed" half of
+  this guard can no longer point at a fabricated id — it would fail on the dependency check before the
+  title guard ever spoke. Depend on a REAL sibling and name it in the title: that still proves a
+  non-operational title ("Test <id>") is admitted where the operational one above is rejected.
+  */
   it("allows non-operational sibling title", async () => {
     const store = h.store();
+    const dependency = await store.createTask({
+      title: "Sibling under test",
+      description: "dependency target",
+    });
     const created = await store.createTask({
-      title: "Test FN-4847",
+      title: `Test ${dependency.id}`,
       description: "verification task",
-      dependencies: ["FN-4847"],
+      dependencies: [dependency.id],
     });
     expect(created.id).toMatch(/^(FN|KB)-/);
-    expect(created.dependencies).toEqual(["FN-4847"]);
+    expect(created.dependencies).toEqual([dependency.id]);
   });
 });

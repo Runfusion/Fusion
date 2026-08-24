@@ -238,7 +238,14 @@ pgTest("task node override persistence (PostgreSQL)", () => {
 
     it("is a true no-op (no throw, stays done) when the task is already done", async () => {
       const store = h.store();
-      const created = await store.createTask({ description: "already done repro" });
+      /*
+      FNXC:MergeAuthority 2026-08-23-16:20:
+      A merge door now refuses a card whose ENABLED pre-merge optional groups have produced no result
+      (b47fb70b81 / 038f802ba4 — the graph is the only merge authority). This case is about the
+      nodeId='end' no-op on an already-done card, so it declares no pre-merge gates instead of relying
+      on the default-on groups the door would legitimately block on.
+      */
+      const created = await store.createTask({ description: "already done repro", enabledWorkflowSteps: [] });
       await store.moveTask(created.id, "todo");
       await store.moveTask(created.id, "in-progress");
       await store.moveTask(created.id, "in-review");

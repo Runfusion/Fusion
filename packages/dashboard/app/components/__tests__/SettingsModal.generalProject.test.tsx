@@ -807,7 +807,9 @@ describe("SettingsModal", () => {
       // FNXC:ProjectModels 2026-07-24-03:10: #2400 (e514e134d) replaced the
       // per-phase moved-to-workflow NOTE with a real editable "Project workflow
       // model lanes" section; assert the editor heading instead of the old copy.
-      expect(screen.getByText("Project workflow model lanes")).toBeInTheDocument();
+      /* FNXC:ProjectModels 2026-08-23-21:20: the editor's heading is now "Workflow lanes" inside the stable `project-models-workflow-lanes` region. */
+      expect(screen.getByTestId("project-models-workflow-lanes")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Workflow lanes" })).toBeInTheDocument();
     });
 
     it("picks a project repo suggestion and preserves label association", async () => {

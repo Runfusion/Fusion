@@ -690,7 +690,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   useEffect(() => {
     if (!isOpen) return;
-    void fetchWorkspaceRepos(projectId).then(({ repos }) => setWorkspaceRepositories(repos)).catch(() => setWorkspaceRepositories([]));
+    /*
+    FNXC:WorkspaceRepos 2026-08-23-23:58:
+    Never let this payload decide whether New Task renders. A 200 whose body lacks `repos` used to store `undefined` in state, and the unguarded `.length` read below then threw during render, unmounting the whole modal into a blank screen — the caller only guarded the rejected path.
+    */
+    void fetchWorkspaceRepos(projectId)
+      .then(({ repos }) => setWorkspaceRepositories(Array.isArray(repos) ? repos : []))
+      .catch(() => setWorkspaceRepositories([]));
   }, [isOpen, projectId]);
 
   const handleClose = useCallback(async () => {

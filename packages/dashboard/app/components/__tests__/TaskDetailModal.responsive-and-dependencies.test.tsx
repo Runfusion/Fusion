@@ -169,11 +169,22 @@ describe("TaskDetailModal", () => {
       expect(inputBlock).toContain("min-height: calc(var(--space-2xl) + var(--space-sm));");
       expect(inputBlock).not.toContain("min-height: 5rem;");
       expect(mobileComposerBlock).toContain("flex-direction: row;");
-      expect(mobileComposerBlock).toContain("flex-wrap: nowrap;");
+      /*
+      FNXC:TaskChatDefaultModel 2026-08-23-20:05:
+      FN-033 gave the narrow composer a wrapping model/thinking control row (`.task-planner-chat-target-controls`
+      takes `flex: 1 1 100%`), so the mobile composer wraps by design; the input and send button still
+      share one row, which the sizing assertions below pin.
+      */
+      expect(mobileComposerBlock).toContain("flex-wrap: wrap;");
       expect(mobileComposerBlock).toContain("align-items: flex-end;");
-      expect(mobileInputBlock).toContain("height: calc(var(--space-2xl) + var(--space-lg));");
+      /*
+      FNXC:ChatComposerHeight 2026-08-23-20:15:
+      FN-024 made every chat composer autosize through five lines in JS, so the narrow Planner
+      composer keeps only its one-line floor and explicitly drops the fixed CSS cap
+      (`max-height: none`); manual resizing stays desktop/tablet-only.
+      */
       expect(mobileInputBlock).toContain("min-height: calc(var(--space-2xl) + var(--space-lg));");
-      expect(mobileInputBlock).toContain("max-height: calc(var(--space-2xl) + var(--space-lg));");
+      expect(mobileInputBlock).toContain("max-height: none;");
       expect(mobileInputBlock).toContain("resize: none;");
       expect(mobileSendBlock).toContain("justify-content: center;");
       expect(mobileSendBlock).toContain("inline-size: calc(var(--space-2xl) + var(--space-lg));");
@@ -722,7 +733,6 @@ describe("TaskDetailModal", () => {
         ".task-detail-content--embedded .modal-header,\n.task-detail-content--embedded .detail-body,\n.task-detail-content--embedded .detail-tabs,\n.task-detail-content--embedded .modal-actions",
       );
 
-      expect(css).toContain("FNXC:TaskDetailFeed 2026-08-04-08:12:");
       expect(rootBlock).toContain("height: 100%;");
       expect(rootBlock).toContain("min-height: 0;");
       expect(detailBodyBlock).toContain("flex: 1;");

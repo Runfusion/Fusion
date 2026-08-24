@@ -42,6 +42,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
     fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 
@@ -111,6 +112,15 @@ const defaultRoomsState: UseChatRoomsResult = {
   refreshRooms: vi.fn(),
 };
 
+/*
+FNXC:ChatNavigation 2026-08-23-18:05:
+FN-054 made Chat list-first: the transcript/terminal region mounts only inside an explicitly opened
+conversation, so each case drills in from the conversation list before asserting on the CLI surface.
+*/
+function openDirectDetail(sessionId = "sess-1") {
+  fireEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
+}
+
 describe("ChatView CLI-backed session mount", () => {
   beforeEach(() => {
     _resetInitialViewportHeight();
@@ -123,6 +133,7 @@ describe("ChatView CLI-backed session mount", () => {
       chatState(makeSession({ cliExecutorAdapterId: "claude-code", cliSessionFile: "cli-native-1" })),
     );
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    openDirectDetail();
 
     // CliChatSurface renders the transcript/terminal toggle tablist.
     expect(screen.getByRole("tab", { name: /transcript/i })).toBeInTheDocument();
@@ -137,6 +148,7 @@ describe("ChatView CLI-backed session mount", () => {
       chatState(makeSession({ cliExecutorAdapterId: "claude-code", cliSessionFile: "cli-native-1" })),
     );
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    openDirectDetail();
     // Switch to the terminal tab to mount SessionTerminal.
     fireEvent.click(screen.getByRole("tab", { name: /terminal/i }));
     expect(screen.getByTestId("session-terminal").getAttribute("data-session-id")).toBe("cli-native-1");
@@ -145,6 +157,7 @@ describe("ChatView CLI-backed session mount", () => {
   it("generic-tier cli session renders terminal-only (no toggle)", async () => {
     mockUseChat.mockReturnValue(chatState(makeSession({ cliExecutorAdapterId: "generic" })));
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    openDirectDetail();
     expect(screen.getByTestId("session-terminal")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /transcript/i })).toBeNull();
   });
@@ -152,6 +165,7 @@ describe("ChatView CLI-backed session mount", () => {
   it("renders the normal provider composer for a regular (non-cli) session", async () => {
     mockUseChat.mockReturnValue(chatState(makeSession({ cliExecutorAdapterId: null })));
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    openDirectDetail();
     // Normal composer present, CLI toggle absent.
     expect(screen.getByPlaceholderText("Type a message...")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /transcript/i })).toBeNull();

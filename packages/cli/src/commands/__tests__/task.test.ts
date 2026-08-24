@@ -3077,6 +3077,9 @@ describe("runTaskRetry", () => {
       branchConflictRecoveryCount: 0,
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
+      // FNXC:TaskRetry 2026-08-23-15:59: FN-149 added review-convergence stage/escalation counters to MANUAL_RETRY_RESET_FIELDS; manual retry must zero them with the other recovery budgets.
+      reviewConvergenceStage: 0,
+      reviewConvergenceEscalationCount: 0,
       completionHandoffLimboRecoveryCount: 0,
       // FNXC:TaskRetry 2026-07-13-08:15: executeRequeueLoopCount added to TaskResetField set; retry must zero it alongside other recovery counters.
       executeRequeueLoopCount: 0,
@@ -3167,6 +3170,9 @@ describe("runTaskRetry", () => {
       branchConflictRecoveryCount: 0,
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
+      // FNXC:TaskRetry 2026-08-23-15:59: FN-149 added review-convergence stage/escalation counters to MANUAL_RETRY_RESET_FIELDS; manual retry must zero them with the other recovery budgets.
+      reviewConvergenceStage: 0,
+      reviewConvergenceEscalationCount: 0,
       completionHandoffLimboRecoveryCount: 0,
       // FNXC:TaskRetry 2026-07-13-08:15: executeRequeueLoopCount added to TaskResetField set; retry must zero it alongside other recovery counters.
       executeRequeueLoopCount: 0,

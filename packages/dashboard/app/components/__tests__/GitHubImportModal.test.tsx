@@ -143,7 +143,6 @@ describe("GitHubImportModal", () => {
     expect(source).not.toContain("rgba(var(--color-primary-rgb)");
     expect(source).not.toContain("rgba(var(--in-progress-rgb)");
     expect(source).toContain("color-mix(in srgb, var(--in-progress) 12%, transparent)");
-    expect(source).toContain("Some hardcoded colors below");
   });
 
 

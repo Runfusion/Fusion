@@ -9,21 +9,17 @@ FN-7020 requires the needs-input banner to stay visible when relevant without co
   --session-notification-list-max-height: min(38vh, calc(var(--space-2xl) * 7));
   --session-notification-touch-size: calc(var(--space-xl) + var(--space-xs));
 
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-md);
-  border-bottom: var(--btn-border-width) solid var(--border);
-  border-left: var(--space-xs) solid var(--triage);
-  background: var(--surface);
   box-sizing: border-box;
   max-height: var(--session-notification-banner-max-height);
   opacity: 1;
   transition: opacity var(--transition-fast), max-height var(--transition-fast);
   animation: session-notification-banner-enter var(--transition-fast);
+}
+
+.session-notification-banner > .banner__copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
 }
 
 @keyframes session-notification-banner-enter {
