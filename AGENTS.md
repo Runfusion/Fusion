@@ -210,6 +210,23 @@ FNXC:TestFlakeRegister 2026-08-01-07:00: Issue #2862 recorded three suite-only P
 - Motivating incident for UI affordances: the workflow-row drop-down arrow removal took three tasks (FN-6115 → FN-6118 → FN-6123) because the affordance rendered in two components and mobile kept an empty 36×36 `btn-icon` button shell.
 - If a regression test only proves the exact reported case, it is incomplete; extend it until the invariant holds across all known surfaces.
 
+### Standing Rule: Tests Assert Behavior, Never Source Text Or Comments
+
+**A test may never assert that a comment exists.** Not an `FNXC:` block, not a date stamp, not prose lifted from a source or CSS file. Comments are documentation; asserting them tests nothing a user, caller, or operator can observe.
+
+This is not a style preference — it is a rule this repo's own conventions make self-defeating. The FNXC convention above tells authors to *keep these comments updated as requirements change*. A test pinning one guarantees a future false failure, and the cheapest way to make that failure go away is the worst possible action: **re-adding a comment to shipped source purely to satisfy a test.**
+
+**Measured 2026-08-23.** `grok-runtime-bootstrap.test.ts` asserted `runTaskMerge`'s body contained the literal `FNXC:GrokCliRouting 2026-07-15-10:17`. FN-9167 legitimately rewrote that function and dropped the block while leaving the behavior intact. The test went red, and the fix applied was to restore the comment in `packages/cli/src/commands/task.ts` — a comment returned to the product not because it documented anything true, but to appease a test. Four more such assertions sat in the dashboard's CSS tests (`NewTaskModal`, `FloatingWindow`, `TaskDetailModal.responsive-and-dependencies`, `CommandCenter.tablet-layout`), each beside a real assertion and each adding nothing.
+
+What to do instead, in order of preference:
+1. **Assert the behavior** the comment describes: the rendered style, the computed value, the observable outcome, the state after the action.
+2. **Assert the code construct** if the invariant is genuinely structural — `expect(body).not.toContain("mergePluginRunner")` is a real guard; `expect(body).toContain("FNXC:…")` is not.
+3. **Delete the assertion.** If nothing behavioral or structural is behind it, it was never guarding anything.
+
+**Boundary — this rule does not touch code-construct guards.** Source scans that enforce call-site allowlists and architectural ratchets (`engine-no-blocking-shellout`, `user-configured-command-no-execsync`, `vi-mock-specifiers-resolve`, the durable-write and emit-surface inventories, `legacy-tombstones`, `lazy-loaded-views-docs`) assert code structure, are mandated elsewhere in this document, and stay. The line is: **prose, comments, and date stamps are never a test subject; code constructs may be.**
+
+Enforced by `scripts/check-no-comment-assertions-in-tests.mjs`, which runs in `pretest`, `pretest:full`, and `test:gate:static`. It flags the unambiguous case (an `FNXC:` stamp inside an assertion matcher); an earlier draft that also matched `/*` produced 24 false positives and zero true ones, because a regex cannot tell comment prose from a path glob. The rest of this rule is enforced by review.
+
 ### Standing Rule: A Behavior Change Owns Every Test That Asserts The Old Behavior
 
 **Changing behavior is not done until the tests that encoded the old behavior are updated or deleted — in the same change.** This is not the same rule as "keep the tests green": targeted verification runs the tests for the files you touched, and the stale assertions are almost always in files you did not touch, so a green targeted run is not evidence that no test still encodes the behavior you just changed.

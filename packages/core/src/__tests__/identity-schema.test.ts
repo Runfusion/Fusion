@@ -1,6 +1,6 @@
 /**
  * FNXC:Identity 2026-08-09-03:04:
- * U2 of the pluggable user identity plan: migration 0066 adds the actor registry, credentials,
+ * U2 of the pluggable user identity plan: migration 0067 adds the actor registry, credentials,
  * sessions, and provider links to `central`, plus project-scoped role grants to `project`.
  *
  * What these tests exist to catch:
@@ -12,7 +12,7 @@
  *   - Storing a raw session value would upgrade the accepted "local shell user reaches Postgres"
  *     residual to "impersonates any administrator over HTTP" (and the same for a backup dump).
  *   - KTD11: `project_auth_*` looks dead but has a live writer (the SQLite→Postgres cutover
- *     migrator); a missing target there is a fail-closed startup error, so it must survive 0066.
+ *     migrator); a missing target there is a fail-closed startup error, so it must survive 0067.
  */
 
 import { createHmac } from "node:crypto";
@@ -42,14 +42,15 @@ describe("identity schema: migration identity", () => {
   Renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0066 because main already shipped 0061-0065 after
   this slice. Two migrations sharing one bookkeeping identity would skip identity tables
   on upgraded databases.
+  FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (memory-focus); identity is 0067.
   */
   it("assigns the identity schema its own immutable migration version at the current ceiling", () => {
-    expect(IDENTITY_ACTORS_VERSION).toBe("0066");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0066");
+    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
   });
 });
 
-pgDescribe("identity schema: migration 0066", () => {
+pgDescribe("identity schema: migration 0067", () => {
   async function withHarness(fn: (h: PgTestHarness) => Promise<void>): Promise<void> {
     const h = await createTaskStoreForTest({ prefix: "fusion_identity" });
     try {
@@ -231,7 +232,7 @@ pgDescribe("identity schema: migration 0066", () => {
       try {
         /*
         FNXC:IdentityGrantEscalation 2026-08-09-03:04:
-        Seeded over the OWNER connection, not the runtime role, because 0066 revokes write on this
+        Seeded over the OWNER connection, not the runtime role, because 0067 revokes write on this
         table from `fusion_runtime` (that revoke is what stops a plugin granting itself a role). The
         runtime role keeps SELECT, which is the half this test is about: it asserts that RLS filters
         what each project can READ. project_id is explicit here — the owner connection runs with
@@ -534,7 +535,7 @@ pgDescribe("identity schema: migration 0066", () => {
   /*
   FNXC:Identity 2026-08-09-03:04:
   KTD11 — the `project_auth_*` tables have zero TypeScript readers but a live writer in the
-  SQLite→Postgres cutover migrator, where a missing target is a fail-closed startup error. 0066 is
+  SQLite→Postgres cutover migrator, where a missing target is a fail-closed startup error. 0067 is
   additive precisely so upgrades from a legacy SQLite database are not bricked.
   */
   it("leaves the legacy project_auth_* preservation tables untouched", async () => {

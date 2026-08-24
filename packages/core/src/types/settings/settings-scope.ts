@@ -2317,6 +2317,60 @@ export interface ProjectSettings {
    *  - Any registered custom backend type
    *  Default: "qmd" */
   memoryBackendType?: string;
+  // FNXC:StashConfig 2026-08-13-16:35: (RUFU-068) optional per-project Stash LCM
+  // memory backend config. stashUrl points at the operator's Stash server
+  // (default http://127.0.0.1:3457); stashApiKey is an override for hard
+  // isolation (separate Stash instance/account). The PRIMARY API key lives in
+  // the global secrets store ("stash-api-key") and is NEVER committed here;
+  // project value wins over global.
+  /** Base URL of the Stash server (optional LCM memory backend, e.g. http://127.0.0.1:3457).
+   *  Used only when memoryBackendType === "stash". Per-project override;
+   *  empty uses the built-in default. The API key is NEVER stored here — it
+   *  lives in the global secrets store ("stash-api-key"). */
+  stashUrl?: string;
+  /** Per-project Stash API key override for hard isolation (separate Stash
+   *  instance/account). The primary key lives in the global secrets store and
+   *  is never committed; this is an optional escape hatch populated by the
+   *  operator through the secrets path. */
+  stashApiKey?: string;
+  /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D3): opt-in vector (semantic) recall for the Stash memory backend.
+  Default-off = zero behavior change until the operator enables it (prototype;
+  rejected alternative was automatic capability detection). When true,
+  multi-word recall queries try GET /api/v1/me/sessions/events/semantic-search
+  first and fall back byte-identically to the RUFU-121 keyword path on any
+  vector failure (memory-backend-stash.ts search(); decisions D1–D5 in
+  docs/research/stash-vector-search-evaluation.md). Used only when
+  memoryBackendType === "stash". Schema-only — no UI row, consistent with
+  stashUrl/stashApiKey.
+  */
+  /** Opt-in vector (semantic) search for Stash memory recall (default off). */
+  stashVectorSearch?: boolean;
+  /*
+  FNXC:StashSessionCapture 2026-08-19-04:37:
+  (RUFU-122) Task-terminal transcript upload to Stash. On task terminalization
+  (done + failed/parked) the engine uploads the task's agent log (agent-log.jsonl)
+  as an ordered, typed transcript to the per-task Stash session
+  fusion-task-<taskId>, extending the RUFU-068 terminal anchor capture
+  (task_completion/task_failure). The operator's 2026-08-18 request fixes these
+  key names: transcript capture is operator-toggleable with a volume cap, and a
+  schema-only setting keeps `status` log entries in or out. All three are inert
+  unless memoryBackendType === "stash" and a Stash API key is present. The
+  RUFU-068 terminal anchor event is unaffected by executorSessionCaptureEnabled.
+  */
+  /** When false, task terminalization skips the agent-log transcript upload to
+   *  the per-task Stash session; the RUFU-068 terminal anchor event
+   *  (task_completion/task_failure) still fires. Default: true. */
+  executorSessionCaptureEnabled?: boolean;
+  /** Per-task cap on transcript events uploaded (the most recent N are kept;
+   *  older entries are dropped, never truncated mid-stream, and the full log
+   *  remains on disk). Default: 20000. */
+  executorSessionCaptureMaxEvents?: number;
+  /** When true, `status` agent-log entries are uploaded as `status` events;
+   *  when false (default) they are skipped. Schema-only setting — deliberately
+   *  NOT surfaced in the settings UI. Default: false. */
+  executorSessionCaptureIncludeStatus?: boolean;
   /** When true, enables automatic AI-powered summarization and compression of the
    *  working memory file when it exceeds the configured size threshold.
    *  Creates an automation schedule that checks memory size and compacts when needed.

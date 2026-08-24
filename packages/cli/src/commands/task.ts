@@ -1351,6 +1351,16 @@ export async function runTaskMerge(id: string, projectName?: string) {
       return;
     }
 
+    /*
+    FNXC:GrokCliRouting 2026-07-15-10:17:
+    `fn task merge` is a bare CLI door: ProjectContext only has store/path, not a live ProjectEngine, so no engine.getPluginRunner() is available. Do not invent a full PluginRunner bootstrap here (that belongs to InProcessRuntime / ProjectEngineManager). Omitting pluginRunner is intentional — grok-cli/no-key merge selections surface the dual-remediation error. Engine-backed merge already forwards this.getPluginRunner().
+
+    FNXC:GrokCliRouting 2026-08-23-16:30:
+    RESTORED, NOT REWRITTEN. FN-9167's merge-stamp work replaced this comment block wholesale while
+    leaving the behavior it documents untouched (no `pluginRunner` is forwarded below), so the
+    routing decision lost its only record. `grok-runtime-bootstrap.test.ts` pins it here for exactly
+    that reason.
+    */
     const result = await runAiMerge(mergeStore, projectPath, id, {
       onAgentText: (delta) => process.stdout.write(delta),
       signal: abortController.signal,

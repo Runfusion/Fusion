@@ -20,7 +20,7 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveReboundTargetForTask, setRunningAgentCountSource } from "@fusion/core";
+import { AgentStore, bulkDeleteStashChatSessions, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveReboundTargetForTask, setRunningAgentCountSource } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -1214,7 +1214,59 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
     Task-detail planner chats are retained after done when a user interacted, but task archival is the retention cutoff. Delete exact task-planner sessions on archive so normal chats and other tasks' planner chats remain intact while chat:session:deleted events clear dashboard caches.
     */
-      await chatStore.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`);
+      const plannerAgentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`;
+      try {
+        /*
+        FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+        RUFU-125: snapshot the doomed local session ids BEFORE the local bulk delete —
+        no projectId (mirrors the RUFU-121 per-session route guard, which also omits it)
+        so the Stash sync targets exactly the rows the archive is about to drop. The read
+        is fail-open: a listSessions failure degrades to an empty list and must never
+        prevent the local delete below.
+        */
+        const doomed = await chatStore.listSessions({ agentId: plannerAgentId }).catch(() => []);
+        const deletedCount = await chatStore.deleteSessionsForAgentId(plannerAgentId);
+        if (deletedCount === 0 || doomed.length === 0) return;
+        /*
+        FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+        RUFU-125: the bulk local delete above bypasses the per-session DELETE route RUFU-121
+        hooks, so soft-delete the matching Stash rows in a SEPARATE fire-and-forget IIFE —
+        a Stash stall can never delay local archival bookkeeping. Mirrors the RUFU-121 route
+        sync (skip-guards, url fallback, never-throws): a skip is debug-logged with its
+        reason, and a partial window match (matched < doomed.length) is debug-logged as a
+        window miss with matched/total + truncated (the bounded lookback's documented
+        residual — rows older than 10 × 200 recent rows remain in Stash).
+        */
+        void (async () => {
+          try {
+            const summary = await bulkDeleteStashChatSessions(store, doomed.map((s) => s.id));
+            if (summary.skipped) {
+              severityAuditLog.debug(
+                `[RUFU-125] stash bulk sync skipped on archive task=${data.task.id} reason=${summary.skipReason}`,
+              );
+              return;
+            }
+            if (summary.result.matched < doomed.length) {
+              const r = summary.result;
+              severityAuditLog.debug(
+                `[RUFU-125] stash bulk sync window miss task=${data.task.id} matched=${r.matched}/${doomed.length} deleted=${r.deleted} truncated=${r.truncated} pagesScanned=${r.pagesScanned}`,
+              );
+            }
+          } catch (err: unknown) {
+            // bulkDeleteStashChatSessions never throws by core contract; this is the
+            // never-reject safety net for any future regression.
+            severityAuditLog.warn(
+              `[RUFU-125] stash bulk sync failed task=${data.task.id} (best-effort, non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        })();
+      } catch (err: unknown) {
+        // Unexpected failure in the archival chain (e.g. the local delete throwing —
+        // previously an unhandled rejection): warn, never reject the task:moved chain.
+        severityAuditLog.warn(
+          `[RUFU-125] archive chat cleanup failed task=${data.task.id} (non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     })();
   });
   options?.engine?.attachChatStore?.(chatStore);

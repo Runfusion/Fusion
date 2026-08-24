@@ -333,7 +333,7 @@ FNXC:Identity 2026-08-09-03:04:
 KTD7 — the actor registry is central, not per-project: one daemon serves N projects from a shared
 Postgres and a solo developer needs ONE identity with different authority per project. Role grants
 therefore live in `project` (project.actorRoleGrants). No `central` table has RLS.
-Materialized by migration 0066_fn_identity_actors.sql.
+Materialized by migration 0067_fn_identity_actors.sql.
 */
 export const actors = centralSchema.table("actors", {
   id: text("id").primaryKey(),

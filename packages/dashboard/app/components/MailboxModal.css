@@ -58,6 +58,27 @@
   background: var(--surface);
 }
 
+/*
+FNXC:MailboxMobile 2026-08-23-23:22:
+Mailbox tab and sub-tab icons and badges must retain their intrinsic size on mobile. The
+`.mailbox-view--mobile .mailbox-tab` track uses `flex: 1 1 0` with `min-width: 0`, and the
+badged Inbox tab was the first overflowing tab to collapse its icon to a dot.
+*/
+.mailbox-tab > svg,
+.mailbox-agent-subtab > svg,
+.mailbox-tab .mailbox-tab-badge,
+.mailbox-agent-subtab .mailbox-tab-badge {
+  flex-shrink: 0;
+}
+
+.mailbox-tab > span:not(.mailbox-tab-badge),
+.mailbox-agent-subtab > span:not(.mailbox-tab-badge) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mailbox-tab:hover {
   color: var(--text);
 }

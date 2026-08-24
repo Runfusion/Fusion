@@ -2193,6 +2193,12 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   // FNXC:ChatPinned 2026-07-16-12:00: nullable timestamp persists the active
   // Direct-session pin; the ChatStore enforces the per-scope max-three invariant.
   pinnedAt: text("pinned_at"),
+  // FNXC:MemoryFocus 2026-08-13-15:57: per-conversation read-time memory FOCUS/TOPIC
+  // (migration 0059). NULL/empty ('' normalized to NULL) means the conversation
+  // inherits the whole-project scope; otherwise it scopes fn_memory_search +
+  // proactive recall to this topic. It is a read-time filter only — Stash capture
+  // stays write-anywhere across every conversation.
+  memoryFocus: text("memory_focus"),
   cliSessionFile: text("cli_session_file"),
   inFlightGeneration: jsonb("in_flight_generation"),
   cliExecutorAdapterId: text("cli_executor_adapter_id"),
@@ -2590,7 +2596,7 @@ every existing REFERENCES central.* is central→central, and R4 requires a tomb
 resolve, so ON DELETE CASCADE would be wrong. Referential integrity is enforced in core.
 The PK is (projectId, actorId, role) because the steady-state ownership audit in schema-applier.ts
 throws on every subsequent boot unless each PK/unique key on a project table includes project_id.
-Materialized by migration 0066_fn_identity_actors.sql.
+Materialized by migration 0067_fn_identity_actors.sql.
 */
 export const actorRoleGrants = projectSchema.table("actor_role_grants", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
@@ -2646,15 +2652,21 @@ export const projectTableNames = [
   land report the previous test's successor as the busy holder), and health compaction skipped them.
   */
   "workspace_coordination_leases", "workspace_land_intents",
+  /*
+  FNXC:PgTableRegistry 2026-08-23-16:05:
+  Second occurrence of the FN-9059 omission above, found by a leaking `current_plan_evidence` row:
+  a task's plan-evidence version counter continued across tests (a fresh KB-002 started at v2), so
+  `task-dependency-mutation.pg` asserted version 2 and read 3 in a whole-file run while passing in
+  isolation. Every table declared with `projectSchema.table(...)` must be registered here — the
+  harness reset and health compaction both drive off this list, and an unregistered table is simply
+  never cleaned. `project-table-registry.test.ts` now fails when the two drift apart.
+  */
+  "chat_session_tags", "chat_tags", "configuration_revisions", "current_plan_evidence",
+  "mission_lineage_stops", "spec_drift_reports", "spec_locks", "symbol_locks",
+  "task_lifecycle_consumer_cursors", "task_lifecycle_consumer_dead_letters",
+  "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
+  "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
+  "unplanned_execution_blocks", "workflow_agent_capacity_leases",
   /* FNXC:Identity 2026-08-09-03:04: registered so the PG test harness TRUNCATEs and vacuums grants; omitting it lets identity rows leak between tests as an order-dependent flake. */
   "actor_role_grants",
-  /*
-  FNXC:WorkflowAgentRouting 2026-08-09-03:04:
-  Pre-existing omission, found while registering the identity tables above and fixed here because it is
-  the same one-line hazard this list exists to prevent. Migration 0046 created
-  `project.workflow_agent_capacity_leases` and defined its drizzle table, but never added it to this
-  registry — so the PG test harness has never TRUNCATEd or vacuumed it, and rows survive between tests as
-  an order-dependent flake. Not part of the identity feature; corrected in place rather than left to rot.
-  */
-  "workflow_agent_capacity_leases",
 ] as const;

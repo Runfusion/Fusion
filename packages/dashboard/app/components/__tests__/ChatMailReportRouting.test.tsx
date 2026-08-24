@@ -10,15 +10,33 @@ import { useViewportMode } from "../../hooks/useViewportMode";
 import { installChatViewEnv, setupMockChat } from "./ChatView.test-harness";
 import * as api from "../../api";
 
-vi.mock("../../api", () => ({
-  fetchInbox: vi.fn(async () => ({ messages: [], total: 0, unreadCount: 0 })), fetchOutbox: vi.fn(async () => ({ messages: [], total: 0 })),
-  fetchUnreadCount: vi.fn(async () => ({ unreadCount: 0 })), fetchAgentMailbox: vi.fn(), fetchAllAgentMailbox: vi.fn(async () => ({ messages: [], total: 0, unreadCount: 0 })),
-  markMessageRead: vi.fn(), markAllMessagesRead: vi.fn(), deleteMessage: vi.fn(), fetchConversation: vi.fn(async () => []), fetchMessage: vi.fn(),
-  sendMessage: vi.fn(async () => ({ id: "sent" })), fetchAgents: vi.fn(async () => [{ id: "agent-1", name: "Agent", role: "executor", state: "idle", createdAt: "2026-08-09", updatedAt: "2026-08-09", metadata: {} }]),
-  fetchApprovals: vi.fn(async () => ({ requests: [], total: 0, pendingCount: 0 })), fetchApprovalDetail: vi.fn(), decideApproval: vi.fn(),
-  fetchMission: vi.fn(), fetchMissions: vi.fn(async () => []), fetchInsights: vi.fn(async () => ({ insights: [], count: 0 })), listEvals: vi.fn(async () => ({ results: [], count: 0 })), fetchTaskDetail: vi.fn(), fetchNativeStructurePreview: vi.fn(), artifactMediaUrlWithToken: vi.fn(),
-  fetchSettings: vi.fn(async () => ({})), fetchModels: vi.fn(async () => ({ models: [] })), fetchDiscoveredSkills: vi.fn(async () => ({ skills: [] })), fetchTasks: vi.fn(async () => []), searchFiles: vi.fn(async () => ({ files: [] })), updateGlobalSettings: vi.fn(),
-}));
+/*
+FNXC:ChatMailReportRoutingMock 2026-08-19-16:52:
+This api mock was a closed manual object listing every export the render path
+uses. When RUFU-120's memory-focus work added ChatView's fetchChatSession call,
+the mock silently lost coverage and every render of the real ChatView threw
+"No fetchChatSession export is defined on the ../../api mock" (3 test failures).
+Switching to the importOriginal spread (same pattern as the useNavigationHistory
+mock below) makes the mock future-proof: any api export not explicitly stubbed
+falls through to the real implementation instead of a missing-export crash, and
+the stubs that DO exist keep their canned data for the mail-report routing
+contract. fetchChatSession is stubbed explicitly because ChatView's focus
+effect awaits it on mount — a real fetch in the test env would add noise.
+*/
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    fetchChatSession: vi.fn(async () => ({ session: { id: "chat-report-1", title: "Report", memoryFocus: null } })),
+    fetchInbox: vi.fn(async () => ({ messages: [], total: 0, unreadCount: 0 })), fetchOutbox: vi.fn(async () => ({ messages: [], total: 0 })),
+    fetchUnreadCount: vi.fn(async () => ({ unreadCount: 0 })), fetchAgentMailbox: vi.fn(), fetchAllAgentMailbox: vi.fn(async () => ({ messages: [], total: 0, unreadCount: 0 })),
+    markMessageRead: vi.fn(), markAllMessagesRead: vi.fn(), deleteMessage: vi.fn(), fetchConversation: vi.fn(async () => []), fetchMessage: vi.fn(),
+    sendMessage: vi.fn(async () => ({ id: "sent" })), fetchAgents: vi.fn(async () => [{ id: "agent-1", name: "Agent", role: "executor", state: "idle", createdAt: "2026-08-09", updatedAt: "2026-08-09", metadata: {} }]),
+    fetchApprovals: vi.fn(async () => ({ requests: [], total: 0, pendingCount: 0 })), fetchApprovalDetail: vi.fn(), decideApproval: vi.fn(),
+    fetchMission: vi.fn(), fetchMissions: vi.fn(async () => []), fetchInsights: vi.fn(async () => ({ insights: [], count: 0 })), listEvals: vi.fn(async () => ({ results: [], count: 0 })), fetchTaskDetail: vi.fn(), fetchNativeStructurePreview: vi.fn(), artifactMediaUrlWithToken: vi.fn(),
+    fetchSettings: vi.fn(async () => ({})), fetchModels: vi.fn(async () => ({ models: [] })), fetchDiscoveredSkills: vi.fn(async () => ({ skills: [] })), fetchTasks: vi.fn(async () => []), searchFiles: vi.fn(async () => ({ files: [] })), updateGlobalSettings: vi.fn(),
+  };
+});
 vi.mock("../../hooks/useChat");
 vi.mock("../../hooks/useChatRooms");
 vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
@@ -72,6 +90,9 @@ describe("chat-to-mail report routing", () => {
     const activeSession = { id: "chat-1", agentId: "__fn_agent__", status: "active", title: "Chat", createdAt: "2026-08-09", updatedAt: "2026-08-09" };
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "assistant-1", sessionId: "chat-1", role: "assistant", content: "# Status\nReady", createdAt: "2026-08-09" }] });
     render(<ChatMailRoutingHost />);
+    // FN-054 list-first navigation: the thread pane renders only after the operator
+    // explicitly selects a conversation (detailOpen), so open the session first.
+    await user.click(screen.getByTestId("chat-session-chat-1"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-1"));
     expect(screen.getByTestId("quick-chat-open")).toHaveTextContent("false");
     expect(await screen.findByTestId("report-title")).toHaveValue("Status");
@@ -96,7 +117,8 @@ describe("chat-to-mail report routing", () => {
     const body = `# Mobile status\n${"x".repeat(2_100)}`;
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "assistant-mobile", sessionId: "chat-mobile", role: "assistant", content: body, createdAt: "2026-08-09" }] });
     render(<ChatMailRoutingHost />);
-
+    // FN-054 list-first navigation: open the detail before the message actions exist.
+    await user.click(screen.getByTestId("chat-session-chat-mobile"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-mobile"));
     expect(screen.getByTestId("quick-chat-open")).toHaveTextContent("false");
     expect(await screen.findByTestId("report-title")).toHaveValue("Mobile status");
@@ -130,13 +152,16 @@ describe("chat-to-mail report routing", () => {
     const activeSession = { id: "chat-repeat", agentId: "__fn_agent__", status: "active", title: "Chat", createdAt: "2026-08-09", updatedAt: "2026-08-09" };
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "assistant-repeat", sessionId: "chat-repeat", role: "assistant", content: "# First report\nReady", createdAt: "2026-08-09" }] });
     render(<ChatMailRoutingHost />);
-
+    // FN-054 list-first navigation: open the detail before the message actions exist.
+    await user.click(screen.getByTestId("chat-session-chat-repeat"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-repeat"));
     await screen.findByTestId("message-composer");
     await user.click(screen.getByTestId("message-composer-cancel"));
     expect(screen.queryByTestId("message-composer")).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("reopen-quick-chat"));
+    // Reopening quick chat remounts ChatView, resetting detailOpen — select the session again.
+    await user.click(screen.getByTestId("chat-session-chat-repeat"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-repeat"));
     expect(await screen.findByTestId("message-composer")).toBeInTheDocument();
     expect(screen.getByTestId("report-title")).toHaveValue("First report");

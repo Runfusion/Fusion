@@ -18,6 +18,8 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import { TaskHasDependentsError, type TaskStore } from "../../store.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../../workflows/builtin-coding-workflow-ir.js";
+import { resolveDependencyReplanTarget } from "../../workflows/workflow-lifecycle-traits.js";
+import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../../workflows/builtin-stepwise-final-review-coding-workflow-ir.js";
 
 const pgTest = pgDescribe;
 
@@ -469,7 +471,20 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
 
       const updated = await store.getTask(dependent.id);
       expect(updated.status).toBe("needs-replan");
-      expect(updated.column).toBe("triage");
+      /*
+      FNXC:MergedPlanningColumn 2026-08-23-16:10:
+      The replan destination is the workflow's OWN trait-resolved lane
+      (`resolveDependencyReplanTarget`), not the literal "triage". U11 merged Todo into Planning
+      keeping the id `todo` and deleted `triage` from the default board, so on this lineage the
+      re-specification is a same-column park — which is exactly what `update-task-deps.ts` says it
+      emits (no `task:moved` when intake and hold are one column). Asserting the resolved lane keeps
+      this test honest if the default board's ids move again. Note the resolved IR is the DEFAULT
+      workflow's (`builtin:coding` -> BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR), not
+      BUILTIN_CODING_WORKFLOW_IR, which is the six-column `builtin:legacy-coding` board that still
+      carries a separate `triage` intake.
+      */
+      expect(updated.column).toBe(resolveDependencyReplanTarget(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR));
+      expect(updated.column).toBe("todo");
       expect(updated.workflowStepResults).toEqual([
         expect.objectContaining({
           workflowStepId: "plan-review",

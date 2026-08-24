@@ -108,6 +108,7 @@ import {
   AI_MERGE_REVIEW_RECONCILIATION_VERSION,
   TASK_REPOSITORY_SCOPE_VERSION,
   REVIEW_CONVERGENCE_STAGE_VERSION,
+  CHAT_SESSION_MEMORY_FOCUS_VERSION,
   IDENTITY_ACTORS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
@@ -139,8 +140,10 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION).toBe("0056");
     expect(PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION).toBe("0057");
     expect(MESSAGE_ARCHIVE_SCHEMA_VERSION).toBe("0058");
-    /* FNXC:PgSchemaApplier 2026-08-15-22:10: 0059 (FN-9037 recommendation source-agent index) and
-       0060 (FN-9059 workspace coordination leases/intents) advance the baseline to 0060. */
+    /* FNXC:PgSchemaApplier 2026-08-15-22:10: 0059 (FN-9037 recommendation source-agent index) and 0060 (FN-9059 workspace
+       coordination leases/intents) landed first; the 2026-08-20 upstream batch owns 0061-0064 (FN-066..FN-094), FN-149
+       owns 0065, and the RUFU-068 chat_sessions.memory_focus migration is renumbered to 0066 (2026-08-23).
+       FNXC:Identity 2026-08-24-00:03: identity then takes 0067 and the ceiling moves with it. */
     expect(TASK_SOURCE_AGENT_INDEX_VERSION).toBe("0059");
     expect(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION).toBe("0060");
     expect(ACTIVITY_LOG_TASK_ID_INDEX_VERSION).toBe("0061");
@@ -155,13 +158,15 @@ describe("schema-applier: immutable migration identities", () => {
     expect(AI_MERGE_REVIEW_RECONCILIATION_VERSION).toBe("0063");
     expect(TASK_REPOSITORY_SCOPE_VERSION).toBe("0064");
     expect(REVIEW_CONVERGENCE_STAGE_VERSION).toBe("0065");
+    expect(CHAT_SESSION_MEMORY_FOCUS_VERSION).toBe("0066");
     /*
     FNXC:Identity 2026-08-23-22:39:
     Identity was 0047 then 0059 then 0060 then 0061 on this branch; main already shipped 0061-0065,
     so identity is 0066 and the ceiling moves with it.
+    FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (memory-focus); identity is unreleased, so it is 0067.
     */
-    expect(IDENTITY_ACTORS_VERSION).toBe("0066");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0066");
+    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -721,6 +726,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     0060 adds workspace coordination leases and land intents (→ 115).
     FNXC:Identity 2026-08-23-22:39: 0066 adds project.actor_role_grants (→ 116). Plugin tables are added separately
     by the schema-init hook and are excluded here.
+    FNXC:Identity 2026-08-24-00:03: identity is now 0067 after main claimed 0066 for memory-focus; table count is unchanged.
     */
     expect(bySchema.project).toBe(116);
     /*
@@ -730,7 +736,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     so fresh and upgraded databases converge on the same shape.
 
     FNXC:Identity 2026-08-23-22:39:
-    21, not 17: migration 0066 adds central.actors, actor_credentials, actor_sessions, and
+    21, not 17: migration 0067 adds central.actors, actor_credentials, actor_sessions, and
     actor_provider_links (KTD7 — identity is central because one daemon serves N projects).
     */
     expect(bySchema.central).toBe(21);
@@ -1791,6 +1797,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1883,6 +1890,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2108,6 +2116,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2214,6 +2223,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2320,6 +2330,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });

@@ -86,9 +86,19 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
     }
   });
 
+  /*
+  FNXC:RefinementPlanningRouting 2026-08-23-16:20:
+  A refinement's workflow comes from the project's refinement ORIGIN selection (pinned
+  `refinementTaskWorkflowId`, else the mirrored Board lane, else the project default) — never from
+  the source card's workflow (FN-8188 / FNXC:OriginWorkflowSelection in `refineTaskImpl`). These
+  cases used to set only the SOURCE's `workflowId`, so every child was actually a `builtin:coding`
+  card and the routing they name was never exercised. Pin the origin so the child really belongs to
+  the workflow under test. Same correction as `store-comments.pg.test.ts`.
+  */
   it("routes Coding (Ideas) refinements to Planning and preserves selection and seed", async () => {
     const h = await makeHarness();
     try {
+      await h.store.updateSettings({ refinementTaskWorkflowId: "builtin:coding-ideas" } as never);
       const source = await h.store.createTask({
         title: "Ideas source",
         description: "Completed work selected in Coding (Ideas)",
@@ -126,6 +136,12 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
           columns: [
             { id: "capture", name: "Capture", traits: [{ trait: "intake", config: { autoTriage: false } }] },
             { id: "ready", name: "Ready to plan", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+            /*
+            FNXC:WorkflowValidation 2026-08-23-16:20: `validateV2` rejects a `release: "capacity"`
+            hold with no downstream wip column — the scheduler would have nowhere to release it to.
+            The fixture's hold lane is the point of this case, so it needs a real wip lane after it.
+            */
+            { id: "working", name: "Working", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
             { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
             { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
           ],
@@ -136,6 +152,7 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
           edges: [{ from: "start", to: "end" }],
         },
       } as never);
+      await h.store.updateSettings({ refinementTaskWorkflowId: definition.id } as never);
       const source = await h.store.createTask({
         title: "Renamed workflow source",
         description: "Completed work in the renamed workflow",
@@ -179,6 +196,7 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
           edges: [{ from: "start", to: "end" }],
         },
       } as never);
+      await h.store.updateSettings({ refinementTaskWorkflowId: definition.id } as never);
       const source = await h.store.createTask({
         description: "Completed source without a Planning hold",
         workflowId: definition.id,
@@ -217,7 +235,16 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
     }
   });
 
-  it("refineTask persists empty default workflow groups and tolerates no default workflow", async () => {
+  /*
+  FNXC:DisabledBuiltinWorkflows 2026-08-23-16:25:
+  "No configured default workflow" is no longer a reachable state. `getDefaultWorkflowId` resolves
+  through `resolveEffectiveDefaultWorkflowId`, which ALWAYS answers with a workflow — the configured
+  id when it is enabled, otherwise the first enabled built-in (FNXC:DisabledBuiltinWorkflows
+  2026-08-19-00:18 in `builtin-workflows.ts`). Clearing the setting therefore falls back to
+  `builtin:coding` rather than producing an unseeded task, so this case now asserts the surviving
+  invariant: refine and create agree on whatever the EFFECTIVE default seeds.
+  */
+  it("refineTask persists empty default workflow groups and falls back to the effective default", async () => {
     const h = await makeHarness();
     try {
       await h.store.setDefaultWorkflowId("builtin:marketing");
@@ -235,22 +262,28 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
       });
 
       await h.store.setDefaultWorkflowId(null);
+      const effectiveDefault = await h.store.getDefaultWorkflowId();
+      expect(effectiveDefault).toBe("builtin:coding");
       const noDefaultSource = await h.store.createTask({
-        title: "No-default source",
-        description: "Completed work without a configured workflow",
+        title: "Cleared-default source",
+        description: "Completed work after the configured workflow was cleared",
         column: "done",
       });
-      const noDefaultControl = await h.store.createTask({ description: "Fresh task without a configured workflow" });
+      const noDefaultControl = await h.store.createTask({ description: "Fresh task after the configured workflow was cleared" });
       const noDefaultRefinement = await h.store.refineTask(noDefaultSource.id, "Tighten the final copy");
 
-      // FNXC:WorkflowOptionalSteps 2026-07-16-00:00: PostgreSQL normalizes omitted
-      // JSONB enabled_workflow_steps to [] for both creation paths, while the fresh
-      // refinement object retains the unset field when no default is configured.
-      expect(noDefaultRefinement.enabledWorkflowSteps).toBeUndefined();
+      // The invariant that survives the effective-default resolver: a refinement is seeded exactly
+      // like a freshly created task, both in the returned object and in the persisted row.
+      expect(noDefaultRefinement.enabledWorkflowSteps).toEqual(noDefaultControl.enabledWorkflowSteps);
       expect((await h.store.getTask(noDefaultRefinement.id)).enabledWorkflowSteps).toEqual(
         (await h.store.getTask(noDefaultControl.id)).enabledWorkflowSteps,
       );
-      expect(await h.store.getTaskWorkflowSelectionAsync(noDefaultRefinement.id)).toBeUndefined();
+      expect(await h.store.getTaskWorkflowSelectionAsync(noDefaultRefinement.id)).toEqual(
+        await h.store.getTaskWorkflowSelectionAsync(noDefaultControl.id),
+      );
+      expect(await h.store.getTaskWorkflowSelectionAsync(noDefaultRefinement.id)).toMatchObject({
+        workflowId: "builtin:coding",
+      });
     } finally {
       await teardown();
     }

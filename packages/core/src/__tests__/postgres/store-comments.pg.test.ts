@@ -154,8 +154,20 @@ pgTest("TaskStore addComment steering + refinement (PostgreSQL)", () => {
     expect(after.some((t: { description?: string }) => (t.description ?? "").includes("empty case"))).toBe(true);
   });
 
+  /*
+  FNXC:RefinementPlanningRouting 2026-08-23-17:20:
+  A refinement's workflow comes from the project's refinement ORIGIN selection (pinned
+  `refinementTaskWorkflowId`, else the mirrored Board lane, else the project default) — never from
+  the source card's workflow (FN-8188 / FNXC:OriginWorkflowSelection in `refineTaskImpl`). Setting
+  the source's `workflowId` alone therefore produced a `builtin:coding` child, so this case proved
+  nothing about the Coding (Ideas) manual-intake bypass it is named for: the child landed in `todo`
+  because that is `builtin:coding`'s intake. Pin the refinement origin so the child really is a
+  Coding (Ideas) card and "manual intake (`ideas`) is bypassed for the Planning hold (`todo`)" is
+  the assertion actually under test.
+  */
   it("routes a user comment refinement from Coding (Ideas) to Planning", async () => {
     const store = h.store();
+    await store.updateSettings({ refinementTaskWorkflowId: "builtin:coding-ideas" } as never);
     const source = await store.createTask({
       title: "Ideas comment source",
       description: "Completed Coding (Ideas) work",

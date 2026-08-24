@@ -77,13 +77,22 @@ startup died with "this binary only knows up to 0064" on fresh and upgraded data
 marker is ONLY the binary's "highest migration I know" claim — bumping it applies no SQL and
 touches no data; it must advance in the same change that ships a new migration file.
 */
+/* FNXC:MemoryFocus 2026-08-13-15:57: chat_sessions.memory_focus (RUFU-068) renumbered 0059->0060->0061 as upstream claimed 0059 (FN-9037) and 0060 (FN-9059). */
+/* FNXC:MemoryFocus 2026-08-20-22:10: the upstream 2026-08-20 batch (FN-066..FN-094) claimed 0061-0064 after this branch had already taken 0061, so the memory-focus migration was renumbered to 0065 and the baseline ceiling advanced with it. */
+/* FNXC:MemoryFocus 2026-08-23-12:50: upstream then shipped FN-149's 0065_fn_149_review_convergence_stage.sql on origin/main, claiming 0065 for its own migration. Upstream's 0065 is canonical (already released), so the memory-focus migration is renumbered to 0066 and the ceiling advances to 0066. Production databases that already applied the memory-focus SQL under ledger row "0065" (v17-era ledger) need a one-time ledger remap 0065->0066 before first boot of a 0066-ceiling binary, or the fresh 0065_fn_149 migration would be skipped as "already applied". */
 /*
 FNXC:Identity 2026-08-23-22:39:
 Identity actors/credentials/sessions/grants cannot reuse 0060-0065 — those identities already
 shipped on main (workspace leases through review-convergence). Two migrations sharing one
 bookkeeping identity would skip identity tables on upgraded databases. Ceiling is 0066.
 */
-export const SCHEMA_BASELINE_VERSION = "0066";
+/*
+FNXC:Identity 2026-08-24-00:03:
+Main then shipped 0066_chat_session_memory_focus.sql (RUFU-068). Identity is unreleased, so it
+takes 0067 and the ceiling advances with it. Sharing 0066 would skip identity tables on upgraded
+databases that already recorded memory-focus.
+*/
+export const SCHEMA_BASELINE_VERSION = "0067";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -253,6 +262,8 @@ export const TASK_REPOSITORY_SCOPE_VERSION = "0064";
 /** FNXC:ReviewConvergence 2026-08-22-05:42: explicit migration registration preserves bounded review recovery state on upgraded projects. */
 export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
 
+/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 /**
  * FNXC:Identity 2026-08-15-22:52:
  * The identity schema's own immutable bookkeeping identity. Renumbered 0047 -> 0059 -> 0060 -> 0061
@@ -262,8 +273,9 @@ export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
  * created on an upgraded database while a fresh one looked fine. A per-migration identity is
  * immutable only once RELEASED; this one has not been.
  * FNXC:Identity 2026-08-23-22:39: main shipped 0061-0065 after this slice, so identity is 0066.
+ * FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (chat session memory-focus). Identity is unreleased, so it is 0067.
  */
-export const IDENTITY_ACTORS_VERSION = "0066";
+export const IDENTITY_ACTORS_VERSION = "0067";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -503,7 +515,9 @@ const REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0062_
 const AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0063_fn_090_ai_merge_review_reconciliation.sql");
 const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_task_repository_scope.sql");
 const REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_fn_149_review_convergence_stage.sql");
-const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_fn_identity_actors.sql");
+/* FNXC:MemoryFocus 2026-08-14-10:30: renumbered to 0061 (FN-9059 workspace leases own 0060), then to 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064, then to 0066 (2026-08-23) when upstream's FN-149 claimed 0065. */
+const CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_chat_session_memory_focus.sql");
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0067_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -639,6 +653,7 @@ export async function applySchemaBaseline(
     const aiMergeReviewReconciliationAlreadyApplied = applied.includes(AI_MERGE_REVIEW_RECONCILIATION_VERSION);
     const taskRepositoryScopeAlreadyApplied = applied.includes(TASK_REPOSITORY_SCOPE_VERSION);
     const reviewConvergenceStageAlreadyApplied = applied.includes(REVIEW_CONVERGENCE_STAGE_VERSION);
+    const chatSessionMemoryFocusAlreadyApplied = applied.includes(CHAT_SESSION_MEMORY_FOCUS_VERSION);
     const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
@@ -1391,12 +1406,21 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REVIEW_CONVERGENCE_STAGE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    /* FNXC:MemoryFocus 2026-08-14-10:30: register 0066 explicitly (renumbered from 0061 on 2026-08-20 — the upstream FN-066..FN-094 batch owns 0061-0064 — and from 0065 on 2026-08-23 when upstream's FN-149 claimed 0065). */
+    if (!chatSessionMemoryFocusAlreadyApplied) {
+      const migrationSql = await readFile(CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_MEMORY_FOCUS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
     /*
     FNXC:Identity 2026-08-23-22:39:
     Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
     writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
     error, so dropping them would brick legacy upgrades). Apply AFTER main's 0065 review-convergence
     so upgraded databases that already recorded 0060-0065 still receive the identity tables as 0066.
+    FNXC:Identity 2026-08-24-00:03: apply AFTER main's 0066 memory-focus so upgraded databases that
+    already recorded 0066 still receive identity as 0067.
     */
     if (!identityActorsAlreadyApplied) {
       const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");

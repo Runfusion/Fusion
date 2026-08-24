@@ -3865,6 +3865,8 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
         error: "Refusing to start coding agent in missing worktree: /tmp/fusion-missing-worktree",
         worktree: "/tmp/fusion-missing-worktree",
         branch: `fusion/${task.id}`,
+        // FNXC:CliTests 2026-08-23-16:02: FN-107 requires branchWriteOrigin provenance on every branch write; this engine-simulated fixture predates that guard.
+        branchWriteOrigin: "engine",
         sessionFile: "/tmp/fusion-session.json",
         mergeRetries: 3,
         worktreeSessionRetryCount: 3,
@@ -4733,7 +4735,15 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       const agentId = await seedAgent(tmpDir, { name: "delegate-resolve-degrades" });
       const store = h.store();
 
-      const resolve = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValueOnce(
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-23-16:03:
+      THE UNREADABLE SELECTION MUST STAY UNREADABLE FOR THE WHOLE CALL. `createTask` itself now
+      resolves the task's workflow IR (`createTaskBackendImpl` -> `resolveWorkflowIrForTask`), so a
+      `...Once` rejection was consumed by the CREATE and the tool's own resolve then succeeded —
+      the degraded-resolve branch under test was never entered. A store whose selection read fails
+      fails it for every reader, which is what this scenario models.
+      */
+      const resolve = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValue(
         new Error("workflow selection unreadable"),
       );
       const tool = api.tools.get("fn_delegate_task")!;

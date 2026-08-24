@@ -106,8 +106,16 @@ pgDescribe("archive pagination (PostgreSQL, FN-7659)", () => {
     expect(new Set(allIds).size).toBe(total);
   });
 
+  /*
+  FNXC:ArchivePagination 2026-08-23-16:45:
+  The isolation half of this case needs a REAL partition key. The shared harness runs
+  project-agnostic (`layer.projectId` is undefined), and an empty/undefined project id means
+  "unscoped" everywhere in the data layer (`projectScopeFor`), so reading with it returned the
+  other project's rows too. Write and read this page under an explicit project id instead of the
+  harness's agnostic one; the ordering assertions are unchanged.
+  */
   it("sorts task IDs numerically before slicing and isolates project pages", async () => {
-    const projectId = ctx.layer.projectId;
+    const projectId = "archive-pagination-project";
     for (let i = 0; i < 105; i++) {
       const entry = makeEntry(`FN-${i}`, new Date(Date.parse("2026-02-01T00:00:00.000Z") + (104 - i) * 60_000).toISOString());
       await upsertArchivedTask(ctx.layer.db, entry, projectId);

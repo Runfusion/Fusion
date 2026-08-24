@@ -1,8 +1,29 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../__test-utils__/pg-test-harness.js";
-import { isWorkspaceTask } from "../../types.js";
+import { isWorkspaceTask, type Task } from "../../types.js";
 
 const pgTest = pgDescribe;
+
+/*
+FNXC:RepositoryScope 2026-08-23-15:58:
+Review evidence CANNOT be seeded in the same updateTask write that publishes a repository scope:
+`updateTaskUnlockedImpl` deliberately drops `reviewEvidence`/`reviewRemediation` whenever the
+written scope revision differs from the stored one, because a new revision may never inherit an
+approval taken against the old repository intent. Production attaches evidence exactly this way —
+`recordWorkspaceReviewEvidence` re-writes the SAME revision through `updateTaskAtomic` — so these
+fixtures publish the scope first and attach the review episode at the unchanged revision. Seeding
+both in one write silently produced a task with no evidence, which made "retains approval" assert
+against a scope that never had an approval to retain.
+*/
+async function attachReviewEpisode(
+  store: SharedPgTaskStoreHarness extends { store: () => infer S } ? S : never,
+  taskId: string,
+  episode: Partial<NonNullable<Task["repositoryScope"]>>,
+): Promise<void> {
+  await store.updateTaskAtomic(taskId, (current: Task) => ({
+    repositoryScope: { ...current.repositoryScope!, ...episode },
+  }));
+}
 
 /*
 FNXC:Workspace 2026-08-15-07:51:
@@ -77,13 +98,11 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
     const store = h.store();
     const task = await store.createTask({ description: "scope change clears stale remediation" });
     await store.updateTask(task.id, {
-      repositoryScope: {
-        repositories: ["repo-a"],
-        state: "confirmed",
-        revision: 1,
-        reviewEvidence: { "repo-a": { fingerprint: "old", approvedAt: new Date().toISOString() } },
-        reviewRemediation: { scopeRevision: 1, repository: "repo-a", inputSignature: "old-review" },
-      },
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 1 },
+    });
+    await attachReviewEpisode(store, task.id, {
+      reviewEvidence: { "repo-a": { fingerprint: "old", approvedAt: new Date().toISOString() } },
+      reviewRemediation: { scopeRevision: 1, repository: "repo-a", inputSignature: "old-review" },
     });
 
     const updated = await store.updateTaskRepositoryScope(task.id, {
@@ -100,10 +119,10 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
     const store = h.store();
     const task = await store.createTask({ description: "idempotent repository scope" });
     await store.updateTask(task.id, {
-      repositoryScope: {
-        repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 4,
-        reviewEvidence: { "repo-a": { fingerprint: "reviewed", approvedAt: new Date().toISOString() } },
-      },
+      repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 4 },
+    });
+    await attachReviewEpisode(store, task.id, {
+      reviewEvidence: { "repo-a": { fingerprint: "reviewed", approvedAt: new Date().toISOString() } },
     });
 
     const updated = await store.updateTaskRepositoryScope(task.id, {
@@ -119,7 +138,9 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
   it("clears singular state in the same per-key update", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "workspace singular state" });
-    await store.updateTask(task.id, { worktree: "/tmp/legacy", branch: "fusion/legacy" });
+    // FNXC:BranchWriteProvenance 2026-08-23-15:55: branch writes require an explicit origin; this
+    // fixture replays the engine's legacy singular worktree/branch routing.
+    await store.updateTask(task.id, { worktree: "/tmp/legacy", branch: "fusion/legacy", branchWriteOrigin: "engine" });
 
     const updated = await store.mergeWorkspaceWorktreeEntry(task.id, "repo-a", {
       worktreePath: "/tmp/repo-a", branch: "fusion/a",
@@ -143,6 +164,8 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
     await first.updateTask(task.id, {
       worktree: "/tmp/.worktrees/fn-legacy",
       branch: "fusion/legacy",
+      // FNXC:BranchWriteProvenance 2026-08-23-15:55: branch writes require an explicit origin.
+      branchWriteOrigin: "engine",
       executionStartBranch: "fusion/legacy",
       baseCommitSha: "root-base",
     });

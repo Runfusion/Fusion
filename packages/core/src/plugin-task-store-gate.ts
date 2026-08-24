@@ -72,7 +72,7 @@ allowlist of ~180 write methods rots immediately and its rot is invisible:
 Honest limits, so this is not mistaken for a sandbox:
 
 1. `getAsyncLayer()` is still reachable — four in-repo plugins depend on it, and it hands out a raw
-   drizzle handle that can run arbitrary SQL straight past every rule above. Migration 0066 revokes
+   drizzle handle that can run arbitrary SQL straight past every rule above. Migration 0067 revokes
    write on `project.actor_role_grants` from the `fusion_runtime` role that handle connects as, which
    closes the grant-yourself-a-role escalation specifically; it does NOT make the handle safe in
    general. A scoped/read-only data layer is the real fix and remains a follow-up.

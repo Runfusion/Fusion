@@ -40,6 +40,7 @@ vi.mock("../../api", () => ({
     { id: "FN-5218", title: "Hash entries in chat", column: "todo" },
   ]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 const mockUseChat = vi.mocked(useChatModule.useChat);
