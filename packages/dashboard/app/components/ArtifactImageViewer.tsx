@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { FloatingWindow } from "./FloatingWindow";
 import { useArtifactImageBlob } from "../hooks/useArtifactImageBlob";
@@ -36,6 +37,7 @@ export interface ArtifactImageViewerProps {
  * credentials in copied URLs, browser history, or image attributes.
  */
 export function ArtifactImageViewer({ artifactId, title, projectId, taskId, onOpenTask, onClose }: ArtifactImageViewerProps) {
+  const { t } = useTranslation("app");
   const closeRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const onCloseRef = useRef(onClose);
@@ -79,17 +81,17 @@ export function ArtifactImageViewer({ artifactId, title, projectId, taskId, onOp
       <section className="artifact-image-viewer" aria-label={`Image artifact: ${title}`}>
         <header className="artifact-image-viewer__header">
           <h3 className="artifact-image-viewer__title">{title}</h3>
-          {taskId && onOpenTask && <button className="btn btn-sm" type="button" onClick={() => onOpenTask(taskId)}>Open task</button>}
-          <button ref={closeRef} className="modal-close" type="button" onClick={onClose} aria-label="Close artifact preview">
+          {taskId && onOpenTask && <button className="btn btn-sm" type="button" onClick={() => onOpenTask(taskId)}>{t("artifactImageViewer.openTask", "Open task")}</button>}
+          <button ref={closeRef} className="modal-close" type="button" onClick={onClose} aria-label={t("artifactImageViewer.close", "Close artifact preview")}>
             <X size={20} />
           </button>
         </header>
         <div className="artifact-image-viewer__content" aria-live="polite">
-          {loading && <p>Loading image artifact…</p>}
+          {loading && <p>{t("artifactImageViewer.loading", "Loading image artifact…")}</p>}
           {error && (
             <div className="artifact-image-viewer__failure" role="alert">
               <p className="artifact-image-viewer__error">{error}</p>
-              <button className="btn btn-sm" type="button" onClick={reload}>Retry</button>
+              <button className="btn btn-sm" type="button" onClick={reload}>{t("artifactImageViewer.retry", "Retry")}</button>
             </div>
           )}
           {url && <img className="artifact-image-viewer__image" src={url} alt={title} />}
