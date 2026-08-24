@@ -64,7 +64,7 @@ function attachMailbox(store: TaskStore, notices: string[]): void {
 const payload: TaskDeletedLifecyclePayload = {
   taskId: "FN-1", previousColumn: "todo", previousStatus: null,
   deletedAt: "2026-08-01T10:33:00.000Z", allowResurrection: false,
-  githubIssueAction: null, closureContext: null, deletedBy: null,
+  githubIssueAction: null, deletedBy: null,
 };
 
 describe("task lifecycle outbox identity", () => {
@@ -73,7 +73,7 @@ describe("task lifecycle outbox identity", () => {
     expect(makeTaskLifecycleEventId(...input)).toBe(makeTaskLifecycleEventId(...input));
     expect(makeTaskLifecycleEventId(...input)).not.toBe(makeTaskLifecycleEventId("project-b", ...input.slice(1)));
     expect(Object.keys(payload).sort()).toEqual([
-      "allowResurrection", "closureContext", "deletedAt", "deletedBy", "githubIssueAction",
+      "allowResurrection", "deletedAt", "deletedBy", "githubIssueAction",
       "previousColumn", "previousStatus", "taskId",
     ]);
   });

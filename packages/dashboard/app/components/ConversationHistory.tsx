@@ -5,6 +5,7 @@ import type { PlanningQuestion } from "@fusion/core";
 import { useState } from "react";
 import type { ConversationHistoryEntry } from "../api";
 import { MailboxMessageContent } from "./MailboxMessageContent";
+import { ThinkingTrace } from "./ThinkingTrace";
 
 const COMMENT_ICON = "💬";
 const PLANNING_OTHER_RESPONSE_KEY = "_other";
@@ -209,7 +210,7 @@ export function ConversationHistory({ entries, defaultShowThinking = false }: Co
                     ? t("conversation.hide", `Hide {{type}}`, { type: hasQuestion ? t("conversation.aiThinking", "AI thinking") : t("conversation.aiReasoning", "AI reasoning") })
                     : t("conversation.show", `Show {{type}}`, { type: hasQuestion ? t("conversation.aiThinking", "AI thinking") : t("conversation.aiReasoning", "AI reasoning") })}
                 </button>
-                {isExpanded && <pre>{entry.thinkingOutput}</pre>}
+                {isExpanded && <ThinkingTrace text={entry.thinkingOutput ?? ""} format="plain" />}
               </div>
             )}
           </div>

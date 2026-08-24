@@ -17,6 +17,7 @@ interface ModelRegistryLike extends RefreshableModelRegistry {
       id: string;
       name: string;
       reasoning: boolean;
+      thinkingLevelMap?: { xhigh?: string | null; max?: string | null };
       input: ("text" | "image")[];
       cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
       contextWindow: number;
@@ -50,6 +51,10 @@ export function resolveApiType(apiType: string): string {
   if (apiType === "openai-responses") {
     return "openai-responses";
   }
+  // FNXC:CustomProviders 2026-08-19-15:28: Google-compatible custom providers must retain pi's Google API dialect so its shared thinking translation handles Off and every selected effort.
+  if (apiType === "google-generative-ai") {
+    return "google-generative-ai";
+  }
   return "openai-completions";
 }
 
@@ -66,6 +71,11 @@ export function resolveApiType(apiType: string): string {
  * anthropic path already auto-caches without any flag, and `openai-responses` uses OpenAI's
  * native `prompt_cache_key`/`prompt_cache_retention` mechanism (no `cache_control` marker concept
  * per pi-ai's `OpenAIResponsesCompat`), so the opt-in is inert there by construction.
+ *
+ * FNXC:CustomProviders 2026-08-19-15:13:
+ * Custom-provider models are presumed thinking-capable without a user-declared capability. Register
+ * all seven canonical levels as transmissible so pi owns Off translation and up-then-down clamping;
+ * the same registration is the source for selector display and execution.
  */
 export function buildCustomProviderModels(
   provider: CustomProvider,
@@ -74,6 +84,7 @@ export function buildCustomProviderModels(
   id: string;
   name: string;
   reasoning: boolean;
+  thinkingLevelMap: { xhigh: string; max: string };
   input: ("text" | "image")[];
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow: number;
@@ -86,7 +97,8 @@ export function buildCustomProviderModels(
   return (provider.models ?? []).map((model) => ({
     id: model.id,
     name: model.name,
-    reasoning: false,
+    reasoning: true,
+    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
     input: ["text" as const],
     cost: {
       input: 0,

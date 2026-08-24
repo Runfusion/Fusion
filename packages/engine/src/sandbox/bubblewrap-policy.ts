@@ -77,11 +77,11 @@ export function policyToBwrapArgs(policy: BubblewrapPolicy, ctx: BubblewrapPolic
     args.push("--unshare-net");
   }
 
-  const writablePaths = uniq([
-    ctx.worktreePath,
-    ctx.pnpmStorePath,
-    ...(policy.allowedWritePaths ?? []),
-  ]);
+  // FNXC:WorkspaceSandbox 2026-08-22-23:45: An explicit empty list is a
+  // read-only session policy; only unspecified write paths retain the legacy preset.
+  const writablePaths = uniq(policy.allowedWritePaths === undefined
+    ? [ctx.worktreePath, ctx.pnpmStorePath]
+    : policy.allowedWritePaths);
 
   for (const path of writablePaths) {
     if (!pathExists(path)) continue;

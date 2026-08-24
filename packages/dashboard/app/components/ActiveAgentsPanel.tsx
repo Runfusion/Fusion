@@ -164,7 +164,7 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs, activity }:
       {(activity?.summary || lastCompletedStep) && (
         <div className="live-agent-card-activity">
           {activity?.summary && <div className="live-agent-card-now-doing">{activity.summary}</div>}
-          {lastCompletedStep && <div className="live-agent-card-last-step">Last completed Step {lastCompletedStep.index}: {lastCompletedStep.step.name}</div>}
+          {lastCompletedStep && <div className="live-agent-card-last-step">{t("agents.lastCompletedStep", "Last completed Step {{index}}: {{name}}", { index: lastCompletedStep.index, name: lastCompletedStep.step.name })}</div>}
         </div>
       )}
       <div className="live-agent-card-transcript">

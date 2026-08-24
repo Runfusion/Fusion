@@ -23,7 +23,7 @@
  *   These helpers are the async target the migrating store and the PostgreSQL
  *   integration tests consume.
  */
-import { and, asc, count, desc, eq, gt, gte, isNotNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, isNotNull, lt, lte, or, sql } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../../postgres/data-layer.js";
 import {
@@ -255,25 +255,34 @@ export async function recordActivityLogEntry(
 
 /**
  * FNXC:TaskStoreAudit 2026-06-24-09:15:
- * Query the activity log with optional filtering by timestamp range and type.
+ * Query the activity log with optional filtering by an older-than cursor and type.
  * This is the async equivalent of `getActivityLog`. Ordered by timestamp DESC
  * (newest first), with an optional limit.
  *
  * @param db The Drizzle instance.
- * @param options Optional filter (since, type, limit).
+ * @param options Optional filter (since older-than cursor, type, limit).
  * @returns The matching activity entries.
  */
 export async function getActivityLog(
   db: AsyncDataLayer["db"] | DbTransaction,
   projectId: string,
-  options?: { limit?: number; since?: string; type?: ActivityEventType },
+  options?: { limit?: number; since?: string; type?: ActivityEventType; taskId?: string },
 ): Promise<ActivityLogEntry[]> {
+  /*
+  FNXC:ActivityLogTaskSearch 2026-08-20-04:38:
+  Task investigation must query durable history rather than filter a newest-page client cache.
+  Keep the project partition predicate alongside the exact task ID so a matching ID cannot cross project isolation.
+  The pagination cursor is strictly older-than because descending pages must advance toward older task events instead of repeating newer rows.
+  */
   const conditions = [eq(schema.project.activityLog.projectId, activityProjectPartition(projectId))];
   if (options?.since) {
-    conditions.push(gte(schema.project.activityLog.timestamp, options.since));
+    conditions.push(lt(schema.project.activityLog.timestamp, options.since));
   }
   if (options?.type) {
     conditions.push(eq(schema.project.activityLog.type, options.type));
+  }
+  if (options?.taskId) {
+    conditions.push(eq(schema.project.activityLog.taskId, options.taskId));
   }
 
   // FNXC:TaskStoreAudit 2026-06-26-10:15:

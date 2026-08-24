@@ -183,7 +183,9 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
       ...read("agent-heartbeat.ts").split("evaluateParkedAgentTaskLink(").slice(1),
       ...read("self-healing.ts").split("evaluateParkedAgentTaskLink(").slice(1),
       ...read("scheduler.ts").split("evaluateParkedAgentTaskLink(").slice(1),
-      ...read("task-agent-sync.ts").split("evaluateParkedAgentTaskLink(").slice(1),
+      /* FNXC:InertSyncLaneConversions 2026-08-23-00:35: the module moved under `agents/` in the
+         package-layout waves; this audit reads sources by path, so it must follow the file. */
+      ...read("agents/task-agent-sync.ts").split("evaluateParkedAgentTaskLink(").slice(1),
     ];
     /* `task-agent-sync.ts` also DECLARES the function, so its export line is one of the splits; the
        declaration is not a call site and is excluded by requiring an options object to follow. */
@@ -212,7 +214,7 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     };
 
     const sourceFor = (site: string) => [
-      read("agent-heartbeat.ts"), read("self-healing.ts"), read("scheduler.ts"), read("task-agent-sync.ts"),
+      read("agent-heartbeat.ts"), read("self-healing.ts"), read("scheduler.ts"), read("agents/task-agent-sync.ts"),
     ].find((src) => src.includes(site.slice(0, 60))) ?? "";
 
     const asyncResolved = parkedConverted.filter((s) => provenanceOf(sourceFor(s), s).includes("await"));

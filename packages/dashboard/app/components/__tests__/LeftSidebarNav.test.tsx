@@ -156,6 +156,7 @@ describe("LeftSidebarNav", () => {
 
     fireEvent.click(newTaskButton);
     expect(onNewTask).toHaveBeenCalledOnce();
+    expect(onNewTask).toHaveBeenCalledWith();
   });
 
   it("omits the New Task CTA when no trigger prop is provided", () => {

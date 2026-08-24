@@ -30,7 +30,9 @@
     "showMore": "더 보기",
     "update": "업데이트",
     "yes": "예",
-    "clear": ""
+    "clear": "",
+    "open": "",
+    "remove": ""
   },
   "activityFeed": {
     "emptyHint": "",
@@ -82,7 +84,10 @@
       "minutesAgo_other": ""
     },
     "title": "활동 로그",
-    "typeFilterBadge": ""
+    "typeFilterBadge": "",
+    "taskId": "작업 ID",
+    "taskIdSearchPlaceholder": "작업 ID 검색(예: FN-066)",
+    "taskIdFilterBadge": "작업: {{taskId}}"
   },
   "agentError": {
     "copied": "복사됨",
@@ -1145,7 +1150,9 @@
     "disableHeartbeatsSummary": "",
     "enableHeartbeatsCountHint": "",
     "disableHeartbeatsCountHint": "",
-    "bulkFailures": ""
+    "bulkFailures": "",
+    "detailLabel": "",
+    "lastCompletedStep": ""
   },
   "app": {
     "backendError": {
@@ -1246,6 +1253,7 @@
     "cancelButton": "취소",
     "clearConversationFailed": "대화 초기화 실패",
     "closeQuickChat": "빠른 채팅 닫기",
+    "openInNewWindow": "",
     "conversationArchived": "대화가 보관되었습니다",
     "conversationDeleted": "대화가 삭제되었습니다",
     "conversationName": "",
@@ -1262,7 +1270,6 @@
     "deleteRoom": "방 {{name}} 삭제",
     "deleteRoomBody": "이 작업은 되돌릴 수 없습니다. 이 방과 모든 메시지가 영구적으로 삭제됩니다.",
     "deleteRoomTitle": "방을 삭제하시겠습니까?",
-    "dismissQueuedMessage": "대기 중인 메시지 닫기",
     "failedToArchiveConversation": "대화 보관 실패",
     "failedToClearConversation": "대화 초기화 실패",
     "failedToClearRoomConversation": "방 대화 초기화 실패",
@@ -1304,6 +1311,10 @@
     "noSkillsAvailable": "사용 가능한 스킬 없음",
     "noSkillsFound": "스킬을 찾을 수 없습니다",
     "openQuickChat": "빠른 채팅 열기",
+    "preserveToStash": "",
+    "preserveToStashDone": "",
+    "preserveToStashFailed": "",
+    "preserveToStashWorking": "",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",
@@ -1315,6 +1326,17 @@
     "questionSubmittedAnswerLabel": "",
     "questionTextPlaceholder": "",
     "queuedMessage": "대기 중: {{preview}}",
+    "pendingLabel": "대기 중인 메시지",
+    "pendingHeading": "대기 중인 메시지",
+    "editPending": "대기 메시지 편집",
+    "savePendingEdit": "대기 메시지 저장",
+    "cancelPendingEdit": "대기 메시지 편집 취소",
+    "movePendingEarlier": "대기 메시지 앞으로 이동",
+    "movePendingLater": "대기 메시지 뒤로 이동",
+    "deletePending": "대기 메시지 삭제",
+    "forcePending": "대기 메시지 강제 전송",
+    "forcePendingShort": "강제 전송",
+    "pendingEditEmpty": "대기 메시지는 비워 둘 수 없습니다",
     "quickChatTitle": "빠른 채팅",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
@@ -1349,6 +1371,13 @@
     "scopeRooms": "방",
     "scrollMessageToTop": "메시지를 맨 위로 스크롤",
     "searchConversations": "대화 검색...",
+    "conversationSearchPlaceholder": "대화에서 찾기",
+    "conversationSearchLabel": "대화에서 찾기",
+    "conversationSearchNoMatches": "일치하는 항목 없음",
+    "conversationSearchMatchCount": "{{current}} / {{count}} 일치",
+    "conversationSearchPrevious": "이전 일치",
+    "conversationSearchNext": "다음 일치",
+    "conversationSearchClose": "검색 닫기",
     "selectAgentForNewChat": "새 채팅을 위한 에이전트 선택",
     "selectAgentPlaceholder": "채팅을 시작할 에이전트를 선택하세요",
     "selectModel": "모델 선택",
@@ -1382,6 +1411,9 @@
     "workingStatus": "작업 중…",
     "you": "나",
     "contextWindowAria": "Estimated {{used}} of {{total}} context tokens",
+    "contextWindowMeasuredAria": "",
+    "contextWindowPendingAria": "",
+    "contextWindowPendingValue": "",
     "noMessage": "",
     "modelAgentSection": "Model / Agent",
     "thinkingLevelSection": "Thinking level",
@@ -1389,7 +1421,8 @@
     "currentAgentTarget": "Current agent: {{name}}",
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
-    "newNotAllowedForTaskChat": ""
+    "newNotAllowedForTaskChat": "",
+    "restore": ""
   },
   "chatRooms": {
     "error": {
@@ -1527,7 +1560,12 @@
     "stopAllTitle": "모든 작업 중지",
     "stopPartialFailure": "{{total}}개 중 {{paused}}개 중지됨; {{failed}}개 실패",
     "stoppedTasks_one": "",
-    "stoppedTasks_other": ""
+    "stoppedTasks_other": "",
+    "sortControlLabel": "",
+    "sortArrivalDesc": "",
+    "sortArrivalDescHint": "",
+    "sortTaskIdDesc": "",
+    "sortTaskIdDescHint": ""
   },
   "commandCenter": {
     "activity": {
@@ -1928,7 +1966,9 @@
         "workflow:gate-failed": "Workflow gate failed",
         "approval:requested": "Approval requested"
       }
-    }
+    },
+    "taskVerification": "",
+    "verificationRequests": ""
   },
   "comments": {
     "addButton": "댓글 추가",
@@ -2006,7 +2046,20 @@
     "toLabel": "받는 사람:",
     "wakeAgentCheckbox": "에이전트 즉시 깨우기",
     "wakeAlwaysImmediate": "(에이전트가 이미 즉시 응답 모드로 설정되어 있습니다)",
-    "wakeOneOff": "(이 메시지에만 적용되는 일회성 재정의)"
+    "wakeOneOff": "(이 메시지에만 적용되는 일회성 재정의)",
+    "addSection": "",
+    "ariaLabel": "",
+    "attachStructure": "",
+    "mode": "",
+    "noStructures": "",
+    "quickMessage": "",
+    "removeSection": "",
+    "removeStructure": "",
+    "report": "",
+    "reportTitle": "",
+    "sectionBody": "",
+    "sectionHeading": "",
+    "selectStructure": ""
   },
   "confirm": {
     "cancel": "취소",
@@ -3482,7 +3535,36 @@
     "typeSystem": "시스템",
     "typeUserToAgent": "나 → 에이전트",
     "user": "사용자",
-    "you": "나"
+    "you": "나",
+    "all": "",
+    "approvalStatus": "",
+    "approvalUnavailable": "",
+    "approve": "",
+    "archive": "",
+    "archived": "",
+    "artifact": "",
+    "audioArtifactAria": "",
+    "createTask": "",
+    "createTaskError": "",
+    "creatingTask": "",
+    "deny": "",
+    "inboxFilter": "",
+    "loadingApproval": "",
+    "noArchivedMessages": "",
+    "openArtifact": "",
+    "openArtifactAria": "",
+    "optionalComment": "",
+    "recommendationsUnavailable": "",
+    "reportsApprovals": "",
+    "restore": "",
+    "retryCreatingTask": "",
+    "taskCreatedView": "",
+    "taskProposalDismissed": "",
+    "taskRecommendations": "",
+    "videoArtifactAria": "",
+    "viewTask": "",
+    "viewTaskAria": "",
+    "viewTaskLabel": ""
   },
   "memory": {
     "auditChecksTitle": "감사 검사",
@@ -4062,6 +4144,7 @@
       "minimal": "최소",
       "off": "끔",
       "xhigh": "매우 높음",
+      "max": "최대",
       "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
@@ -5303,7 +5386,14 @@
     "resize": "",
     "viewExpanded": "",
     "views": "",
-    "resizeExpandedView": ""
+    "resizeExpandedView": "",
+    "archivedCopy": "",
+    "doneHiddenCopy": "",
+    "emptyCopy": "",
+    "hideDone": "",
+    "noActiveTasks": "",
+    "noTasksYet": "",
+    "showDone": ""
   },
   "routine": {
     "andMore_one": "",
@@ -5775,7 +5865,11 @@
       "taskPopupsBoardListOnlyHelp": "",
       "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
-      "showCostBadgeOnCardsHelp": ""
+      "showCostBadgeOnCardsHelp": "",
+      "chatMessageLayout": "",
+      "chatMessageLayoutBubbles": "",
+      "chatMessageLayoutFullWidth": "",
+      "chatMessageLayoutHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 키가 지워졌습니다",
@@ -5806,6 +5900,12 @@
       "openGitHub": "GitHub 열기",
       "pasteRedirectUrlFirst": "먼저 전체 리디렉션 URL 또는 인증 코드를 붙여넣으세요.",
       "reopenOnboarding": "온보딩 가이드 다시 열기",
+      "refreshModels": "모델 새로 고침",
+      "refreshModelsPending": "모델 새로 고치는 중…",
+      "refreshModelsSuccess": "모델을 새로 고쳤습니다.",
+      "refreshModelsTimedOut": "새로 고침 시간이 초과되어 사용 가능한 최신 모델을 표시합니다. 다시 시도하세요.",
+      "refreshModelsDeferred": "다른 새로 고침이 진행 중이므로 사용 가능한 최신 모델을 표시합니다. 잠시 후 다시 시도하세요.",
+      "refreshModelsFailed": "새로 고치지 못해 사용 가능한 최신 모델을 표시합니다. 다시 시도하세요.",
       "reopenOnboardingHint": "설정 마법사를 다시 실행하여 AI 공급자 및 모델 구성을 검토하거나 업데이트하세요.",
       "savingKey": "저장 중…",
       "signInHint": "AI 모델을 사용하려면 하나 이상의 공급자에 로그인하세요.",
@@ -6006,6 +6106,7 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
+      "builtinWorkflowAtLeastOneEnabled": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "autoTranslateImportedIssues": "",
       "autoTranslateImportedIssuesHelp": "",
@@ -6064,6 +6165,8 @@
       "refinementTaskWorkflowHelp": "",
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
+      "requireTaskRecommendations": "",
+      "requireTaskRecommendationsHelp": "",
       "recommendationMailboxNoticeEnabled": "",
       "recommendationMailboxNoticeEnabledHelp": ""
     },
@@ -6116,6 +6219,10 @@
       "releaseChannelHelp": "",
       "autoUpdateAndRestart": "",
       "autoUpdateAndRestartHelp": "",
+      "autoUpdateEnabled": "",
+      "autoUpdateEnabledHelp": "",
+      "autoRestartAfterUpdate": "",
+      "autoRestartAfterUpdateHelp": "",
       "channelStable": "",
       "channelBeta": "",
       "agentToolOutputLimit": "",
@@ -6126,6 +6233,7 @@
       "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
+      "modelOverrides": "",
       "allow": "",
       "commaSeparatedValuesSentToOpenRouterModelSync": "",
       "controlsHowMuchReasoningEffortTheAIModel": "",
@@ -6175,7 +6283,8 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "modelOverrides": ""
     },
     "header": {
       "discord": "Discord",
@@ -6226,6 +6335,19 @@
     "keepRemote": "원격 유지",
     "loading": "불러오는 중…",
     "memory": {
+      "backendFile": "",
+      "backendHelp": "",
+      "backendLabel": "",
+      "backendQmd": "",
+      "backendReadonly": "",
+      "backendStash": "",
+      "capOnTranscriptEventsUploadedPerTask": "",
+      "executorSessionCapture": "",
+      "maxTranscriptEventsPerTask": "",
+      "stashUrlHelp": "",
+      "stashUrlLabel": "",
+      "stashUrlPlaceholder": "",
+      "uploadTaskAgentLogTranscriptToStash": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6272,7 +6394,9 @@
       "turnsDailyNotesIntoDREAMSMdAndPromotes": "",
       "qmdInstalled": "",
       "qmdInstallFailed": "",
-      "qmdInstallUnavailable": ""
+      "qmdInstallUnavailable": "",
+      "saveBeforeCompacting": "",
+      "saveBeforeSwitching": ""
     },
     "merge": {
       "abort": "",
@@ -6550,6 +6674,10 @@
       "plugins": ""
     },
     "projectModels": {
+      "modelOverrides": "",
+      "projectLanesSubheading": "",
+      "summarizationPointer": "",
+      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6557,8 +6685,11 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
-      "taskDefinitionInInputLanguage": "",
-      "taskDefinitionInInputLanguageHelp": "",
+      "taskOutputLanguage": "AI-authored task language",
+      "taskOutputLanguageHelp": "Choose the language for AI-authored task plans, titles, steps, summaries, and recommendations. No stored default — unset resolves English. Changes apply to new generation sessions only.",
+      "taskOutputLanguageEnglish": "English (default)",
+      "taskOutputLanguageInput": "User input language",
+      "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6616,7 +6747,11 @@
       "executorEscalationModel": "",
       "executorEscalationModelHelp": "",
       "selectExecutorEscalationModel": "",
-      "noExecutorEscalationModel": ""
+      "noExecutorEscalationModel": "",
+      "modelOverrides": "",
+      "projectLanesSubheading": "",
+      "workflowLanesSubheading": "",
+      "summarizationPointer": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6687,7 +6822,9 @@
       "installationFailed": "",
       "acceptRoutesHint": "",
       "shortLivedEnabledHint": "",
-      "shortLivedTtlMsHint": ""
+      "shortLivedTtlMsHint": "",
+      "cloudflareTunnelURL": "",
+      "tunnelURL": ""
     },
     "researchGlobal": {
       "advancedExternalSearchProviders": "",
@@ -6929,7 +7066,11 @@
       "projectTitle": "Project MCP servers",
       "globalDescription": "Configure MCP servers shared by all projects. Project settings may override or disable these servers by name.",
       "projectDescription": "Configure project-specific MCP servers, overrides, and disabled inherited servers.",
-      "enabledHint": ""
+      "enabledHint": "",
+      "transport": "",
+      "transportHttp": "",
+      "transportSse": "",
+      "transportStdio": ""
     },
     "search": {
       "allSections": "",
@@ -7009,6 +7150,29 @@
       "runtimeIncompatible": "The installed voice runtime is incompatible. Repair it, then re-check the runtime.",
       "recheckRuntime": "Re-check runtime",
       "recheckingRuntime": "Re-checking runtime…"
+    },
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
     }
   },
   "setup": {
@@ -7863,7 +8027,8 @@
     "header": {
       "back": "뒤로",
       "backToList": "작업 목록으로 돌아가기",
-      "editTask": "작업 편집"
+      "editTask": "작업 편집",
+      "popOut": ""
     },
     "inputTokens": "입력",
     "lastUsed": "마지막 사용",
@@ -7872,6 +8037,10 @@
       "activity": "활동",
       "activityHeading": "활동",
       "agentLog": "에이전트 로그",
+      "copy": "",
+      "copyDisplayed": "",
+      "copyFailure": "",
+      "copySuccess": "",
       "loadingActivity": "",
       "noActivity": "(활동 없음)",
       "truncated_one": "",
@@ -8220,6 +8389,22 @@
       "retry": "",
       "create": "",
       "error": ""
+    },
+    "reverted": {
+      "deleteAria": ""
+    },
+    "revise": "",
+    "specLock": {
+      "accepted": "",
+      "alignment": "",
+      "alignmentLabel": "",
+      "captured": "",
+      "currentPlan": "",
+      "findings": "",
+      "latestLock": "",
+      "lockState": "",
+      "relockChanged": "",
+      "retainedHistory": ""
     }
   },
   "taskDocuments": {
@@ -9358,7 +9543,11 @@
     "toolNames": "",
     "toolResult": "",
     "you": "",
-    "youMessage": ""
+    "youMessage": "",
+    "missingOutput": "",
+    "missingOutputTimestamp": "",
+    "statusUpdate": "",
+    "statusUpdateTimestamp": ""
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9381,6 +9570,154 @@
     "targetLabel": "등록 대상",
     "targetInherit": "구성된 작업 대상 사용",
     "targetIssue": "GitHub 이슈",
-    "targetDiscussion": "GitHub 토론"
+    "targetDiscussion": "GitHub 토론",
+    "activityTrace": "",
+    "capturingScreenshot": "",
+    "close": "",
+    "confirmDataPoint": "",
+    "confirmScreenshotRetention": "",
+    "duplicateReview": "",
+    "file": "",
+    "final": "",
+    "menu": "",
+    "returnToPrompt": "",
+    "review": "",
+    "storeScreenshot": "",
+    "structured": "",
+    "structuredDataPoint": "",
+    "suggestedHelp": "",
+    "summary": "",
+    "viewGitHub": ""
+  },
+  "composeChat": {
+    "ariaLabel": "",
+    "draft": "",
+    "draftNarrative": "",
+    "emptyDraft": "",
+    "useDraft": ""
+  },
+  "fixture": {
+    "floatingTaskDetail": "",
+    "floatingTaskDetailBody": "",
+    "genericFloatingWindow": "",
+    "genericFloatingWindowBody": "",
+    "genericWindowHeader": "",
+    "headerAction": "",
+    "headerlessTaskDetail": "",
+    "taskDetail": "",
+    "taskDetailBody": ""
+  },
+  "floatingWindow": {
+    "close": "",
+    "resize": ""
+  },
+  "githubImport": {
+    "github": "",
+    "gitlab": ""
+  },
+  "ideation": {
+    "addCandidate": "",
+    "converge": "",
+    "convergedToMission": "",
+    "description": "",
+    "divergentCandidate": "",
+    "noSessions": "",
+    "persisted": "",
+    "selectOrStart": "",
+    "sessionTitle": "",
+    "start": "",
+    "title": ""
+  },
+  "knowledgeGraph": {
+    "allFnxcAreas": "",
+    "allOwners": "",
+    "allSymbolKinds": "",
+    "bothDirections": "",
+    "depth": "",
+    "distance": "",
+    "edgeKinds": "",
+    "findPath": "",
+    "incoming": "",
+    "limitResults": "",
+    "neighbors": "",
+    "next": "",
+    "noNeighbors": "",
+    "noPath": "",
+    "nodeKinds": "",
+    "none": "",
+    "outgoing": "",
+    "ownerDerived": "",
+    "ownerFile": "",
+    "pathLimitReached": "",
+    "previous": "",
+    "provenance": "",
+    "raiseHopLimit": "",
+    "refreshNeighbors": "",
+    "searching": "",
+    "selectNodeHint": "",
+    "shortestPath": "",
+    "showingOf": "",
+    "useSelectedFrom": "",
+    "useSelectedTo": ""
+  },
+  "mermaid": {
+    "diagram": ""
+  },
+  "nativeStructure": {
+    "loadFailed": "",
+    "loading": "",
+    "openAria": "",
+    "previewUnavailable": "",
+    "unavailable": ""
+  },
+  "providerLogin": {
+    "approveInBrowser": "",
+    "authorizationReceived": "",
+    "cancel": "",
+    "connected": "",
+    "exchangingCode": "",
+    "finishInBrowser": "",
+    "handAuthorizationBack": "",
+    "openSignInAgain": "",
+    "pasteRedirectUrl": "",
+    "signingInTo": ""
+  },
+  "taskVerification": {
+    "failed": "",
+    "heading": "",
+    "passed": "",
+    "queued": "",
+    "requestRejected": "",
+    "running": ""
+  },
+  "whatsapp": {
+    "allowedSenders": "",
+    "choosePairingMethod": "",
+    "connectedAs": "",
+    "connectedSuccess": "",
+    "description": "",
+    "installPlugin": "",
+    "instructionsLabel": "",
+    "loggingOut": "",
+    "logoutRepair": "",
+    "pairing": "",
+    "pairingConfiguration": "",
+    "phoneNumber": "",
+    "qrCode": "",
+    "refreshStatus": "",
+    "repairInstructions": "",
+    "requestPairingCode": "",
+    "requestingCode": "",
+    "status": "",
+    "waitConnected": "",
+    "waitingQr": ""
+  },
+  "thinking": {
+    "expandAll": "",
+    "collapseAll": "",
+    "noDetail": "",
+    "untitledSection": "",
+    "sectionCount": "",
+    "sectionCountPlural": ""
   }
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -74,6 +74,8 @@ export interface HeaderProps {
   filesOpen?: boolean;
   view?: TaskView;
   onChangeView?: (view: TaskView) => void;
+  /** Opens the existing App-owned full New Task modal. */
+  onNewTask?: () => void;
   /** Whether to show the skills tab in the view toggle */
   showSkillsTab?: boolean;
   /** When true, shows the Agents view tab button. Hidden by default (experimental feature). */
@@ -137,6 +139,7 @@ export function Header({
   onOpenFiles,
   view = "board",
   onChangeView,
+  onNewTask,
   showSkillsTab,
   showAgentsTab,
   searchQuery = "",
@@ -621,30 +624,20 @@ export function Header({
 
       <div className="header-actions">
         {shellConnectionControl}
-        {/* Mobile View Toggle - compact board/list switcher in header when mobile nav is active */}
-        {hideFullNav && onChangeView && (view === "board" || view === "list") && (
-          <div className="view-toggle" data-testid="mobile-view-toggle">
-            <button
-              className={`view-toggle-btn${view === "board" ? " active" : ""}`}
-              onClick={() => onChangeView("board")}
-              title={t("header.boardView", "Board view")}
-              aria-label={t("header.boardView", "Board view")}
-              aria-pressed={view === "board"}
-              data-testid="mobile-view-toggle-board"
-            >
-              <LayoutGrid size={16} />
-            </button>
-            <button
-              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
-              onClick={() => onChangeView("list")}
-              title={t("header.listView", "List view")}
-              aria-label={t("header.listView", "List view")}
-              aria-pressed={view === "list"}
-              data-testid="mobile-view-toggle-list"
-            >
-              <List size={16} />
-            </button>
-          </div>
+        {/*
+        FNXC:MobileTaskNavigation 2026-08-20-05:47:
+        Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
+        */}
+        {isMobile && mobileNavEnabled && projectId && onNewTask && (
+          <button
+            className="btn-icon"
+            onClick={onNewTask}
+            title={t("newTaskModal.title", "New Task")}
+            aria-label={t("newTaskModal.title", "New Task")}
+            data-testid="mobile-header-new-task"
+          >
+            <Plus />
+          </button>
         )}
 
         {/* Mobile Search Trigger - only on mobile, show trigger button in header */}

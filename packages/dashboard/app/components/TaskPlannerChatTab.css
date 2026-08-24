@@ -8,6 +8,20 @@
 }
 
 /*
+FNXC:ChatMessageLayout 2026-08-18-20:27:
+Planner Chat reuses StandardChatSurface message markup, so its root modifier is the only task-specific hook needed to remove the shared horizontal bubble split while preserving the planner transcript, controls, and empty/loading states.
+*/
+.task-planner-chat--full-width .chat-message,
+.task-planner-chat--full-width .chat-message--user,
+.task-planner-chat--full-width .chat-message--assistant,
+.task-planner-chat--full-width .chat-message--streaming,
+.task-planner-chat--full-width .chat-message--failure {
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+}
+
+/*
 FNXC:TaskDetailPlannerChat 2026-07-02-00:28:
 Planner Chat should not render a redundant in-panel title/header. The transcript starts at the top of the chat area, the expand button floats over the view, and the planning model/provider icon appears only as a small empty-state affordance.
 */
@@ -196,6 +210,46 @@ Mobile Planner Chat should match regular task chat: keep the composer as a singl
 FNXC:TaskDetailPlannerChat 2026-07-07-00:00:
 The Planner Chat streaming Stop button must occupy the same width footprint as the Send button it replaces (no shift/shrink on swap) and mirror the regular Chat view's stop-button sizing (`.chat-input-row`'s `--chat-input-control-size` in ChatView.css). The shared `.chat-input-send` / `.chat-input-stop` classes read that custom property from `.chat-input-row`, which the Planner composer never renders inside of, so the property was undefined here and `width` fell back to `auto`, sizing each button from its own content only. Declare the same control-size formula scoped to `.task-planner-chat-composer` and give `.task-planner-chat-send` (present on both the send and stop button variants) a matching `min-inline-size` floor so neither button can render narrower than the other on desktop, without touching ChatView.css's own token.
 */
+/*
+FNXC:TaskChatDefaultModel 2026-08-19-12:12:
+Task Chat keeps model and thinking controls reachable beside the composer, reusing the Direct Chat primitives instead of adding a task-only selector style. The compact control row wraps on narrow layouts so the task transcript and send affordance remain usable.
+*/
+.task-planner-chat-target-controls {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.task-planner-chat-target-controls .model-combobox {
+  min-width: 0;
+  max-width: calc(var(--space-2xl) * 8);
+}
+
+.task-planner-chat-target-controls .model-combobox-trigger {
+  max-width: 100%;
+}
+
+.task-planner-chat-target-controls .chat-thinking-level-root {
+  flex: 0 0 auto;
+}
+
+/*
+FNXC:ChatMemoryFocus 2026-08-13:
+Spacing row holding the per-conversation memory focus chip above the planner
+composer. The chip inherits its control-size token from the composer below so
+it aligns with the send/stop buttons.
+*/
+.task-planner-chat-focus-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-start;
+  padding-inline: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
 .task-planner-chat-composer {
   /* FN-7634: same formula as ChatView.css's `.chat-input-row { --chat-input-control-size: … }` so the Planner stop/send buttons share the regular Chat view's control-size floor. */
   --chat-input-control-size: calc(var(--space-lg) * 2.5);
@@ -207,15 +261,19 @@ The Planner Chat streaming Stop button must occupy the same width footprint as t
   gap: var(--space-sm);
 }
 
+/*
+FNXC:ChatComposer 2026-08-20-19:25:
+FN-076 requires Planner Chat to grow automatically through five rendered lines, internally scroll excess content, and shrink after deletion. Native mouse resizing is disabled and CSS leaves the controller's measured cap authoritative.
+*/
 .task-planner-chat-input {
   box-sizing: border-box;
   flex: 1 1 calc(var(--space-2xl) * 8);
   min-width: min(100%, calc(var(--space-2xl) * 8));
-  height: calc(var(--space-2xl) + var(--space-sm));
   min-height: calc(var(--space-2xl) + var(--space-sm));
-  max-height: var(--task-chat-composer-max-height, 40vh);
+  max-height: none;
   padding: var(--btn-padding);
-  resize: vertical;
+  overflow-y: hidden;
+  resize: none;
 }
 
 /*
@@ -252,17 +310,27 @@ height rather than relying on the global button minimum.
 
   .task-planner-chat-composer {
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--space-xs);
+  }
+
+  .task-planner-chat-target-controls {
+    flex: 1 1 100%;
+    order: 0;
+    justify-content: flex-end;
+  }
+
+  .task-planner-chat-target-controls .model-combobox {
+    flex: 1 1 auto;
+    max-width: none;
   }
 
   .task-planner-chat-input {
     flex: 1 1 auto;
     min-width: 0;
-    height: calc(var(--space-2xl) + var(--space-lg));
     min-height: calc(var(--space-2xl) + var(--space-lg));
-    max-height: calc(var(--space-2xl) + var(--space-lg));
+    max-height: none;
     resize: none;
   }
 
@@ -310,5 +378,13 @@ height rather than relying on the global button minimum.
 
   .task-planner-chat .chat-question-response {
     margin-inline: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .task-planner-chat--full-width .chat-message {
+    width: 100%;
+    max-width: 100%;
+    align-self: stretch;
   }
 }

@@ -95,11 +95,24 @@ describe("reliability interactions: secrets env materialization", () => {
     expect(readFileSync(join(worktree, "unrelated.txt"), "utf8")).toBe("dirt\n");
   });
 
+  /*
+  FNXC:SecretsEnvMaterialization 2026-08-23-18:52:
+  FN-9162 (3b0a6b795f) narrowed orphan reaping: a configured worktree root may be SHARED with other
+  projects, so `isReclaimableWorktreeCandidate` now deletes only what Git proves belongs to this
+  project's common directory. A bare directory with no `.git` at all is therefore protected, and the
+  companion negative is pinned by worktree-pool.test.ts ("excludes containers and unproven
+  half-initialized directories"). The secrets invariant this test owns is unchanged and still
+  load-bearing: when a leaked worktree IS reaped, its env artifacts go with it. Ground it on the
+  FN-6782 dangling-`.git`-pointer orphan — the leak form that remains reapable — rather than on the
+  now-protected bare directory.
+  */
   it("orphan reap reclaims orphaned env artifacts", async () => {
     const root = tmpRepo();
     const worktreesDir = join(root, ".worktrees");
     const orphan = join(worktreesDir, "ghost");
     mkdirSync(orphan, { recursive: true });
+    // `.git` link file present, but the admin entry it points at was pruned away: leak residue.
+    writeFileSync(join(orphan, ".git"), `gitdir: ${join(root, ".git", "worktrees", "ghost")}\n`);
     writeFileSync(join(orphan, ".env"), "A=1\n");
     writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), "abc\n.env\n");
 

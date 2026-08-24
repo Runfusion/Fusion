@@ -15,6 +15,7 @@ import type {
   GithubIssueAction,
   MergeResult,
   Task,
+  TaskColumnSortMode,
   TaskCreateInput,
   TaskDetail,
   ThemeMode,
@@ -48,6 +49,7 @@ import type { ChatReportHandoff } from "../chatReportHandoff";
 import { SettingsView } from "../SettingsModal";
 import { AgentsView } from "../AgentsView";
 import { ChatView } from "../ChatView";
+import type { ChatSessionInfo } from "../../hooks/useChat";
 import { CommandCenter } from "../command-center/CommandCenter";
 import { DevServerView } from "../DevServerView";
 import { DocumentsView } from "../DocumentsView";
@@ -133,11 +135,22 @@ export interface MainContentProps {
   mergeStrategy: string;
   planAutoApproveEnabled: boolean;
   settingsLoaded: boolean;
+  openTasksInRightSidebar: boolean;
   openMobileTasksInPopup: boolean;
+  taskPopupsBoardListOnly: boolean;
+  showCostBadgeOnCards: boolean;
   taskDetailChatFirst: boolean;
+  chatMessageLayout: "bubbles" | "full-width";
+  setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
+  setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
+  setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
+  setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
+  setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+  setChatMessageLayoutImmediate: (layout: "bubbles" | "full-width") => void;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;
   setQuickChatOpen: Dispatch<SetStateAction<boolean>>;
+  onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Optional so existing MainContent callers preserve their unseeded Chat behavior. */
   chatComposerPrefill?: { text: string; nonce: number } | null;
   mailComposerPrefill?: (ChatReportHandoff & { nonce: number }) | null;
@@ -179,6 +192,8 @@ export interface MainContentProps {
   mainPanelDetailTask: Task | TaskDetail | null;
   filteredBoardTasks: Task[];
   maxConcurrent: number;
+  /** Shared effective ceiling used by board previews and engine admission. */
+  effectiveMaxConcurrent: number;
   showWorktreeGrouping: boolean;
   moveTask: (
     id: string,
@@ -190,9 +205,7 @@ export interface MainContentProps {
   openTaskDetailInMainPanel: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   openGroupModalWithNav: (groupId: string) => void;
   handleBoardQuickCreate: (input: TaskCreateInput) => Promise<Task>;
-  openNewTaskWithNav: () => void;
-  subtaskBreakdownEnabled: boolean;
-  openSubtaskBreakdownWithNav: (description: string, workflowId?: string | null) => void;
+  openNewTaskWithNav: (workflowId?: string | null) => void;
   toggleAutoMerge: () => Promise<void>;
   togglePlanAutoApprove: () => Promise<void>;
   globalPaused: boolean;
@@ -222,6 +235,10 @@ export interface MainContentProps {
   loadArchivedTasks: () => Promise<void>;
   /** FNXC:ArchivePagination 2026-07-08-00:00: FN-7659 — fetch the next 100-item page of archived tasks (newest-first). */
   loadMoreArchivedTasks: () => Promise<void>;
+  /** Board action callback that commits Archive order only after its first replacement page succeeds. */
+  changeArchivedSortMode: (mode: TaskColumnSortMode) => Promise<void>;
+  /** Committed server-backed Archive order. */
+  archivedSortMode: TaskColumnSortMode;
   /** Whether another page of archived tasks is available beyond what is currently loaded. */
   archivedHasMore: boolean;
   /** True while a "Show more" archived page fetch is in flight. */

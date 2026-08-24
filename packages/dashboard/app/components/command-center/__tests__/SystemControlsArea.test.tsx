@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
+import { refreshUpdateCheck } from "../../../api/legacy";
 import { readAppFile } from "../../../test/cssFixture";
 
 /*
@@ -419,6 +420,25 @@ describe("SystemControlsArea layout integration", () => {
     geometry.setScrollHeight(700);
     await act(async () => events.log(new MessageEvent("message", { data: JSON.stringify({ timestamp: "2026-07-18T00:00:02.000Z", level: "info", message: "third" }) })));
     expect(geometry.scrollTop).toBe(700);
+  });
+
+  it("reports externally managed deployments without settings-disabled copy", async () => {
+    vi.mocked(refreshUpdateCheck).mockResolvedValueOnce({
+      currentVersion: "0.60.0",
+      latestVersion: null,
+      updateAvailable: false,
+      disabled: true,
+      externallyManaged: true,
+      message: "Managed deployment updates must be installed through its release pipeline.",
+    });
+
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    await screen.findByTestId("cc-system-controls");
+    fireEvent.click(within(screen.getByTestId("cc-syscontrol-check-updates")).getByRole("button", { name: "Check now" }));
+
+    expect(await screen.findByTestId("cc-system-update-check-result")).toHaveTextContent("Updates are managed by this deployment");
+    expect(screen.queryByText("Update checks are disabled in global settings")).not.toBeInTheDocument();
   });
 
   it("hides build-and-link-local when the host is not a source checkout", async () => {

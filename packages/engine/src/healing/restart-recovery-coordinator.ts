@@ -12,6 +12,7 @@ import type { TaskExecutor } from "../executor.js";
 import { createLogger } from "../logger.js";
 import { resolveProjectColumnsForRoles, resolveReboundTargetForTask } from "@fusion/core";
 import { setImmediate as setImmediateCb } from "node:timers";
+import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "./no-progress-requeue-budget.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-15:20 (fleet — the one arm left after main made the others required):
@@ -231,14 +232,21 @@ export class RestartRecoveryCoordinator {
   }
 
   private mustSafeRetry(task: Task): boolean {
-    return isNoTaskDoneFailure(task) && !hasStepProgress(task);
+    /*
+    FNXC:SelfHealing 2026-08-21-15:44:
+    Restart recovery is intentionally budget-free because it runs once per start,
+    but must not erase #3496's terminal park and recreate the loop it did not own.
+    */
+    return isNoTaskDoneFailure(task)
+      && !task.error?.startsWith(NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX)
+      && !hasStepProgress(task);
   }
 
   private async safeRequeue(task: Task): Promise<void> {
     await this.store.updateTask(task.id, {
       status: "stuck-killed",
       worktree: null,
-      branch: null,
+      branch: null, branchWriteOrigin: "engine" as const,
       sessionFile: null,
       error: null,
     }, UNATTRIBUTED_MUTATION_CONTEXT);

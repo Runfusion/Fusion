@@ -47,7 +47,7 @@ describe("custom providers openai-completions regression", () => {
       baseUrl: provider.baseUrl,
       api: "openai-completions",
       apiKey: provider.apiKey,
-      models: [{ id: "my-model", name: "My Model", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 16384 }],
+      models: [{ id: "my-model", name: "My Model", reasoning: true, thinkingLevelMap: { xhigh: "xhigh", max: "max" }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 16384 }],
     });
     await modelRegistry.refresh();
 

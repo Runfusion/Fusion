@@ -22,8 +22,11 @@ import { createMockStore, mockedExistsSync, resetExecutorMocks } from "./executo
 
 const now = "2026-07-15T00:00:00.000Z";
 
-/** A task shaped to clear the merge boundary's implementation-proof gates, so the
- *  cancellation race — not a pre-flight rejection — is what the assertion observes. */
+/**
+ * FNXC:WorkflowCancellation 2026-08-20-01:20:
+ * FN-9157 requires terminal pre-merge evidence before a merge attempt reaches the requester.
+ * Keep this fixture merge-ready so cancellation, not boundary admission, is the observed contract.
+ */
 function mergeReadyTask(overrides = {}) {
   return {
     id: "FN-CANCEL",
@@ -38,6 +41,14 @@ function mergeReadyTask(overrides = {}) {
     branch: null,
     worktree: null,
     enabledWorkflowSteps: [],
+    workflowStepResults: [{
+      workflowStepId: "execute",
+      workflowStepName: "Execute",
+      source: "node",
+      phase: "pre-merge",
+      status: "passed",
+      completedAt: now,
+    }],
     prompt: "# Task\n\n## Steps\n\n### Step 1: Decide\n- [ ] Record no-code decision",
     createdAt: now,
     updatedAt: now,

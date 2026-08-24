@@ -127,6 +127,18 @@ function createStore(task: Task, settings: Partial<Settings> = {}, overrides: Pa
     getWorkflowSettingValues: vi.fn().mockResolvedValue({}),
     getWorkflowSettingsProjectId: vi.fn().mockReturnValue("default"),
     withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    /*
+    FNXC:EngineTests 2026-08-23-18:48:
+    `fn_task_prompt_write` no longer publishes through `updateTask`. When planning supplies a
+    `canPersist` generation check (FN TaskReset), it takes the planning lifecycle lock and writes
+    via `withTaskLock` + `updateTaskUnlocked` so a Reset cannot be raced. A fake missing that
+    surface makes the tool fail and PROMPT.md is never persisted, which surfaces far away as an
+    ENOENT reading the artifact. Mirror the production lock/write surface, routing the unlocked
+    write through the same `updateTask` mock so live task state stays authoritative.
+    */
+    withPlanningLifecycleLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    updateTaskUnlocked: vi.fn(async (id: string, updates: Partial<Task>) => store.updateTask(id, updates)),
+    isBackendMode: vi.fn(() => false),
     readTaskForMove: vi.fn(async () => live),
     on: vi.fn(),
     emit: vi.fn(),

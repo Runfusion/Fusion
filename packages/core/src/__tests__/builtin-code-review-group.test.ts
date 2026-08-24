@@ -108,11 +108,16 @@ describe("built-in coding + stepwise workflows wire code-review as a default-ON 
     // Changes-requested always routes back to implementation.
     expect(byId.get("code-review-remediation")?.column).toBe("in-progress");
 
-    // Pre-merge wiring: ... → browser-verification → code-review → completion-summary; failure → remediation node.
+    /*
+    FNXC:WorkflowBuiltins 2026-08-23-22:55:
+    Pre-merge wiring: ... → browser-verification → completion-summary → code-review; failure → remediation node.
+    FN-120 (10c399d01e) moved completion-summary AHEAD of code-review because a completion-summary agent
+    can acquire the task worktree; running it after review would reopen the reviewed tree.
+    */
     expect(ir.edges).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ from: "browser-verification", to: "code-review", condition: "success" }),
-        expect.objectContaining({ from: "code-review", to: "completion-summary", condition: "success" }),
+        expect.objectContaining({ from: "browser-verification", to: "completion-summary", condition: "success" }),
+        expect.objectContaining({ from: "completion-summary", to: "code-review", condition: "success" }),
         expect.objectContaining({ from: "code-review", to: "code-review-remediation", condition: "failure" }),
       ]),
     );

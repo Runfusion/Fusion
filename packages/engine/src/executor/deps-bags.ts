@@ -1,4 +1,4 @@
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, WorkspaceConfig } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:30:
  * Free builders for TaskExecutor deps bags that wire peeled worktree/session helpers (U4).
@@ -228,6 +228,47 @@ function withWorkspaceResolver(host: any): () => Promise<unknown | null> {
   });
 }
 
+const workspaceRefreshes = new WeakMap<object, Promise<WorkspaceConfig | null>>();
+
+/*
+FNXC:Workspace 2026-08-20-02:03:
+Membership is disk-authoritative and can grow during an execution. A failed or empty refresh restores
+this host's last known-good multi-repo snapshot so shared consumers never fall back to single-repo mode.
+*/
+function withWorkspaceRefresher(host: any): () => Promise<WorkspaceConfig | null> {
+  return () => {
+    const active = workspaceRefreshes.get(host);
+    if (active) return active;
+    const refresh = (async (): Promise<WorkspaceConfig | null> => {
+      const previous = host.workspaceConfig as WorkspaceConfig | null | undefined;
+      try {
+        host.invalidateWorkspaceConfig();
+        const resolved = await withWorkspaceResolver(host)() as WorkspaceConfig | null;
+        if (resolved === null && previous && previous.repos.length > 0) {
+          host.workspaceConfig = previous;
+          return previous;
+        }
+        /*
+        FNXC:Workspace 2026-08-20-02:25:
+        A settings listener can invalidate during this awaited read. The resolver declines the stale
+        epoch write, so this refresh publishes its successful result to prevent shared consumers from
+        observing the cleared single-repo sentinel.
+        */
+        host.workspaceConfig = resolved;
+        return resolved;
+      } catch {
+        host.workspaceConfig = previous;
+        return previous ?? null;
+      }
+    })();
+    workspaceRefreshes.set(host, refresh);
+    void refresh.finally(() => {
+      if (workspaceRefreshes.get(host) === refresh) workspaceRefreshes.delete(host);
+    });
+    return refresh;
+  };
+}
+
 export function buildRunImplementationDeps(
   host: any,
   constants: { BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number; MAX_AUTO_RECOVERY_ATTEMPTS: number },
@@ -235,6 +276,7 @@ export function buildRunImplementationDeps(
   const bag = {
     ...facadeFields(host, ["store", "rootDir"]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
+    refreshWorkspaceConfig: withWorkspaceRefresher(host),
     options: host.options as any,
     BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: constants.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
     MAX_AUTO_RECOVERY_ATTEMPTS: constants.MAX_AUTO_RECOVERY_ATTEMPTS,
@@ -254,7 +296,7 @@ export function buildRunImplementationDeps(
       "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
       "transitionReviewAddressing", "buildActionGateContext", "buildPermanentAgentGatingContext",
       "resolveMcpServers", "captureModifiedFiles", "handleNonContinuableSessionError",
-      "signalTaskComplete", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
+      "signalTaskComplete", "signalTaskTerminalFailed", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
       "unregisterConfiguredCommandController", "tryBootstrapMisbindingRecovery", "addActiveWorktree",
       "getAuthoritativeAssignedAgent", "resolveSeamColumnAgent", "sendTaskBackForFix",
       "runWithExecutorSemaphore", "resetStepsIfWorkLost", "recoverMissingWorktreeSessionStartFailure",
@@ -266,7 +308,7 @@ export function buildRunImplementationDeps(
       "emitWorktreeReanchoredAudit", "buildInjectedRuntimeEnv", "reconcileStepsFromGitHistory",
       "setActiveStepExecutor", "captureWorkspaceModifiedFiles", "runExecutorDeterministicVerification",
       "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
-      "createTaskAddDepTool", "createTaskDoneTool", "createSpawnAgentTool",
+      "createTaskAddDepTool", "createTaskDoneTool", "createReviewDisputeTool", "createSpawnAgentTool",
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
     ]),
@@ -743,6 +785,7 @@ export function buildBuildActionGateContextDeps(host: any): any {
     agentStore: host.options.agentStore,
     // Lazy getter: only construct the PostgreSQL-backed store when a gate needs it.
     get approvalRequestStore() { return host.approvalRequestStore; },
+    messageStore: host.options.messageStore,
     activeWorkflowAuthorities: host.activeWorkflowAuthorities,
     activeWorkflowGraphAbortControllers: host.activeWorkflowGraphAbortControllers,
   };
@@ -893,6 +936,7 @@ export function buildBuildPermanentAgentGatingContextDeps(host: any): any {
     ...buildStoreRunContextDeps(host),
     approvalSuspended: host.approvalSuspended,
     get approvalRequestStore() { return host.approvalRequestStore; },
+    messageStore: host.options.messageStore,
   };
 }
 
@@ -1048,8 +1092,24 @@ export function buildSignalTaskCompleteDeps(host: any): any {
   return {
     store: host.store,
     capturedReflectionTaskIds: host.capturedReflectionTaskIds,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
     reflectionService: host.options.reflectionService,
     onComplete: host.options.onComplete,
+  };
+}
+
+/*
+FNXC:StashSessionCapture 2026-08-19-05:09:
+(RUFU-122) Minimal deps bag for the terminal-failure transcript capture seam:
+store/rootDir plus the SAME capturedMemoryTaskIds gate the completion seam
+uses — triggerTaskMemoryCapture picks exactly the fields it needs.
+*/
+export function buildSignalTaskTerminalFailedDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
   };
 }
 
@@ -1126,7 +1186,10 @@ export function buildEnsureTaskWorktreeForPlanningDeps(host: any): any {
 
 export function buildPrepareGraphNodeExecutionDeps(host: any): any {
   return {
-    ...facadeFields(host, ["store"]),
+    ...facadeFields(host, ["rootDir", "store"]),
+    workspaceConfigOwner: host,
+    getWorkspaceConfig: () => host.workspaceConfig,
+    setWorkspaceConfig: (cfg: unknown) => { host.workspaceConfig = cfg; },
     ...facadeMethods(host, ["getRunContextFor", "runContextFor", "ensureGraphCustomNodeWorktree"]),
   };
 }

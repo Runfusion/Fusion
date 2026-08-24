@@ -22,6 +22,11 @@ export type { TaskAgeStalenessLevel, TaskAgeStalenessSignal } from "./tasks/task
 // dashboard code (whose "@fusion/core" vite alias resolves to types.ts, not the
 // package barrel) can name the update channel union.
 export type { UpdateChannel } from "./i18n/app-version.js";
+/*
+FNXC:BranchNaming 2026-08-20-03:54:
+TaskForm needs the same browser-safe validator as the task store so operator feedback matches the shell-adjacent write boundary.
+*/
+export { isValidTaskBranchName } from "./branch/branch-assignment.js";
 
 export {
   computeCapacityRisk,
@@ -275,6 +280,7 @@ import type {
   WorkflowReviewFindingSeverity,
   WorkflowReviewFindingResolution,
   WorkflowReviewFinding,
+  WorkflowRepositoryReviewOutcome,
   WorkflowStep,
   NtfyNotificationEvent,
   NotificationEvent,
@@ -298,6 +304,7 @@ export type {
   WorkflowReviewFindingSeverity,
   WorkflowReviewFindingResolution,
   WorkflowReviewFinding,
+  WorkflowRepositoryReviewOutcome,
   WorkflowStep,
   NtfyNotificationEvent,
   NotificationEvent,
@@ -341,18 +348,6 @@ export type {
   TaskSourceIssue,
 };
 
-/*
-FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
-When triage closes an imported parent after splitting it into child tasks, the authoritative
-in-process `task:deleted` event carries only this typed, ids-only reason so the GitHub owner can
-explain the close. PostgreSQL cannot observe the SQLite polling replica path, so this context is
-intentionally delivered only by the deleting store instance; cross-process delivery needs a separate
-outbox or event bridge.
-*/
-export interface TaskDeleteClosureContext {
-  kind: "split-into-subtasks";
-  childTaskIds: string[];
-}
 
 export interface BatchStatusRequest {
   taskIds: string[];
@@ -610,7 +605,9 @@ import type {
   TaskRecommendationCategory,
   TaskRecommendationListItem,
   TaskRecommendationListPage,
+  WorkspaceLandFailure,
   WorkspaceWorktreeEntry,
+  TaskRepositoryScope,
   Task,
   TaskReleaseGateVerdict,
   TaskVerificationResultSummary,
@@ -658,7 +655,9 @@ export type {
   TaskRecommendationCategory,
   TaskRecommendationListItem,
   TaskRecommendationListPage,
+  WorkspaceLandFailure,
   WorkspaceWorktreeEntry,
+  TaskRepositoryScope,
   Task,
   TaskReleaseGateVerdict,
   TaskVerificationResultSummary,
@@ -1592,7 +1591,7 @@ sorter here so Board, Lane, and ListView share core policy without importing a N
 The sorter and its transitive role/merge/priority helpers are browser-safe.
 */
 export { sortTasksForDisplayColumn } from "./tasks/task-priority.js";
-export type { DoneColumnSortMode, DisplayColumnSortOptions } from "./tasks/task-priority.js";
+export type { TaskColumnSortMode, ColumnSortMode, DoneColumnSortMode, DisplayColumnSortOptions } from "./tasks/task-priority.js";
 
 /*
 FNXC:MissionValidationRepair 2026-08-11-00:10:

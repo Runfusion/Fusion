@@ -1,5 +1,7 @@
 import { recordRunAuditEvent, type AsyncDataLayer } from "../postgres/data-layer.js";
 import type { Logger } from "../process/logger.js";
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+import type { RunAuditEventInput } from "../types.js";
 import { appendRecall } from "./recall/recall-store.js";
 import type { RecallAppendInput, RecallAppendResult, RecallKind, RecallOrigin } from "./recall/recall-types.js";
 
@@ -77,6 +79,11 @@ FNXC:MemoryRecallCapture 2026-08-11-10:57:
 FN-8922 has no insight-specific RecallOrigin literal, so insight outcomes use its real "other"
 origin while completed tasks and research use "task-completion" and "deep-research" respectively.
 The test drain exists solely for deterministic detached-work tests and production must never call it.
+
+FNXC:RunAudit 2026-08-20-07:03:
+FN-9181 implements FN-9178's class-A decision: bounded audit emission prevents a stalled sink from
+retaining a detached capture promise. Preserve the injectable adapter's bare-metadata contract, and
+suppress the layer path whenever append is injected so the deterministic test seam remains isolated.
 */
 export const NOOP_RECALL_CAPTURE_WRITER: RecallCaptureWriter = Object.freeze({
   capture: () => {},
@@ -134,10 +141,18 @@ export function createRecallCaptureWriter(
   const pending = new Set<Promise<void>>();
   const append = deps.append ?? ((input: RecallAppendInput) => appendRecall(deps.layer, input));
   const recordAudit = async (type: "memory:capture-recorded" | "memory:capture-failed", input: RecallCaptureInput, metadata: Record<string, string>) => {
+    const log = { warn: () => deps.logger.warn(`Automatic recall capture audit failed for ${input.origin}`) };
     if (deps.audit) {
-      await deps.audit({ type, metadata });
+      await emitBoundedRunAudit({
+        recordRunAuditEvent: (event) => deps.audit?.({
+          type: event.mutationType as "memory:capture-recorded" | "memory:capture-failed",
+          metadata,
+        }),
+      }, { mutationType: type }, { log });
     } else if (!deps.append) {
-      await recordRunAuditEvent(deps.layer, {
+      await emitBoundedRunAudit({
+        recordRunAuditEvent: (event) => recordRunAuditEvent(deps.layer, event as RunAuditEventInput),
+      }, {
         agentId: input.agentId ?? "memory-capture",
         runId: `memory-capture:${input.origin}:${Date.now()}`,
         taskId: input.taskId,
@@ -145,7 +160,7 @@ export function createRecallCaptureWriter(
         mutationType: type,
         target: input.insightId ?? input.findingId ?? input.researchRunId ?? input.taskId ?? input.origin,
         metadata: { origin: input.origin, ...metadata },
-      });
+      }, { log });
     }
   };
 
@@ -154,24 +169,16 @@ export function createRecallCaptureWriter(
       const operation = (async () => {
         try {
           const result = await append(toAppendInput(input));
-          try {
-            await recordAudit("memory:capture-recorded", input, {
-              recallRecordId: result.status === "created" ? result.record.id : result.duplicateOf.id,
-              outcome: result.status,
-            });
-          } catch {
-            deps.logger.warn(`Automatic recall capture audit failed for ${input.origin}`);
-          }
+          await recordAudit("memory:capture-recorded", input, {
+            recallRecordId: result.status === "created" ? result.record.id : result.duplicateOf.id,
+            outcome: result.status,
+          });
         } catch (error) {
           // Recall content can be sensitive, so diagnostics identify only the bounded origin.
           deps.logger.warn(`Automatic recall capture failed for ${input.origin}`);
-          try {
-            await recordAudit("memory:capture-failed", input, {
-              errorClass: error instanceof Error ? error.name : "unknown",
-            });
-          } catch {
-            deps.logger.warn(`Automatic recall capture audit failed for ${input.origin}`);
-          }
+          await recordAudit("memory:capture-failed", input, {
+            errorClass: error instanceof Error ? error.name : "unknown",
+          });
         }
       })();
       pending.add(operation);

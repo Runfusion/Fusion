@@ -214,7 +214,7 @@ describe("acquireTaskWorktree — task-pinned mode", () => {
     expect(result.source).toBe("existing");
     expect(result.worktreePath).toBe(PINNED);
     // The successful acquisition must leave the task assigned, not orphaned.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7996", { worktree: PINNED, branch: "fusion/fn-7996" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7996", { worktree: PINNED, branch: "fusion/fn-7996", branchWriteOrigin: "engine" });
     expect(createWorktree).not.toHaveBeenCalled();
     expect(removeWorktree).not.toHaveBeenCalled();
   });

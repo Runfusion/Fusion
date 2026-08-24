@@ -20,7 +20,8 @@ describeIfGit("reliability interactions: audit + recovery", () => {
     await fx.checkout("main");
     await fx.writeAndCommit("src/tree.txt", "one\n", "feat: main part1");
     await fx.writeAndCommit("src/tree.txt", "one\ntwo\n", "feat: main part2");
-    await fx.store.updateTask(fx.task.id, { branch: "fusion/fn-4361-c3", status: "failed", mergeRetries: 3, column: "in-review" } as any);
+    /* FNXC:BranchNaming 2026-08-23-02:10: a branch write is a provenance boundary (updateTaskUnlockedImpl); without an explicit origin this threw before the scenario ran.*/
+    await fx.store.updateTask(fx.task.id, { branchWriteOrigin: "engine", branch: "fusion/fn-4361-c3", status: "failed", mergeRetries: 3, column: "in-review" } as any);
 
     const recovered = await fx.selfHeal.recoverAlreadyMergedReviewTasks();
     const task = await fx.store.getTask(fx.task.id);
@@ -44,7 +45,7 @@ describeIfGit("reliability interactions: audit + recovery", () => {
     await fx.checkout("main");
     await fx.writeAndCommit("src/tree13.txt", "a\n", "feat: main p1");
     await fx.writeAndCommit("src/tree13.txt", "a\nb\n", "feat: main p2");
-    await fx.store.updateTask(fx.task.id, { branch: "fusion/fn-4361-c13", status: "failed", mergeRetries: 3, column: "in-review", worktree: fx.rootDir } as any);
+    await fx.store.updateTask(fx.task.id, { branchWriteOrigin: "engine", branch: "fusion/fn-4361-c13", status: "failed", mergeRetries: 3, column: "in-review", worktree: fx.rootDir } as any);
     await fx.checkout("fusion/fn-4361-c13");
     await fx.writeAndCommit("src/other.txt", "local\n", "feat: local");
     await fx.checkout("main");

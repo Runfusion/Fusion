@@ -2,16 +2,14 @@
  * FNXC:CodeOrganization 2026-08-03-17:30:
  * ensureTaskWorktreeForPlanning peeled from TaskExecutor (U4).
  *
- * Acquires a planning worktree when none exists (non-workspace). Fail-soft: planning falls
- * back to the repo root on acquisition failure.
+ * Acquires a planning worktree when none exists for a single-repository task. Workspace planning
+ * returns the workspace root under a declared read-only boundary and acquires nothing.
  *
- * FNXC:NodeWorktreeIsolation 2026-07-25-22:10 (planning acquires the task worktree):
- * Public seam for the planning/triage lane. Specification runs a CODING-tool session; pointing it at
- * the shared main checkout meant every planning agent had write tools in the operator's tree and every
- * concurrent planner shared one path. Acquire the task's own worktree up front and let the whole
- * lifecycle — planning, Plan Review, implementation, code review — reuse that single worktree.
- * Returns null (caller falls back to the root, unchanged behavior) when the project is a workspace, or
- * when acquisition fails: planning must never be blocked by a worktree problem.
+ * FNXC:NodeWorktreeIsolation 2026-08-22-22:46:
+ * FN-158 replaces the workspace planning checkout with a read-only-root boundary. That removes
+ * write tools from the shared checkout entirely, so concurrent planners cannot collide; Plan Review
+ * and execution re-check freshness after scoped acquisition. Single-repository scope is known at
+ * creation and continues to acquire immediately under the same "acquire when scope is known" rule.
  */
 import { existsSync } from "node:fs";
 import type { Settings, TaskDetail, TaskStore, WorkspaceConfig } from "@fusion/core";
@@ -30,18 +28,26 @@ export type EnsureTaskWorktreeForPlanningDeps = {
     settings: Settings,
     nodeId: string,
     refreshStaleBase?: boolean,
-  ) => Promise<{ worktree?: string }>;
+  ) => Promise<TaskDetail>;
 };
 
 export async function ensureTaskWorktreeForPlanning(
   deps: EnsureTaskWorktreeForPlanningDeps,
   taskId: string,
 ): Promise<string | null> {
+  let workspaceMode = false;
   try {
     const workspaceConfig = await resolveWorkspaceConfigOnce(deps);
-    if (workspaceConfig && (workspaceConfig.repos.length ?? 0) > 0) return null;
+    workspaceMode = Boolean(workspaceConfig && (workspaceConfig.repos.length ?? 0) > 0);
 
     const live = await deps.store.getTask(taskId);
+    if (workspaceMode) {
+      if (!existsSync(deps.rootDir)) {
+        throw new Error(`Workspace root is missing for planning: ${deps.rootDir}`);
+      }
+      return deps.rootDir;
+    }
+
     if (live.worktree && existsSync(live.worktree)) return live.worktree;
 
     const settings = await deps.store.getSettings();
@@ -51,6 +57,10 @@ export async function ensureTaskWorktreeForPlanning(
     const acquired = await deps.ensureGraphCustomNodeWorktree(acquisitionTask, settings, "planning");
     return acquired.worktree || null;
   } catch (error) {
+    if (workspaceMode) {
+      executorLog.error(`${taskId}: workspace planning cannot establish its read-only workspace root: ${formatError(error)}`);
+      throw error;
+    }
     executorLog.warn(`${taskId}: could not acquire a planning worktree — planning falls back to the repo root: ${formatError(error)}`);
     return null;
   }

@@ -9,7 +9,7 @@
 import {TaskStore, storeLog, type DeleteTaskOptions} from "../store.js";
 import type {RunMutationContext} from "../types.js";
 import {TaskSelfDeleteError} from "./errors.js";
-import {isWorkspaceTask, type Task, type GithubIssueAction, type TaskDeleteClosureContext} from "../types.js";
+import {isWorkspaceTask, type Task, type GithubIssueAction} from "../types.js";
 import {type TaskDeleteAuditContext} from "../task-delete-attribution.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -17,12 +17,11 @@ import {getErrorMessage} from "../process/error-message.js";
 import {ArchiveWorkspaceDisposalError, ArchiveWorkspaceDisposalIncompleteError, ArchiveWorkspaceWorktreeDisposerMissingError, getArchiveWorkspaceWorktreeDisposer, getArchiveWorktreeDisposer, type ArchiveWorkspaceDisposalResult, type WorkspaceDisposalPlanEntry} from "../db/archive-worktree-disposer.js";
 import {acquireWorktreePathReservation, canonicalizeWorktreePath} from "../tasks/worktree-path-reservation.js";
 import {LiveTaskWorktreeRemovalRefusedError} from "../tasks/task-archive-liveness.js";
-import {basename, join, resolve} from "node:path";
-import {homedir} from "node:os";
+import {join} from "node:path";
+import {resolveWorktreesDirLayout, type WorkspaceWorktreeContext} from "../tasks/worktree-layout.js";
 
-function resolveArchiveWorktreesDir(store: TaskStore, configured?: string): string {
-  const value = configured?.replace(/^~(?=$|[\\/])/, homedir()).replaceAll("{repo}", basename(store.rootDir));
-  return value ? resolve(store.rootDir, value) : join(store.rootDir, ".worktrees");
+function resolveArchiveWorktreesDir(store: TaskStore, configured?: string, workspaceContext?: WorkspaceWorktreeContext): string {
+  return resolveWorktreesDirLayout(store.rootDir, {worktreesDir: configured}, workspaceContext);
 }
 
 export async function buildWorkspaceDisposalPlan(store: TaskStore, task: Task): Promise<{plan: WorkspaceDisposalPlanEntry[]; singularDeduplicated: boolean}> {
@@ -90,7 +89,7 @@ export async function prepareArchivedWorkspaceWorktrees(store: TaskStore, task: 
       reservations[entry.repoRel] = await acquireWorktreePathReservation({
         canonicalPath: canonical,
         rootDir: entry.repoRootDir,
-        worktreesDir: resolveArchiveWorktreesDir({rootDir: entry.repoRootDir} as TaskStore, settings.worktreesDir),
+        worktreesDir: resolveArchiveWorktreesDir(store, settings.worktreesDir, {workspaceRootDir: store.rootDir, repoRelPath: entry.repoRel}),
       });
     }
     return {plan, reservations, singularDeduplicated};
@@ -195,7 +194,7 @@ export async function deleteTaskIfImpl(
   store: TaskStore,
   id: string,
   predicate: (live: Task) => boolean | Promise<boolean>,
-  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext },
+  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext },
 ): Promise<DeleteTaskIfResult> {
   if (options?.auditContext?.taskId === id) throw new TaskSelfDeleteError(id);
   /*

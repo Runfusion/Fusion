@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -489,5 +489,156 @@ describe("renderReport", () => {
 
     assert.match(report, /\| Previous \| _\(seed baseline\)_ \| — \| — \| — \| — \|/);
     assert.match(report, /\| Delta \| — \| n\/a \| n\/a \| n\/a \| n\/a \|/);
+  });
+});
+
+/*
+FNXC:TestVelocityBaseline 2026-08-18-14:35:
+FN-9144 guards the historical-report contract: W33's variance verdict must remain
+visible after unbounded future weekly measurements, including the production append path.
+*/
+describe("durable measurement notes", () => {
+  function entry(capturedAt, notes) {
+    return {
+      capturedAt,
+      gateMs: 9_000,
+      bootSmokeMs: 19_000,
+      testMs: 30_000,
+      quarantineCount: 0,
+      slowestTop20: [],
+      measurementFailures: [],
+      ...(notes === undefined ? {} : { notes }),
+    };
+  }
+
+  function baseFiles(rootDir, entries) {
+    writeJson(rootDir, "scripts/test-velocity-history.json", { entries });
+    writeJson(rootDir, "scripts/lib/test-quarantine.json", { entries: [] });
+  }
+
+  it("renders all annotated history entries newest first and tolerates legacy note shapes", () => {
+    const report = renderReport({
+      gateMs: 9_000,
+      bootSmokeMs: 19_000,
+      testMs: 30_000,
+      capturedAt: "2026-09-01T12:00:00.000Z",
+      slowest: [],
+      quarantine: { total: 0, byAgeBucket: {}, deletionDueEntries: [], deletionDueCount: 0 },
+      entries: [
+        entry("2026-08-16T06:01:44.671Z", [{ text: "W33 variance verdict", addedAt: "2026-08-18T14:35:00.000Z" }]),
+        entry("2026-08-23T06:01:44.671Z", "legacy malformed notes"),
+        entry("2026-08-30T06:01:44.671Z", [{ text: "newer note", addedAt: "2026-08-30T07:00:00.000Z" }]),
+      ],
+    });
+    assert.match(report, /## Measurement notes/);
+    assert.match(report, /2026-W33.*W33 variance verdict/);
+    assert.match(report, /2026-W35.*newer note/);
+    assert.ok(report.indexOf("newer note") < report.indexOf("W33 variance verdict"));
+
+    const empty = renderReport({
+      gateMs: 9_000, bootSmokeMs: 19_000, testMs: 30_000, slowest: [],
+      quarantine: { total: 0, byAgeBucket: {}, deletionDueEntries: [], deletionDueCount: 0 }, entries: [entry("2026-08-16T06:01:44.671Z")],
+    });
+    assert.match(empty, /## Measurement notes\n\n- No notes recorded\./);
+  });
+
+  it("retains a W33 note through one, three, and ten later report-only entries", async () => {
+    const rootDir = tempRoot();
+    try {
+      const w33 = entry("2026-08-16T06:01:44.671Z", [{ text: "W33 retained verdict", addedAt: "2026-08-18T14:35:00.000Z" }]);
+      const later = Array.from({ length: 14 }, (_, index) => entry(`2026-08-${String(17 + index).padStart(2, "0")}T06:01:44.671Z`));
+      for (const count of [1, 4, 14]) {
+        baseFiles(rootDir, [w33, ...later.slice(0, count)]);
+        assert.equal(await main([], { rootDir, stdout: nullStream(), stderr: nullStream() }), 0);
+        const report = readFileSync(path.join(rootDir, "docs/test-velocity-baseline.md"), "utf8");
+        assert.match(report, /2026-W33.*W33 retained verdict/);
+      }
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers an abandoned partial lock acquisition after its stale timeout", async () => {
+    const rootDir = tempRoot();
+    try {
+      baseFiles(rootDir, [entry("2026-08-16T06:01:44.671Z")]);
+      const lockPath = path.join(rootDir, "scripts/.test-velocity-history.lock");
+      mkdirSync(lockPath);
+      const staleAt = new Date(Date.now() - 61_000);
+      utimesSync(lockPath, staleAt, staleAt);
+
+      assert.equal(await main([], { rootDir, stdout: nullStream(), stderr: nullStream() }), 0);
+      assert.equal(existsSync(lockPath), false);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes a delayed measurement append with a concurrent annotation", async () => {
+    const rootDir = tempRoot();
+    try {
+      const capturedAt = "2026-08-16T06:01:44.671Z";
+      baseFiles(rootDir, [entry(capturedAt)]);
+      let releaseMeasurement;
+      let measurementStarted;
+      const started = new Promise((resolve) => { measurementStarted = resolve; });
+      const delayedMeasurement = main(["--measure", "--skip-build-preflight"], {
+        rootDir, stdout: nullStream(), stderr: nullStream(), now: new Date("2026-09-02T12:00:00.000Z"),
+        commandRunner: async () => {
+          if (releaseMeasurement === undefined) {
+            measurementStarted();
+            await new Promise((resolve) => { releaseMeasurement = resolve; });
+          }
+          return { ms: 1_000, failure: null };
+        },
+      });
+      await started;
+      assert.equal(await main(["--note", "concurrent W33 verdict", "--note-target", capturedAt], {
+        rootDir, stdout: nullStream(), stderr: nullStream(), now: new Date("2026-09-02T12:01:00.000Z"),
+      }), 0);
+      releaseMeasurement();
+      assert.equal(await delayedMeasurement, 0);
+
+      const history = JSON.parse(readFileSync(path.join(rootDir, "scripts/test-velocity-history.json"), "utf8"));
+      assert.equal(history.entries.length, 2);
+      assert.deepEqual(history.entries[0].notes.map((note) => note.text), ["concurrent W33 verdict"]);
+      assert.equal(history.entries[1].capturedAt, "2026-09-02T12:00:00.000Z");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("targets past entries idempotently and preserves their notes through a measured append", async () => {
+    const rootDir = tempRoot();
+    try {
+      const capturedAt = "2026-08-16T06:01:44.671Z";
+      baseFiles(rootDir, [entry(capturedAt), entry("2026-08-23T06:01:44.671Z")]);
+      const options = { rootDir, stdout: nullStream(), stderr: nullStream(), now: new Date("2026-09-01T12:00:00.000Z") };
+      assert.equal(await main(["--note", "latest W34 verdict"], options), 0);
+      assert.equal(await main(["--note", "targeted W33 verdict", "--note-target", capturedAt], options), 0);
+      assert.equal(await main(["--note", "targeted W33 verdict", "--note-target", capturedAt], options), 0);
+      const beforeMeasure = JSON.parse(readFileSync(path.join(rootDir, "scripts/test-velocity-history.json"), "utf8"));
+      assert.equal(beforeMeasure.entries[0].notes.length, 1);
+      assert.deepEqual(beforeMeasure.entries[1].notes.map((note) => note.text), ["latest W34 verdict"]);
+
+      assert.equal(await main(["--measure", "--skip-build-preflight"], {
+        ...options,
+        now: new Date("2026-09-02T12:00:00.000Z"),
+        commandRunner: async () => ({ ms: 1_000, failure: null }),
+      }), 0);
+      const afterMeasure = JSON.parse(readFileSync(path.join(rootDir, "scripts/test-velocity-history.json"), "utf8"));
+      assert.deepEqual(afterMeasure.entries[0].notes, beforeMeasure.entries[0].notes);
+      const report = readFileSync(path.join(rootDir, "docs/test-velocity-baseline.md"), "utf8");
+      assert.match(report, /2026-W33.*targeted W33 verdict/);
+
+      const reportBefore = readFileSync(path.join(rootDir, "docs/test-velocity-baseline.md"), "utf8");
+      assert.equal(await main([], options), 0);
+      assert.equal(readFileSync(path.join(rootDir, "docs/test-velocity-baseline.md"), "utf8"), reportBefore);
+      assert.equal(await main(["--note", "bad", "--note-target", "missing"], options), 1);
+      baseFiles(rootDir, [entry(capturedAt), entry("2026-08-15T06:01:44.671Z")]);
+      assert.equal(await main(["--note", "ambiguous", "--note-target", "2026-W33"], options), 1);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 });

@@ -19,7 +19,18 @@ describe("CLI quiet prompt and result source contracts", () => {
       if (exemptSources.has(path)) continue;
       const source = readFileSync(path, "utf8");
       if (!source.includes("createInterface")) continue;
-      expect(source, path).not.toMatch(/output:\s*process\.stdout/);
+      /*
+      FNXC:CliTests 2026-08-23-16:50:
+      MEASURE THE PROMPT, NOT THE FILE. A whole-file search for `output: process.stdout` convicts any
+      module that merely mentions `createInterface` somewhere — `commands/mcp-memory-server.ts` builds
+      an input-only readline over stdin and separately writes JSON-RPC RESPONSES to `process.stdout`,
+      which is its transport and not a prompt. Inspect each `createInterface({ ... })` argument object
+      instead, so the invariant (no readline prompt writes to gated stdout) still fails on a real one.
+      */
+      const interfaceOptions = source.match(/createInterface\(\s*\{[^}]*\}/g) ?? [];
+      for (const options of interfaceOptions) {
+        expect(options, path).not.toMatch(/output:\s*process\.stdout/);
+      }
     }
   });
 

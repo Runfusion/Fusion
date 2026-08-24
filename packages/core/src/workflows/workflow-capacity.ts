@@ -20,7 +20,7 @@
  * in-txn check arbitrates (two holds, one slot → one wins).
  */
 
-import type { Settings } from "../types.js";
+import { DEFAULT_PROJECT_SETTINGS, type Settings } from "../types.js";
 import type { WorkflowIr, WorkflowIrV2, WorkflowIrColumn } from "./workflow-ir-types.js";
 import { DEFAULT_WORKFLOW_COLUMN_IDS } from "./workflow-ir.js";
 import { getTraitRegistry } from "./trait-registry.js";
@@ -29,8 +29,14 @@ import { getTraitRegistry } from "./trait-registry.js";
  *  `settings.maxConcurrent` (the legacy "N agents in-progress" gate). */
 const DEFAULT_WIP_COLUMN_ID = "in-progress";
 
-/** Fallback when `maxWorktrees` is unset. Matches `DEFAULT_SETTINGS.maxWorktrees`. */
-const DEFAULT_MAX_WORKTREES = 4;
+/** Shipped worktree default; kept as an export for capacity consumers and tests. */
+export const DEFAULT_MAX_WORKTREES = DEFAULT_PROJECT_SETTINGS.maxWorktrees;
+
+/** Shipped agent-concurrency default. */
+export const DEFAULT_MAX_CONCURRENT = DEFAULT_PROJECT_SETTINGS.maxConcurrent;
+
+/** Settings-like input accepted by every live, fast, and fallback capacity reader. */
+export type ConcurrencySettingsInput = Partial<Pick<Settings, "maxConcurrent" | "maxWorktrees" | "worktreeLimitEnabled">> | Record<string, unknown> | null | undefined;
 
 /*
 FNXC:CapacityModel 2026-07-28-11:20:
@@ -81,12 +87,47 @@ silently remove the disk bound altogether, which is a leak, not a simplification
 `maxWorktrees` must be named with a reason, so a future raw admission bound fails instead of
 quietly re-limiting a project that turned worktrees off.
 */
-export function resolveWorktreeCapacityLimit(
-  settings: Pick<Settings, "maxWorktrees" | "worktreeLimitEnabled"> | undefined,
-): number | null {
+export function resolveWorktreeCapacityLimit(settings: ConcurrencySettingsInput): number | null {
   if (settings?.worktreeLimitEnabled === false) return null;
   const limit = settings?.maxWorktrees;
-  return typeof limit === "number" && Number.isFinite(limit) ? limit : DEFAULT_MAX_WORKTREES;
+  return typeof limit === "number" && Number.isFinite(limit) && limit > 0
+    ? limit
+    : DEFAULT_MAX_WORKTREES;
+}
+
+/*
+FNXC:CapacityModel 2026-08-21-15:25:
+FN-9185 consolidates the operator-reported max-concurrent mismatch into one resolver.
+The live project settings blob is authoritative; registry snapshots and boot options are
+fallback-only inputs, so every surface falls back to shipped defaults rather than private literals.
+*/
+export function resolveMaxConcurrentSetting(settings: ConcurrencySettingsInput): number {
+  const value = settings?.maxConcurrent;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_MAX_CONCURRENT;
+}
+
+export interface EffectiveConcurrency {
+  maxConcurrent: number;
+  worktreeLimit: number | null;
+  effectiveLimit: number;
+  bindingKnob: "maxConcurrent" | "maxWorktrees";
+}
+
+/** Resolves the configured capacity and its visible, enforced effective ceiling. */
+export function resolveEffectiveConcurrency(settings: ConcurrencySettingsInput): EffectiveConcurrency {
+  const maxConcurrent = resolveMaxConcurrentSetting(settings);
+  const worktreeLimit = resolveWorktreeCapacityLimit(settings);
+  const bindingKnob = worktreeLimit !== null && worktreeLimit <= maxConcurrent
+    ? "maxWorktrees"
+    : "maxConcurrent";
+  return {
+    maxConcurrent,
+    worktreeLimit,
+    effectiveLimit: worktreeLimit === null ? maxConcurrent : Math.min(maxConcurrent, worktreeLimit),
+    bindingKnob,
+  };
 }
 
 /** U6 (KTD-10): sentinel effective-workflow id for default-workflow
@@ -202,13 +243,11 @@ export function resolveColumnCapacity(
   if (configLimit !== undefined) {
     limit = configLimit;
   } else if (limitSetting === "maxConcurrent") {
-    const maxConcurrent = settings?.maxConcurrent;
-    limit = typeof maxConcurrent === "number" && Number.isFinite(maxConcurrent) ? maxConcurrent : 2;
+    limit = resolveMaxConcurrentSetting(settings);
   } else if (columnId === DEFAULT_WIP_COLUMN_ID && isDefaultWorkflowColumns(ir)) {
     // Read-through: legacy maxConcurrent maps onto the default workflow's
     // in-progress WIP limit (U6 scheduler integration).
-    const maxConcurrent = settings?.maxConcurrent;
-    limit = typeof maxConcurrent === "number" && Number.isFinite(maxConcurrent) ? maxConcurrent : 2;
+    limit = resolveMaxConcurrentSetting(settings);
   } else {
     limit = Infinity;
   }

@@ -204,9 +204,16 @@ describe("FN-4811: active worktree removal liveness gate", () => {
         return { kill: () => undefined } as any;
       }) as any);
 
+      /*
+      FNXC:BranchProvenance 2026-08-23-00:20:
+      FN-9161 (e40bcebc27) made the branch deletion inside this recovery provenance-gated: only a
+      branch this task owns is force-deleted, so an operator-supplied ref can never be destroyed by
+      a stale-path cleanup. This case therefore cleans up the task's OWN canonical branch; the
+      unprovable case is covered by the sibling case below.
+      */
       const result = await (executor as any).cleanupConflictingWorktree(
         STALE_PATH,
-        "fusion/fn-9999",
+        "fusion/fn-4811",
         "FN-4811",
       );
 
@@ -214,11 +221,50 @@ describe("FN-4811: active worktree removal liveness gate", () => {
       // Must have run prune after the validation-failed catch.
       expect(execCalls.some((c) => c.includes("git worktree prune"))).toBe(true);
       // Must have attempted branch -D as part of the recovery.
-      expect(execCalls.some((c) => c.includes('git branch -D "fusion/fn-9999"'))).toBe(true);
+      expect(execCalls.some((c) => c.includes('git branch -D "fusion/fn-4811"'))).toBe(true);
       // Must have logged the stale-path cleanup outcome — NOT the generic failure log.
       const logCalls = store.logEntry.mock.calls.map((c: any[]) => String(c[1] ?? ""));
       expect(logCalls.some((m: string) => m.includes("Cleaned up stale conflicting worktree"))).toBe(true);
       expect(logCalls.some((m: string) => m === "Failed to clean up conflicting worktree")).toBe(false);
+    });
+
+    /*
+    FNXC:BranchProvenance 2026-08-23-00:20:
+    The other half of FN-9161's invariant: the same stale-path recovery still prunes, removes the
+    orphan directory, and succeeds — but must NOT delete a branch whose engine provenance it cannot
+    prove (here a ref that is not this task's canonical branch and could be an operator's).
+    */
+    it("does not delete a branch it cannot prove this task owns while recovering a stale path", async () => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+      store.listTasks.mockResolvedValue([]);
+
+      const execCalls: string[] = [];
+      mockedExec.mockImplementation(((cmd: string, _opts: unknown, cb?: (...args: unknown[]) => void) => {
+        execCalls.push(cmd);
+        if (cmd.includes("git worktree remove")) {
+          const err: any = new Error(
+            `Command failed: ${cmd}\nfatal: validation failed, cannot remove working tree:`,
+          );
+          err.stderr = "fatal: validation failed, cannot remove working tree:";
+          cb?.(err, "", err.stderr);
+          return { kill: () => undefined } as any;
+        }
+        cb?.(null, "", "");
+        return { kill: () => undefined } as any;
+      }) as any);
+
+      const result = await (executor as any).cleanupConflictingWorktree(
+        STALE_PATH,
+        "operator/keep-me",
+        "FN-4811",
+      );
+
+      expect(result).toBe(true);
+      expect(execCalls.some((c) => c.includes("git worktree prune"))).toBe(true);
+      expect(execCalls.some((c) => c.includes("git branch -D"))).toBe(false);
+      const logCalls = store.logEntry.mock.calls.map((c: any[]) => String(c[1] ?? ""));
+      expect(logCalls.some((m: string) => m.includes("Cleaned up stale conflicting worktree"))).toBe(true);
     });
   });
 

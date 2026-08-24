@@ -64,6 +64,21 @@ export function resolveQuickAddStartTargetColumn(workflow: ValidatedQuickAddWork
  * precede one non-intake, non-complete Todo lane. Missing, hidden, reordered, or malformed
  * metadata fails closed rather than guessing a transition.
  */
+/*
+FNXC:NewTaskWorkflowStart 2026-08-19-00:17:
+The modal and QuickEntryBox must hide Start when the metadata proves manual intake but no later
+working lane exists. Resolve that proof from the same ordered workflow snapshot used for the actual
+create or move, retaining the Coding (Ideas) atomic-column special case.
+*/
+export function resolveQuickAddStartWorkflowTarget(workflow: ValidatedQuickAddWorkflow | null): string | null {
+  if (!workflow || !workflowSupportsQuickAddStart(workflow)) return null;
+  const initialColumn = resolveQuickAddStartInitialColumn(workflow);
+  if (initialColumn) return initialColumn;
+  if (workflow.id === "builtin:coding-ideas") return null;
+  const intakeColumn = visibleColumns(workflow)[0]?.id;
+  return intakeColumn ? resolveQuickAddStartTargetColumn(workflow, intakeColumn) : null;
+}
+
 export function resolveQuickAddStartInitialColumn(workflow: ValidatedQuickAddWorkflow): string | null {
   if (workflow.id !== "builtin:coding-ideas") return null;
   const columns = visibleColumns(workflow);

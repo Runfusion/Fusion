@@ -319,3 +319,12 @@ export function rejectPlan(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/reject-plan`, projectId), { method: "POST" });
 }
 
+
+/** Dismiss one durable AI merge finding; this is intentionally separate from workflow-step bypass. */
+export function dismissAiMergeReviewFinding(taskId: string, findingId: string, reason: string, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${taskId}/ai-merge-review-findings/${findingId}/dismiss`, projectId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}

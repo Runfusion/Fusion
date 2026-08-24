@@ -229,8 +229,39 @@ describe("resolveAgentPrompt", () => {
     for (const result of [defaultExecutor, seniorEngineer]) {
       expect(result).toContain("Do not call `fn_workflow_select` to change the workflow of the task you are executing");
       expect(result).toContain("The only exception is when the user explicitly requested a specific workflow for this task");
-      expect(result).toContain("You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`");
+      /*
+      FNXC:AgentPrompts 2026-08-23-23:05:
+      The "you may still set the workflow on tasks you create" carve-out was DELETED by FN-125
+      (0b4dbd219b), which withheld `fn_task_create`/`fn_delegate_task` from workflow agents — an
+      executor can no longer create a task, so the carve-out describes an impossible action. The
+      remaining guarantee is the prohibition plus its single user-directed exception.
+      */
+      expect(result).not.toContain("You may still set the workflow on tasks you create");
     }
+  });
+
+  it("renders created-task workflow guidance only for creation tools on the resolved surface", () => {
+    const unavailable = resolveAgentPrompt("executor", undefined, {
+      taskCreateToolAvailable: false,
+      delegateTaskToolAvailable: false,
+    });
+    expect(unavailable).not.toContain("set the workflow on tasks you create");
+
+    const taskCreateOnly = resolveAgentPrompt("executor", undefined, {
+      taskCreateToolAvailable: true,
+      delegateTaskToolAvailable: false,
+    });
+    expect(taskCreateOnly).toContain("set the workflow on tasks you create via `fn_task_create`");
+    expect(taskCreateOnly).not.toContain("set the workflow on tasks you create via `fn_delegate_task`");
+
+    const seniorDelegateOnly = resolveAgentPrompt("executor", {
+      roleAssignments: { executor: "senior-engineer" },
+    }, {
+      taskCreateToolAvailable: false,
+      delegateTaskToolAvailable: true,
+    });
+    expect(seniorDelegateOnly).toContain("set the workflow on tasks you create via `fn_delegate_task`");
+    expect(seniorDelegateOnly).not.toContain("set the workflow on tasks you create via `fn_task_create`");
   });
 
   it("senior-engineer prompt limits fixes to impacted failures and follow-ups unrelated broad-suite failures", () => {
@@ -451,25 +482,12 @@ describe("resolveAgentPrompt", () => {
     expect(triageSource).not.toContain(["FAST", "TRIAGE", "SYSTEM", "PROMPT"].join("_"));
     expect(triageSource).not.toMatch(/export const [A-Z_]*TRIAGE[A-Z_]*SYSTEM_PROMPT\s*=/);
     expect(planningPrompt).toBe(corePrompt);
-    expect(corePrompt).toContain("{{triageProactiveSubtaskSplittingEnabled}}");
-    expect(corePrompt).toContain("Explicit user-requested `breakIntoSubtasks: true` remains governed");
+    expect(corePrompt).toContain("Complexity never authorizes replacing a requested task with child tasks");
 
     const renderedPrompt = renderTriagePolicyPlaceholders(corePrompt, {});
-    expect(renderedPrompt).toContain("**Broad-scope decomposition signals:**");
-    expect(renderedPrompt).toContain("step count would reach 9 or more");
-    expect(renderedPrompt).toContain("would reach 12 or more");
-    expect(renderedPrompt).toContain("20 or more entries");
-    expect(renderedPrompt).toContain("at or above 30 items");
-    expect(renderedPrompt).toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
+    expect(renderedPrompt).toContain("Keep every requested task as one detailed plan regardless of size");
+    expect(renderedPrompt).not.toContain("breakIntoSubtasks");
     expect(renderedPrompt).not.toContain("{{");
-
-    const disabledPrompt = renderTriagePolicyPlaceholders(corePrompt, {
-      triageProactiveSubtaskSplittingEnabled: false,
-    } as never);
-    expect(disabledPrompt).toContain("Proactive oversized-task splitting is DISABLED");
-    expect(disabledPrompt).toContain("Only create child tasks when `breakIntoSubtasks: true` is explicitly present");
-    expect(disabledPrompt).not.toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(disabledPrompt).not.toContain("{{");
   });
 
   it("resolves custom seam prompts and ignores IRs without matching prompts", () => {

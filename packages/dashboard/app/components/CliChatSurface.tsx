@@ -36,6 +36,8 @@ export interface CliChatSurfaceProps {
   renderTranscript: () => ReactNode;
   /** Renders the existing ChatView composer (hidden in raw-terminal mode). */
   renderComposer: () => ReactNode;
+  /** Renders ChatView's transcript-only find row; raw terminal stays terminal-owned. */
+  renderSearch?: () => ReactNode;
   /** Number of composer messages queued behind a busy session (0 = none). */
   queuedCount?: number;
   /** Extra props forwarded to SessionTerminal (posture, settings link, etc.). */
@@ -50,6 +52,7 @@ export function CliChatSurface({
   projectId,
   renderTranscript,
   renderComposer,
+  renderSearch,
   queuedCount = 0,
   terminalProps,
 }: CliChatSurfaceProps) {
@@ -101,7 +104,7 @@ export function CliChatSurface({
           // owns input. Composer is hidden below.
           <SessionTerminal sessionId={cliSessionId} projectId={projectId} {...terminalProps} />
         ) : (
-          renderTranscript()
+          <>{renderSearch?.()}{renderTranscript()}</>
         )}
       </div>
 

@@ -18,6 +18,14 @@ export interface SystemInfo {
   authEnabled: boolean;
   authToken?: string;
   tokenizedUrl?: string;
+  /*
+  FNXC:DevTunnel 2026-08-19-04:30:
+  Public URL of whatever tunnel is exposing this dashboard — `pnpm dev --tunnel` (forwarded over the
+  dev IPC channel) or the operator's own remote tunnel (from the engine's tunnel manager). Either
+  way it belongs on screen: the dev wrapper prints a banner that a TTY run's TUI paints straight
+  over, and the remote tunnel never printed its URL anywhere the terminal could show it at all.
+  */
+  tunnelUrl?: string;
   engineMode: "no-engine" | "active" | "paused";
   fileWatcher: boolean;
   startTimeMs: number;

@@ -47,6 +47,48 @@ describe("event bridge: text/thinking", () => {
     expect(onText.mock.calls.map((c) => c[0]).join("")).toBe("Done. Next step.");
   });
 
+  /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  Normalize numeric boundaries before ACP output is emitted so the shared Chat stream and persisted message receive complete model labels and URL paths.
+  */
+  it("preserves the reported dotted model links across text chunks", () => {
+    const { callbacks, onText } = makeCallbacks();
+    const bridge = createEventBridge(callbacks);
+    for (const text of [
+      "[GPT‑5.",
+      "6 Luna](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-luna) [GPT‑5.",
+      "6 Sol](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-sol) [GPT‑5.",
+      "6 Terra](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-terra)",
+    ]) {
+      bridge.handleSessionUpdate({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      } as SessionUpdate);
+    }
+
+    const output = onText.mock.calls.map(([text]) => text).join("");
+    expect(output).toContain("GPT‑5.6 Luna");
+    expect(output).not.toContain("5. 6");
+    expect(output).toContain("/gpt-5.6-luna");
+    expect(output).toContain("/gpt-5.6-sol");
+    expect(output).toContain("/gpt-5.6-terra");
+  });
+
+  it("preserves numeric token boundaries in the independent thinking accumulator", () => {
+    const { callbacks, onThinking } = makeCallbacks();
+    const bridge = createEventBridge(callbacks);
+    for (const text of ["Version 5.", "6 and decimal 2.", "5"]) {
+      bridge.handleSessionUpdate({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text },
+      } as SessionUpdate);
+    }
+    expect(onThinking.mock.calls.map(([text]) => text).join("")).toBe("Version 5.6 and decimal 2.5");
+  });
+
   it("agent_thought_chunk routes to onThinking, not onText", () => {
     const { callbacks, onText, onThinking } = makeCallbacks();
     const bridge = createEventBridge(callbacks);

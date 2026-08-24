@@ -92,6 +92,33 @@ describe("useChatRooms cache behavior", () => {
     await waitFor(() => expect(result.current.messages[0]?.id).toBe("m9"));
   });
 
+  it("retains active room rows during an uncached refresh", async () => {
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [message("m3", "room-a", "initial")] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms.length).toBeGreaterThan(0));
+
+    act(() => result.current.selectRoom("room-a"));
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+
+    localStorage.removeItem(`${SWR_CACHE_KEYS.CHAT_ROOM_MESSAGES_PREFIX}proj-1:room-a`);
+    const refresh = deferred<{ messages: ChatRoomMessage[] }>();
+    mockFetchChatRoomMessages.mockReturnValueOnce(refresh.promise);
+
+    act(() => {
+      void result.current.refreshRooms();
+    });
+
+    expect(result.current.messages[0]).toMatchObject({ roomId: "room-a" });
+    expect(result.current.messagesLoading).toBe(false);
+
+    await act(async () => {
+      refresh.resolve({ messages: [message("m4", "room-a", "fresh")] });
+      await refresh.promise;
+    });
+
+    await waitFor(() => expect(result.current.messages[0]).toMatchObject({ id: "m4", content: "fresh" }));
+  });
+
   it("cold open keeps loading true until fetch resolves", async () => {
     const messagesDef = deferred<{ messages: ChatRoomMessage[] }>();
     mockFetchChatRoomMessages.mockReturnValueOnce(messagesDef.promise);

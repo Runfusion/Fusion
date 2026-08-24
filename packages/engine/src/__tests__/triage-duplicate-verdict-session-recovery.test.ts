@@ -70,8 +70,27 @@ function createTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-function createStore(task: Task): TaskStore {
+/*
+FNXC:DuplicateIntake 2026-08-23-20:45:
+The duplicate-marker recovery persists through the store's planning-lifecycle seam
+(`withPlanningLifecycleLock` -> `withTaskLock` -> `updateTaskUnlocked({ prompt })`), not by writing
+PROMPT.md itself. A fake store missing those methods makes `persistResetFencedPlanningArtifact`
+throw into its own catch and silently return false, so the recovery looked absent when it had simply
+been swallowed. Model the real hybrid-storage behaviour: a persisted `prompt` lands in
+`.fusion/tasks/<id>/PROMPT.md`, which is the file contract this test asserts.
+*/
+function createStore(task: Task, rootDir: string): TaskStore {
   return {
+    withPlanningLifecycleLock: vi.fn(async (_id: string, fn: () => Promise<void>) => { await fn(); }),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => await fn()),
+    isBackendMode: vi.fn().mockReturnValue(false),
+    updateTaskUnlocked: vi.fn(async (id: string, patch: Record<string, unknown>) => {
+      if (typeof patch.prompt === "string") {
+        const { writeFile } = await import("node:fs/promises");
+        await writeFile(join(rootDir, ".fusion", "tasks", id, "PROMPT.md"), patch.prompt, "utf-8");
+      }
+      return { ...task, ...patch } as TaskDetail;
+    }),
     getTask: vi.fn().mockImplementation(async (id: string) => {
       if (id === task.id) return { ...task, prompt: "", attachments: [], comments: [] } as TaskDetail;
       // The canonical the planner points at: a real, active task.
@@ -137,7 +156,7 @@ describe("duplicate verdict reported in the planner's reply (FN-8600)", () => {
     const task = createTask();
     stubPlanner(rootDir, task.id, DUPLICATE_REPLY);
 
-    await new TriageProcessor(createStore(task), rootDir, {
+    await new TriageProcessor(createStore(task, rootDir), rootDir, {
       acquirePlanningWorktree: async () => null,
     }).specifyTask(task);
 
@@ -157,7 +176,7 @@ describe("duplicate verdict reported in the planner's reply (FN-8600)", () => {
       realSpec,
     );
 
-    await new TriageProcessor(createStore(task), rootDir, {
+    await new TriageProcessor(createStore(task, rootDir), rootDir, {
       acquirePlanningWorktree: async () => null,
     }).specifyTask(task);
 

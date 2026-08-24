@@ -106,6 +106,7 @@ export const tasks = projectSchema.table("tasks", {
   mergerModelId: text("merger_model_id"),
   mergerThinkingLevel: text("merger_thinking_level"),
   mergeRetries: integer("merge_retries"),
+  aiMergeReviewReconciliation: text("ai_merge_review_reconciliation"),
   workflowStepRetries: integer("workflow_step_retries"),
   resumeLimboCount: integer("resume_limbo_count").default(0),
   graphResumeRetryCount: integer("graph_resume_retry_count").default(0),
@@ -148,6 +149,8 @@ export const tasks = projectSchema.table("tasks", {
   branchConflictRecoveryCount: integer("branch_conflict_recovery_count").default(0),
   reviewerContextRetryCount: integer("reviewer_context_retry_count").default(0),
   reviewerFallbackRetryCount: integer("reviewer_fallback_retry_count").default(0),
+  reviewConvergenceStage: integer("review_convergence_stage").default(0),
+  reviewConvergenceEscalationCount: integer("review_convergence_escalation_count").default(0),
   nextRecoveryAt: text("next_recovery_at"),
   error: text("error"),
   summary: text("summary"),
@@ -228,7 +231,8 @@ export const tasks = projectSchema.table("tasks", {
   sourceIssueClosedAt: text("source_issue_closed_at"),
   mergeDetails: jsonb("merge_details"),
   workspaceWorktrees: jsonb("workspace_worktrees"),
-  breakIntoSubtasks: integer("break_into_subtasks").default(0),
+  // FNXC:RepositoryScope 2026-08-20-23:07: explicit task intent must survive PostgreSQL reads independently of acquired worktrees.
+  repositoryScope: jsonb("repository_scope"),
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),
   modifiedFiles: jsonb("modified_files").default([]),
@@ -2189,6 +2193,12 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   // FNXC:ChatPinned 2026-07-16-12:00: nullable timestamp persists the active
   // Direct-session pin; the ChatStore enforces the per-scope max-three invariant.
   pinnedAt: text("pinned_at"),
+  // FNXC:MemoryFocus 2026-08-13-15:57: per-conversation read-time memory FOCUS/TOPIC
+  // (migration 0059). NULL/empty ('' normalized to NULL) means the conversation
+  // inherits the whole-project scope; otherwise it scopes fn_memory_search +
+  // proactive recall to this topic. It is a read-time filter only — Stash capture
+  // stays write-anywhere across every conversation.
+  memoryFocus: text("memory_focus"),
   cliSessionFile: text("cli_session_file"),
   inFlightGeneration: jsonb("in_flight_generation"),
   cliExecutorAdapterId: text("cli_executor_adapter_id"),
@@ -2586,7 +2596,7 @@ every existing REFERENCES central.* is central→central, and R4 requires a tomb
 resolve, so ON DELETE CASCADE would be wrong. Referential integrity is enforced in core.
 The PK is (projectId, actorId, role) because the steady-state ownership audit in schema-applier.ts
 throws on every subsequent boot unless each PK/unique key on a project table includes project_id.
-Materialized by migration 0061_fn_identity_actors.sql.
+Materialized by migration 0067_fn_identity_actors.sql.
 */
 export const actorRoleGrants = projectSchema.table("actor_role_grants", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
@@ -2634,6 +2644,29 @@ export const projectTableNames = [
   "approval_requests",
   "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "memory_recall_records", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
+  /*
+  FNXC:WorkspaceCoordination 2026-08-23-20:05:
+  FN-9059 (migration 0060) added these two tables to the schema without registering them here, so
+  every registry consumer under-counted them: the PostgreSQL test harness never TRUNCATEd them
+  between tests (a held `repo:<repo>` lease leaked from one case into the next and made the next
+  land report the previous test's successor as the busy holder), and health compaction skipped them.
+  */
+  "workspace_coordination_leases", "workspace_land_intents",
+  /*
+  FNXC:PgTableRegistry 2026-08-23-16:05:
+  Second occurrence of the FN-9059 omission above, found by a leaking `current_plan_evidence` row:
+  a task's plan-evidence version counter continued across tests (a fresh KB-002 started at v2), so
+  `task-dependency-mutation.pg` asserted version 2 and read 3 in a whole-file run while passing in
+  isolation. Every table declared with `projectSchema.table(...)` must be registered here — the
+  harness reset and health compaction both drive off this list, and an unregistered table is simply
+  never cleaned. `project-table-registry.test.ts` now fails when the two drift apart.
+  */
+  "chat_session_tags", "chat_tags", "configuration_revisions", "current_plan_evidence",
+  "mission_lineage_stops", "spec_drift_reports", "spec_locks", "symbol_locks",
+  "task_lifecycle_consumer_cursors", "task_lifecycle_consumer_dead_letters",
+  "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
+  "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
+  "unplanned_execution_blocks", "workflow_agent_capacity_leases",
   /* FNXC:Identity 2026-08-09-03:04: registered so the PG test harness TRUNCATEs and vacuums grants; omitting it lets identity rows leak between tests as an order-dependent flake. */
   "actor_role_grants",
   /*

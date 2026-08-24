@@ -80,3 +80,18 @@ Do not change a runtime gate seam on a single weekly measurement. For a future m
 - **FN-8497** (`9002fca9de`) kept only high-value PG canaries and made test lanes concurrent; **`c15c78fee`** created the PostgreSQL gate lane that was explicitly measured here.
 - **FN-8783/FN-8789** established the warm-cache healthy band and transform-cache policy used for comparison.
 - **FN-8937** (`0fbeba50d1`) removed, rather than admitted, an engine-core file in the measurement window; **FN-9096** (`1d3f6c198c`) added the inexpensive static validator.
+
+## FN-9144 confirmation (2026-08-18)
+
+FN-9144 repeated the protocol on HEAD `86950400c9` after a passing `pnpm build`. No unrelated Vitest, build, boot-smoke, or `fn serve` process was present; pre-sample load was 6.49/5.07/4.35 and the cold sample load was 7.01/5.57/4.59.
+
+| Sample | Cache state | Gate wall time |
+|---|---|---:|
+| Warm 1 | warm | 9.0s |
+| Warm 2 | warm | 8.9s |
+| Warm 3 | warm | 9.0s |
+| Cold | transform cache and core bundle removed | 9.7s |
+
+The warm median was **9.0s**, below the 11.0s healthy-band ceiling and the reported 13.0s regression bar. Attribution remained static 2.0s, engine-core 5.2s, PG 3.5s, unit-gate 5.5s, CI-shape 0.8s, and direct core-bundle rebuild 0.18s. The bundle had 411 inputs and 4,189,685 bytes. Unit-gate remained the concurrent critical path, matching FN-9122, so no runtime gate seam changed.
+
+FN-9144 also added the generated velocity report's history-wide measurement-note channel and annotated the W33 capture with this confirmed variance verdict. The note persists in `scripts/test-velocity-history.json` and is rendered from all annotated entries, rather than disappearing when future cycles are appended.

@@ -14,6 +14,7 @@ import {
   columnsWithFlag,
   resolveTaskLifecycleColumns,
   isTerminalColumnRole,
+  resolveEffectiveConcurrency,
 } from "@fusion/core";
 import type { CentralCore as CentralCoreApi, WorkflowIr } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
@@ -320,16 +321,6 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest("cloneUrl can only be provided when gitSetupMode is 'clone'");
       }
 
-      /*
-      FNXC:ProjectSetup 2026-07-18-04:30:
-      skipGitInit is the dashboard's confirmed "create anyway without a git
-      repo" choice when git is missing on the host. Never valid for clone mode
-      (cloning requires git by definition).
-      */
-      const skipGitInit = req.body?.skipGitInit === true;
-      if (skipGitInit && normalizedGitSetupMode === "clone") {
-        throw badRequest("skipGitInit cannot be combined with clone mode");
-      }
       if (normalizedGitSetupMode === "clone" && normalizedCloneUrl === undefined) {
         throw badRequest("cloneUrl must be a non-empty string when gitSetupMode is 'clone'");
       }
@@ -445,7 +436,6 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           name: normalizedName,
           isolationMode,
           nodeId,
-          skipGitInit,
         });
         const project = ensured.project;
 
@@ -1028,8 +1018,19 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         throw notFound("Project not found");
       }
 
+      /*
+      FNXC:CapacityModel 2026-08-21-15:25:
+      FN-9185 replaces this route's historical literal `2` with the target project's
+      live settings blob. Registry metadata only establishes existence and rootDir.
+      */
+      const settings = await (await getOrCreateProjectStore(req.params.id)).getSettingsFast();
+      const capacity = resolveEffectiveConcurrency(settings);
       res.json({
-        maxConcurrent: 2,
+        maxConcurrent: capacity.maxConcurrent,
+        maxWorktrees: capacity.worktreeLimit ?? settings.maxWorktrees,
+        effectiveMaxConcurrent: capacity.effectiveLimit,
+        worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
+        concurrencyBindingKnob: capacity.bindingKnob,
         rootDir: project.path,
       });
     } catch (err: unknown) {

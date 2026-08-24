@@ -322,12 +322,15 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // KTD-5: bounded rework exhaustion → manual hold; release re-enters the group.
     { from: "steps", to: "rework-hold", condition: "outcome:rework-exhausted" },
     { from: "rework-hold", to: "browser-verification", condition: "success" },
-    // browser-verification → code-review → completion-summary → merge-gate; each
-    // optional-group passes through (outcome=success) when disabled, so a task with
-    // both off routes straight to completion summary and merge policy.
-    { from: "browser-verification", to: "code-review", condition: "success" },
-    { from: "code-review", to: "completion-summary", condition: "success" },
-    { from: "completion-summary", to: "merge-gate", condition: "success" },
+    /*
+    FNXC:WorkspaceReviewSeal 2026-08-21-19:36:
+    A completion-summary agent can acquire the task worktree. It therefore precedes Code Review;
+    the approval becomes the final write-sensitive pre-merge gate and cannot be invalidated by the
+    built-in workflow after it is recorded.
+    */
+    { from: "browser-verification", to: "completion-summary", condition: "success" },
+    { from: "completion-summary", to: "code-review", condition: "success" },
+    { from: "code-review", to: "merge-gate", condition: "success" },
     { from: "browser-verification", to: "browser-verification-remediation", condition: "failure" },
     { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
     { from: "code-review", to: "code-review-remediation", condition: "failure" },
@@ -353,6 +356,12 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
     { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
+    /*
+    FNXC:WorkspaceReviewReroute 2026-08-21-20:11:
+    A stale workspace approval returns to the final Code Review gate through a bounded rework
+    edge, preserving the existing graph owner instead of burning a merge retry.
+    */
+    { from: "merge-attempt", to: "code-review", condition: "outcome:workspace-review-required", kind: "rework" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },
     { from: "merge-attempt", to: "end", condition: "failure" },

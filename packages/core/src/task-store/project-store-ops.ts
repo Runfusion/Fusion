@@ -235,6 +235,50 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
       }
       return undefined;
       };
+      const dependencyIds = planningInvalidation
+        ? [...new Set(task.dependencies ?? [])].filter((dependencyId) => dependencyId !== id).sort()
+        : [];
+      const persistWithDependencyTargetValidation = async (): Promise<void | { deletedAt: string }> => {
+        /*
+        FNXC:DependencyIntegrity 2026-08-20-17:53:
+        Test-only ordering barrier: production never sets this private seam. It proves a mutation
+        holding its prerequisite lock serializes a forced delete until that mutation either commits
+        or rolls back, rather than relying on timing-sensitive concurrent PostgreSQL tests.
+        */
+        await (store as unknown as { __afterDependencyTargetLocksForTest?: () => void | Promise<void> }).__afterDependencyTargetLocksForTest?.();
+        const liveDependencyRows = dependencyIds.length === 0
+          ? []
+          : await tx.select({ id: schema.project.tasks.id })
+            .from(schema.project.tasks)
+            .where(and(
+              projectScopeFor(schema.project.tasks.projectId, layer.projectId),
+              isNull(schema.project.tasks.deletedAt),
+              inArray(schema.project.tasks.id, dependencyIds),
+            ));
+        if (liveDependencyRows.length !== dependencyIds.length) {
+          const liveIds = new Set(liveDependencyRows.map((row) => row.id));
+          const missingDependencyId = dependencyIds.find((dependencyId) => !liveIds.has(dependencyId));
+          throw new Error(`Dependency task ${missingDependencyId} not found`);
+        }
+        return persist();
+      };
+      /*
+      FNXC:DependencyIntegrity 2026-08-20-17:53:
+      Dependency targets are advisory-locked before their dependent's persistence lock and then
+      re-read inside this transaction. A forced delete holds the same target lock, so a writer
+      that validated a live prerequisite before waiting cannot commit its edge after that task is
+      tombstoned. Sort target IDs to retain deterministic ordering for multi-dependency mutations.
+      */
+      const serializeDependencyTargets = async (index: number): Promise<void | { deletedAt: string }> => {
+        if (index >= dependencyIds.length) {
+          return withTaskWorkflowSerialization(tx, layer.projectId, id, persistWithDependencyTargetValidation);
+        }
+        return withTaskWorkflowSerialization(tx, layer.projectId, dependencyIds[index], () =>
+          serializeDependencyTargets(index + 1));
+      };
+      if (planningInvalidation) {
+        return serializeDependencyTargets(0);
+      }
       /*
       FNXC:PlanningDependencyReseed 2026-08-04-01:57:
       Planning invalidation shares this task-scoped transaction lock with
@@ -242,7 +286,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
       retained because that persisted graph edge has the same serialization
       requirement.
       */
-if (planningInvalidation || task.workflowStepResults?.some(isPlanReviewSatisfied)) {
+      if (task.workflowStepResults?.some(isPlanReviewSatisfied)) {
         return withTaskWorkflowSerialization(tx, layer.projectId, id, persist);
       }
       return persist();

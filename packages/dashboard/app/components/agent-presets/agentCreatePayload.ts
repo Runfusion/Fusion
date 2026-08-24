@@ -1,7 +1,8 @@
 import type { AgentCapability, AgentCreateInput, AgentOnboardingSummary } from "../../api";
+import type { ThinkingLevel } from "@fusion/core";
 import type { AgentPreset } from "./index";
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type { ThinkingLevel };
 
 export const VALID_AGENT_CAPABILITIES = new Set<string>(["triage", "executor", "reviewer", "merger", "scheduler", "engineer", "custom"]);
 

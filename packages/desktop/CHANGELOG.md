@@ -1,5 +1,61 @@
 # @fusion/desktop
 
+## 0.77.0-beta.8
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.8
+- @fusion/dashboard@0.77.0-beta.8
+- @fusion/engine@0.77.0-beta.8
+
+## 0.77.0-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.7
+- @fusion/dashboard@0.77.0-beta.7
+- @fusion/engine@0.77.0-beta.7
+
+## 0.77.0-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.6
+- @fusion/dashboard@0.77.0-beta.6
+- @fusion/engine@0.77.0-beta.6
+
+## 0.77.0-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.5
+- @fusion/dashboard@0.77.0-beta.5
+- @fusion/engine@0.77.0-beta.5
+
+## 0.77.0-beta.4
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.4
+- @fusion/dashboard@0.77.0-beta.4
+- @fusion/engine@0.77.0-beta.4
+
+## 0.77.0-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.3
+- @fusion/dashboard@0.77.0-beta.3
+- @fusion/engine@0.77.0-beta.3
+
+## 0.77.0-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.2
+- @fusion/dashboard@0.77.0-beta.2
+- @fusion/engine@0.77.0-beta.2
+
 ## 0.77.0-beta.1
 
 ### Patch Changes

@@ -8,7 +8,7 @@ import path from "node:path";
 const requireFromEngine = createRequire(new URL("../../../engine/package.json", import.meta.url));
 const { chromium } = requireFromEngine("playwright-core") as { chromium: { launch(options: { executablePath: string; headless: boolean; args?: string[] }): Promise<Browser> } };
 type Browser = { newPage(options: { viewport: { width: number; height: number } }): Promise<Page>; close(): Promise<void> };
-type Page = { goto(url: string): Promise<unknown>; evaluate<T, Arg = undefined>(fn: (arg: Arg) => T, arg?: Arg): Promise<T>; locator(selector: string): Locator; waitForTimeout(ms: number): Promise<void>; screenshot(options: { path: string }): Promise<void>; close(): Promise<void>; context(): { newCDPSession(page: Page): Promise<Cdp> }; on(event: "console" | "pageerror", listener: (message: { text?(): string; message?: string }) => void): void };
+type Page = { goto(url: string): Promise<unknown>; evaluate<T, Arg = undefined>(fn: (arg: Arg) => T, arg?: Arg): Promise<T>; locator(selector: string): Locator; mouse: { move(x: number, y: number): Promise<void>; down(): Promise<void>; up(): Promise<void> }; waitForTimeout(ms: number): Promise<void>; screenshot(options: { path: string }): Promise<void>; close(): Promise<void>; context(): { newCDPSession(page: Page): Promise<Cdp> }; on(event: "console" | "pageerror", listener: (message: { text?(): string; message?: string }) => void): void };
 type Locator = { boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> };
 type Cdp = { send(method: string, params: Record<string, unknown>): Promise<unknown> };
 type Point = { x: number; y: number };
@@ -41,6 +41,7 @@ const screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8602");
 const floatingWindowScreenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8605");
 const fn8607Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8607");
 const fn8806Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8806");
+const fn115Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-115");
 
 async function touchDrag(cdp: Cdp, point: Point, delta = { x: 48, y: 36 }) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y, id: 1 }] });
@@ -776,6 +777,78 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     expect(state.fitting).toEqual({ width: state.fitting.width, controls: 0, collapsed: true });
     expect(state.overflowing).toEqual({ width: state.overflowing.width, controls: 1, collapsed: true });
     expect(state.fittingAgain).toEqual({ width: state.fittingAgain.width, controls: 0, collapsed: true });
+    await page.close();
+  }, 30_000);
+
+  /*
+  FNXC:BoardNavigation 2026-08-21-18:12:
+  FN-115 requires native Chromium mouse delivery because jsdom cannot model pointer-capture
+  retargeting. A stationary card click must open the production popup; a horizontal card drag must
+  pan without opening it, and the next click must remain usable on desktop, tablet, and mobile touch.
+  */
+  for (const [name, width, height] of [["desktop", 1280, 900], ["tablet", 820, 1180]] as const) {
+    it(`opens a Board task popup after a stationary card click at ${name} width`, async () => {
+      const page = await browser.newPage({ viewport: { width, height } });
+      const cdp = await page.context().newCDPSession(page);
+      await setDesktopMetrics(cdp, width, height);
+      await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=board-card-click-app&openMobileTasksInPopup=true&reset=1`);
+      await page.waitForTimeout(350);
+      const cardSelector = ".card[data-id='FN-TITLE-FLICKER'] .card-title";
+      const boardSelector = "main.board-workflow-columns";
+      const ready = await page.evaluate(async ({ cardSelector, boardSelector }) => {
+        for (let frame = 0; frame < 12; frame++) {
+          const card = document.querySelector<HTMLElement>(cardSelector);
+          const board = document.querySelector<HTMLElement>(boardSelector);
+          if (card && board && board.scrollWidth > board.clientWidth) return true;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+        return false;
+      }, { cardSelector, boardSelector });
+      expect(ready).toBe(true);
+      const card = await targetCenter(page, cardSelector);
+      await page.mouse.move(card.x, card.y);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+      expect(await page.evaluate(() => Boolean(document.querySelector(".floating-window--task-detail")))).toBe(true);
+      if (name === "desktop") {
+        await mkdir(fn115Screenshots, { recursive: true });
+        await page.screenshot({ path: path.join(fn115Screenshots, "task-card-detail-open.png") });
+      }
+      const close = await targetCenter(page, ".floating-window--task-detail button[aria-label='Close']");
+      await page.mouse.move(close.x, close.y);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+      expect(await page.evaluate(() => document.querySelector(".floating-window--task-detail") === null)).toBe(true);
+      const beforeDrag = await page.evaluate((selector) => document.querySelector<HTMLElement>(selector)?.scrollLeft ?? 0, boardSelector);
+      await page.mouse.move(card.x, card.y);
+      await page.mouse.down();
+      await page.mouse.move(card.x - 48, card.y);
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+      expect(await page.evaluate((selector) => document.querySelector<HTMLElement>(selector)?.scrollLeft ?? 0, boardSelector)).not.toBe(beforeDrag);
+      expect(await page.evaluate(() => Boolean(document.querySelector(".floating-window--task-detail")))).toBe(false);
+      await page.mouse.move(card.x, card.y);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+      expect(await page.evaluate(() => Boolean(document.querySelector(".floating-window--task-detail")))).toBe(true);
+      await page.close();
+    }, 30_000);
+  }
+
+  it("keeps mobile task-card touch activation outside the desktop pan owner", async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, screenWidth: 390, screenHeight: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=board-card-click-app&openMobileTasksInPopup=true&reset=1`);
+    await page.waitForTimeout(350);
+    const card = await targetCenter(page, ".card[data-id='FN-TITLE-FLICKER'] .card-title");
+    await touchTap(cdp, card);
+    await page.waitForTimeout(100);
+    expect(await page.evaluate(() => Boolean(document.querySelector(".floating-window--task-detail")))).toBe(true);
     await page.close();
   }, 30_000);
 

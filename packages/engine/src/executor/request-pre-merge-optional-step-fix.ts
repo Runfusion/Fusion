@@ -55,6 +55,55 @@ import {
 } from "../plan-review-feedback-history.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { deriveWorkspaceReviewRemediation } from "./workspace-review-remediation.js";
+import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
+
+function normalizeConvergenceText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/*
+FNXC:RepositoryScope 2026-08-21-02:17:
+R10 convergence is keyed by the actual review input: review node, repository, confirmed scope generation, exact diff fingerprint, blocking verdict, and normalized findings. Reviewer prose is presentation only; it may change without a new defect or remain unchanged after the underlying diff changes.
+*/
+export function reviewInputSignature(result: CoreWorkflowStepResult): string | undefined {
+  const singularFindings = (result.findings ?? [])
+    .map((finding) => `${normalizeConvergenceText(finding.filePath)}:${finding.line ?? ""}:${normalizeConvergenceText(finding.body)}`)
+    .sort()
+    .join("|");
+  if (result.reviewInputFingerprint && result.verdict === "REVISE") {
+    return `${result.workflowStepId}\u0000${result.reviewInputFingerprint}\u0000${result.verdict}\u0000${singularFindings}`;
+  }
+  const blocking = (result.repositoryReviewOutcomes ?? [])
+    .filter((outcome) => outcome.status === "REVIEWED" && (outcome.verdict === "REVISE" || outcome.verdict === "RETHINK"))
+    .map((outcome) => {
+      const findings = (outcome.findings ?? [])
+        .map((finding) => `${finding.id}:${normalizeConvergenceText(finding.title)}:${normalizeConvergenceText(finding.body)}`)
+        .sort()
+        .join("|");
+      return `${outcome.repository}\u0000${outcome.fingerprint ?? ""}\u0000${outcome.verdict}\u0000${findings}`;
+    })
+    .sort();
+  if (blocking.length === 0 || result.repositoryScopeRevision === undefined) return undefined;
+  return `${result.workflowStepId}\u0000${result.repositoryScopeRevision}\u0000${blocking.join("\u0001")}`;
+}
+
+export function hasRepeatedUnchangedReview(task: Task, info: RequestPreMergeOptionalStepFixInfo): boolean {
+  const revisionKey = info.nodeId ?? info.stepName;
+  if (!revisionKey) return false;
+  const current = (task.workflowStepResults ?? []).find((result) =>
+    (result.workflowStepId === info.nodeId || result.workflowStepName === info.stepName)
+    && result.verdict === "REVISE",
+  );
+  if (!current) return false;
+  const currentSignature = reviewInputSignature(current);
+  if (!currentSignature) return false;
+  const previous = current.priorAttempts?.[0];
+  return previous?.verdict === "REVISE" && reviewInputSignature(previous) === currentSignature;
+}
+
+/** Backward-compatible code-review name retained for existing remediation callers. */
+export const hasRepeatedUnchangedCodeReview = hasRepeatedUnchangedReview;
 
 export type RequestPreMergeOptionalStepFixInfo = {
   stepName: string;
@@ -101,6 +150,7 @@ export type RequestPreMergeOptionalStepFixDeps = {
     mergeVerificationFailure: boolean,
     retryPresentation?: { attempt: number; max?: number },
     findings?: WorkflowReviewFinding[],
+    persistWorktreePath?: boolean,
   ) => Promise<void>;
 };
 
@@ -224,6 +274,11 @@ export async function requestPreMergeOptionalStepFix(
       // re-owned from the deleted triage gate), not a silent leave-in-place.
       const feedbackForPark = info.feedback?.trim()
         || "Plan Review requested another planning revision but the replan budget is exhausted.";
+      const outcome = await routeReviewConvergenceLadder(deps, taskId, {
+        kind: "plan-review-cap", workflowStepId: info.nodeId, stepName: info.stepName,
+        feedback: feedbackForPark, findings: info.findings, attempt: currentCount, max: budget.max,
+      });
+      if (outcome === "escalated" || outcome === "arbitrated") return true;
       await deps.parkPlanReviewReplanCapExhausted(taskId, String(budget.max), currentCount, feedbackForPark);
       return true;
     }
@@ -258,12 +313,12 @@ export async function requestPreMergeOptionalStepFix(
       // U3: the unbounded-default safety ceiling parks awaiting-approval with the replan-cap reason
       // (re-owned from the deleted triage gate) so non-convergence surfaces to a human instead of
       // silently sitting in place.
-      await deps.parkPlanReviewReplanCapExhausted(
-        taskId,
-        String(unboundedReplanCap),
-        currentCount,
-        feedback,
-      );
+      const outcome = await routeReviewConvergenceLadder(deps, taskId, {
+        kind: "plan-review-cap", workflowStepId: info.nodeId, stepName: info.stepName,
+        feedback, findings: info.findings, attempt: currentCount, max: unboundedReplanCap,
+      });
+      if (outcome === "escalated" || outcome === "arbitrated") return true;
+      await deps.parkPlanReviewReplanCapExhausted(taskId, String(unboundedReplanCap), currentCount, feedback);
       return true;
     }
     const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
@@ -291,7 +346,12 @@ export async function requestPreMergeOptionalStepFix(
     );
     deps.workflowLifecycleMovesInFlight.add(taskId);
     try {
-      await moveTaskToReplanColumn(deps.store, { id: taskId, column: liveTask.column }, replanColumn);
+      await moveTaskToReplanColumn(
+        deps.store,
+        { id: taskId, column: liveTask.column },
+        replanColumn,
+        { workflowMoveSource: "workflow-remediation" },
+      );
     } finally {
       deps.workflowLifecycleMovesInFlight.delete(taskId);
     }
@@ -329,13 +389,55 @@ export async function requestPreMergeOptionalStepFix(
   }
 
   const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
+  /*
+  FNXC:RepositoryScope 2026-08-21-01:53:
+  Two identical Code Review rejections with unchanged durable review input cannot be repaired by
+  another executor bounce. Park the task for an operator before a third session; new review output,
+  a changed diff, or a scope revision naturally produces a different durable result and reopens it.
+  */
+  const reviewResult = (liveTask.workflowStepResults ?? []).find((result) =>
+    (result.workflowStepId === info.nodeId || result.workflowStepName === info.stepName)
+    && result.verdict === "REVISE",
+  );
+  const derivedRemediation = reviewResult ? deriveWorkspaceReviewRemediation(reviewResult) : undefined;
+  // FNXC:WorkspaceFinalization 2026-08-21-09:09: structured outcomes can exist on legacy
+  // single-repository flows; only a durable workspace map activates scoped routing and persistence.
+  const remediation = derivedRemediation && liveTask.workspaceWorktrees ? derivedRemediation : undefined;
+  const priorRemediation = liveTask.repositoryScope?.reviewRemediation;
+  const hasDurableRepeatedWorkspaceReview = remediation !== undefined
+    && priorRemediation?.scopeRevision === remediation.scopeRevision
+    && priorRemediation.repository === remediation.repository
+    && priorRemediation.inputSignature === remediation.inputSignature;
+  const updateWorkspaceReviewState = (deps.store as TaskStore & {
+    updateWorkspaceReviewState?: TaskStore["updateWorkspaceReviewState"];
+  }).updateWorkspaceReviewState;
+  if (remediation && !hasDurableRepeatedWorkspaceReview && updateWorkspaceReviewState) {
+    const persisted = await updateWorkspaceReviewState.call(deps.store, taskId, remediation.scopeRevision, remediation);
+    if (!persisted.updated) {
+      executorLog.warn(`${taskId}: workspace Code Review remediation was superseded by a repository scope change.`);
+      return false;
+    }
+  }
+  if (hasDurableRepeatedWorkspaceReview || ((!remediation || !updateWorkspaceReviewState) && hasRepeatedUnchangedCodeReview(liveTask, info))) {
+    const outcome = await routeReviewConvergenceLadder(deps, taskId, {
+      kind: "repeat-unchanged", workflowStepId: info.nodeId, stepName: info.stepName,
+      feedback: info.feedback, findings: info.findings, attempt: countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName),
+      max: budget.unbounded ? undefined : budget.max,
+    });
+    if (outcome === "escalated" || outcome === "arbitrated") return true;
+    const runContext = deps.runContextFor(taskId);
+    await deps.store.logEntry(taskId, "Code Review did not converge — awaiting operator action", `The same Code Review revision was returned twice without a new review result. Latest feedback:\n${info.feedback}`, runContext);
+    await deps.store.updateTask(taskId, { status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence", error: null, nextRecoveryAt: null }, runContext);
+    return false;
+  }
   const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
   if (!budget.unbounded && currentCount >= budget.max) {
-    // Budget exhaustion is a legitimate terminal outcome, but it must be visible: the card stays
-    // in place with a failed pre-merge step and only an operator bypass clears it.
-    executorLog.warn(
-      `${taskId}: pre-merge remediation budget EXHAUSTED for step "${info.stepName}" (${currentCount}/${String(budget.max)}). Card left parked for operator action.`,
-    );
+    const outcome = await routeReviewConvergenceLadder(deps, taskId, {
+      kind: "budget-exhausted", workflowStepId: info.nodeId, stepName: info.stepName,
+      feedback: info.feedback, findings: info.findings, attempt: currentCount, max: budget.max,
+    });
+    if (outcome === "escalated" || outcome === "arbitrated") return true;
+    executorLog.warn(`${taskId}: pre-merge remediation budget EXHAUSTED for step "${info.stepName}" (${currentCount}/${String(budget.max)}). Card left parked for operator action.`);
     return false;
   }
 
@@ -349,9 +451,20 @@ export async function requestPreMergeOptionalStepFix(
     optionalStepRevisionLogOutcome(`Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`, revisionKey),
     deps.runContextFor(taskId),
   );
-  await deps.sendTaskBackForFix(
+  const remediationWorktreePath = remediation
+    ? liveTask.workspaceWorktrees?.[remediation.repository]?.worktreePath
+    : liveTask.worktree;
+  if (remediation && !remediationWorktreePath) {
+    await deps.store.updateTask(taskId, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+      error: `Workspace Code Review remediation target ${remediation.repository} has no acquired worktree.`,
+    });
+    return false;
+  }
+  const sendArgs = [
     liveTask,
-    liveTask.worktree ?? "",
+    remediationWorktreePath ?? "",
     info.feedback,
     info.stepName,
     `Pre-merge optional workflow step "${info.stepName}" requested revision`,
@@ -359,6 +472,11 @@ export async function requestPreMergeOptionalStepFix(
     false,
     { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
     info.findings,
-  );
+  ] as const;
+  if (remediation) {
+    await deps.sendTaskBackForFix(...sendArgs, false);
+  } else {
+    await deps.sendTaskBackForFix(...sendArgs);
+  }
   return true;
 }

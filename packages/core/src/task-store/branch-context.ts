@@ -20,16 +20,36 @@ export function parseTaskBranchContextFromSourceMetadata(sourceMetadata: Record<
   const groupId = typeof candidate.groupId === "string"
     ? candidate.groupId.trim() || undefined
     : undefined;
-  if (candidate.source !== "planning" && candidate.source !== "mission" && candidate.source !== "new-task") return undefined;
-  if (candidate.assignmentMode !== "shared" && candidate.assignmentMode !== "per-task-derived") return undefined;
+  const source = candidate.source;
+  const assignmentMode = candidate.assignmentMode;
+  const hasAssignment = (source === "planning" || source === "mission" || source === "new-task")
+    && (assignmentMode === "shared" || assignmentMode === "per-task-derived");
+  const override = candidate.branchOverride;
+  const overrideRecord = override && typeof override === "object" && !Array.isArray(override)
+    ? override as Record<string, unknown>
+    : undefined;
+  const branchOverride = overrideRecord?.by === "operator"
+    && typeof overrideRecord.at === "string"
+    && typeof overrideRecord.branch === "string"
+    && overrideRecord.branch.trim().length > 0
+    ? {
+        by: "operator" as const,
+        at: overrideRecord.at,
+        branch: overrideRecord.branch,
+        ...(typeof overrideRecord.previousBranch === "string"
+          ? { previousBranch: overrideRecord.previousBranch }
+          : {}),
+      }
+    : undefined;
+  if (!hasAssignment && !branchOverride) return undefined;
   const inheritedBaseBranch = typeof candidate.inheritedBaseBranch === "string" && candidate.inheritedBaseBranch.trim().length > 0
     ? candidate.inheritedBaseBranch.trim()
     : undefined;
   return {
     ...(groupId ? { groupId } : {}),
-    source: candidate.source,
-    assignmentMode: candidate.assignmentMode,
-    inheritedBaseBranch,
+    ...(hasAssignment ? { source, assignmentMode } : {}),
+    ...(inheritedBaseBranch ? { inheritedBaseBranch } : {}),
+    ...(branchOverride ? { branchOverride } : {}),
   };
 }
 
@@ -44,9 +64,10 @@ export function withTaskBranchContextInSourceMetadata(
       ...(branchContext.groupId?.trim()
         ? { groupId: branchContext.groupId.trim() }
         : {}),
-      source: branchContext.source,
-      assignmentMode: branchContext.assignmentMode,
+      ...(branchContext.source ? { source: branchContext.source } : {}),
+      ...(branchContext.assignmentMode ? { assignmentMode: branchContext.assignmentMode } : {}),
       ...(branchContext.inheritedBaseBranch ? { inheritedBaseBranch: branchContext.inheritedBaseBranch } : {}),
+      ...(branchContext.branchOverride ? { branchOverride: branchContext.branchOverride } : {}),
     },
   };
 }

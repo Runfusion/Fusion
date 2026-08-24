@@ -135,8 +135,12 @@ describe("remote access API route contracts", () => {
         providers: expect.objectContaining({
           cloudflare: expect.objectContaining({ quickTunnel: true }),
         }),
+        tokenStrategy: expect.objectContaining({
+          persistent: expect.objectContaining({ token: "frt_persistent_token" }),
+        }),
       }),
     }));
+    expect(JSON.stringify(putRes.body)).not.toContain("frt_persistent_token");
   });
 
   it("persists Tailscale accept-routes and lifecycle fields without erasing populated branches", async () => {

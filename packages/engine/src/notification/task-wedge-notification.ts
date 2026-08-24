@@ -1,5 +1,6 @@
 import { classifyTerminalFailureAutoRecovery, type TerminalFailureAutoRecoveryDecision, type Task } from "@fusion/core";
 import { hasTransientMergeRecoveryOwner } from "../errors/transient-merge-error-classifier.js";
+import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "../healing/no-progress-requeue-budget.js";
 
 /** A bounded, operator-safe description of a task that cannot make progress. */
 export interface TaskWedgeDescriptor {
@@ -201,6 +202,14 @@ export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
   if (task.status !== "failed") return null;
   if (error.startsWith("EXECUTION_DISPATCH_LOOP_EXHAUSTED")) {
     return { reasonKey: "execution-dispatch-loop-exhausted", reason: "Execution re-queued without progress until its retry budget was exhausted.", action: "Retry, decompose, or rescope the task." };
+  }
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-21-15:44:
+  #3496's sentinel must precede preserved failure text matchers. Otherwise the
+  terminal owner treats this park as generic, clears error, and restarts the loop.
+  */
+  if (error.startsWith(NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX)) {
+    return { reasonKey: "no-progress-requeue-budget-exhausted", reason: "Self-healing exhausted its no-progress requeue budget.", action: "Repair the environment or task, then retry the task." };
   }
   if (error.includes("tool failure") || error.includes("Tool failure")) {
     return { reasonKey: "tool-failure-retry-exhausted", reason: "Execution tool-failure retries were exhausted.", action: "Inspect the failing tool and retry the task." };

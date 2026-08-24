@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { isReviewColumnRole } from "../utils/columnRoles";
-import type { Task, TraitFlags } from "@fusion/core";
+import { DEFAULT_PROJECT_SETTINGS, type Task, type TraitFlags } from "@fusion/core";
 import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask, isWaitingAgentTask } from "../../../core/src/agents/live-agent-count";
 import { fetchExecutorStats } from "../api";
 import type { ExecutorStats, ExecutorState } from "../api";
@@ -138,13 +138,15 @@ function hasActionableBlockedBy(blockedBy: Task["blockedBy"] | string[] | null):
  * - Derives executorState from globalPause and enginePaused flags, with globalPause mapping to "stopped" and enginePaused to "paused" at any running count
  * - Returns ExecutorStats object with reactive updates
  */
-const DEFAULT_API_DATA: Pick<ExecutorStats, "maxConcurrent" | "lastActivityAt"> & {
+const DEFAULT_API_DATA: Pick<ExecutorStats, "maxConcurrent" | "effectiveMaxConcurrent" | "concurrencyBindingKnob" | "lastActivityAt"> & {
   globalPause: boolean;
   enginePaused: boolean;
 } = {
   globalPause: false,
   enginePaused: false,
-  maxConcurrent: 2,
+  maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
+  effectiveMaxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
+  concurrencyBindingKnob: "maxConcurrent",
 };
 
 export function useExecutorStats(tasks: Task[], projectId?: string, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): UseExecutorStatsResult {
@@ -260,6 +262,8 @@ export function useExecutorStats(tasks: Task[], projectId?: string, columnFlagsB
     ...taskStats,
     executorState,
     maxConcurrent: apiData.maxConcurrent,
+    effectiveMaxConcurrent: apiData.effectiveMaxConcurrent,
+    concurrencyBindingKnob: apiData.concurrencyBindingKnob,
     lastActivityAt: apiData.lastActivityAt,
   };
 

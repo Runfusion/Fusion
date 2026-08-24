@@ -12,13 +12,18 @@
 
 import { TaskStore } from "../store.js";
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
-import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
+import {
+  isBuiltinWorkflowEnabled,
+  isBuiltinWorkflowId,
+  isBuiltinWorkflowToggleEligible,
+  resolveEffectiveDefaultWorkflowId,
+} from "../workflows/builtin-workflows.js";
 import { InsightStore } from "../insights/insight-store.js";
 import { ResearchStore } from "../research/research-store.js";
 import { parseWorkflowIr } from "../workflows/workflow-ir.js";
 import { columnsWithFlag } from "../workflows/workflow-lifecycle-traits.js";
 import { type TaskRow } from "./persistence.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { MergeRequestRow, WorkflowWorkItemRow } from "./row-types.js";
 import { TodoStore } from "../stores/todo-store.js";
@@ -218,6 +223,29 @@ export async function getMergeRequestRecordAsyncImpl(store: TaskStore, taskId: s
     return row ? store.rowToMergeRequestRecord(row) : null;
 }
 
+/*
+FNXC:MergeAuthority 2026-08-23-20:05 (review finding #10):
+BATCHED sibling of `getMergeRequestRecordAsyncImpl` for the in-review merge sweep, which needs one
+merge-request state per review-lane card per poll. One `inArray` replaces N single-row selects.
+*/
+export async function getMergeRequestRecordsAsyncImpl(
+  store: TaskStore,
+  taskIds: readonly string[],
+): Promise<Map<string, MergeRequestRecord>> {
+    const byTask = new Map<string, MergeRequestRecord>();
+    if (taskIds.length === 0) return byTask;
+    const layer = store.asyncLayer!;
+    const rows = await layer.db
+      .select()
+      .from(schema.project.mergeRequests)
+      .where(inArray(schema.project.mergeRequests.taskId, [...taskIds]));
+    for (const row of rows as MergeRequestRow[]) {
+      const record = store.rowToMergeRequestRecord(row);
+      byTask.set(record.taskId, record);
+    }
+    return byTask;
+}
+
 export function getWorkflowWorkItemByIdentityImpl(store: TaskStore,
     runId: string,
     taskId: string,
@@ -358,8 +386,14 @@ export async function applyBuiltInPromptOverridesAsyncImpl(store: TaskStore, wor
 
 export async function getDefaultWorkflowIdImpl(store: TaskStore): Promise<string | undefined> {
     const settings = await store.getSettingsFast();
-    const id = (settings as { defaultWorkflowId?: string }).defaultWorkflowId;
-    return id && id.trim() ? id : undefined;
+    const typedSettings = settings as { defaultWorkflowId?: string; enabledBuiltinWorkflowIds?: string[] };
+    /*
+    FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+    All no-selection callers share this effective resolver. A disabled built-in
+    configured as the project default falls through to the first enabled catalog
+    workflow, while custom defaults retain their explicit identity.
+    */
+    return resolveEffectiveDefaultWorkflowId(typedSettings.defaultWorkflowId, typedSettings.enabledBuiltinWorkflowIds);
 }
 
 /**
@@ -387,20 +421,36 @@ export async function resolveOriginWorkflowOverrideIdImpl(
   origin: TaskOriginWorkflowKind,
 ): Promise<string | undefined> {
   let candidate: string | undefined;
+  let enabledBuiltinWorkflowIds: string[] | undefined;
   try {
     const settings = (await store.getSettingsFast()) as {
       taskCreateWorkflowId?: string;
       refinementTaskWorkflowId?: string;
       boardSelectedWorkflowId?: string;
+      enabledBuiltinWorkflowIds?: string[];
     };
     const pinned = origin === "refinement"
       ? settings.refinementTaskWorkflowId
       : settings.taskCreateWorkflowId;
     candidate = pinned?.trim() || settings.boardSelectedWorkflowId?.trim() || undefined;
+    enabledBuiltinWorkflowIds = settings.enabledBuiltinWorkflowIds;
   } catch {
     return undefined;
   }
   if (!candidate) return undefined;
+
+  /*
+  FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+  Origin pins are new-selection settings, not compatibility assignments. A pinned
+  built-in that was disabled must inherit the effective project default; existing
+  tasks still resolve their stored workflow id through the direct definition path.
+  */
+  if (
+    isBuiltinWorkflowId(candidate)
+    && (!isBuiltinWorkflowToggleEligible(candidate) || !isBuiltinWorkflowEnabled(candidate, enabledBuiltinWorkflowIds))
+  ) {
+    return undefined;
+  }
 
   try {
     const def = await store.getWorkflowDefinition(candidate);

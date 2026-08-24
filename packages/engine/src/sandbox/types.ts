@@ -57,6 +57,11 @@ export interface SandboxCapabilities {
   platform: NodeJS.Platform[] | "any";
 }
 
+export interface SandboxWrappedCommand {
+  command: string;
+  args: string[];
+}
+
 export interface SandboxBackend {
   /** Hot-path capability descriptor for backend selection/routing. */
   capabilities(): SandboxCapabilities;
@@ -64,6 +69,12 @@ export interface SandboxBackend {
   prepare(policy: SandboxPolicy): Promise<void>;
   /** Execute a command in the backend's environment. */
   run(command: string, options: SandboxRunOptions): Promise<SandboxRunResult>;
+  /**
+   * Return an argv wrapper when the backend can synchronously contain a shell
+   * command. Native backends return null; this seam lets task tools preserve
+   * their existing spawn ownership while opting into an isolating backend.
+   */
+  wrapCommand?(command: string, options: Pick<SandboxRunOptions, "cwd" | "env">): SandboxWrappedCommand | null;
   /**
    * Execute a spawn-shaped streaming command path.
    * Implementations must not throw for command-level outcomes (abort/timeout/non-zero);

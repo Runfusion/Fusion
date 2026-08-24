@@ -13,6 +13,7 @@ import { basename, dirname, join, normalize, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { promptOutputStream, result as outputResult } from "./output.js";
 import {
+  resolveEffectiveConcurrency,
   CentralCore,
   createTaskStoreForBackend,
   hasProjectIdentity,
@@ -926,13 +927,33 @@ export async function startProjectRuntime(projectId: string): Promise<import("@f
     });
   }
 
-  // Add and start the runtime
+  /*
+  FNXC:CapacityModel 2026-08-21-16:02:
+  FN-9185 requires CLI runtime startup to prefer the target project's live settings blob.
+  Registry settings are only a fallback when the scoped store cannot be opened, preventing a stale
+  central snapshot from overriding a persisted project concurrency setting at startup.
+  */
+  let capacity = resolveEffectiveConcurrency(project.settings);
+  if (existsSync(project.path)) {
+    try {
+      const boot = await createTaskStoreForBackend({ rootDir: project.path, projectId: project.id });
+      try {
+        capacity = resolveEffectiveConcurrency(await boot.taskStore.getSettingsFast());
+      } finally {
+        await boot.shutdown();
+      }
+    } catch {
+      // The registry snapshot remains the documented fallback for an unavailable live store.
+    }
+  }
+
+  // Add and start the runtime.
   const runtime = await pm.addProject({
     projectId: project.id,
     workingDirectory: project.path,
     isolationMode: project.isolationMode,
-    maxConcurrent: project.settings?.maxConcurrent ?? 2,
-    maxWorktrees: project.settings?.maxWorktrees ?? 4,
+    maxConcurrent: capacity.maxConcurrent,
+    maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
   });
 
   return runtime;

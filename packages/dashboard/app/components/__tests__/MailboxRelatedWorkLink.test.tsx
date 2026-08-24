@@ -1,6 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { createInstance } from "i18next";
+import { I18nextProvider, initReactI18next } from "react-i18next";
+import realEnApp from "../../../../i18n/locales/en/app.json";
 import { MailboxRelatedWorkLink } from "../MailboxRelatedWorkLink";
+
+async function createRealCatalogInstance() {
+  const instance = createInstance();
+  await instance.use(initReactI18next).init({
+    lng: "en",
+    fallbackLng: "en",
+    ns: ["app"],
+    defaultNS: "app",
+    returnNull: false,
+    returnEmptyString: false,
+    react: { useSuspense: false },
+    interpolation: { escapeValue: false },
+    resources: { en: { app: realEnApp } },
+  });
+  return instance;
+}
 
 describe("MailboxRelatedWorkLink", () => {
   it("opens a task when task metadata and its handler are available", () => {
@@ -9,6 +28,34 @@ describe("MailboxRelatedWorkLink", () => {
 
     fireEvent.click(screen.getByTestId("mailbox-view-task"));
     expect(onOpenTask).toHaveBeenCalledWith("FN-8428");
+  });
+
+  it("interpolates task and planning-session destinations against the shipping English catalog", async () => {
+    const instance = await createRealCatalogInstance();
+    const onOpenTask = vi.fn();
+    const onOpenPlanningSession = vi.fn();
+    const { rerender, container } = render(
+      <I18nextProvider i18n={instance}>
+        <MailboxRelatedWorkLink metadata={{ taskId: "FN-8428" }} onOpenTask={onOpenTask} />
+      </I18nextProvider>,
+    );
+
+    const taskLink = screen.getByTestId("mailbox-view-task");
+    expect(taskLink).toHaveTextContent("View task FN-8428");
+    expect(taskLink).toHaveAccessibleName("View task: FN-8428");
+    expect(container.textContent).not.toContain("{{");
+    fireEvent.click(taskLink);
+    expect(onOpenTask).toHaveBeenCalledWith("FN-8428");
+
+    rerender(
+      <I18nextProvider i18n={instance}>
+        <MailboxRelatedWorkLink
+          metadata={{ kind: "planning-clarification", sessionId: "planning-8428" }}
+          onOpenPlanningSession={onOpenPlanningSession}
+        />
+      </I18nextProvider>,
+    );
+    expect(screen.getByTestId("mailbox-open-planning-session")).toHaveAccessibleName("Open planning session: planning-8428");
   });
 
   it("opens a planning clarification session when no task target is available", () => {
@@ -30,6 +77,9 @@ describe("MailboxRelatedWorkLink", () => {
 
     rerender(<MailboxRelatedWorkLink metadata={{ kind: "planning-clarification", sessionId: "planning-8428" }} />);
     expect(screen.queryByTestId("mailbox-open-planning-session")).toBeNull();
+
+    rerender(<MailboxRelatedWorkLink metadata={{ taskId: "   " }} onOpenTask={vi.fn()} />);
+    expect(screen.queryByTestId("mailbox-view-task")).toBeNull();
 
     rerender(<MailboxRelatedWorkLink metadata={{ kind: "ordinary" }} onOpenTask={vi.fn()} onOpenPlanningSession={vi.fn()} />);
     expect(screen.queryByTestId("mailbox-view-task")).toBeNull();

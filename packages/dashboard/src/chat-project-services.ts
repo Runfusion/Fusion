@@ -31,8 +31,26 @@ export async function resolveProjectChatContext(options: {
   defaultStore: TaskStore;
   defaultChatStore?: ChatStore;
   engineManager?: ProjectEngineManager;
+  requestStore?: TaskStore;
 }): Promise<{ store: TaskStore; chatStore: ChatStore }> {
-  const { projectId, defaultStore, defaultChatStore, engineManager } = options;
+  const { projectId, defaultStore, defaultChatStore, engineManager, requestStore } = options;
+
+  /*
+  FNXC:TaskChatProjectContext 2026-08-19-17:25:
+  A request's canonical project store is authoritative for task Chat. A secondary project can be
+  reachable before its engine is live, so substituting the dashboard default store here would make
+  its synthetic task session load another project's task context or report it missing.
+  */
+  if (requestStore) {
+    return {
+      store: requestStore,
+      chatStore: getOrCreateScopedChatStore(
+        requestStore,
+        requestStore === defaultStore ? defaultChatStore : undefined,
+      ),
+    };
+  }
+
   if (!projectId) {
     return {
       store: defaultStore,

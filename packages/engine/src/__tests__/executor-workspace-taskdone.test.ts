@@ -25,6 +25,7 @@ import { TaskExecutor } from "../executor.js";
 import {
   deriveRepoForPath,
   deriveRepoScopeSubset,
+  resolveRepoDeclaredScope,
   splitRepoScopedPath,
   UNSCOPED_REPO,
 } from "../worktree/workspace-paths.js";
@@ -115,6 +116,13 @@ describe("U2 — workspace-paths repo-prefix helper (unit)", () => {
     // repo-root scope entry maps to whole-repo **
     expect(deriveRepoScopeSubset(["repo-a"], "repo-a")).toEqual(["**"]);
   });
+  it("resolves prefixed, repo-local, and foreign-only scope without cross-repo fallback", () => {
+    const repoKeys = ["repo-a", "apps/web", "repo-b"];
+    expect(resolveRepoDeclaredScope(["apps/web/src/**", "repo-a"], "apps/web", repoKeys)).toEqual({ scope: ["src/**"], source: "repo-subset" });
+    expect(resolveRepoDeclaredScope(["src/**", "README.md"], "repo-a", repoKeys)).toEqual({ scope: ["src/**", "README.md"], source: "unprefixed-fallback" });
+    expect(resolveRepoDeclaredScope(["repo-a/src/**", "src/**"], "repo-b", repoKeys)).toEqual({ scope: [], source: "foreign-repo-only" });
+    expect(resolveRepoDeclaredScope(["repo-a", "repo-a/src/**"], "repo-a", repoKeys)).toEqual({ scope: ["**", "src/**"], source: "repo-subset" });
+  });
 });
 
 describeIfGit("U2 KTD4 — per-repo scope-leak guard in fn_task_done", () => {
@@ -145,6 +153,39 @@ describeIfGit("U2 KTD4 — per-repo scope-leak guard in fn_task_done", () => {
     expect(result.blocked).toBe(true);
     expect(result.message).toContain("repo-a");
     expect(result.message).toContain("OFFSCOPE.md");
+  });
+
+  it("blocks an unreadable acquired out-of-scope checkout instead of treating lossy capture as clean", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const a = addRepoWorktree(fx, "repo-a", "src/a.ts");
+    const store = createStore([]);
+    const executor = workspaceExecutor(fx, store);
+    const task = makeTask({
+      branch: BRANCH,
+      repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 1 },
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: a.worktreePath, branch: BRANCH, baseCommitSha: a.baseCommitSha },
+        "repo-b": { worktreePath: path.join(fx.repoPath("repo-b"), ".worktrees", "missing"), branch: BRANCH },
+      },
+    });
+
+    const result = await (executor as any).evaluateTaskDoneScopeLeak(task, fx.rootDir, PROMPT, SETTINGS);
+    expect(result).toMatchObject({ blocked: true });
+    expect(result.message).toContain("repo-b");
+    expect(result.message).toContain("cannot establish out-of-scope change evidence");
+  });
+
+  it("accepts repo-local scope for a one-repository workspace", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const a = addRepoWorktree(fx, "repo-a", "src/a.ts");
+    const store = createStore(["src/**"]);
+    const executor = workspaceExecutor(fx, store);
+    const task = makeTask({
+      branch: BRANCH,
+      workspaceWorktrees: { "repo-a": { worktreePath: a.worktreePath, branch: BRANCH, baseCommitSha: a.baseCommitSha } },
+    });
+
+    await expect((executor as any).evaluateTaskDoneScopeLeak(task, fx.rootDir, PROMPT, SETTINGS)).resolves.toEqual({ blocked: false });
   });
 
   it("all-clean: only in-scope changes in both repos → not blocked", async () => {

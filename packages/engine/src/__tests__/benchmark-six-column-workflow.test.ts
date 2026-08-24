@@ -690,9 +690,15 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
       "steps#0:step-execute",
       "steps#0:step-done",
       "browser-verification",
+      /*
+      FNXC:WorkspaceReviewSeal 2026-08-23-18:50:
+      completion-summary precedes code-review since 10c399d01e (FN-120): its agent may acquire and
+      write the task worktree, so the approving review must be the final write-capable pre-merge
+      stage. The oracle trace records that order.
+      */
+      "completion-summary",
       "code-review",
       "code-review::code-review-step",
-      "completion-summary",
       "merge",
       "post-merge-verification",
     ]);
@@ -701,8 +707,8 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
       "custom:plan-review-step",
       "parse",
       "step-execute:0",
-      "custom:code-review-step",
       "custom:completion-summary",
+      "custom:code-review-step",
       "merge",
     ]);
 

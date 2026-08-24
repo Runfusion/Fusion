@@ -27,6 +27,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
     fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 
@@ -205,6 +206,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
     try {
       setupChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
 
       const attachButton = screen.getByTestId("chat-attach-btn");
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -224,6 +226,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
       const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onAccepted?: () => void }) => callbacks?.onAccepted?.());
       setupChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, sendMessage });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       fireEvent.change(fileInput, { target: { files: [new File(["note"], "mobile.txt", { type: "text/plain" })] } });
@@ -249,6 +252,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
       });
 
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
 
       expectMobileEmptyStateToSpanMessagePane("No messages yet. Start the conversation!");
       expect(css).toMatch(/@media \(max-width: 768px\)\s*\{[\s\S]*\.chat-messages\s*\{[\s\S]*padding:\s*var\(--space-lg\) var\(--space-sm\);[\s\S]*\.chat-messages\s*>\s*\.chat-empty-state\s*\{[\s\S]*border:\s*none;[\s\S]*border-radius:\s*0;[\s\S]*background:\s*transparent;/);
@@ -257,9 +261,8 @@ describe("FN-5997 mobile chat message pane rendering", () => {
       document.head.innerHTML = "";
       setupChat();
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-      expectMobileEmptyStateToSpanMessagePane("Start a new conversation");
-      const startConversationEmptyState = screen.getByText("Start a new conversation").closest(".chat-empty-state") as HTMLElement;
-      expect(within(startConversationEmptyState).getByText("New Chat").closest("button")).toBeInTheDocument();
+      expect(screen.getByText("No conversations yet")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-new-btn")).toBeInTheDocument();
 
       cleanup();
       document.head.innerHTML = "";
@@ -270,6 +273,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         messagesLoading: true,
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
       expect(screen.getByText("Loading messages...")).toBeInTheDocument();
 
       cleanup();
@@ -281,6 +285,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         messages: [messageFixture],
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
       expect(screen.getByText("Hello from Fusion")).toBeInTheDocument();
 
       cleanup();
@@ -293,6 +298,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         streamingText: "Streaming reply",
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
       expect(screen.getByText("Streaming reply")).toBeInTheDocument();
       expect(screen.queryByText("No messages yet. Start the conversation!")).toBeNull();
     } finally {
@@ -318,6 +324,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         activeRoom,
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      await act(async () => screen.getByTestId("chat-room-item-eng").click());
 
       expectMobileEmptyStateToSpanMessagePane("No messages yet. Start the conversation!");
 
@@ -329,6 +336,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         messagesLoading: true,
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      await act(async () => screen.getByTestId("chat-room-item-eng").click());
       expect(screen.getByText("Loading messages...")).toBeInTheDocument();
 
       cleanup();
@@ -349,6 +357,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         }],
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      await act(async () => screen.getByTestId("chat-room-item-eng").click());
       expect(screen.getByText("Room message")).toBeInTheDocument();
     } finally {
       restoreMatchMedia.mockRestore();
@@ -364,6 +373,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
         activeSession,
       });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await act(async () => screen.getByTestId(`chat-session-${activeSession.id}`).click());
 
       const messagePaneEmptyState = screen.getByText("No messages yet. Start the conversation!").closest(".chat-empty-state");
       expect(messagePaneEmptyState).toBeTruthy();
@@ -387,248 +397,30 @@ describe("FN-5997 mobile chat message pane rendering", () => {
     }
   });
 
-  it("keeps the tablet sidebar at the same width while the software keyboard is open", async () => {
-    const restoreMatchMedia = mockViewportMode("tablet");
-    const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
-    try {
-      setupChat({
-        sessions: [activeSession],
-        filteredSessions: [activeSession],
-        activeSession,
-      });
-      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-
-      const sidebar = getSidebar();
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-      expect(sidebar.style.width).toBe("280px");
-      expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument();
-
-      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
-      await act(async () => {
-        input.focus();
-      });
-      await setVisualViewportHeight(visualViewport, 560);
-
-      await waitFor(() => expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull());
-      expect(sidebar.style.width).toBe("280px");
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-
-      await act(async () => {
-        input.blur();
-      });
-      await setVisualViewportHeight(visualViewport, 1112);
-
-      await waitFor(() => expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument());
-      expect(sidebar.style.width).toBe("280px");
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-    } finally {
-      restoreMatchMedia.mockRestore();
-    }
-  });
-
-  it("keeps a persisted custom tablet sidebar width while the software keyboard is open", async () => {
-    const restoreMatchMedia = mockViewportMode("tablet");
-    const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
-    localStorage.setItem("fusion:chat-sidebar-width", "360");
-    try {
-      setupChat({
-        sessions: [activeSession],
-        filteredSessions: [activeSession],
-        activeSession,
-      });
-      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-
-      const sidebar = getSidebar();
-      await waitFor(() => expect(sidebar.style.width).toBe("360px"));
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-
-      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
-      await act(async () => {
-        input.focus();
-      });
-      await setVisualViewportHeight(visualViewport, 560);
-
-      await waitFor(() => expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull());
-      expect(sidebar.style.width).toBe("360px");
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-
-      await act(async () => {
-        input.blur();
-      });
-      await setVisualViewportHeight(visualViewport, 1112);
-
-      await waitFor(() => expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument());
-      expect(sidebar.style.width).toBe("360px");
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-    } finally {
-      restoreMatchMedia.mockRestore();
-    }
-  });
-
-  it("keeps a user-collapsed sidebar collapsed across tablet keyboard open and close", async () => {
-    const restoreMatchMedia = mockViewportMode("mobile");
-    const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
-    try {
-      setupChat({
-        sessions: [activeSession],
-        filteredSessions: [activeSession],
-        activeSession,
-      });
-      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-
-      const sidebar = getSidebar();
-      await act(async () => {
-        screen.getByTestId(`chat-session-${activeSession.id}`).click();
-      });
-      expect(sidebar).toHaveClass("chat-sidebar--hidden");
-
-      Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
-      restoreMatchMedia.mockImplementation((query: string) => ({
-        matches: query.includes("min-width: 769px") && query.includes("max-width: 1024px"),
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      }));
-      await act(async () => {
-        window.dispatchEvent(new Event("resize"));
-      });
-
-      expect(sidebar).toHaveClass("chat-sidebar--hidden");
-      expect(sidebar.style.width).toBe("280px");
-
-      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
-      await act(async () => {
-        input.focus();
-      });
-      await setVisualViewportHeight(visualViewport, 560);
-
-      await waitFor(() => expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull());
-      expect(sidebar.style.width).toBe("280px");
-      expect(sidebar).toHaveClass("chat-sidebar--hidden");
-
-      await act(async () => {
-        input.blur();
-      });
-      await setVisualViewportHeight(visualViewport, 1112);
-
-      await waitFor(() => expect(sidebar.style.width).toBe("280px"));
-      expect(sidebar).toHaveClass("chat-sidebar--hidden");
-      expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull();
-    } finally {
-      restoreMatchMedia.mockRestore();
-    }
-  });
-
-  it("keeps sidebar width bounded even if viewport mode flickers to mobile during keyboard-open on tablet", async () => {
-    const restoreMatchMedia = mockViewportMode("tablet");
-    const originalScreenDescriptor = Object.getOwnPropertyDescriptor(window, "screen");
-    const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
-    try {
-      setupChat({
-        sessions: [activeSession],
-        filteredSessions: [activeSession],
-        activeSession,
-      });
-      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-
-      const sidebar = getSidebar();
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-      expect(sidebar.style.width).toBe("280px");
-
-      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
-      await act(async () => {
-        input.focus();
-      });
-      await setVisualViewportHeight(visualViewport, 400);
-
-      // Simulate the FN-6213 bug scenario where viewport mode transiently
-      // resolves to mobile on a tablet while the keyboard has shrunk height.
-      Object.defineProperty(window, "screen", { configurable: true, value: { width: 390, height: 844 } });
-      restoreMatchMedia.mockImplementation((query: string) => ({
-        matches:
-          query.includes("max-width: 768px") ||
-          query.includes("max-height: 480px"),
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      }));
-      await act(async () => {
-        window.dispatchEvent(new Event("resize"));
-      });
-
-      await waitFor(() => expect(sidebar.style.width).toBe(""));
-      const maxWidth = parseInt(getComputedStyle(sidebar).maxWidth, 10);
-      expect(maxWidth).toBeLessThanOrEqual(500);
-      expect(sidebar.offsetWidth).toBeLessThanOrEqual(500);
-    } finally {
-      restoreMatchMedia.mockRestore();
-      if (originalScreenDescriptor) {
-        Object.defineProperty(window, "screen", originalScreenDescriptor);
-      }
-    }
-  });
-
-  it("keeps the desktop sidebar fixed even if visualViewport shrinks while the composer is focused", async () => {
-    const restoreMatchMedia = mockViewportMode("desktop");
-    const visualViewport = mockVisualViewport({ width: 1280, height: 900 });
-    try {
-      setupChat({
-        sessions: [activeSession],
-        filteredSessions: [activeSession],
-        activeSession,
-      });
-      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-
-      const sidebar = getSidebar();
-      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
-      await act(async () => {
-        input.focus();
-      });
-      await setVisualViewportHeight(visualViewport, 560);
-
-      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
-      expect(sidebar.style.width).toBe("280px");
-      expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument();
-    } finally {
-      restoreMatchMedia.mockRestore();
-    }
-  });
-
-  it("keeps the existing mobile sidebar behavior unchanged when the keyboard opens", async () => {
+  it("keeps full-pane detail navigation stable while the mobile keyboard opens", async () => {
     const restoreMatchMedia = mockViewportMode("mobile");
     const visualViewport = mockVisualViewport({ width: 375, height: 812 });
     try {
-      setupChat({
-        sessions: [activeSession],
-        filteredSessions: [activeSession],
-        activeSession,
-      });
+      setupChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession });
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-      const sidebar = getSidebar();
-      const initiallyHidden = sidebar.classList.contains("chat-sidebar--hidden");
-      expect(sidebar.style.width).toBe("");
+      await act(async () => {
+        screen.getByTestId(`chat-session-${activeSession.id}`).click();
+      });
+      expect(getSidebar()).toHaveClass("chat-sidebar--hidden");
+      expect(screen.getByTestId("chat-back-btn")).toHaveAccessibleName("Back to conversations");
       expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull();
 
       const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
-      await act(async () => {
-        input.focus();
-      });
+      await act(async () => input.focus());
       await setVisualViewportHeight(visualViewport, 500);
 
-      expect(sidebar.classList.contains("chat-sidebar--hidden")).toBe(initiallyHidden);
-      expect(sidebar.style.width).toBe("");
+      expect(getSidebar()).toHaveClass("chat-sidebar--hidden");
+      expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
       expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull();
     } finally {
       restoreMatchMedia.mockRestore();
     }
   });
+
 });

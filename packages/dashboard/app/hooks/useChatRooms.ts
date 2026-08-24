@@ -167,10 +167,12 @@ export function useChatRooms(
 
   const roomsRef = useRef(rooms);
   const activeRoomRef = useRef(activeRoom);
+  const messagesRef = useRef(messages);
   const projectContextVersionRef = useRef(0);
   const previousProjectIdRef = useRef<string | undefined>(projectId);
   roomsRef.current = rooms;
   activeRoomRef.current = activeRoom;
+  messagesRef.current = messages;
 
   if (previousProjectIdRef.current !== projectId) {
     previousProjectIdRef.current = projectId;
@@ -192,21 +194,29 @@ export function useChatRooms(
     const cachedMembers = readCache<ChatRoomMember[]>(membersCacheKey(room.id), { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     const hasCachedMessages = Array.isArray(cachedMessages) && cachedMessages.length > 0;
     const hasCachedMembers = Array.isArray(cachedMembers) && cachedMembers.length > 0;
+    const hasRetainedMessages = activeRoomRef.current?.id === room.id
+      && messagesRef.current.length > 0
+      && messagesRef.current.every((message) => message.roomId === room.id);
 
+    /*
+    FNXC:ChatTranscriptRevalidation 2026-08-19-18:09:
+    A same-room background revalidation must not blank a populated selected transcript or
+    invalidate its reader anchor. Only a new room with neither cache nor in-memory rows owns the
+    blocking loader; the active room keeps its rows until its fenced response arrives.
+    */
     if (hasCachedMessages || hasCachedMembers) {
       timer.mark("cache-hit");
-      if (hasCachedMessages) {
+      if (hasCachedMessages && !hasRetainedMessages) {
         setMessages(cachedMessages);
         timer.mark("hydrate");
       }
       if (hasCachedMembers) {
         setActiveRoomMembers(cachedMembers);
       }
-      setMessagesLoading(false);
-    } else {
+    } else if (!hasRetainedMessages) {
       setMessages([]);
-      setMessagesLoading(true);
     }
+    setMessagesLoading(!hasCachedMessages && !hasRetainedMessages);
 
     try {
       const [membersData, messagesData] = await Promise.all([
@@ -231,8 +241,10 @@ export function useChatRooms(
         setMessages([]);
       }
     } finally {
-      setMessagesLoading(false);
-      timer.complete({ warm: hasCachedMessages, membersCached: hasCachedMembers });
+      if (activeRoomRef.current?.id === room.id) {
+        setMessagesLoading(false);
+      }
+      timer.complete({ warm: hasCachedMessages || hasRetainedMessages, membersCached: hasCachedMembers });
     }
   }, [membersCacheKey, messagesCacheKey, projectId]);
 

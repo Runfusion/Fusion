@@ -7,7 +7,7 @@
  * review groups and prose cannot open a terminal lifecycle path.
  */
 import { proseSignalsClearApproval, extractJsonObjectCandidates, textHasStructuredVerdictKey } from "../execution/reviewer.js";
-import { normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, PLAN_REVIEW_GROUP_ID, type WorkflowReviewFinding } from "@fusion/core";
+import { normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, PLAN_REVIEW_GROUP_ID, type WorkflowReviewFinding, type WorkflowRepositoryReviewOutcome } from "@fusion/core";
 
 /** Machine-readable workflow-step verdicts, including Plan Review CLOSE_NO_OP. */
 export type WorkflowStepVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
@@ -58,6 +58,12 @@ export interface WorkflowStepOutcome {
   notes?: string;
   /** Normalized independently actionable feedback from a review-kind node. */
   findings?: WorkflowReviewFinding[];
+  /** Structured workspace review outcomes for durable node-result persistence. */
+  repositoryReviewOutcomes?: WorkflowRepositoryReviewOutcome[];
+  /** Confirmed scope generation used for the workspace review. */
+  repositoryScopeRevision?: number;
+  /** Content-addressed review input used to detect unchanged remediation loops. */
+  reviewInputFingerprint?: string;
   /** Specific prior result containing the findings this review step claims are superseded. */
   supersededFindingSourceWorkflowStepId?: string;
   /** Explicit prior-lane finding IDs this review step claims are now superseded. */

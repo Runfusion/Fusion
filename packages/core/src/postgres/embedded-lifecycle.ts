@@ -62,7 +62,7 @@ import {
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { createServer, type Server } from "node:net";
-import { dirname, join, basename, sep } from "node:path";
+import { dirname, join, basename, sep, resolve } from "node:path";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { createLogger } from "../process/logger.js";
 import { redactConnectionString } from "./credential-redact.js";
@@ -202,7 +202,7 @@ const EMBEDDED_PG_BIN_NAMES = new Set([
  * host-local caches always rematerialize after a desktop update that ships a
  * new fingerprinting strategy (e.g. content-hashing lib/share, not path+size).
  */
-const MATERIALIZATION_MARKER_VERSION = 2;
+const MATERIALIZATION_MARKER_VERSION = 3;
 
 /**
  * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
@@ -361,6 +361,40 @@ function hashPayloadTreeContents(
  * binaries instead of reusing the previous release's host-local cache.
  * Legacy path-only markers fail equality and force rematerialization.
  */
+/*
+ * FNXC:PostgresEmbedded 2026-08-20-01:11:
+ * Issue #3489 reports Windows Defender removing dict_snowball.dll while PostgreSQL
+ * initializes. Win32 4550/4551 are the virus-infected/deleted codes, so match both
+ * signatures narrowly; generic library-load errors have unrelated remediation.
+ */
+export function isWindowsBlockedNativeLibraryError(errorOrText: unknown): boolean {
+  const text = errorOrText instanceof Error ? errorOrText.message : String(errorOrText ?? "");
+  return (/could not load library/i.test(text) && /unknown error 455[01]/i.test(text))
+    || /ERROR_VIRUS_(?:INFECTED|DELETED)/i.test(text);
+}
+
+/** Creates the shared, actionable Windows antivirus recovery instruction. */
+export function describeWindowsBlockedNativeLibraryError(errorOrText: unknown): string {
+  const text = errorOrText instanceof Error ? errorOrText.message : String(errorOrText ?? "");
+  const blockedPath = text.match(/could not load library\s+["']([^"']+)["']/i)?.[1];
+  const pathDetail = blockedPath ? ` Blocked file: ${blockedPath}.` : "";
+  return `${pathDetail} HINT: Windows antivirus blocked a bundled PostgreSQL library. Add an exclusion for %USERPROFILE%\\.fusion\\embedded-postgres in Windows Security → Virus & threat protection → Manage settings → Exclusions, restore the quarantined file from Protection history, then restart Fusion. Fusion re-copies the runtime automatically.`;
+}
+
+export function decorateWindowsBlockedNativeLibraryError(error: unknown, destRoot?: string): Error {
+  const recorded = getEmbeddedPayloadIntegrityFailure(destRoot);
+  if (!isWindowsBlockedNativeLibraryError(error) && !recorded) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Windows antivirus blocked a bundled PostgreSQL library")) {
+    return error instanceof Error ? error : new Error(message);
+  }
+  return new Error(`${message}${recorded ? ` ${recorded.message}` : describeWindowsBlockedNativeLibraryError(error)}`, {
+    cause: error,
+  });
+}
+
 export function buildEmbeddedPostgresMaterializationMarker(nativeRoot: string): string {
   const fingerprint = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
   return `v${MATERIALIZATION_MARKER_VERSION}\n${nativeRoot}\n${fingerprint}\n`;
@@ -372,6 +406,134 @@ function resolveMaterializedEmbeddedPostgresBinary(filePath: string): string | n
   if (!filePath.includes(`${sep}app.asar`)) return null;
   const candidate = join(embeddedPostgresRuntimeBinRoot(), "bin", name);
   return existsSync(candidate) ? candidate : null;
+}
+
+type PayloadInventoryResult = {
+  readonly acceptable: boolean;
+  readonly mismatches: readonly string[];
+  readonly mismatchCount: number;
+};
+
+/**
+ * FNXC:PostgresEmbedded 2026-08-20-01:11:
+ * A marker fingerprints only the source. Defender can remove a copied DLL after
+ * materialization, leaving that marker truthful but the destination unusable.
+ * Compare the bounded source inventory on reuse; exhaustion and unreadable source
+ * fail open so a healthy host never incurs an unbounded copy or boot refusal.
+ */
+function verifyEmbeddedPostgresPayloadInventory(
+  nativeRoot: string,
+  destRoot: string,
+): PayloadInventoryResult {
+  const budget = { remaining: 4096 };
+  const mismatches: string[] = [];
+  let mismatchCount = 0;
+  let sourceUnreadable = false;
+  const report = (relativePath: string) => {
+    mismatchCount += 1;
+    if (mismatches.length < 10) mismatches.push(relativePath);
+  };
+  const visit = (sourcePath: string, destPath: string, relativePath: string): void => {
+    if (budget.remaining <= 0 || sourceUnreadable) return;
+    let sourceEntries: string[];
+    try {
+      sourceEntries = readdirSync(sourcePath).sort();
+    } catch {
+      sourceUnreadable = true;
+      return;
+    }
+    for (const entry of sourceEntries) {
+      if (budget.remaining <= 0 || sourceUnreadable) return;
+      const sourceEntry = join(sourcePath, entry);
+      const destEntry = join(destPath, entry);
+      const relativeEntry = relativePath ? `${relativePath}/${entry}` : entry;
+      try {
+        const sourceStat = lstatSync(sourceEntry);
+        if (sourceStat.isDirectory()) {
+          visit(sourceEntry, destEntry, relativeEntry);
+        } else if (sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+          budget.remaining -= 1;
+          let destStat: ReturnType<typeof lstatSync>;
+          try {
+            destStat = lstatSync(destEntry);
+          } catch {
+            report(relativeEntry);
+            continue;
+          }
+          if (sourceStat.isFile()) {
+            if (!destStat.isFile() || destStat.size !== sourceStat.size) report(relativeEntry);
+          } else {
+            if (!destStat.isSymbolicLink()) report(relativeEntry);
+          }
+        }
+      } catch {
+        sourceUnreadable = true;
+      }
+    }
+  };
+  for (const tree of ["bin", "lib", "share"] as const) {
+    const sourceTree = join(nativeRoot, tree);
+    try {
+      if (lstatSync(sourceTree).isDirectory()) visit(sourceTree, join(destRoot, tree), tree);
+    } catch {
+      sourceUnreadable = true;
+    }
+  }
+  return {
+    acceptable: sourceUnreadable || budget.remaining <= 0 || mismatchCount === 0,
+    mismatches,
+    mismatchCount,
+  };
+}
+
+export class EmbeddedPostgresPayloadBlockedError extends Error {
+  readonly destRoot: string;
+  readonly nativeRoot: string;
+  readonly affectedPaths: readonly string[];
+  readonly affectedPathCount: number;
+
+  constructor(nativeRoot: string, destRoot: string, verification: PayloadInventoryResult) {
+    const affected = verification.mismatches.join(", ") || "unknown payload entry";
+    super(
+      `Embedded PostgreSQL runtime payload is incomplete (${affected}${verification.mismatchCount > verification.mismatches.length ? ", …" : ""}).${describeWindowsBlockedNativeLibraryError(affected)}`,
+    );
+    this.name = "EmbeddedPostgresPayloadBlockedError";
+    this.nativeRoot = nativeRoot;
+    this.destRoot = destRoot;
+    this.affectedPaths = verification.mismatches;
+    this.affectedPathCount = verification.mismatchCount;
+  }
+}
+
+type EmbeddedPayloadIntegrityFailure = {
+  readonly destRoot: string;
+  readonly error: EmbeddedPostgresPayloadBlockedError;
+  readonly recordedAt: number;
+};
+
+let embeddedPayloadIntegrityFailure: EmbeddedPayloadIntegrityFailure | null = null;
+
+/** Records only the newest root-scoped incomplete-payload diagnosis. */
+export function recordEmbeddedPayloadIntegrityFailure(error: EmbeddedPostgresPayloadBlockedError): void {
+  embeddedPayloadIntegrityFailure = { destRoot: resolve(error.destRoot), error, recordedAt: Date.now() };
+}
+
+/** Returns the diagnostic only for its originating materialized runtime root. */
+export function getEmbeddedPayloadIntegrityFailure(destRoot?: string): EmbeddedPostgresPayloadBlockedError | null {
+  if (!embeddedPayloadIntegrityFailure) return null;
+  if (destRoot && resolve(destRoot) !== embeddedPayloadIntegrityFailure.destRoot) return null;
+  return embeddedPayloadIntegrityFailure.error;
+}
+
+/** Clears the test-resettable, in-memory payload diagnostic. */
+export function clearEmbeddedPayloadIntegrityFailure(): void {
+  embeddedPayloadIntegrityFailure = null;
+}
+
+function clearEmbeddedPayloadIntegrityFailureForRoot(destRoot: string): void {
+  if (embeddedPayloadIntegrityFailure?.destRoot === resolve(destRoot)) {
+    clearEmbeddedPayloadIntegrityFailure();
+  }
 }
 
 export interface MaterializeEmbeddedPostgresOptions {
@@ -413,8 +575,10 @@ export function materializeEmbeddedPostgresRuntimeBinaries(
     existsSync(marker) &&
     readFileSync(marker, "utf8") === sourceMarker &&
     existsSync(join(destBin, process.platform === "win32" ? "postgres.exe" : "postgres")) &&
-    existsSync(join(destRoot, "lib", "postgresql"))
+    existsSync(join(destRoot, "lib", "postgresql")) &&
+    verifyEmbeddedPostgresPayloadInventory(nativeRoot, destRoot).acceptable
   ) {
+    clearEmbeddedPayloadIntegrityFailureForRoot(destRoot);
     return destRoot;
   }
 
@@ -424,6 +588,12 @@ export function materializeEmbeddedPostgresRuntimeBinaries(
    * payload cannot linger beside the updated binaries (force-copy alone does not
    * delete orphans).
    */
+  // Never let a prior marker certify a partially copied payload after a crash or AV action.
+  try {
+    unlinkSync(marker);
+  } catch {
+    // best-effort; recursive destination removal below is the normal cleanup path
+  }
   if (existsSync(destRoot)) {
     rmSync(destRoot, { recursive: true, force: true });
   }
@@ -446,7 +616,19 @@ export function materializeEmbeddedPostgresRuntimeBinaries(
   }
   // Re-apply macOS ABI compatibility links against the materialized lib dir.
   normalizeMacosEmbeddedPostgresDylibSymlinks(destRoot);
+  const verification = verifyEmbeddedPostgresPayloadInventory(nativeRoot, destRoot);
+  if (!verification.acceptable) {
+    try {
+      unlinkSync(marker);
+    } catch {
+      // No marker is the retry contract; ignore an already-absent marker.
+    }
+    const error = new EmbeddedPostgresPayloadBlockedError(nativeRoot, destRoot, verification);
+    recordEmbeddedPayloadIntegrityFailure(error);
+    throw error;
+  }
   writeFileSync(marker, sourceMarker, "utf8");
+  clearEmbeddedPayloadIntegrityFailureForRoot(destRoot);
   return destRoot;
 }
 
@@ -525,7 +707,10 @@ export function installElectronAsarNativePathPatch(): void {
         materializeEmbeddedPostgresRuntimeBinaries(sourceRoot);
       }
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof EmbeddedPostgresPayloadBlockedError) {
+      recordEmbeddedPayloadIntegrityFailure(error);
+    }
     // Materialization is best-effort; path rewrite still helps when possible.
   }
 
@@ -970,7 +1155,10 @@ function resolveWindowsEmbeddedPostgresNativeRoot(): string | null {
       return materializeEmbeddedPostgresRuntimeBinaries(
         resolveElectronAsarUnpackedPath(nativeRoot),
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof EmbeddedPostgresPayloadBlockedError) {
+        recordEmbeddedPayloadIntegrityFailure(error);
+      }
       return resolveElectronAsarUnpackedPath(nativeRoot);
     }
   }
@@ -1531,7 +1719,11 @@ export class EmbeddedPostgresLifecycle {
       this.options.onLog(
         `embedded postgres: initializing new data directory at ${this.options.dataDir} (initdb)`,
       );
-      await pg.initialise();
+      try {
+        await pg.initialise();
+      } catch (error) {
+        throw decorateWindowsBlockedNativeLibraryError(error, embeddedPostgresRuntimeBinRoot());
+      }
     }
 
     if (signal?.aborted) {
@@ -1603,7 +1795,9 @@ export class EmbeddedPostgresLifecycle {
       then failed later read back its OWN postmaster.pid, "join itself" with ownsProcess=false,
       and orphan a live postmaster nothing would ever stop. See isPostgresLockCollisionError.
       */
-      if (!isPostgresLockCollisionError(error)) throw error;
+      if (!isPostgresLockCollisionError(error)) {
+        throw decorateWindowsBlockedNativeLibraryError(error, embeddedPostgresRuntimeBinRoot());
+      }
       const existing = await isAlreadyRunning(this.options.dataDir, this.options.onLog);
       if (!existing) throw error;
 

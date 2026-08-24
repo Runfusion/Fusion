@@ -2,8 +2,9 @@ import "./EngineControlMenu.css";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_PROJECT_SETTINGS } from "@fusion/core";
+import { resolveEffectiveConcurrency } from "../../../core/src/workflows/workflow-capacity.js";
 import { Pause, Play, SlidersHorizontal, Square, X } from "lucide-react";
-import { fetchConfig, fetchSettings, updateSettings } from "../api/legacy";
+import { fetchSettings, updateSettings } from "../api/legacy";
 import { useAppSettings } from "../hooks/useAppSettings";
 import { useConfirm } from "../hooks/useConfirm";
 // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Footer menu adopts the shared global-concurrency hook so it and the Command Center card read/write ONE source of truth (no more duplicated fetch/debounce/clobber logic).
@@ -199,11 +200,19 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     setConcurrencyState({ status: "loading", data: null, error: null });
     void (async () => {
       try {
-        const [config, settings] = await Promise.all([fetchConfig(projectId), fetchSettings(projectId)]);
+        const settings = await fetchSettings(projectId);
         if (!cancelled) {
+          const capacity = resolveEffectiveConcurrency(settings);
+          /*
+          FNXC:CapacityModel 2026-08-21-16:37:
+          Worktree limiting controls admission, not storage. Preserve the configured Max Worktrees
+          value when its gate is disabled so saving a Max Concurrent edit never overwrites an
+          operator's dormant worktree setting with the shipped default.
+          */
+          const configuredWorktreeCapacity = resolveEffectiveConcurrency({ ...settings, worktreeLimitEnabled: true });
           const persistedValues = {
-            maxConcurrent: settings.maxConcurrent ?? config.maxConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxConcurrent,
-            maxWorktrees: settings.maxWorktrees ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
+            maxConcurrent: capacity.maxConcurrent,
+            maxWorktrees: configuredWorktreeCapacity.worktreeLimit ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
           };
           persistedProjectConcurrencyRef.current = persistedValues;
           pendingProjectConcurrencySaveRef.current = null;

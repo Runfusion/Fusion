@@ -10,9 +10,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -78,10 +78,48 @@ const PRETEST_CHECKS = [
   "scripts/check-workspace-package-graph.mjs",
   "scripts/check-no-test-timeout-appeasement.mjs",
   "scripts/check-changeset-format.mjs",
+  /*
+  FNXC:TestInfrastructure 2026-08-19-12:04:
+  Commit 027faaa09f added check-pre-json-anchor to the canonical pretest chain.
+  verify:fast was right while this hardcoded mirror was stale, so retain its
+  production position for the order-sensitive deepEqual drift guard.
+  */
+  "scripts/check-pre-json-anchor.mjs",
   "scripts/check-routes-modular.mjs",
   "scripts/check-runtime-skill-loader-drift.mjs",
 ];
 const STATIC_STEP_IDS = PRETEST_CHECKS.map((script) => `static-check:${script.slice("scripts/".length, -".mjs".length)}`);
+const PRETEST_VALIDATORS_START = "<!-- pretest-validators:start -->";
+const PRETEST_VALIDATORS_END = "<!-- pretest-validators:end -->";
+
+function extractDocumentedPretestValidators(markdown) {
+  const startCount = markdown.split(PRETEST_VALIDATORS_START).length - 1;
+  const endCount = markdown.split(PRETEST_VALIDATORS_END).length - 1;
+  if (startCount === 0) throw new Error("pretest validator block start anchor is missing");
+  if (endCount === 0) throw new Error("pretest validator block end anchor is missing");
+  if (startCount > 1) throw new Error("pretest validator block start anchor occurs more than once");
+  if (endCount > 1) throw new Error("pretest validator block end anchor occurs more than once");
+
+  const start = markdown.indexOf(PRETEST_VALIDATORS_START);
+  const end = markdown.indexOf(PRETEST_VALIDATORS_END);
+  if (end < start) throw new Error("pretest validator block end anchor precedes the start anchor");
+
+  return [...markdown.slice(start + PRETEST_VALIDATORS_START.length, end).matchAll(/^\s*-\s+`([^`]+)`\s*$/gm)].map(([, validator]) => validator);
+}
+
+function assertDocumentedPretestValidators(documented, canonical) {
+  const undocumented = canonical.filter((validator) => !documented.includes(validator));
+  const stale = documented.filter((validator) => !canonical.includes(validator));
+  const firstOrderDifference = Math.max(documented.length, canonical.length) === 0
+    ? -1
+    : Array.from({ length: Math.max(documented.length, canonical.length) }, (_, index) => index)
+      .find((index) => documented[index] !== canonical[index]) ?? -1;
+  assert.deepStrictEqual(
+    documented,
+    canonical,
+    `undocumented validators: ${undocumented.join(", ") || "none"}; documented-but-not-canonical entries: ${stale.join(", ") || "none"}; first order divergence: ${firstOrderDifference}`,
+  );
+}
 
 function stepIds(plan) {
   return plan.steps.map((s) => s.id);
@@ -162,6 +200,40 @@ test("buildVerifyPlan: defaults to every canonical pretest validator before esta
     assert.match(step.args[0], /^\/repo\/scripts\/check-[\w-]+\.mjs$/);
     assert.equal(step.args.length, 1); // A validator path only: no test lane or mutation flag.
   }
+});
+
+/*
+FNXC:TestInfrastructure 2026-08-19-12:05:
+Pretest additions silently drifted both this hardcoded mirror and the testing guide.
+The guide's validator block is anchor-delimited and compared by exact production
+order; a substring scan was rejected because it cannot detect stale entries or reordering.
+*/
+test("docs/testing.md lists canonical pretest validators in exact order", () => {
+  const canonical = PRETEST_STATIC_CHECK_SCRIPTS.map((script) => script.slice("scripts/".length, -".mjs".length));
+  const documented = extractDocumentedPretestValidators(readFileSync(resolve(REPO_ROOT, "docs/testing.md"), "utf8"));
+  assertDocumentedPretestValidators(documented, canonical);
+});
+
+test("documented pretest validator guard rejects missing, stale, reordered, and unanchored blocks", () => {
+  const canonical = PRETEST_STATIC_CHECK_SCRIPTS.map((script) => script.slice("scripts/".length, -".mjs".length));
+  const block = (validators) => `${PRETEST_VALIDATORS_START}\n${validators.map((validator) => `- \`${validator}\``).join("\n")}\n${PRETEST_VALIDATORS_END}`;
+
+  assert.throws(
+    () => assertDocumentedPretestValidators(extractDocumentedPretestValidators(block(canonical.slice(1))), canonical),
+    new RegExp(`undocumented validators: ${canonical[0]}`),
+  );
+  const stale = "stale-validator";
+  assert.throws(
+    () => assertDocumentedPretestValidators(extractDocumentedPretestValidators(block([...canonical, stale])), canonical),
+    new RegExp(`documented-but-not-canonical entries: ${stale}`),
+  );
+  const reordered = [...canonical];
+  [reordered[0], reordered[1]] = [reordered[1], reordered[0]];
+  assert.throws(
+    () => assertDocumentedPretestValidators(extractDocumentedPretestValidators(block(reordered)), canonical),
+    /first order divergence: 0/,
+  );
+  assert.throws(() => extractDocumentedPretestValidators("# no validator block"), /start anchor is missing/);
 });
 
 test("buildVerifyPlan: no packages -> CLI prerequisite build then boot smoke", () => {

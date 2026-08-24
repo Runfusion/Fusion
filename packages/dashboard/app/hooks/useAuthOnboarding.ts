@@ -54,8 +54,9 @@ export function useAuthOnboarding({
     let shouldOpenSettings = false;
 
     fetchAuthStatus()
-      .then(({ providers }) => {
+      .then(({ providers, customProvidersConfigured }) => {
         const hasAuthenticatedProvider = providers.some((provider) => provider.authenticated);
+        const hasConfiguredAiProvider = hasAuthenticatedProvider || customProvidersConfigured === true;
 
         /*
          * FNXC:Onboarding 2026-07-03-04:00:
@@ -76,12 +77,12 @@ export function useAuthOnboarding({
             const onboardingIncomplete =
               globalSettings.modelOnboardingComplete === false ||
               globalSettings.modelOnboardingComplete === undefined;
-            const setupIncomplete = !hasAuthenticatedProvider || !hasDefaultModel;
+            const setupIncomplete = !hasConfiguredAiProvider || !hasDefaultModel;
 
             if (onboardingIncomplete && setupIncomplete && !isOnboardingCompleted()) {
               shouldOpenOnboarding = true;
-            } else if (!hasAuthenticatedProvider && !isOnboardingCompleted()) {
-              // Completed onboarding but no authenticated provider → fallback
+            } else if (!hasConfiguredAiProvider && !isOnboardingCompleted()) {
+              // Completed onboarding but no configured AI provider → fallback
               // to Settings Authentication section (only if not locally completed)
               shouldOpenSettings = true;
             }

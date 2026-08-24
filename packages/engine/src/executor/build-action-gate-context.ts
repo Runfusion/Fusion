@@ -30,7 +30,7 @@
  * FNXC:ApprovalRedemption 2026-07-26-14:35:
  * ownership guard — an agent must not be able to burn another agent's approval by id.
  */
-import type { Agent, AgentStore, TaskStore } from "@fusion/core";
+import type { Agent, AgentStore, MessageStore, TaskStore } from "@fusion/core";
 import {
   AWAITING_APPROVAL_PAUSE_REASON,
   ApprovalRequestStore,
@@ -39,6 +39,7 @@ import {
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
+import { emitApprovalMail } from "../agents/approval-mail.js";
 import { isCurrentReviewerNodeOverride } from "../agents/workflow-agent-router.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
@@ -52,6 +53,13 @@ export type BuildActionGateContextDeps = {
   awaitAbortInFlightTaskWork: (taskId: string, reason: string) => Promise<void>;
   agentStore?: AgentStore | null;
   approvalRequestStore: ApprovalRequestStore;
+  /*
+  FNXC:StructuralMail 2026-08-23-18:52:
+  FN-8870 requires this gate closure to write the operator's approval mailbox row. The wave-18 peel
+  (1cf86baa1c, declared behavior-preserving) dropped the emission when the closure left executor.ts,
+  so the message store must travel with the peeled deps bag rather than being read off the host.
+  */
+  messageStore?: Pick<MessageStore, "sendMessageOnce"> | null;
   activeWorkflowAuthorities: Map<string, ActiveWorkflowAuthority>;
   activeWorkflowGraphAbortControllers: Map<string, AbortController>;
 };
@@ -181,6 +189,7 @@ export function buildActionGateContext(
           executorLog.warn(`${taskId}: failed to suspend in-flight session while awaiting approval: ${error instanceof Error ? error.message : String(error)}`);
         });
       }
+      void emitApprovalMail({ messageStore: deps.messageStore ?? undefined, approvalRequestId, toolName: decision.toolName, taskId, agentId: actorId, agentName: actorName });
       if (agent && deps.agentStore) {
         await deps.agentStore.updateAgentState(agent.id, "paused");
         await deps.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });

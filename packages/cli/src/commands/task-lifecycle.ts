@@ -29,6 +29,7 @@ const execFileAsync: (file: string, args: string[], opts?: import("node:child_pr
 import type { TaskStore } from "@fusion/core";
 import {
   resolveTaskMergeTarget,
+  resolveTaskPrHeadBranch,
   getCurrentRepo,
   getPushRepo,
   isBranchGroupMemberLanded,
@@ -911,7 +912,7 @@ export function createPrNodeGithubOps(
         sourceType: "task",
         sourceId: task.id,
         repo: `${repo.owner}/${repo.repo}`,
-        headBranch: getTaskBranchName(task.id),
+        headBranch: resolveTaskPrHeadBranch(task),
       };
     },
     createPr: async ({ task, entity, integrationRemote, signal }) => {
@@ -919,7 +920,7 @@ export function createPrNodeGithubOps(
       // Git ops run in the task worktree when known; process.cwd() only as the
       // single-project fallback.
       const cwd = options.getTaskWorktree?.(entity.sourceId) ?? task.worktree ?? process.cwd();
-      const headBranch = entity.headBranch || getTaskBranchName(task.id);
+      const headBranch = entity.headBranch || resolveTaskPrHeadBranch(task);
       const refreshed = await refreshAutomatedPrHead({
         projectRoot: cwd,
         preferredWorktree: task.worktree,
@@ -953,7 +954,7 @@ export function createPrNodeGithubOps(
       const refreshed = await refreshAutomatedPrHead({
         projectRoot: cwd,
         preferredWorktree: task?.worktree,
-        headBranch: entity.headBranch || getTaskBranchName(task?.id ?? entity.sourceId),
+        headBranch: entity.headBranch || (task ? resolveTaskPrHeadBranch(task) : getTaskBranchName(entity.sourceId)),
         targetBranch: entity.baseBranch || "main",
         integrationRemote,
         signal,
@@ -1326,7 +1327,8 @@ export async function processPullRequestMergeTask(
     throw new Error("processPullRequestMergeTask: could not determine repository");
   }
 
-  const branch = getTaskBranchName(task.id);
+  // FNXC:WorkspacePrHead 2026-08-20-03:38: Pull-request lifecycle git operations must use an explicitly selected task branch, not reconstruct fusion/<task-id>.
+  const branch = resolveTaskPrHeadBranch(task);
   const settings = await store.getSettings();
   // `requirePrApproval` MOVED to workflow settings (U4): resolve the task's
   // effective workflow settings and overlay them onto the project/global base so

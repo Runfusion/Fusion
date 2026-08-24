@@ -20,7 +20,6 @@ vi.mock("../../api", () => ({
   fetchChatMessages: vi.fn(),
   updateChatSession: vi.fn(),
   deleteChatSession: vi.fn(),
-  editChatMessage: vi.fn(),
   streamChatResponse: vi.fn(),
   attachChatStream: vi.fn(),
   cancelChatResponse: vi.fn(),
@@ -56,7 +55,6 @@ const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockUpdateChatSession = vi.mocked(apiModule.updateChatSession);
 const mockDeleteChatSession = vi.mocked(apiModule.deleteChatSession);
-const mockEditChatMessage = vi.mocked(apiModule.editChatMessage);
 const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
 const mockAttachChatStream = vi.mocked(apiModule.attachChatStream);
 const mockCancelChatResponse = vi.mocked(apiModule.cancelChatResponse);
@@ -453,31 +451,37 @@ describe("useChat", () => {
       return result;
     }
 
-    it("optimistically truncates from the edited message and resends via sendMessage", async () => {
+    it("keeps the transcript until replacement SSE acceptance, then keeps only the prefix and replacement", async () => {
       const m1 = makeMessage({ id: "msg-1", sessionId: "session-001", role: "user", content: "one" });
       const m2 = makeMessage({ id: "msg-2", sessionId: "session-001", role: "assistant", content: "two" });
       const m3 = makeMessage({ id: "msg-3", sessionId: "session-001", role: "user", content: "three" });
       const result = await setupWithMessages([m1, m2, m3]);
 
-      mockEditChatMessage.mockResolvedValueOnce({ retained: [m1, m2] });
       const closeFn = vi.fn();
-      mockStreamChatResponse.mockImplementation(() => ({ close: closeFn, isConnected: () => true }));
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        handlers.onAccepted?.();
+        return { close: closeFn, isConnected: () => true };
+      });
 
       await act(async () => {
         await result.current.editMessageAndResend("msg-3", "three (edited)");
       });
 
-      expect(mockEditChatMessage).toHaveBeenCalledWith("session-001", "msg-3", "three (edited)", "proj-123");
       await waitFor(() => {
-        // Optimistic truncation drops msg-3, then sendMessage appends a fresh optimistic user bubble
-        // with the edited content — so retained [m1, m2] plus the new turn is 3 messages.
         expect(result.current.messages).toHaveLength(3);
         expect(result.current.messages[0]?.id).toBe("msg-1");
         expect(result.current.messages[1]?.id).toBe("msg-2");
         expect(result.current.messages[2]?.role).toBe("user");
         expect(result.current.messages[2]?.content).toBe("three (edited)");
       });
-      expect(mockStreamChatResponse).toHaveBeenCalledWith("session-001", "three (edited)", expect.anything(), undefined, "proj-123");
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-001",
+        "three (edited)",
+        expect.anything(),
+        undefined,
+        "proj-123",
+        { replacementMessageId: "msg-3" },
+      );
     });
 
     it("is a no-op while streaming", async () => {
@@ -492,32 +496,41 @@ describe("useChat", () => {
         expect(result.current.isStreaming).toBe(true);
       });
 
-      mockEditChatMessage.mockClear();
+      mockStreamChatResponse.mockClear();
       await act(async () => {
         await result.current.editMessageAndResend("msg-1", "edited");
       });
 
-      expect(mockEditChatMessage).not.toHaveBeenCalled();
+      expect(mockStreamChatResponse).not.toHaveBeenCalled();
     });
 
-    it("reloads messages and does not resend on PATCH failure", async () => {
+    it("reloads messages and does not resend on pre-acceptance replacement failure", async () => {
       const m1 = makeMessage({ id: "msg-1", sessionId: "session-001", role: "user", content: "one" });
       const m2 = makeMessage({ id: "msg-2", sessionId: "session-001", role: "assistant", content: "two" });
       const result = await setupWithMessages([m1, m2]);
 
-      mockEditChatMessage.mockRejectedValueOnce(new Error("boom"));
       // fetchChatMessages returns newest-first; the reload path reverses it back to [m1, m2].
       mockFetchChatMessages.mockResolvedValueOnce({ messages: [m2, m1] });
-      mockStreamChatResponse.mockClear();
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        handlers.onError?.("boom", { requestAccepted: false, receivedStreamEvent: false });
+        return { close: vi.fn(), isConnected: () => true };
+      });
 
       await expect(act(async () => {
         await result.current.editMessageAndResend("msg-1", "edited");
-      })).rejects.toThrow("boom");
+      })).rejects.toThrow("Failed to edit message");
 
       await waitFor(() => {
         expect(result.current.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
       });
-      expect(mockStreamChatResponse).not.toHaveBeenCalled();
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-001",
+        "edited",
+        expect.anything(),
+        undefined,
+        "proj-123",
+        { replacementMessageId: "msg-1" },
+      );
     });
   });
 
@@ -2469,6 +2482,116 @@ describe("useChat", () => {
     });
   });
 
+  it("keeps and reconciles a visible interrupted prefix after Stop", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    const persistedAssistant = makeMessage({
+      id: "assistant-interrupted",
+      sessionId: "session-001",
+      role: "assistant",
+      content: "Distinct direct prefix",
+      metadata: { interrupted: true },
+      createdAt: "2026-08-18T21:55:00.000Z",
+    });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValue({ messages: [
+        makeMessage({ id: "user-1", sessionId: "session-001", role: "user", content: "Hello" }),
+        persistedAssistant,
+      ] });
+    mockCancelChatResponse.mockResolvedValue({ success: true, interrupted: true, message: persistedAssistant });
+
+    let streamHandlers: StreamAppendHandlers | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers = handlers as StreamAppendHandlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useChat("proj-123"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession("session-001"));
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+    act(() => result.current.sendMessage("Hello"));
+    await waitFor(() => expect(result.current.isStreaming).toBe(true));
+    act(() => streamHandlers?.onText("Distinct direct prefix"));
+    await waitFor(() => expect(result.current.streamingText).toBe("Distinct direct prefix"));
+
+    act(() => result.current.stopStreaming());
+    await waitFor(() => expect(mockCancelChatResponse).toHaveBeenCalledWith("session-001", "proj-123"));
+    await waitFor(() => {
+      const assistants = result.current.messages.filter((message) => message.role === "assistant" && message.content === "Distinct direct prefix");
+      expect(assistants).toHaveLength(1);
+      expect(result.current.isStreaming).toBe(false);
+    });
+    expect(result.current.messages.some((message) => message.failureInfo)).toBe(false);
+  });
+
+  it("keeps the interrupted prefix and reports a real cancellation durability failure", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    const addToast = vi.fn();
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    const cancellation = createDeferredPromise<{ success: boolean; interrupted: boolean }>();
+    mockCancelChatResponse.mockReturnValue(cancellation.promise);
+
+    let streamHandlers: StreamAppendHandlers | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers = handlers as StreamAppendHandlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useChat("proj-123", addToast));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession("session-001"));
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+    act(() => result.current.sendMessage("Hello"));
+    await waitFor(() => expect(result.current.isStreaming).toBe(true));
+    act(() => streamHandlers?.onText("Durable recovery prefix"));
+    await waitFor(() => expect(result.current.streamingText).toBe("Durable recovery prefix"));
+
+    act(() => { void result.current.stopStreaming(); });
+    await waitFor(() => expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: "Durable recovery prefix" }),
+    ])));
+    cancellation.resolve({ success: false, interrupted: false });
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith(
+      "Failed to save the interrupted response; it remains visible for recovery.",
+      "error",
+    ));
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: "Durable recovery prefix" }),
+    ]));
+  });
+
+  it("retains the optimistic interrupted prefix when history has no matching durable row", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockCancelChatResponse.mockResolvedValue({ success: true, interrupted: true });
+
+    let streamHandlers: StreamAppendHandlers | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers = handlers as StreamAppendHandlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useChat("proj-123"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession("session-001"));
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+    act(() => result.current.sendMessage("Hello"));
+    await waitFor(() => expect(result.current.isStreaming).toBe(true));
+    act(() => streamHandlers?.onText("Distinct retained prefix"));
+    await waitFor(() => expect(result.current.streamingText).toBe("Distinct retained prefix"));
+
+    act(() => result.current.stopStreaming());
+    await waitFor(() => expect(mockCancelChatResponse).toHaveBeenCalledWith("session-001", "proj-123"));
+    await waitFor(() => {
+      expect(result.current.messages.filter((message) => message.content === "Distinct retained prefix")).toHaveLength(1);
+    });
+  });
+
   it("stopStreaming with no pendingMessages cancels stream without sending anything", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
@@ -2501,6 +2624,45 @@ describe("useChat", () => {
       expect(result.current.pendingMessages).toEqual([]);
       expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("force-sends a selected direct queue entry only after cancellation reconciliation", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    const cancelDeferred = createDeferredPromise<{ success: boolean; interrupted: boolean }>();
+    const streamHandlers: StreamAppendHandlers[] = [];
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers.push(handlers as StreamAppendHandlers);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    mockCancelChatResponse.mockReturnValueOnce(cancelDeferred.promise);
+
+    const { result } = renderHook(() => useChat("proj-123"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession("session-001"));
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+    act(() => {
+      result.current.sendMessage("First");
+      result.current.sendMessage("Keep first");
+      result.current.sendMessage("Force second");
+    });
+    await waitFor(() => expect(result.current.pendingMessages).toEqual(["Keep first", "Force second"]));
+
+    act(() => result.current.forceSendPendingMessage?.(1));
+    expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+    expect(mockCancelChatResponse).toHaveBeenCalledWith("session-001", "proj-123");
+    expect(result.current.pendingMessages).toEqual(["Keep first", "Force second"]);
+
+    act(() => streamHandlers[0]?.onText(" stale callback"));
+    cancelDeferred.resolve({ success: true, interrupted: true });
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
+      expect(mockStreamChatResponse.mock.calls[1]?.[1]).toBe("Force second");
+      expect(result.current.pendingMessages).toEqual(["Keep first"]);
+    });
+    expect(result.current.streamingText).toBe("");
   });
 
   it("sending during streaming queues pendingMessages without warning toast", async () => {
@@ -2942,6 +3104,45 @@ describe("useChat", () => {
         expect(mockStreamChatResponse.mock.calls[0]?.[1]).toBe("Queued follow-up");
         expect(result.current.pendingMessages).toEqual([]);
       });
+    });
+  });
+
+  it("waits for durable stop reconciliation before starting a queued follow-up", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    const cancellation = createDeferredPromise<{ success: boolean; interrupted: boolean }>();
+    const reconciliation = createDeferredPromise<{ messages: ChatMessage[] }>();
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockImplementation(async (_sessionId, options) => (
+      options?.order === "asc" ? reconciliation.promise : { messages: [] }
+    ));
+    mockCancelChatResponse.mockReturnValue(cancellation.promise);
+    mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
+
+    const { result } = renderHook(() => useChat("proj-123"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession("session-001"));
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+    act(() => result.current.sendMessage("First"));
+    await waitFor(() => expect(result.current.isStreaming).toBe(true));
+    act(() => {
+      result.current.sendMessage("Queued follow-up");
+      result.current.stopStreaming();
+    });
+
+    expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      cancellation.resolve({ success: true, interrupted: false });
+      await Promise.resolve();
+    });
+    expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      reconciliation.resolve({ messages: [] });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
+      expect(mockStreamChatResponse.mock.calls[1]?.[1]).toBe("Queued follow-up");
     });
   });
 

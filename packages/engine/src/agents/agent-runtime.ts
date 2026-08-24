@@ -20,6 +20,7 @@ import type { SkillSelectionContext } from "../cli-runtime/skill-resolver.js";
 import type { FallbackModelUsedPayload } from "../pi.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import type { SystemPromptLayers } from "../execution/prompt-layers.js";
+import type { SandboxCapabilities, SandboxPolicy } from "../sandbox/types.js";
 
 /**
  * Options for creating an agent session.
@@ -30,6 +31,18 @@ export interface AgentRuntimeContext {
   toolMode?: "coding" | "readonly";
   customToolNames?: string[];
   requestedSkillNames?: string[];
+}
+
+/**
+ * Declares the filesystem contract for a task session. Workspace tasks have one
+ * task-directory root while repository children retain their own Git metadata.
+ */
+export interface SessionBoundaryDescriptor {
+  kind: "task-worktree" | "workspace-task-dir" | "read-only-root";
+  writableRoot: string | null;
+  projectRoot: string;
+  readOnlyRoots?: readonly string[];
+  repoRoots?: readonly { repoRelPath: string; repoRootDir: string }[];
 }
 
 /**
@@ -65,6 +78,12 @@ export function normalizeAgentRuntimeMcpServers(
 export interface AgentRuntimeOptions {
   /** Working directory for the agent session */
   cwd: string;
+  /** Explicit task boundary. Undeclared sessions retain legacy inference. */
+  sessionBoundary?: SessionBoundaryDescriptor;
+  /** Resolved task-lane sandbox selection; native preserves the legacy spawn path. */
+  sandboxBackendId?: SandboxCapabilities["id"];
+  /** Prepared policy derived from the declared session boundary. */
+  sandboxPolicy?: SandboxPolicy;
   /** System prompt for the agent */
   systemPrompt: string;
   /*
@@ -74,6 +93,8 @@ export interface AgentRuntimeOptions {
   */
   /** Lane purpose (executor/merger/triage/…). Used for host-extension policy and diagnostics. */
   sessionPurpose?: string;
+  /** True only when this session is executing a board task (FN-125). */
+  taskExecutionSession?: boolean;
   /**
    * Optional structured prompt layers for cross-session caching.
    * When present, runtimes that support prompt caching use the `stable`

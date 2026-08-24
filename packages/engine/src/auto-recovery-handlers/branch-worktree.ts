@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
 /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
-import { resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError } from "@fusion/core";
+import { isFusionDeletableBranch, resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
@@ -239,7 +239,7 @@ export class BranchWorktreeAutoRecoveryHandler {
     }
 
     if (wipColumns.has(task.column)) {
-      await this.deps.taskStore.updateTask(task.id, { branch: null, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+      await this.deps.taskStore.updateTask(task.id, { branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     }
     await this.deps.runAudit.database({
       type: "branch-worktree:auto-requeue",
@@ -406,12 +406,16 @@ export class BranchWorktreeAutoRecoveryHandler {
           // best-effort
         }
         try {
-          await execAsync(`git branch -D ${this.quote(branchName)}`, {
-            cwd: repoDir,
-            timeout: GIT_TIMEOUT_MS,
-            maxBuffer: GIT_MAX_BUFFER,
-          });
-          branchDeleted = true;
+          if (!isFusionDeletableBranch(ctx.task, branchName)) {
+            this.logger.log(`Kept operator-supplied branch ${branchName}`);
+          } else {
+            await execAsync(`git branch -D ${this.quote(branchName)}`, {
+              cwd: repoDir,
+              timeout: GIT_TIMEOUT_MS,
+              maxBuffer: GIT_MAX_BUFFER,
+            });
+            branchDeleted = true;
+          }
         } catch (err) {
           this.logger.warn(`FN-4847 discard: branch -D failed for ${branchName}: ${err instanceof Error ? err.message : String(err)}`);
         }

@@ -4,11 +4,13 @@ FNXC:TaskDetailLayout 2026-08-01-04:23:
 SHELL NAMING MAP — read before fixing any Task Detail inset/padding bug. "Task Detail modal"
 is ONE surface with THREE shells, and only one of them lives in this file's `.modal-overlay`
 rules: (1) the fixed desktop modal (`.modal-overlay` + `.modal.task-detail-modal`, this file),
-(2) the tablet popup and desktop pop-out (FloatingWindow.css — class floating-window--task-detail,
-whose shared body element owns the FN-8015 inline-end gutter and the tablet-viewport zeroing),
+(2) the tablet popup and desktop pop-out (FloatingWindow.css — class floating-window--task-detail),
 and (3) the mobile full-screen sheet. The right-
 padding bug recurred across FN-8630, FN-8634, and the 2026-08-01 tablet fix precisely because
 fixes landed only in shell (1) while the reporter was looking at shell (2).
+As of 2026-08-17 shell (2) no longer carries FN-8015's shared inline-end body gutter (deleted for
+every caller — see FloatingWindow.css), so an uneven right inset there is now the child's own
+padding, not an inherited reservation.
 */
 .task-detail-content {
   display: flex;
@@ -3367,6 +3369,31 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
   padding: 0;
 }
 
+/*
+FNXC:TaskActivityFeedCopy 2026-08-18-18:11:
+Feed's copy and expansion actions share one tokenized overlay group so the bounded log remains scroll-owned and both controls stay reachable in modal, embedded, floating, and mobile hosts.
+*/
+.detail-activity-actions {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-activity-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.detail-activity-copy svg {
+  flex: 0 0 auto;
+}
+
 .activity-expand-toggle--overlay {
   position: absolute;
   top: var(--space-md);
@@ -3375,6 +3402,19 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
   background: var(--surface);
   border-color: var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+.detail-activity-actions .activity-expand-toggle--overlay {
+  position: static;
+  inset: auto;
+}
+
+.detail-activity-actions ~ h4,
+.detail-activity-actions ~ .detail-log-truncated,
+.detail-activity-actions ~ .detail-log-loading,
+.detail-activity-actions ~ .detail-log-empty,
+.detail-activity-actions ~ .detail-activity-list > .detail-log-entry:first-child {
+  padding-inline-end: calc((var(--space-2xl) * 4) + var(--space-lg));
 }
 
 .detail-log-loading {
@@ -3415,6 +3455,20 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
   .activity-expand-toggle--overlay {
     top: var(--space-sm);
     right: var(--space-sm);
+  }
+
+  .detail-activity-actions {
+    top: var(--space-sm);
+    right: var(--space-sm);
+    gap: var(--space-xs);
+  }
+
+  .detail-activity-actions ~ h4,
+  .detail-activity-actions ~ .detail-log-truncated,
+  .detail-activity-actions ~ .detail-log-loading,
+  .detail-activity-actions ~ .detail-log-empty,
+  .detail-activity-actions ~ .detail-activity-list > .detail-log-entry:first-child {
+    padding-inline-end: calc((var(--space-2xl) * 4) + var(--space-md));
   }
 
   .detail-log-loading {
@@ -3873,6 +3927,20 @@ Read-only list/placeholder only — not the deferred rich per-repo-status compon
 .workspace-worktrees-branch {
   color: var(--text-muted, inherit);
 }
+/*
+FNXC:Workspace 2026-08-20-00:56:
+The full Task Detail list exposes durable per-repo base decisions; the compact card stays count-only.
+Fallback uses the existing warning status treatment because it is observable divergence, not an error.
+*/
+.workspace-worktrees-base {
+  color: var(--text-muted, inherit);
+}
+.workspace-worktrees-base-fallback {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-xs);
+}
 .workspace-worktrees-status {
   border-radius: var(--radius-sm);
   padding: 0 var(--space-xs);
@@ -3951,4 +4019,50 @@ reuse source-grid spacing so long structural finding labels and immutable proven
   .spec-lock-report .detail-source-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* FNXC:AIMergeReviewReconciliation 2026-08-20-21:56: approved-but-unconfirmed findings need neutral status chrome rather than the rejected treatment, while terminal review state remains actionable on narrow hosts. */
+.ai-merge-review-reconciliation {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-info-border);
+  border-radius: var(--radius-md);
+  background: var(--color-info-subtle);
+}
+.ai-merge-review-reconciliation-terminal {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-subtle);
+}
+.ai-merge-review-reconciliation h3 { margin: 0; }
+.ai-merge-review-reconciliation p { margin: var(--space-2) 0 0; }
+.ai-merge-review-reconciliation ul { margin: var(--space-2) 0 0; }
+@media (max-width: 768px) {
+  .ai-merge-review-reconciliation { margin-inline: var(--space-2); }
+}
+
+/*
+FNXC:RepositoryScope 2026-08-21-00:29:
+Task Detail exposes pre-land scope corrections beside acquired repository evidence. The controls
+use existing form and spacing tokens so desktop and compact modal layouts retain keyboard-accessible
+operator recovery without treating acquisition count as task intent.
+*/
+.workspace-repository-scope-controls {
+  display: grid;
+  gap: var(--space-sm);
+  margin-block: var(--space-md);
+}
+.workspace-repository-scope-controls label {
+  display: grid;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+.workspace-repository-scope-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.workspace-repository-scope-error { color: var(--color-danger-text); }
+.workspace-repository-scope-history {
+  margin: var(--space-sm) 0;
+  padding-inline-start: var(--space-lg);
 }

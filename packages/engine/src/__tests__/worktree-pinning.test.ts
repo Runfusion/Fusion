@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { workspaceRepoSegment, workspaceWorktreeGroupSegment } from "@fusion/core";
 import {
   isTaskPinnedWorktreeNaming,
   pinnedWorktreeSlug,
@@ -49,6 +50,22 @@ describe("worktree-pinning", () => {
       const a = pinnedWorktreePathForTask("FN-9", {}, "/repo");
       const b = pinnedWorktreePathForTask("FN-9", {}, "/repo");
       expect(a).toBe(b);
+    });
+
+    it("groups task-id paths by workspace and repository under a configured root", () => {
+      const workspaceRoot = "/projects/PRD-1234-my-slug";
+      const settings = { worktreesDir: "/shared/worktrees" };
+      const api = pinnedWorktreePathForTask("FN-9162", settings, join(workspaceRoot, "api"), {
+        workspaceRootDir: workspaceRoot,
+        repoRelPath: "api",
+      });
+      const web = pinnedWorktreePathForTask("FN-9162", settings, join(workspaceRoot, "web"), {
+        workspaceRootDir: workspaceRoot,
+        repoRelPath: "web",
+      });
+      expect(api).toBe(join("/shared/worktrees", workspaceWorktreeGroupSegment(workspaceRoot), workspaceRepoSegment("api"), "fn-9162"));
+      expect(web).toBe(join("/shared/worktrees", workspaceWorktreeGroupSegment(workspaceRoot), workspaceRepoSegment("web"), "fn-9162"));
+      expect(api).not.toBe(web);
     });
   });
 

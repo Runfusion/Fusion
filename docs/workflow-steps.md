@@ -26,10 +26,14 @@ FNXC:WorkflowRuntime 2026-06-28-08:10:
 Selectable built-in workflows must share the canonical dispatch traits: their held work enters through a capacity-released `todo`/backlog column and moves to the first WIP execution column via the hold/release sweep, so non-default built-ins do not need a separate dispatcher.
 -->
 
-Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → graph-native optional gates → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. A task with no explicit workflow resolves to `builtin:coding`; an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
+Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → graph-native optional gates → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. `builtin:coding` remains the catalog default; when project enablement excludes it, unselected/new work and dashboard defaults use the first enabled normal built-in in catalog order. An explicitly selected existing built-in remains resolvable even when it is disabled for new selection, while an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
 
 ### Selecting workflows
 
+<!--
+FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+Project Settings treats an unset `enabledBuiltinWorkflowIds` as all normal built-ins enabled and requires every explicit list to retain at least one valid, available built-in. Disabled built-ins stay in management/direct-resolution paths only; they are omitted from new-task and board/header/list/Planning/Missions/Graph pickers.
+-->
 Operators can select workflows in the dashboard wherever the task or board workflow selector is shown. Agents and automation can discover, author, tune, and assign them with the workflow tools:
 
 - `fn_workflow_list` / `fn_workflow_get` — list built-in and custom workflow definitions and inspect a definition's IR before editing.
@@ -82,7 +86,7 @@ Use this inventory as the documentation map for current workflow behavior:
 | Agent workflow tools | Agents can list/get/validate/create/update/delete workflows, inspect traits, read/write workflow settings, select workflows for explicit task contexts, and pass `workflow_id` when creating/delegating tasks. `fn_workflow_validate` is read-only and uses the same validator as create/update without persistence. Prompt-injectable lanes strip approval-bypass flags on workflow writes. | [Agents](./agents.md#interactive-cli-chat) and [CLI Reference](./cli-reference.md#published-agent-extension-workflow-tools). |
 | Routing boundary | Agents may select/change a workflow only for explicit user requests or tasks they created; no-commit markers do not imply Quick fix or any other workflow. | This page, [Selecting workflows](#selecting-workflows); [Agents](./agents.md#interactive-cli-chat). |
 | Dashboard board/list/graph selection | Board/List/Header/Graph share durable per-project workflow selection; stale saved ids fall back to a valid workflow. Board adds a dashboard-only **All workflows** aggregate and task workflow-name badges; Graph uses **All workflows** for the full active graph. | [Dashboard Guide → Board View](./dashboard-guide.md#board-view), [Graph View](./dashboard-guide.md#graph-view), and [Workflow Selection and Editor](./dashboard-guide.md#workflow-selection-and-editor). |
-| Create/planning forwarding | Quick-create task creation, Planning Mode, Subtask Breakdown, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
+| Create/planning forwarding | Quick-create task creation, Planning Mode, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
 | Manual-intake column parking | Dashboard create surfaces never send an explicit `column`; the store resolves the landing column from the (selected or project-default) workflow's intake column. A workflow whose intake column sets `autoTriage: false` parks new cards there instead of auto-planning them, until an operator promotes the card. Built-in Coding (Ideas)'s `ideas` composition is deprecated and hidden from new selection; copy that composition into a custom workflow when needed. Existing Coding (Ideas) selections remain resolvable. The full lifecycle — create → parked → operator "Start" promotion → poll-time todo-discovery of the still-unplanned (bootstrap-stub) card — is regression-tested at the engine (triage poll ordering/discovery), UI (`TaskCard` Start affordance), and store (create → `moveTask` promotion) layers (FN-7596). | [Dashboard Guide → Create/Planning Forwarding](./dashboard-guide.md#planning-mode). |
 
 ### Skill-backed workflow steps
@@ -437,7 +441,7 @@ Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?
 
 - `defaultOn` contributes to the runtime/display effective enable set only when the task has no persisted `enabledWorkflowSteps` array; operators can still toggle persisted selections when creating or editing tasks.
 - `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, generic optional gates keep the global `maxPostReviewFixes` behavior; built-in `plan-review` and most `code-review` groups default to unbounded remediation unless a workflow setting caps them. Compound Engineering authors a two-pass Code Review cap.
-- `phase` defaults to `"pre-merge"` (the prior, only behavior). `"post-merge"` marks a group the executor runs after a successful merge (see [Execution Phases](#execution-phases)).
+- `phase` defaults to `"pre-merge"` (the prior, only behavior). `"post-merge"` marks a group the executor runs after a successful merge (see [Execution Phases](#execution-phases)). An enabled pre-merge group with no result blocks the merge door as well as pending or failed results. The built-in Plan Review, Code Review, and Browser Verification groups declare no phase, so they count as pre-merge.
 - Persisted enable state lives on the per-task `enabledWorkflowSteps` array, keyed by the **group node id** (for example `browser-verification`, `code-review`). For execution, Fusion treats a group as enabled when `enabledWorkflowSteps` is present and includes the group id; if the field is omitted, Fusion falls back to the workflow node's `defaultOn: true`. An explicit empty array disables every optional group and prevents default-on gates from reappearing.
 
 Built-in optional gates ship as inlined IR builders, not as a template catalog:
@@ -572,17 +576,17 @@ Plugin palette templates (above) can be dropped in as a starting point instead o
 ## Model Overrides for Workflow Nodes
 
 <!--
-FNXC:WorkflowModelBinding 2026-07-10-00:00:
-FN-7771 lets workflow authors bind reasoning effort per session-running node, independently from provider/model. FN-7772 adds workflow-declared primary lane thinking companions, but node-level thinking remains strongest so a custom workflow can pin a high-effort review or low-effort execution seam without changing task-wide or lane defaults.
+FNXC:WorkflowModelBinding 2026-08-18-23:38:
+FN-7771 lets workflow authors bind reasoning effort per session-running node, independently from provider/model. The canonical vocabulary now includes both opt-in `xhigh` and `max`; node-level thinking remains strongest so a custom workflow can pin a high-effort review or low-effort execution seam without changing task-wide or lane defaults. Model-bound dashboard controls narrow only when `/api/models` carries pi capability metadata; unknown metadata keeps the canonical fallback.
 -->
 
 A prompt-mode gate node can set its own model with:
 
 - `modelProvider`
 - `modelId`
-- `thinkingLevel` (`"off" | "minimal" | "low" | "medium" | "high" | "xhigh"`)
+- `thinkingLevel` (`"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`)
 
-If a node also sets `config.credentialInstanceId`, execution resolves that configured instance for the node's provider/model pair; clearing it uses the provider default credential. If both model fields are set, node execution uses that provider/model pair; otherwise it falls back to default model selection. `thinkingLevel` is stored as `config.thinkingLevel` and can be set or cleared independently from the model pair. Runtime reasoning-effort precedence is **node/step `thinkingLevel` → task `thinkingLevel` → workflow lane thinking override (`executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel`) → global lane thinking override → project default thinking override → global `defaultThinkingLevel`**. The lane settings accept `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`; unset means inherit. This applies to prompt/gate custom nodes, the `execute` and `step-execute` seams, triage/planning, and `step-review` reviewer sessions. Dashboard node summaries show unpinned provider/model state as **Default model**; the inspector's inline thinking selector shows the resolved project default (e.g. "Default (off)") when no node-level thinking value is pinned.
+If a node also sets `config.credentialInstanceId`, execution resolves that configured instance for the node's provider/model pair; clearing it uses the provider default credential. If both model fields are set, node execution uses that provider/model pair; otherwise it falls back to default model selection. `thinkingLevel` is stored as `config.thinkingLevel` and can be set or cleared independently from the model pair. Runtime reasoning-effort precedence is **node/step `thinkingLevel` → task `thinkingLevel` → workflow lane thinking override (`executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel`) → global lane thinking override → project default thinking override → global `defaultThinkingLevel`**. The lane settings accept `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; unset means inherit. Model-bound controls offer only the selected model's documented levels (`null` excludes a level and `xhigh`/`max` require a mapped string); without metadata they offer the canonical list. This applies to prompt/gate custom nodes, the `execute` and `step-execute` seams, triage/planning, and `step-review` reviewer sessions. Dashboard node summaries show unpinned provider/model state as **Default model**; the inspector's inline thinking selector shows the resolved project default (e.g. "Default (off)") when no node-level thinking value is pinned.
 
 ## Default-On Behavior for New Tasks
 
@@ -807,9 +811,9 @@ Self-healing recovery re-runs the *same* dispatch that produced a failed pre-mer
 
 **A reason is always mandatory** and every bypass is audit-logged (actor, timestamp, reason, and the prior step status it superseded) via a `task:bypass-review` run-audit event plus a task log entry.
 
-The bypass targets the **most-recently-completed failed pre-merge** `WorkflowStepResult` (any lane — Code Review, Code Review Remediation, Plan Review, Browser Verification) and rewrites it in place: `status` becomes `"skipped"` (a terminal, non-blocking value `getTaskMergeBlocker` does not match), and the result is stamped with `bypassedBy`, `bypassedAt`, `bypassReason`, and `bypassedFromStatus` (the prior `"failed"` status) plus `bypassedFromVerdict` when one was present. **The bypass never fabricates a reviewer `verdict`** (no synthetic `APPROVE`) — it is an honest record that the gate was overridden, not that the change was reviewed and approved.
+The bypass targets the **most-recently-completed failed pre-merge** `WorkflowStepResult` (any lane — Code Review, Code Review Remediation, Plan Review, Browser Verification) and rewrites it in place: `status` becomes `"skipped"` (a terminal, non-blocking value `getTaskMergeBlocker` does not match), and the result is stamped with `bypassedBy`, `bypassedAt`, `bypassReason`, and `bypassedFromStatus` (the prior `"failed"` status) plus `bypassedFromVerdict` when one was present. If an enabled required pre-merge group has no result at all, the same operator bypass records a new skipped result with `bypassedFromStatus: "absent"`. **The bypass never fabricates a reviewer `verdict`** (no synthetic `APPROVE`) — it is an honest record that the gate was overridden, not that the change was reviewed and approved. `fn_workflow_step_resume` remains the escape for an existing pending result.
 
-The bypass clears **only** the `"task has failed pre-merge workflow steps"` merge-blocker reason. It does **not** touch any other `getTaskMergeBlocker` condition: a paused task, incomplete steps, a blocking task status, or a still-`pending` pre-merge step all continue to block exactly as before. It also does not itself move the task to `done` or force a merge — an `autoMerge:false` task remains terminal-until-human-merge after the bypass, same as before (FN-5147). Because the bypassed step's `status` is no longer `"failed"`, self-healing's recovery sweep (`recoverReviewTasksWithFailedPreMergeSteps`) no longer selects it for re-dispatch.
+The bypass clears **only** the relevant pre-merge merge-blocker reason. It does **not** touch any other `getTaskMergeBlocker` condition: a paused task, incomplete steps, a blocking task status, or a still-`pending` pre-merge step all continue to block exactly as before. It also does not itself move the task to `done` or force a merge — an `autoMerge:false` task remains terminal-until-human-merge after the bypass, same as before (FN-5147). Because the bypassed step's `status` is no longer `"failed"`, self-healing's recovery sweep (`recoverReviewTasksWithFailedPreMergeSteps`) no longer selects it for re-dispatch. A forced promotion that explicitly waives Plan Review records its own skipped planning-gate result; legacy adoption likewise does not backfill resultless pre-merge groups after review. Recovery scanners keep their legacy blocker query so they can still find resultless-blocked cards and route them back to the graph gate.
 
 ## Viewing Results
 
@@ -948,12 +952,8 @@ declaration (drop-on-orphan) and falling back to the default.
 
 The **step-execution**, **review/approval**, **per-phase model-lane**,
 **triage/spec policy**, and **planner oversight** knobs are workflow settings
-declared by `builtin:coding`. Triage policy includes
-`triageProactiveSubtaskSplittingEnabled` (default `true`), which controls
-automatic large-task splitting guidance for oversized M/L work. Set it to `false`
-in a workflow's Values tab when triage should keep large tasks whole unless the
-task explicitly has `breakIntoSubtasks: true`; explicit subtask requests still
-follow the mandatory split flow. Planner oversight uses `plannerOversightLevel`
+declared by `builtin:coding`. Large tasks remain one task with a complete plan;
+triage does not fan them out. Planner oversight uses `plannerOversightLevel`
 (default `autonomous`) with `off`, `observe`, `steer`, and `autonomous` values —
 full steering/control is ON for every workflow unless explicitly changed. Tasks
 may set a nullable `Task.plannerOversightLevel` override that wins over the
@@ -1014,3 +1014,25 @@ Task creation resolves ownership once at the shared pre-insert boundary used by 
 ### Board visibility of pre-release Plan Review
 
 Board hold-lane payloads can expose a transient `releaseGate` verdict. It makes the resolved pre-release Plan Review node, its column/default-on state, and a capacity-boundary continuation observable to Promote controls without duplicating workflow-gate rules in the browser.
+
+## Foreach merge admission
+
+A workflow whose `foreach` template contains `step-execute` may use terminal live task-step coverage as merge implementation proof when it expects at least one instance. Every expected instance must map to a `done` or `skipped` live step. This supports Review Level 0, which intentionally disables optional node-result groups. Zero expected instances still require a relevant `source:"node"` pre-merge result, and pending or failed node results remain blocking.
+
+When the merge boundary cannot be proven, Fusion emits the terminal graph value `merge-boundary-unproven` and parks the task as failed with an actionable error. It does not silently retain the task in the review lane or repeat the same boundary check through bounded auto-merge retry.
+
+### Workspace Code Review remediation
+
+Workspace Code Review carries repository-specific outcomes. A failed review is remediated from the failing repository's acquired worktree without persisting a singular workspace-root worktree. Repeated unchanged negative review input parks for operator approval; landing requires current approval evidence for every modified scoped repository. Scope changes clear both approval evidence and the remediation target atomically, while a current-scope APPROVE clears its matching target before graph completion.
+
+### Workspace Code Review seal
+
+For workspace tasks, Code Review is the final write-sensitive stage before landing. Completion and other write-capable finalization stages run before it. A missing or stale workspace approval returns the task to Code Review (`workspace-review-required`) so a new current-scope approval is produced before merge.
+
+## Review convergence
+
+Automatic remediation retains a failed review as a non-blocking `skipped` carrier. The carrier stores the failed verdict, findings, and bounded prior-attempt ledger, but never bypass metadata, so it cannot satisfy a review gate by itself. This applies to remediation bounces, graph-failure resumes, and remediation-owned replans; explicit operator retry remains a clean slate.
+
+The next reviewer receives the same-gate attempt history and open findings. An implementer may call `fn_review_dispute(findingId, rationale)`: this records a contested-but-open annotation, so the finding remains blocking and visible. The reviewer must supersede it or rebut it with `rebutsDisputedFindingId`; only a terminal same-gate verdict that does neither marks it `dispute-upheld`.
+
+Repeated unchanged review input routes through the shared convergence ladder: one bounded escalation/replan, then arbitration, then a loud human escalation only after the automatic stages are spent. A non-declining stage performs a real re-dispatch and its requester succeeds rather than terminalizing the remediation node. Arbitration may release only its exact fenced failed gate; it cannot release sibling gates, and a split with binding findings remains blocking.

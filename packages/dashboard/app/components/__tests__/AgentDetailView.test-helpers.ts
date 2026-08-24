@@ -166,7 +166,7 @@ vi.mock("../CustomModelDropdown", () => ({
             value: thinkingLevel ?? "",
             onChange: (e: Event) => onThinkingLevelChange((e.target as HTMLSelectElement).value),
           },
-          ...["off", "minimal", "low", "medium", "high", "xhigh"].map((level) => createElement("option", { key: level, value: level }, level)),
+          ...["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => createElement("option", { key: level, value: level }, level)),
         )
         : null,
       ...Array.from(new Set(models.map((model) => model.provider))).map((provider) => createElement(

@@ -130,7 +130,14 @@ pgDescribe("U11 stranded-column behaviour against a live store and the REAL defa
     admits everything.
     */
     const store = h.store();
-    const finished = await store.createTask({ description: "declared terminal" });
+    /*
+    FNXC:WorkflowFixtures 2026-08-23-18:30:
+    This card only needs to SIT in the workflow's declared terminal column; it is not exercising the
+    merge door. The door refuses a move to `done` for a task whose ENABLED optional pre-merge groups
+    produced no result, and the built-in workflow enables Plan Review + Code Review by default, so
+    state the intent explicitly: no enabled pre-merge steps.
+    */
+    const finished = await store.createTask({ description: "declared terminal", enabledWorkflowSteps: [] } as never);
     await store.moveTask(finished.id, "in-progress" as never, { moveSource: "user" } as never);
     await store.moveTask(finished.id, "in-review" as never, { moveSource: "user" } as never);
     await store.moveTask(finished.id, "done" as never, { moveSource: "user" } as never);

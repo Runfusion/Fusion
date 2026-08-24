@@ -12,7 +12,6 @@ export type {
   Agent, MergeResult, WorkflowIrNode, WorkflowIr, WorkflowColumnAgent, TaskMoveLanes,
   ApprovalRequestStore,
 } from "@fusion/core";
-export { resolvePlannerLanes } from "../execution/replan-target.js";
 export type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 export type { WorkflowLegacySeams } from "../workflows/workflow-node-handlers.js";
 export type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";

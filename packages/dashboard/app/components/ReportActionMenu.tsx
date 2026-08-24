@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { Bug, Lightbulb, LifeBuoy, MessageSquare } from "lucide-react";
 import type { ReportActionType } from "@fusion/core";
 import "./ReportActionMenu.css";
@@ -13,6 +14,7 @@ const actions: Array<{ type: ReportActionType; label: string; Icon: typeof Bug }
 
 /** Four guided entry points share the same report pipeline rather than issue textboxes. */
 export function ReportActionMenu({ onSelect }: { onSelect: (action: ReportActionType) => void }) {
+  const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number; right: number }>();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -71,14 +73,14 @@ export function ReportActionMenu({ onSelect }: { onSelect: (action: ReportAction
           role="menu"
           style={{ top: position.top, left: position.left, right: position.right }}
         >
-          {actions.map(({ type, label, Icon }) => <button className="report-action-menu__item" type="button" role="menuitem" key={type} onClick={() => { setOpen(false); onSelect(type); }}><Icon aria-hidden="true" />{label}</button>)}
+          {actions.map(({ type, label, Icon }) => <button className="report-action-menu__item" type="button" role="menuitem" key={type} onClick={() => { setOpen(false); onSelect(type); }}><Icon aria-hidden="true" />{t(`report.actions.${type}`, label)}</button>)}
         </div>,
         document.body,
       )
     : null;
 
   return <div className="report-action-menu">
-    <button ref={triggerRef} className="btn btn-secondary" type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>Report</button>
+    <button ref={triggerRef} className="btn btn-secondary" type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{t("report.menu", "Report")}</button>
     {menu}
   </div>;
 }

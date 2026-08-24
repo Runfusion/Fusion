@@ -9,7 +9,10 @@ vacuously — an assertion that can no longer fail is worse than one that is red
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
-import { PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE } from "../../workflows/workflow-graph-executor.js";
+import {
+  PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
+  WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE,
+} from "../../workflows/workflow-graph-executor.js";
 // graphFailureValue was peeled off TaskExecutor into executor/graph-failure-pure.ts (wave 18); use the re-exported free function.
 import { TaskExecutor, graphFailureValue } from "../../executor.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
@@ -115,6 +118,33 @@ describe("graphFailureValue optional-group materialized ids", () => {
       context: { "node:steps:value": "awaiting-user-input" },
     });
     expect(value).toBe("awaiting-user-input");
+  });
+});
+
+describe("workspace preparation graph failure recovery (FN-120)", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExecSync.mockReturnValue("" as any);
+  });
+
+  it("uses the environment retry lane instead of the Plan Review provider budget", async () => {
+    const initial = makeTask();
+    const { store, getLive } = trackingStore(initial);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await (executor as any).handleGraphFailure(initial, planReviewGraphFailure({
+      "node:plan-review-step:value": WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE,
+      "node:plan-review-step:error": "Workspace repository preparation failed for repo1 during acquire: fatal: not a valid object name: 'main'",
+    }));
+
+    // FNXC:WorkspacePreparation 2026-08-21-19:52: Git acquisition uses the durable
+    // worktree recovery episode, never graph/provider retry accounting.
+    expect(getLive().graphResumeRetryCount).toBeUndefined();
+    expect(getLive().worktreeSessionRetryCount).toBe(1);
+    expect(store.logEntry.mock.calls.some(([, message]: [string, string]) =>
+      message.includes("Workspace preparation recovery") && message.includes("not a valid object name"))).toBe(true);
+    expect(store.logEntry.mock.calls.some(([, message]: [string, string]) =>
+      message.includes("Plan Review provider failure"))).toBe(false);
   });
 });
 

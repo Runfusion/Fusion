@@ -133,7 +133,6 @@ export interface ArchivedTaskEntry {
   /** Per-task token/cost accounting (input/output/cache) preserved across archival. */
   tokenUsage?: TaskTokenUsage;
   /** Optional: other metadata to preserve */
-  breakIntoSubtasks?: boolean;
   noCommitsExpected?: boolean;
   paused?: boolean;
   baseBranch?: string;

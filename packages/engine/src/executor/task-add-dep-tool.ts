@@ -4,7 +4,7 @@
  * declaration tool; confirm=true aborts the active session for re-planning.
  */
 import { Type, type Static } from "@earendil-works/pi-ai";
-import type { TaskStore } from "@fusion/core";
+import type { Task, TaskStore } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { executorLog } from "../logger.js";
 
@@ -47,8 +47,9 @@ export function createTaskAddDepTool(deps: TaskAddDepToolDeps, taskId: string): 
       }
 
       // Validate target task exists
+      let targetTask: Task;
       try {
-        await store.getTask(targetId);
+        targetTask = await store.getTask(targetId);
       } catch {
         return {
           content: [{
@@ -62,6 +63,15 @@ export function createTaskAddDepTool(deps: TaskAddDepToolDeps, taskId: string): 
       // Read current task to get existing dependencies
       const currentTask = await store.getTask(taskId);
       const existing = currentTask.dependencies;
+      if (targetTask.sourceParentTaskId === taskId) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Cannot depend on self-spawned task ${targetId}; implement required work directly in ${taskId}.`,
+          }],
+          details: { code: "SELF_SPAWNED_DEPENDENCY", dependencyId: targetId },
+        };
+      }
 
       // Dedup check
       if (existing.includes(targetId)) {

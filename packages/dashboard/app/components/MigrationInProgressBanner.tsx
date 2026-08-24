@@ -11,28 +11,21 @@ server. Fresh navigations during migration get the holding page instead.
 */
 import { useTranslation } from "react-i18next";
 import { DatabaseZap } from "lucide-react";
+import { Banner } from "./Banner";
 import "./MigrationInProgressBanner.css";
 
-interface MigrationInProgressBannerProps {
-  isActive: boolean;
-  progressLabel?: string;
-}
+interface MigrationInProgressBannerProps { isActive: boolean; progressLabel?: string; }
 
 export function MigrationInProgressBanner({ isActive, progressLabel }: MigrationInProgressBannerProps) {
   const { t } = useTranslation("app");
-  if (!isActive) {
-    return null;
-  }
+  if (!isActive) return null;
 
   return (
-    <div className="migration-in-progress-banner" role="status" aria-live="polite">
-      <DatabaseZap aria-hidden="true" />
+    <Banner className="migration-in-progress-banner" tone="info" icon={<DatabaseZap aria-hidden="true" />} role="status" aria-live="polite">
       <span>
         {t("app.migrationInProgress", "Database migration in progress — the dashboard will reconnect when it completes.")}
-        {progressLabel ? (
-          <span className="migration-in-progress-banner-progress">{progressLabel}</span>
-        ) : null}
+        {progressLabel ? <span className="migration-in-progress-banner-progress">{progressLabel}</span> : null}
       </span>
-    </div>
+    </Banner>
   );
 }

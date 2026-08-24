@@ -8,7 +8,7 @@
    Theme token translucency uses color-mix(in srgb, var(--token) N%, transparent) or exact literal color-mix values for glass surfaces. Raw RGB alpha color functions are banned outside var() fallbacks by FN-6489.
    ============================================================ */
 
-/* Aurora, Calm, Dawn, Sage, Midnight, Factory Dark, and Factory Light swatches stay globally resolvable while a different theme is active. */
+/* Aurora, Calm, Dawn, Sage, Midnight, Velvet, Factory Dark, and Factory Light swatches stay globally resolvable while a different theme is active. */
 :root {
   --aurora-swatch-sample-1: #0a1022;
   --aurora-swatch-sample-2: #162044;
@@ -30,6 +30,19 @@
   --midnight-swatch-sample-2: #1b2450;
   --midnight-swatch-sample-3: #a78bfa;
   --midnight-swatch-sample-4: #67d4e8;
+  --velvet-swatch-sample-1: #1d1418;
+  --velvet-swatch-sample-2: #2b1d24;
+  --velvet-swatch-sample-3: #c99a89;
+  --velvet-swatch-sample-4: #b66b7d;
+  /* FNXC:DashboardTheming 2026-08-23-01:51: Iceberg preview samples stay global so its selector chip remains accurate even while another persisted theme supplies active tokens. */
+  --iceberg-swatch-sample-1: #161821;
+  --iceberg-swatch-sample-2: #242940;
+  --iceberg-swatch-sample-3: #84a0c6;
+  --iceberg-swatch-sample-4: #a093c7;
+  --medieval-swatch-sample-1: #21170f;
+  --medieval-swatch-sample-2: #392417;
+  --medieval-swatch-sample-3: #d5ad67;
+  --medieval-swatch-sample-4: #8db08b;
   --factory-dark-swatch-sample-1: #0d0f10;
   --factory-dark-swatch-sample-2: #1a1d1f;
   --factory-dark-swatch-sample-3: #e89532;
@@ -61,6 +74,18 @@
   --midnight-swatch-sample-2: #e2e6fa;
   --midnight-swatch-sample-3: #5134a3;
   --midnight-swatch-sample-4: #16778c;
+  --velvet-swatch-sample-1: #f9f3f2;
+  --velvet-swatch-sample-2: #f0e2e0;
+  --velvet-swatch-sample-3: #8a4a55;
+  --velvet-swatch-sample-4: #a9636f;
+  --iceberg-swatch-sample-1: #f3f5f9;
+  --iceberg-swatch-sample-2: #dfe5f0;
+  --iceberg-swatch-sample-3: #2d539e;
+  --iceberg-swatch-sample-4: #6142a0;
+  --medieval-swatch-sample-1: #f4ead2;
+  --medieval-swatch-sample-2: #e1ceb0;
+  --medieval-swatch-sample-3: #765125;
+  --medieval-swatch-sample-4: #446b48;
   --factory-dark-swatch-sample-1: #eceef0;
   --factory-dark-swatch-sample-2: #d9dde0;
   --factory-dark-swatch-sample-3: #a95612;
@@ -7437,6 +7462,96 @@ FNXC:DashboardTheming 2026-07-20-00:00:
 Aurora gives operators navy/teal/violet dark surfaces and misty light surfaces. Literal palette values stay in these canonical tokens, while globally defined swatch variables keep the unselected option accurate in either mode.
 */
 /*
+FNXC:DashboardTheming 2026-08-20-00:29:
+Operator feedback supersedes the original oversized pixel choice because its apparent UI size harmed readability. Medieval keeps a locally bundled Pixelify Sans face for ordinary UI while code and terminal surfaces retain --font-mono; paper and wood paints stay CSS backgrounds rather than interaction overlays.
+*/
+[data-color-theme="medieval"] {
+  --bg: #21170f;
+  --surface: #302116;
+  --card: #3b2a1c;
+  --card-hover: #4a3523;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #795735;
+  --text: #fff1ce;
+  --text-muted: #ddc79e;
+  --text-dim: #aa926c;
+  --todo: #d5ad67;
+  --in-progress: #79afaa;
+  --in-progress-rgb: 121, 175, 170;
+  --in-review: #c79ad4;
+  --triage: #e5ba6a;
+  --done: #8db08b;
+  --color-success: #9dca8c;
+  --color-warning: #e5ba6a;
+  --color-error: #ef8e75;
+  --color-info: #82b9c4;
+  --cta-bg: #80512c;
+  --cta-border: #d5ad67;
+  --cta-text: #fff8e5;
+  --cta-bg-hover: #9a6637;
+  --cta-border-hover: #ecd093;
+  --cta-glow: 0 0 var(--space-md) color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #d5ad67;
+  --accent-text: #21170f;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 36%, transparent);
+  --font-primary: "Pixelify Sans", system-ui, sans-serif;
+  --medieval-paper-fiber: color-mix(in srgb, var(--text) 6%, transparent);
+  --medieval-paper-mottle: color-mix(in srgb, var(--border) 18%, transparent);
+  --medieval-wood-light: color-mix(in srgb, var(--accent) 68%, var(--card));
+  --medieval-wood-dark: color-mix(in srgb, var(--border) 76%, var(--bg));
+}
+
+[data-color-theme="medieval"][data-theme="light"] {
+  --bg: #f4ead2;
+  --surface: #ead9b8;
+  --card: #fff8e5;
+  --card-hover: #f0dfc0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #a77b4a;
+  --text: #302116;
+  --text-muted: #674e31;
+  --text-dim: #896f4d;
+  --todo: #8a612b;
+  --in-progress: #2e7473;
+  --in-progress-rgb: 46, 116, 115;
+  --in-review: #704c87;
+  --triage: #8a612b;
+  --done: #446b48;
+  --color-success: #3d7544;
+  --color-warning: #8a612b;
+  --color-error: #a94335;
+  --color-info: #2f6f89;
+  --cta-bg: #765125;
+  --cta-border: #61401e;
+  --cta-text: #fff8e5;
+  --cta-bg-hover: #5f3e1c;
+  --cta-border-hover: #4b3015;
+  --cta-glow: 0 0 var(--space-md) color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #765125;
+  --accent-text: #fff8e5;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 28%, transparent);
+  --font-primary: "Pixelify Sans", system-ui, sans-serif;
+  --medieval-paper-fiber: color-mix(in srgb, var(--text) 5%, transparent);
+  --medieval-paper-mottle: color-mix(in srgb, var(--border) 16%, transparent);
+  --medieval-wood-light: color-mix(in srgb, var(--accent) 64%, var(--card));
+  --medieval-wood-dark: color-mix(in srgb, var(--border) 78%, var(--bg));
+}
+
+[data-color-theme="medieval"] body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse at top left, var(--medieval-paper-fiber), transparent var(--space-2xl)),
+    radial-gradient(ellipse at bottom right, var(--medieval-paper-mottle), transparent calc(var(--space-2xl) * 2)),
+    repeating-linear-gradient(0deg, transparent 0, transparent var(--space-lg), var(--medieval-paper-fiber) calc(var(--space-lg) + var(--btn-border-width))),
+    repeating-linear-gradient(90deg, transparent 0, transparent var(--space-2xl), var(--medieval-paper-mottle) calc(var(--space-2xl) + var(--btn-border-width)));
+}
+/*
 FNXC:MidnightTheme 2026-08-03-02:05:
 Midnight gives operators deep-navy surfaces with restrained violet/indigo accents in dark mode and a cool pale counterpart in light mode. These complete token blocks preserve distinct semantic statuses, AA-readable text and CTA pairs, and globally resolvable swatch previews for unselected selector options.
 */
@@ -7505,6 +7620,158 @@ Midnight gives operators deep-navy surfaces with restrained violet/indigo accent
   --cta-border-hover: #341f70;
   --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
   --accent: #5134a3;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-08-18-05:45:
+Velvet gives operators deep plum and burgundy surfaces with rose-gold actions in dark mode, plus a warm blush-white light counterpart. Keep complete semantic and interaction token sets in both modes so persisted theme selection never inherits colors from another theme.
+*/
+[data-color-theme="velvet"] {
+  --bg: #1d1418;
+  --surface: #241a20;
+  --card: #2b1d24;
+  --card-hover: #382631;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #5c414c;
+  --text: #fff4f0;
+  --text-muted: #dfc4be;
+  --text-dim: #aa8b90;
+
+  --todo: #d4a5a5;
+  --in-progress: #d89a82;
+  --in-progress-rgb: 216, 154, 130;
+  --in-review: #c493b7;
+  --triage: #e1b66f;
+  --done: #a99a9d;
+  --color-success: #9fc79b;
+  --color-warning: #e1b66f;
+  --color-error: #ed8c95;
+  --color-info: #d89a82;
+
+  --cta-bg: #c99a89;
+  --cta-border: #e5bbab;
+  --cta-text: #1d1418;
+  --cta-bg-hover: #d9aa99;
+  --cta-border-hover: #f3d0c3;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #c99a89;
+  --accent-text: #1d1418;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="velvet"][data-theme="light"] {
+  --bg: #f9f3f2;
+  --surface: #f3e8e6;
+  --card: #fffaf8;
+  --card-hover: #f0e2e0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #d9bfc0;
+  --text: #321d25;
+  --text-muted: #704d57;
+  --text-dim: #98757b;
+
+  --todo: #93616b;
+  --in-progress: #a65348;
+  --in-progress-rgb: 166, 83, 72;
+  --in-review: #81578a;
+  --triage: #8a611e;
+  --done: #816b70;
+  --color-success: #4d7951;
+  --color-warning: #8a611e;
+  --color-error: #ad4050;
+  --color-info: #9c544a;
+
+  --cta-bg: #8a4a55;
+  --cta-border: #713a45;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #743c47;
+  --cta-border-hover: #5d2f38;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #8a4a55;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-08-23-01:51:
+Iceberg is a persisted navy-slate palette with a pale blue-gray light counterpart. Keep its id/order synchronized across the core union, selector metadata, web/Electron first-paint validators, token blocks, and swatch CSS so saved selections never flash or fall back.
+*/
+[data-color-theme="iceberg"] {
+  --bg: #161821;
+  --surface: #1e2132;
+  --card: #242940;
+  --card-hover: #2e3450;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #3d4363;
+  --text: #e8eaf5;
+  --text-muted: #b4bbd6;
+  --text-dim: #838aa8;
+
+  --todo: #a6accd;
+  --in-progress: #84a0c6;
+  --in-progress-rgb: 132, 160, 198;
+  --in-review: #a093c7;
+  --triage: #e2a478;
+  --done: #8b93b0;
+  --color-success: #b4be82;
+  --color-warning: #e2a478;
+  --color-error: #e27878;
+  --color-info: #89b8c2;
+
+  --cta-bg: #84a0c6;
+  --cta-border: #a3bcdf;
+  --cta-text: #161821;
+  --cta-bg-hover: #94b0d6;
+  --cta-border-hover: #c2d4ee;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #84a0c6;
+  --accent-text: #161821;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="iceberg"][data-theme="light"] {
+  --bg: #f3f5f9;
+  --surface: #e8ecf4;
+  --card: #ffffff;
+  --card-hover: #dfe5f0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #c6cee0;
+  --text: #1f2233;
+  --text-muted: #4c5470;
+  --text-dim: #767e99;
+
+  --todo: #5b6486;
+  --in-progress: #2d539e;
+  --in-progress-rgb: 45, 83, 158;
+  --in-review: #6142a0;
+  --triage: #8a5216;
+  --done: #6b7290;
+  --color-success: #4d6b1f;
+  --color-warning: #8a5216;
+  --color-error: #b0413e;
+  --color-info: #276a80;
+
+  --cta-bg: #2d539e;
+  --cta-border: #24437f;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #24437f;
+  --cta-border-hover: #1b3363;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #2d539e;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
   --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);

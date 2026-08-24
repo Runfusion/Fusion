@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { Mock } from "vitest";
+import type { Task } from "@fusion/core";
 import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 import type * as ReviewerModule from "../execution/reviewer.js";
 
@@ -553,6 +554,13 @@ export function createMockStore() {
   `getTask`/`updateTask` implementations replace these outright and are unaffected.
   */
   const patches = new Map<string, Record<string, unknown>>();
+  /*
+  FNXC:EngineTests 2026-08-21-08:34:
+  The shared executor store fake must preserve TaskStore's per-task atomic merge contract. Queue merge
+  calls and re-read after an async callback so sibling merges and simulated external task updates cannot
+  be overwritten by a stale workspaceWorktrees snapshot.
+  */
+  const workspaceMergeTails = new Map<string, Promise<void>>();
   const applyPatch = (id: string, patch: Record<string, unknown> | undefined) => {
     if (!patch || typeof patch !== "object") return;
     patches.set(id, { ...(patches.get(id) ?? {}), ...patch });
@@ -671,6 +679,53 @@ export function createMockStore() {
     updateTask: vi.fn(async (id: string, patch: Record<string, unknown>) => {
       applyPatch(id, patch);
       return { ...(patches.get(id) ?? {}), id };
+    }),
+    mergeWorkspaceWorktreeEntry: vi.fn((
+      id: string,
+      repoRelPath: string,
+      patch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>
+        | ((current: Task) => Promise<Partial<NonNullable<Task["workspaceWorktrees"]>[string]>>),
+      options?: {
+        requireExistingEntry?: boolean;
+        clearSingularWorktree?: boolean;
+        validateBeforePersist?: (current: Task) => Promise<void>;
+      },
+    ) => {
+      const operation = (workspaceMergeTails.get(id) ?? Promise.resolve()).then(async () => {
+        const callbackTask = await store.getTask(id) as Task;
+        const callbackExisting = callbackTask.workspaceWorktrees?.[repoRelPath];
+        if (options?.requireExistingEntry && !callbackExisting) return callbackTask;
+        const resolvedPatch = typeof patch === "function" ? await patch(callbackTask) : patch;
+        const current = await store.getTask(id) as Task;
+        const workspaceWorktrees = current.workspaceWorktrees ?? {};
+        const existing = workspaceWorktrees[repoRelPath];
+        if (options?.requireExistingEntry && !existing) return current;
+        await options?.validateBeforePersist?.(current);
+        applyPatch(id, {
+          workspaceWorktrees: {
+            ...workspaceWorktrees,
+            [repoRelPath]: { ...existing, ...resolvedPatch },
+          },
+          ...(options?.clearSingularWorktree
+            ? {
+                worktree: null,
+                branch: null,
+                branchWriteOrigin: "engine",
+                executionStartBranch: null,
+                baseCommitSha: null,
+              }
+            : {}),
+        });
+        return store.getTask(id);
+      });
+      workspaceMergeTails.set(id, operation.then(() => undefined, () => undefined));
+      return operation;
+    }),
+    updateWorkspaceReviewState: vi.fn(async (id: string, _revision: number, reviewRemediation: unknown) => {
+      const current = await store.getTask(id);
+      const repositoryScope = { ...(current.repositoryScope ?? {}), reviewRemediation };
+      applyPatch(id, { repositoryScope });
+      return { task: { ...current, repositoryScope }, updated: true };
     }),
     recordActivity: vi.fn().mockResolvedValue({}),
     moveTask: makeWriteThroughMoveTask(),

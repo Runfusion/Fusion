@@ -319,6 +319,21 @@
   --swatch-sample-4: var(--midnight-swatch-sample-4);
 }
 
+.theme-swatch-velvet {
+  --swatch-sample-1: var(--velvet-swatch-sample-1);
+  --swatch-sample-2: var(--velvet-swatch-sample-2);
+  --swatch-sample-3: var(--velvet-swatch-sample-3);
+  --swatch-sample-4: var(--velvet-swatch-sample-4);
+}
+
+/* FNXC:DashboardTheming 2026-08-23-01:51: Iceberg maps only global mode-specific preview variables so its chip remains accurate while any other persisted theme is active. */
+.theme-swatch-iceberg {
+  --swatch-sample-1: var(--iceberg-swatch-sample-1);
+  --swatch-sample-2: var(--iceberg-swatch-sample-2);
+  --swatch-sample-3: var(--iceberg-swatch-sample-3);
+  --swatch-sample-4: var(--iceberg-swatch-sample-4);
+}
+
 .theme-swatch-aurora {
   --swatch-sample-1: var(--aurora-swatch-sample-1);
   --swatch-sample-2: var(--aurora-swatch-sample-2);
@@ -672,6 +687,13 @@
   --swatch-sample-2: #252019;
   --swatch-sample-3: #d08a4b;
   --swatch-sample-4: #be6e3c;
+}
+
+.theme-swatch-medieval {
+  --swatch-sample-1: var(--medieval-swatch-sample-1);
+  --swatch-sample-2: var(--medieval-swatch-sample-2);
+  --swatch-sample-3: var(--medieval-swatch-sample-3);
+  --swatch-sample-4: var(--medieval-swatch-sample-4);
 }
 
 .theme-swatch-terminal {
@@ -1195,6 +1217,20 @@
   --swatch-sample-4: var(--midnight-swatch-sample-4);
 }
 
+[data-theme="light"] .theme-swatch-velvet {
+  --swatch-sample-1: var(--velvet-swatch-sample-1);
+  --swatch-sample-2: var(--velvet-swatch-sample-2);
+  --swatch-sample-3: var(--velvet-swatch-sample-3);
+  --swatch-sample-4: var(--velvet-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-iceberg {
+  --swatch-sample-1: var(--iceberg-swatch-sample-1);
+  --swatch-sample-2: var(--iceberg-swatch-sample-2);
+  --swatch-sample-3: var(--iceberg-swatch-sample-3);
+  --swatch-sample-4: var(--iceberg-swatch-sample-4);
+}
+
 [data-theme="light"] .theme-swatch-aurora {
   --swatch-sample-1: var(--aurora-swatch-sample-1);
   --swatch-sample-2: var(--aurora-swatch-sample-2);
@@ -1353,4 +1389,12 @@
   .theme-font-size-toggle {
     grid-template-columns: 1fr;
   }
+}
+
+
+[data-theme="light"] .theme-swatch-medieval {
+  --swatch-sample-1: var(--medieval-swatch-sample-1);
+  --swatch-sample-2: var(--medieval-swatch-sample-2);
+  --swatch-sample-3: var(--medieval-swatch-sample-3);
+  --swatch-sample-4: var(--medieval-swatch-sample-4);
 }

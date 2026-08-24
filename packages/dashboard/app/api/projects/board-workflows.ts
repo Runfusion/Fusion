@@ -71,6 +71,8 @@ export interface BoardWorkflowColumn {
 export interface BoardWorkflowDefinition {
   id: string;
   name: string;
+  /** Whether this definition may be selected for new board/task work. Older payloads omit it and remain selectable. */
+  selectable?: boolean;
   /** Optional compact custom workflow icon; built-ins render the Fusion mark by id. */
   icon?: string;
   columns: BoardWorkflowColumn[];

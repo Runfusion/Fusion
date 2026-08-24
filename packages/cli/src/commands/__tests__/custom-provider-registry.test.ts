@@ -6,6 +6,14 @@ import {
   resolveApiType,
 } from "../custom-provider-registry.js";
 
+/*
+FNXC:CustomProviders 2026-08-23-23:00:
+FN-7622 moved this implementation into @fusion/engine and the FN-8902 bounded
+model-registry refresh made both register/reregister entry points ASYNC. Their
+`refresh()` call now lands after an await, so every case here must await the
+call before asserting; a fire-and-forget call asserted synchronously sees zero
+refreshes.
+*/
 describe("custom-provider-registry", () => {
   it.each([
     ["openai-compatible", "openai-completions"],
@@ -30,7 +38,7 @@ describe("custom-provider-registry", () => {
     expect(resolveApiType(apiType)).toBe(expectedApi);
   });
 
-  it("registers providers with expected config shape", () => {
+  it("registers providers with expected config shape", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
     const logFn = vi.fn();
@@ -53,7 +61,7 @@ describe("custom-provider-registry", () => {
       },
     ];
 
-    registerCustomProviders({ registerProvider, refresh }, providers, logFn);
+    await registerCustomProviders({ registerProvider, refresh }, providers, logFn);
 
     expect(registerProvider).toHaveBeenNthCalledWith(1, "openai-custom", expect.objectContaining({
       baseUrl: "https://example.test/v1",
@@ -70,11 +78,11 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("uses slugified provider names and collision suffixes for registry keys", () => {
+  it("uses slugified provider names and collision suffixes for registry keys", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    registerCustomProviders(
+    await registerCustomProviders(
       { registerProvider, refresh },
       [
         {
@@ -98,21 +106,21 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("handles empty provider list and still refreshes", () => {
+  it("handles empty provider list and still refreshes", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    registerCustomProviders({ registerProvider, refresh }, [], vi.fn());
+    await registerCustomProviders({ registerProvider, refresh }, [], vi.fn());
 
     expect(registerProvider).not.toHaveBeenCalled();
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("uses empty models when models is missing", () => {
+  it("uses empty models when models is missing", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    registerCustomProviders(
+    await registerCustomProviders(
       { registerProvider, refresh },
       [{
         id: "770e8400-e29b-41d4-a716-446655440002",
@@ -127,7 +135,7 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("continues when one provider registration fails", () => {
+  it("continues when one provider registration fails", async () => {
     const registerProvider = vi
       .fn()
       .mockImplementationOnce(() => {
@@ -137,7 +145,7 @@ describe("custom-provider-registry", () => {
     const refresh = vi.fn();
     const logFn = vi.fn();
 
-    registerCustomProviders(
+    await registerCustomProviders(
       { registerProvider, refresh },
       [
         {
@@ -161,11 +169,11 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("reregisters new providers", () => {
+  it("reregisters new providers", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    reregisterCustomProviders(
+    await reregisterCustomProviders(
       { registerProvider, refresh },
       [{ id: "aa0e8400-e29b-41d4-a716-446655440005", name: "Old", apiType: "openai-compatible", baseUrl: "https://old.test" }],
       [
@@ -180,11 +188,11 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("sets supportsDeveloperRole true only when opted in", () => {
+  it("sets supportsDeveloperRole true only when opted in", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    registerCustomProviders(
+    await registerCustomProviders(
       { registerProvider, refresh },
       [
         { id: "optout", name: "Optout", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] },
@@ -204,11 +212,11 @@ describe("custom-provider-registry", () => {
     expect(anthropicModels[0]).not.toHaveProperty("compat");
   });
 
-  it("reregisters changed providers", () => {
+  it("reregisters changed providers", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    reregisterCustomProviders(
+    await reregisterCustomProviders(
       { registerProvider, refresh },
       [{ id: "cc0e8400-e29b-41d4-a716-446655440007", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", apiKey: "A" }],
       [{ id: "cc0e8400-e29b-41d4-a716-446655440007", name: "Provider", apiType: "openai-compatible", baseUrl: "https://two.test", apiKey: "B" }],
@@ -223,11 +231,11 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("reregisters when only supportsDeveloperRole changes", () => {
+  it("reregisters when only supportsDeveloperRole changes", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    reregisterCustomProviders(
+    await reregisterCustomProviders(
       { registerProvider, refresh },
       [{ id: "role", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] }],
       [{ id: "role", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", supportsDeveloperRole: true, models: [{ id: "m", name: "M" }] }],
@@ -241,11 +249,11 @@ describe("custom-provider-registry", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("handles empty previous/current arrays", () => {
+  it("handles empty previous/current arrays", async () => {
     const registerProvider = vi.fn();
     const refresh = vi.fn();
 
-    reregisterCustomProviders({ registerProvider, refresh }, [], [], vi.fn());
+    await reregisterCustomProviders({ registerProvider, refresh }, [], [], vi.fn());
 
     expect(registerProvider).not.toHaveBeenCalled();
     expect(refresh).toHaveBeenCalledTimes(1);

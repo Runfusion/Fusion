@@ -1639,8 +1639,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
           */}
           <div className="github-import-controls" data-testid="github-import-controls">
           <div className="github-import-provider" role="group" aria-label={t("git.providerAriaLabel", "Import provider")}>
-            <button type="button" className={`github-import-tab ${provider === "github" ? "active" : ""}`} aria-pressed={provider === "github"} onClick={() => setProvider("github")} disabled={loading || importing}>GitHub</button>
-            {gitlabEnabled ? <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing}>GitLab</button> : null}
+            <button type="button" className={`github-import-tab ${provider === "github" ? "active" : ""}`} aria-pressed={provider === "github"} onClick={() => setProvider("github")} disabled={loading || importing}>{t("githubImport.github", "GitHub")}</button>
+            {gitlabEnabled ? <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing}>{t("githubImport.gitlab", "GitLab")}</button> : null}
           </div>
           {provider === "github" && (<>
           {/* Tab Navigation */}

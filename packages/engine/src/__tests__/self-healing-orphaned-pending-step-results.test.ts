@@ -5,7 +5,14 @@ import type { Settings, Task, TaskStore, WorkflowStepResult } from "@fusion/core
 const { recordRunAuditEventMock } = vi.hoisted(() => ({
   recordRunAuditEventMock: vi.fn(async () => undefined),
 }));
-vi.mock("../run-audit.js", async (importOriginal) => {
+/*
+FNXC:EngineTests 2026-08-23-18:47:
+The auditor module moved to `util/run-audit.js` in the domain folder layout; the stale
+`../run-audit.js` specifier matched nothing, so this mock was inert and the sweep ran against the
+real auditor — the `toHaveBeenCalled` cases failed while the `not.toHaveBeenCalled` cases passed
+for the wrong reason. Mock the path `self-healing.ts` actually imports.
+*/
+vi.mock("../util/run-audit.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../util/run-audit.js")>();
   return {
     ...actual,

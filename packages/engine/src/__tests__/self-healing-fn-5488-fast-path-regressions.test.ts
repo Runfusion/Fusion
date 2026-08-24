@@ -61,6 +61,43 @@ function makeStore(tasksInput: Task[]) {
       return next;
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:QueuedTaskLogging 2026-08-23-18:30:
+    The overlap-preservation path no longer writes its queued-episode line through `logEntry`: it
+    goes through the atomic `transitionQueuedEpisode` seam (queue fields + episode signature + the
+    single log entry in one transaction, deduped by signature). A fake store missing that method
+    made the sweep throw into its own catch and report zero recoveries. This fake mirrors the
+    production semantics: append only when the row is not already queued with the same blocker
+    fields and signature.
+    */
+    transitionQueuedEpisode: vi.fn().mockImplementation(async (id: string, transition: {
+      signature: string;
+      blockedBy: string | null;
+      overlapBlockedBy: string | null;
+      action: string;
+      outcome?: string;
+    }) => {
+      const current = tasks.get(id);
+      if (!current) throw new Error(`Task ${id} not found or archived while queuing`);
+      const appended = !(
+        current.status === "queued"
+        && (current.blockedBy ?? null) === transition.blockedBy
+        && (current.overlapBlockedBy ?? null) === transition.overlapBlockedBy
+        && ((current as Task & { queuedLogEpisodeSignature?: string | null }).queuedLogEpisodeSignature ?? null) === transition.signature
+      );
+      const next = {
+        ...current,
+        status: "queued",
+        blockedBy: transition.blockedBy,
+        overlapBlockedBy: transition.overlapBlockedBy,
+        queuedLogEpisodeSignature: transition.signature,
+        log: appended
+          ? [...(current.log ?? []), { timestamp: new Date().toISOString(), action: transition.action, outcome: transition.outcome }]
+          : current.log,
+      } as unknown as Task;
+      tasks.set(id, next);
+      return { appended, task: next };
+    }),
   } as unknown as TaskStore;
 
   return { tasks, store };
@@ -243,17 +280,17 @@ describe("SelfHealingManager FN-5488 fast-path regressions", () => {
     expect(tasks.get(dependent.id)?.blockedBy).toBeNull();
     expect(tasks.get(dependent.id)?.status).toBe("queued");
     expect(tasks.get(dependent.id)?.overlapBlockedBy).toBe(overlap.id);
-    expect(store.logEntry).toHaveBeenCalledWith(
-      dependent.id,
-      expect.stringContaining(`${AUDIT_PREFIX} preserved queued status`),
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      dependent.id,
-      expect.stringContaining(`reason=${REASON_FAILED_RETRY_EXHAUSTED}`),
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      dependent.id,
-      expect.stringContaining(`still blocked by file scope overlap with ${overlap.id}`),
-    );
+    /*
+     * FNXC:QueuedTaskLogging 2026-08-23-18:30:
+     * The queued-episode line is now written atomically by `transitionQueuedEpisode`, so assert the
+     * transition's `action` — the same audited text this test always owned — instead of a separate
+     * `logEntry` call that no longer exists on this path.
+     */
+    const [, transition] = (store.transitionQueuedEpisode as ReturnType<typeof vi.fn>).mock.calls
+      .find(([id]) => id === dependent.id) as [string, { action: string; signature: string }];
+    expect(transition.action).toContain(`${AUDIT_PREFIX} preserved queued status`);
+    expect(transition.action).toContain(`reason=${REASON_FAILED_RETRY_EXHAUSTED}`);
+    expect(transition.action).toContain(`still blocked by file scope overlap with ${overlap.id}`);
+    expect(transition.signature).toBe(`file-scope:${overlap.id}`);
   });
 });

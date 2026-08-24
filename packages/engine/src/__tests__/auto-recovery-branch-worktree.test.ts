@@ -68,7 +68,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     const f = createFixtures();
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
     expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine", preserveWorktree: false }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
   });
@@ -95,7 +95,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
 
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.taskStore.moveTask).toHaveBeenCalledWith(
       "FN-4536",
       RENAMED_VOCAB.hold,

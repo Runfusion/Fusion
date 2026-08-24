@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { BarChart3, CircleAlert, Flag, Lightbulb, Map, Target } from "lucide-react";
 import type { NativeStructurePreviewResult, NativeStructureRef } from "@fusion/core";
 import { fetchNativeStructurePreview } from "../api";
@@ -39,6 +40,7 @@ function unavailableLabel(kind: string): string {
  * Roadmap items join this shared renderer with the roadmap icon and callback-only open action.
  */
 export const NativeStructurePreview = memo(function NativeStructurePreview({ ref, payload, capturedLabel, onOpen }: NativeStructurePreviewProps) {
+  const { t } = useTranslation("app");
   const supportedKind = isSupportedKind(ref.kind);
   const refKey = `${ref.kind}\u0000${ref.id}\u0000${ref.projectId ?? ""}`;
   const [fetchedPayload, setFetchedPayload] = useState<{ refKey: string; result: NativeStructurePreviewResult } | undefined>();
@@ -72,7 +74,7 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     return (
       <section className="native-structure-preview native-structure-preview--unavailable" data-testid="native-structure-preview-unavailable" data-reason="missing">
         <Icon aria-hidden="true" />
-        <div className="native-structure-preview__content"><span className="native-structure-preview__label">Preview unavailable</span><p>This structure is unavailable.</p></div>
+        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{t("nativeStructure.previewUnavailable", "Preview unavailable")}</span><p>{t("nativeStructure.unavailable", "This structure is unavailable.")}</p></div>
       </section>
     );
   }
@@ -82,7 +84,7 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     return (
       <section className="native-structure-preview native-structure-preview--unavailable" data-testid="native-structure-preview-error">
         <Icon aria-hidden="true" />
-        <div className="native-structure-preview__content"><span className="native-structure-preview__label">Preview unavailable</span><p>Could not load this {unavailableLabel(ref.kind)}.</p></div>
+        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{t("nativeStructure.previewUnavailable", "Preview unavailable")}</span><p>{t("nativeStructure.loadFailed", "Could not load this {{kind}}.", { kind: unavailableLabel(ref.kind) })}</p></div>
       </section>
     );
   }
@@ -91,7 +93,7 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     return (
       <section className="native-structure-preview" data-testid="native-structure-preview-loading" aria-busy="true">
         <Icon aria-hidden="true" />
-        <div className="native-structure-preview__content"><span className="native-structure-preview__label">Loading {unavailableLabel(ref.kind)}</span></div>
+        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{t("nativeStructure.loading", "Loading {{kind}}", { kind: unavailableLabel(ref.kind) })}</span></div>
       </section>
     );
   }
@@ -100,7 +102,7 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     return (
       <section className="native-structure-preview native-structure-preview--unavailable" data-testid="native-structure-preview-unavailable" data-reason={result.reason}>
         <Icon aria-hidden="true" />
-        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{unavailableLabel(result.kind)}</span><strong className="native-structure-preview__title">{capturedLabel?.trim() || "Preview unavailable"}</strong><p>This structure is unavailable.</p></div>
+        <div className="native-structure-preview__content"><span className="native-structure-preview__label">{unavailableLabel(result.kind)}</span><strong className="native-structure-preview__title">{capturedLabel?.trim() || t("nativeStructure.previewUnavailable", "Preview unavailable")}</strong><p>{t("nativeStructure.unavailable", "This structure is unavailable.")}</p></div>
       </section>
     );
   }
@@ -113,8 +115,8 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
         <strong className="native-structure-preview__title">{result.title}</strong>
         <p className="native-structure-preview__excerpt">{result.excerpt}</p>
       </div>
-      <button className="btn native-structure-preview__open" type="button" onClick={() => onOpen(ref, result)} aria-label={`Open ${result.kindLabel}: ${result.title}`}>
-        Open
+      <button className="btn native-structure-preview__open" type="button" onClick={() => onOpen(ref, result)} aria-label={t("nativeStructure.openAria", "Open {{kind}}: {{title}}", { kind: result.kindLabel, title: result.title })}>
+        {t("actions.open", "Open")}
       </button>
     </section>
   );

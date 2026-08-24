@@ -68,7 +68,6 @@ function renderQuickEntryBox() {
       addToast={vi.fn()}
       tasks={[]}
       availableModels={[]}
-      onSubtaskBreakdown={vi.fn()}
       projectId={PROJECT_ID}
     />,
   );
@@ -159,35 +158,6 @@ describe("composer settings-read isolation", () => {
     fireEvent.pointerDown(toggle, { pointerType: "touch" });
     expect(toggle).toBeInTheDocument();
     expect(fetchSettings).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps K real settings-reading hosts at K reads", async () => {
-    render(<><TaskForm
-      mode="create"
-      description=""
-      onDescriptionChange={vi.fn()}
-      dependencies={[]}
-      onDependenciesChange={vi.fn()}
-      executorModel=""
-      onExecutorModelChange={vi.fn()}
-      validatorModel=""
-      onValidatorModelChange={vi.fn()}
-      presetMode="default"
-      onPresetModeChange={vi.fn()}
-      selectedPresetId=""
-      onSelectedPresetIdChange={vi.fn()}
-      pendingImages={[]}
-      onImagesChange={vi.fn()}
-      tasks={[]}
-      addToast={vi.fn()}
-      isActive
-      reviewLevel={undefined}
-      onReviewLevelChange={vi.fn()}
-      projectId={PROJECT_ID}
-    /><QuickEntryBox onCreate={vi.fn().mockResolvedValue(undefined)} addToast={vi.fn()} tasks={[]} availableModels={[]} onSubtaskBreakdown={vi.fn()} projectId={PROJECT_ID} /></>);
-
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(2));
-    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("keeps TaskComments' two real dictation consumers free of settings reads", async () => {

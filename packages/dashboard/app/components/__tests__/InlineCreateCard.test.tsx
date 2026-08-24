@@ -216,7 +216,6 @@ function renderCard(
     addToast: vi.fn(),
     availableModels: MOCK_MODELS,
     projectId: TEST_PROJECT_ID,
-    onSubtaskBreakdown: vi.fn(),
     ...overrides,
   };
   const result = render(<InlineCreateCard {...props} />);
@@ -894,94 +893,6 @@ describe("InlineCreateCard dependency dropdown search", () => {
   });
 });
 
-describe("InlineCreateCard Subtask controls without Plan", () => {
-  it("omits Plan and renders Subtask disabled when description is empty", () => {
-    renderCard();
-    expandCard();
-    const subtaskButton = screen.getByTestId("subtask-button") as HTMLButtonElement;
-    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Plan$/i })).not.toBeInTheDocument();
-    expect(subtaskButton.disabled).toBe(true);
-  });
-
-  it("omits Plan and enables Subtask when description is entered", () => {
-    renderCard();
-    expandCard();
-    const textarea = screen.getByPlaceholderText("What needs to be done?");
-    fireEvent.change(textarea, { target: { value: "Test task" } });
-
-    const subtaskButton = screen.getByTestId("subtask-button") as HTMLButtonElement;
-    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-    expect(subtaskButton.disabled).toBe(false);
-  });
-
-  it("omits the Plan handoff while preserving input draft", () => {
-    const onPlanningMode = vi.fn();
-    renderCard([], { onPlanningMode });
-    expandCard();
-    const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
-
-    fireEvent.change(textarea, { target: { value: "  Plan this task  " } });
-
-    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Open planning mode with current description")).not.toBeInTheDocument();
-    expect(onPlanningMode).not.toHaveBeenCalled();
-    expect(textarea.value).toBe("  Plan this task  ");
-    expect(localStorage.getItem(INLINE_CREATE_STORAGE_KEY)).toBe("  Plan this task  ");
-  });
-
-  it("calls onSubtaskBreakdown with description and clears input when Subtask clicked", () => {
-    const onSubtaskBreakdown = vi.fn();
-    renderCard([], { onSubtaskBreakdown });
-    expandCard();
-    const textarea = screen.getByPlaceholderText("What needs to be done?");
-
-    fireEvent.change(textarea, { target: { value: "Break this down" } });
-    fireEvent.click(screen.getByTestId("subtask-button"));
-
-    expect(onSubtaskBreakdown).toHaveBeenCalledWith("Break this down");
-    expect((textarea as HTMLTextAreaElement).value).toBe("");
-  });
-
-  it("hides the Subtask quick-add action without leaving an inline controls shell when the callback is omitted", () => {
-    renderCard([], { onSubtaskBreakdown: undefined });
-    expandCard();
-
-    const controlsRow = document.querySelector(".inline-create-controls") as HTMLElement;
-    expect(controlsRow).toBeTruthy();
-    expect(screen.queryByTestId("subtask-button")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Break down into AI-generated subtasks")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-    expect(controlsRow.querySelector(".dep-trigger")).toBeTruthy();
-  });
-
-  it("does not leave a disabled Plan button for empty descriptions", () => {
-    const addToast = vi.fn();
-    const onPlanningMode = vi.fn();
-    renderCard([], { addToast, onPlanningMode });
-    expandCard();
-
-    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Open planning mode with current description")).not.toBeInTheDocument();
-    expect(addToast).not.toHaveBeenCalled();
-    expect(onPlanningMode).not.toHaveBeenCalled();
-  });
-
-  it("shows toast when Subtask clicked with empty description (via direct handler call)", () => {
-    const addToast = vi.fn();
-    const onSubtaskBreakdown = vi.fn();
-    renderCard([], { addToast, onSubtaskBreakdown });
-    expandCard();
-
-    // When no description, button is disabled - verify that behavior
-    const subtaskButton = screen.getByTestId("subtask-button") as HTMLButtonElement;
-    expect(subtaskButton.disabled).toBe(true);
-
-    // The handler validation exists but can't be triggered via click when disabled
-    // The disabled state is the primary UX protection
-  });
-});
-
 describe("InlineCreateCard localStorage persistence", () => {
   beforeEach(() => {
     // Clear localStorage before each test
@@ -1068,61 +979,11 @@ describe("InlineCreateCard localStorage persistence", () => {
 });
 
 describe("InlineCreateCard button visibility when collapsed", () => {
-  it("hides all buttons when not expanded", () => {
-    renderCard();
-    // Card starts collapsed (isExpanded is false by default)
-    // Only the toggle button should be visible, all footer buttons should be hidden
-
-    // Footer controls should not be rendered
-    expect(screen.queryByTestId("plan-button")).toBeNull();
-    expect(screen.queryByTestId("subtask-button")).toBeNull();
-    expect(screen.queryByText(/Deps/)).toBeNull();
-    expect(screen.queryByText(/Preset/)).toBeNull();
-    expect(screen.queryByText(/Models/)).toBeNull();
-    expect(screen.queryByTestId("save-button")).toBeNull();
-  });
 
   it("toggle button is always visible regardless of expanded state", () => {
     renderCard();
     // Toggle button should always be visible
     expect(screen.getByTestId("inline-create-toggle")).toBeTruthy();
-  });
-
-  it("shows buttons after clicking toggle to expand", () => {
-    renderCard();
-
-    // Initially collapsed - buttons hidden
-    expect(screen.queryByTestId("plan-button")).toBeNull();
-    expect(screen.queryByText(/Deps/)).toBeNull();
-
-    // Click toggle to expand
-    expandCard();
-
-    // Now non-Plan buttons should be visible
-    expect(screen.queryByTestId("plan-button")).toBeNull();
-    expect(screen.getByTestId("subtask-button")).toBeTruthy();
-    expect(screen.getByText(/Deps/)).toBeTruthy();
-    expect(screen.getByTestId("save-button")).toBeTruthy();
-  });
-
-  it("hides buttons again after collapsing via toggle", () => {
-    renderCard();
-
-    // Expand
-    expandCard();
-    expect(screen.queryByTestId("plan-button")).toBeNull();
-    expect(screen.getByTestId("subtask-button")).toBeTruthy();
-
-    // Collapse
-    expandCard();
-
-    // Buttons should be hidden again
-    expect(screen.queryByTestId("plan-button")).toBeNull();
-    expect(screen.queryByTestId("subtask-button")).toBeNull();
-    expect(screen.queryByText(/Deps/)).toBeNull();
-    expect(screen.queryByText(/Preset/)).toBeNull();
-    expect(screen.queryByText(/Models/)).toBeNull();
-    expect(screen.queryByTestId("save-button")).toBeNull();
   });
 
   it("footer div is not rendered when collapsed", () => {
@@ -1254,24 +1115,6 @@ describe("InlineCreateCard button visibility when collapsed", () => {
   });
 
   describe("Consolidated controls layout (FN-781, FN-1292)", () => {
-    it("renders Subtask, Deps, Agent, and Models together in footer controls without Plan", () => {
-      renderCard();
-      expandCard();
-
-      // All buttons should be in the footer controls row
-      const controlsRow = document.querySelector(".inline-create-controls");
-      expect(controlsRow).toBeTruthy();
-
-      // Subtask, Deps, Agent, Browser Verify, Priority, Preset, Models all in one row; Plan is intentionally omitted.
-      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-      expect(controlsRow!.contains(screen.getByTestId("subtask-button"))).toBe(true);
-      expect(controlsRow!.contains(screen.getByTestId("inline-create-agent-button"))).toBe(true);
-      expect(controlsRow!.contains(screen.getByTestId("inline-create-priority-select"))).toBe(true);
-      const depsButton = screen.getByText(/Deps/);
-      expect(controlsRow!.contains(depsButton)).toBe(true);
-      const modelsButton = screen.getByRole("button", { name: /Models/i });
-      expect(controlsRow!.contains(modelsButton)).toBe(true);
-    });
 
     it("does not render footer controls when not expanded", () => {
       renderCard();
@@ -1289,19 +1132,6 @@ describe("InlineCreateCard button visibility when collapsed", () => {
 
       // Save button should NOT be in the controls row (it's in inline-create-actions)
       expect(controlsRow!.contains(saveButton)).toBe(false);
-    });
-
-    it("Subtask disabled state still works in consolidated controls without Plan", () => {
-      renderCard();
-      expandCard();
-      const textarea = screen.getByPlaceholderText("What needs to be done?");
-
-      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-      expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(true);
-
-      fireEvent.change(textarea, { target: { value: "Some task" } });
-      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-      expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(false);
     });
   });
 
@@ -1897,6 +1727,26 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
 
     await waitFor(() => expect(props.onSubmit).toHaveBeenCalled());
     expect(selectTaskWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("keeps the inline composer submit-ready when its scoped draft storage throws", async () => {
+    const projectId = "proj-9160";
+    const key = `kb:${projectId}:kb-inline-create-text`;
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-9160" } as Task);
+    const addToast = vi.fn();
+    vi.spyOn(localStorage, "setItem").mockImplementation((storageKey) => {
+      if (storageKey === key) throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+    renderCard([], { projectId, onSubmit, addToast });
+    expandCard();
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+
+    expect(() => fireEvent.change(textarea, { target: { value: "inline task survives quota" } })).not.toThrow();
+    expect(textarea).toHaveValue("inline task survives quota");
+    expect(addToast).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ description: "inline task survives quota" })));
   });
 });
 

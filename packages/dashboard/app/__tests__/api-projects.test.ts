@@ -522,7 +522,7 @@ describe("summarizeTitle", () => {
     });
     global.fetch = mockFetch;
 
-    const result = await summarizeTitle("a".repeat(201));
+    const result = await summarizeTitle("a");
 
     expect(result).toBe("Generated Title");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -532,7 +532,7 @@ describe("summarizeTitle", () => {
         // `summarizeTitle` calls `fetch()` directly, bypassing `api()`, so no attribution header.
         // See the note in test/apiRequestHeaders.ts — this is a MUTATION without attribution.
         headers: API_JSON_HEADERS_NO_ATTRIBUTION,
-        body: JSON.stringify({ description: "a".repeat(201), provider: undefined, modelId: undefined }),
+        body: JSON.stringify({ description: "a", provider: undefined, modelId: undefined }),
       })
     );
   });
@@ -895,13 +895,15 @@ describe("fetchActivityFeed", () => {
       since: "2026-01-01T00:00:00.000Z",
       projectId: "proj_abc123",
       type: "task:created",
+      taskId: "FN-066",
     });
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toContain("limit=50");
     expect(call[0]).toContain("since=2026-01-01T00%3A00%3A00.000Z");
     expect(call[0]).toContain("projectId=proj_abc123");
-    expect(call[0]).toContain("type=task%3Acreated");
+    expect(call[0]).toContain("types=task%3Acreated");
+    expect(call[0]).toContain("taskId=FN-066");
   });
 });
 

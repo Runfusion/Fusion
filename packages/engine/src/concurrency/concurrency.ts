@@ -3,7 +3,7 @@ import {
   countRunningAgentTasks,
   enrichRunningAgentTaskShape,
   isRunningAgentTask,
-  resolveWorktreeCapacityLimit,
+  resolveEffectiveConcurrency,
   resolveWorkflowIrForTask,
   type Task,
   type WorkflowIrResolverStore,
@@ -26,14 +26,11 @@ population. Collapse them to one project admission ceiling so planning, execute,
 and merge cannot each observe and claim the final worktree slot independently.
 */
 export function resolveActiveTaskCapacityLimit(params: {
-  maxConcurrent: number;
-  maxWorktrees: number;
-  worktreeLimitEnabled?: boolean;
+  maxConcurrent?: unknown;
+  maxWorktrees?: unknown;
+  worktreeLimitEnabled?: unknown;
 }): number {
-  const maxWorktrees = resolveWorktreeCapacityLimit(params);
-  return maxWorktrees === null
-    ? params.maxConcurrent
-    : Math.min(params.maxConcurrent, maxWorktrees);
+  return resolveEffectiveConcurrency(params).effectiveLimit;
 }
 
 /**
@@ -49,13 +46,11 @@ export function formatAdmissionCapacityQueuedReason(params: {
   claimed: number;
   holderTaskIds: Iterable<string>;
 }): string {
-  const limit = resolveActiveTaskCapacityLimit(params);
-  const worktreeLimit = resolveWorktreeCapacityLimit(params);
-  const gate = worktreeLimit !== null && worktreeLimit <= params.maxConcurrent
-    ? "maxWorktrees"
-    : "maxConcurrent";
+  const concurrency = resolveEffectiveConcurrency(params);
+  const limit = concurrency.effectiveLimit;
+  const gate = concurrency.bindingKnob;
   const holders = [...new Set(params.holderTaskIds)].sort();
-  return `queued — ${gate} capacity exhausted: used=${params.claimed}/${limit}; holders=${holders.join(",") || "none"}`;
+  return `queued — ${gate} capacity exhausted: used=${params.claimed}/${limit}; effectiveLimit=${limit}; bindingKnob=${gate}; holders=${holders.join(",") || "none"}`;
 }
 
 /** Lifecycle lanes ordered by the project admission coordinator. */

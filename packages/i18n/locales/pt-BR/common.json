@@ -166,6 +166,7 @@
       "ollama": "Endpoint do Ollama",
       "openai": "Chave de API da OpenAI",
       "openrouter": "Chave de API do OpenRouter",
+      "orcarouter": "",
       "zai": "Chave de API da Zhipu AI"
     },
     "apiKeyPlaceholder": {
@@ -182,6 +183,7 @@
       "ollama": "Digite a URL do endpoint do Ollama (por exemplo, http://localhost:11434).",
       "openai": "Crie uma chave de API no painel da OpenAI, em API keys.",
       "openrouter": "Crie uma chave de API na página de gerenciamento de chaves da sua conta OpenRouter.",
+      "orcarouter": "",
       "zai": "Crie uma chave de API nas configurações de conta da plataforma aberta da Zhipu AI."
     },
     "apiKeyUsage": {
@@ -191,6 +193,7 @@
       "ollama": "Conecta à sua instância local do Ollama",
       "openai": "Usada para modelos GPT na execução e no planejamento de tarefas",
       "openrouter": "Roteia para múltiplos provedores de modelos de IA através de uma única chave",
+      "orcarouter": "",
       "zai": "Usada para modelos GLM na execução de tarefas"
     },
     "providerDesc": {
@@ -206,6 +209,7 @@
       "openai": "Modelos GPT — versáteis para uma ampla variedade de tarefas",
       "openaiCodex": "Modelos Codex da OpenAI — otimizados para tarefas de programação",
       "openrouter": "OpenRouter — roteia solicitações entre múltiplos provedores de IA",
+      "orcarouter": "",
       "zai": "Modelos GLM da Zhipu AI — forte suporte multilíngue"
     }
   },

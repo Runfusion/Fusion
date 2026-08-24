@@ -22,7 +22,7 @@ implied here; whether agents should hold `fn_task_delete` at all is a separate o
 import type { RunMutationContext } from "./types/task/task-log.js";
 
 /**
- * FNXC:TaskDeleteAttribution 2026-07-26-14:30:
+ * FNXC:TaskDeleteAttribution 2026-08-20-18:40:
  * Closed set of delete-caller classes, ordered from most to least attributable.
  *
  * - `operator-ui` — an HTTP client that identified itself as the dashboard UI (see trust model).
@@ -32,7 +32,7 @@ import type { RunMutationContext } from "./types/task/task-log.js";
  *   masquerade as `api-unattributed` and re-blur exactly the operator-vs-automation line this
  *   change exists to draw.
  * - `agent-tool` — an AI agent's tool call (`fn_task_delete`). Pair with `callerTaskId`.
- * - `engine` — an autonomous engine lane (triage split-close, duplicate resolution, self-healing).
+ * - `engine` — an autonomous engine lane (duplicate resolution or self-healing).
  * - `api-unattributed` — an HTTP caller that sent no recognized client header. The deliberate
  *   default: unknown is recorded as unknown rather than guessed as operator.
  */
@@ -115,21 +115,5 @@ export function buildDeleteCallerAuditFields(
   return {
     callerKind: auditContext?.callerKind ?? "api-unattributed",
     callerTaskId: auditContext?.taskId ?? null,
-  };
-}
-
-/**
- * FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
- * A split-close audit row records the closed-vocabulary reason and child task ids, never the
- * explanatory GitHub comment prose. Omission deliberately returns no fields so ordinary deletes
- * retain their existing audit shape.
- */
-export function buildDeleteClosureAuditFields(
-  closureContext: import("./types.js").TaskDeleteClosureContext | undefined,
-): Record<string, unknown> {
-  if (!closureContext || closureContext.kind !== "split-into-subtasks") return {};
-  return {
-    closureKind: closureContext.kind,
-    closureChildTaskIds: closureContext.childTaskIds,
   };
 }

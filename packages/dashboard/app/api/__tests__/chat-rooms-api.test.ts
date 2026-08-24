@@ -71,6 +71,17 @@ describe("chat room legacy API client", () => {
     expect((fetchMock.mock.calls[2] as [string])[0]).toContain("/api/chat/rooms/room-1/members/agent-2?projectId=proj-2");
   });
 
+  it("serializes a large room log byte-for-byte", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ message: {} }));
+    const log = "2026-08-21T04:35:00Z INFO repeated room line\n".repeat(3_000);
+
+    await postChatRoomMessage("room-1", { content: log }, "proj-3");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(JSON.stringify({ content: log }));
+    expect(JSON.parse(String(init.body)).content).toBe(log);
+  });
+
   it("builds message endpoints", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ success: true }));
 

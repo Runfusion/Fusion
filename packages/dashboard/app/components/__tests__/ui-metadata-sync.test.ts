@@ -54,6 +54,24 @@ describe("shared UI metadata no-drift contract", () => {
     );
   });
 
+  it("keeps Remote Access unique, global, and basic-visible across UI metadata", () => {
+    const remoteSections = SETTINGS_SECTION_METADATA.filter((section) => section.id === "remote");
+
+    expect(remoteSections).toEqual([
+      expect.objectContaining({
+        id: "remote",
+        label: "Remote Access",
+        group: "Infrastructure",
+        scope: "global",
+        advanced: false,
+      }),
+    ]);
+    expect(ADVANCED_SETTINGS_SECTION_IDS).not.toContain("remote");
+    expect(buildSettingsSectionsPayload().sections).toContainEqual(
+      expect.objectContaining({ id: "remote", scope: "global", group: "Infrastructure", advanced: false }),
+    );
+  });
+
   it("keeps each section's served group equal to the group header it renders under", () => {
     // `group` is the only metadata field the Settings list does not itself render, so it is
     // pinned to the navigation structure the user actually sees: the nearest preceding header.

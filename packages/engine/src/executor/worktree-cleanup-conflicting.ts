@@ -7,7 +7,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import type { Settings } from "@fusion/core";
+import { isFusionDeletableBranch, type Settings, type Task } from "@fusion/core";
 import {
   isInsideWorktreesDir,
   isRegisteredGitWorktree,
@@ -23,6 +23,7 @@ export type CleanupConflictingWorktreeDeps = {
     logEntry: (taskId: string, action: string, outcome?: string) => Promise<unknown>;
     getSettings: () => Promise<Settings>;
     clearStaleExecutionStartBranchReferences: (branches: string[], excludingTaskId?: string) => Promise<unknown>;
+    getTask?: (taskId: string) => Promise<Task | undefined>;
   };
   reconcileSelfOwnedBeforeRemove: (worktreePath: string, taskId: string) => Promise<void>;
   findActiveWorktreeOwner: (worktreePath: string, requestingTaskId: string) => Promise<string | null>;
@@ -55,6 +56,9 @@ export async function cleanupConflictingWorktree(
     return false;
   }
 
+  // Fail closed when this narrow cleanup facade cannot prove branch provenance.
+  const task = await deps.store.getTask?.(taskId);
+
   try {
     // Check if worktree is locked and unlock if needed
     try {
@@ -77,17 +81,18 @@ export async function cleanupConflictingWorktree(
     });
     await deps.store.logEntry(taskId, `Removed conflicting worktree`, worktreePath);
 
-    // Delete the branch if it exists
-    try {
-      await execAsync(`git branch -D "${branch}"`, {
-        cwd: deps.rootDir,
-      });
-      await deps.store.logEntry(taskId, `Deleted branch`, branch);
-      // FN-2165 regression guard: null baseBranch on any task that stored this branch
-      await deps.store.clearStaleExecutionStartBranchReferences([branch], taskId);
-    } catch (err: unknown) {
+    if (task && isFusionDeletableBranch(task, branch)) {
+      try {
+        await execAsync(`git branch -D "${branch}"`, {
+          cwd: deps.rootDir,
+        });
+        await deps.store.logEntry(taskId, `Deleted branch`, branch);
+        // FN-2165 regression guard: null baseBranch on any task that stored this branch
+        await deps.store.clearStaleExecutionStartBranchReferences([branch], taskId);
+      } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${taskId}: failed to delete conflicting branch ${branch}: ${msg}`);
+        executorLog.warn(`${taskId}: failed to delete conflicting branch ${branch}: ${msg}`);
+      }
     }
 
     return true;
@@ -170,11 +175,13 @@ export async function cleanupConflictingWorktree(
           executorLog.warn(`${taskId}: failed to remove orphan worktree directory ${worktreePath}: ${rmMsg}`);
         }
       }
-      try {
-        await execAsync(`git branch -D "${branch}"`, { cwd: deps.rootDir });
-        await deps.store.clearStaleExecutionStartBranchReferences([branch], taskId);
-      } catch {
-        // best-effort — branch may not exist, which is fine for a stale-path cleanup
+      if (task && isFusionDeletableBranch(task, branch)) {
+        try {
+          await execAsync(`git branch -D "${branch}"`, { cwd: deps.rootDir });
+          await deps.store.clearStaleExecutionStartBranchReferences([branch], taskId);
+        } catch {
+          // best-effort — branch may not exist, which is fine for a stale-path cleanup
+        }
       }
       await deps.store.logEntry(
         taskId,

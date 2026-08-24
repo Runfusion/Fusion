@@ -46,6 +46,10 @@ import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { resolveProjectColumnsForRoles, REVIEW_ROLES } from "../project-lane-vocabulary.js";
 import type { InReviewDurationLanes } from "./async/async-audit.js";
+import { createLogger } from "../process/logger.js";
+import { emitBoundedRunAuditWithOutcome } from "../run-audit/emit-bounded-run-audit.js";
+
+const workflowDefinitionLog = createLogger("workflow-definitions");
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -849,33 +853,37 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
         AWAITED, not fire-and-forget (PR #2512 review — CodeRabbit). The whole claim of
         this branch is that the divergence is a fact on disk; `void`-ing the write and
         throwing on the next line meant the one artifact self-healing is meant to find
-        could silently be absent. The write is awaited and its own failure is swallowed
-        so it can never mask the rejection the caller actually needs to see.
+        could silently be absent. The bounded outcome is still awaited before throwing,
+        but a hostile sink cannot stall the switch forever.
 
         NO ERROR PROSE (PR #2512 review — CodeRabbit). `outcome.error` is a propagated
         `err.message`; persisting it would contradict this file's own "ids/columns/
         outcomes-only" claim and the project rule that run-audit never stores error
         prose. The bounded outcome code goes here; the human-readable reason travels on
         the thrown error, which is not persisted.
+
+        FNXC:RunAudit 2026-08-20-07:14:
+        FN-9182 bounds the awaited forensic emission and reports its outcome without
+        changing this branch's typed rejection. A timeout is observable in logs rather
+        than indefinitely hiding a torn workflow switch from its caller.
         */
-        try {
-          await store.recordRunAuditEvent({
-            taskId,
-            agentId: "system",
-            runId: `workflow-switch-torn-${taskId}`,
-            domain: "database",
-            mutationType: "task:workflow-switch-torn",
-            target: taskId,
-            metadata: {
-              workflowId,
-              fromColumn,
-              intendedColumn: decision.targetColumn,
-              selectionCommitted: true,
-              outcome: "rehome-rejected",
-            },
-          });
-        } catch {
-          // An audit-write failure must not replace the rejection being reported.
+        const auditResult = await emitBoundedRunAuditWithOutcome(store, {
+          taskId,
+          agentId: "system",
+          runId: `workflow-switch-torn-${taskId}`,
+          domain: "database",
+          mutationType: "task:workflow-switch-torn",
+          target: taskId,
+          metadata: {
+            workflowId,
+            fromColumn,
+            intendedColumn: decision.targetColumn,
+            selectionCommitted: true,
+            outcome: "rehome-rejected",
+          },
+        });
+        if (auditResult.outcome !== "recorded") {
+          workflowDefinitionLog.warn(`[workflow-switch] audit ${auditResult.outcome} task=${taskId} workflow=${workflowId}`);
         }
         throw new WorkflowSwitchRehomeFailedError({
           taskId,

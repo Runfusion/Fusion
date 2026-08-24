@@ -1,125 +1,14 @@
-/* === UpdateAvailableBanner === */
-.update-available-banner {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  margin-bottom: var(--space-md);
-  border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--color-info) 35%, var(--border));
-  border-inline-start: var(--space-xs) solid var(--color-info);
-  background: color-mix(in srgb, var(--color-info) 10%, var(--surface));
-  color: var(--text);
-}
-
-.update-available-banner__content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  min-width: 0;
-}
-
-.update-available-banner__text {
-  margin: 0;
-  color: var(--text);
-}
-
-.update-available-banner__text code {
-  font-family: var(--font-mono);
-}
-
-.update-available-banner__link {
-  color: var(--color-info);
-  text-decoration: underline;
-  text-underline-offset: var(--space-xs);
-  transition: color var(--transition-fast);
-}
-
-.update-available-banner__link:hover {
-  color: var(--text);
-}
-
-.update-available-banner__link:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-  border-radius: var(--radius-sm);
-}
-
-.update-available-banner__actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
-
-.update-available-banner__update-btn,
-.update-available-banner__restart-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.update-available-banner__update-btn:disabled {
-  color: var(--color-warning);
-}
-
-.update-available-banner__update-btn svg.spinning,
-.update-available-banner__restart-btn svg.spinning {
-  animation: update-available-banner-spin 1s linear infinite;
-}
-
-.update-available-banner__install-status {
-  font-weight: 500;
-}
-
-.update-available-banner__install-status--success {
-  color: var(--color-success);
-}
-
-.update-available-banner__install-status--error {
-  color: var(--color-error);
-}
-
-.update-available-banner__dismiss {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: var(--space-xs);
-  border-radius: var(--radius-sm);
-  transition: color var(--transition-fast), background var(--transition-fast);
-  line-height: 0;
-  flex-shrink: 0;
-}
-
-.update-available-banner__dismiss:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--color-info) 14%, transparent);
-}
-
-.update-available-banner__dismiss:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-@keyframes update-available-banner-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 768px) {
-  .update-available-banner {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .update-available-banner__actions {
-    align-items: flex-start;
-  }
-
-  .update-available-banner__dismiss {
-    align-self: flex-end;
-  }
-}
+.update-available-banner__content { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+.update-available-banner__text { margin: 0; color: var(--text); }
+.update-available-banner__text code { font-family: var(--font-mono); }
+.update-available-banner__link { color: var(--color-info); text-decoration: underline; text-underline-offset: var(--space-xs); transition: color var(--transition-fast); }
+.update-available-banner__link:hover { color: var(--text); }
+.update-available-banner__link:focus-visible { outline: none; box-shadow: var(--focus-ring-strong); border-radius: var(--radius-sm); }
+.update-available-banner__actions, .update-available-banner__update-btn, .update-available-banner__restart-btn { display: inline-flex; align-items: center; gap: var(--space-xs); }
+.update-available-banner__actions { flex-wrap: wrap; }
+.update-available-banner__update-btn:disabled { color: var(--color-warning); }
+.update-available-banner__update-btn svg.spinning, .update-available-banner__restart-btn svg.spinning { animation: update-available-banner-spin 1s linear infinite; }
+.update-available-banner__install-status { font-weight: 500; }
+.update-available-banner__install-status--success { color: var(--color-success); }
+.update-available-banner__install-status--error { color: var(--color-error); }
+@keyframes update-available-banner-spin { to { transform: rotate(360deg); } }

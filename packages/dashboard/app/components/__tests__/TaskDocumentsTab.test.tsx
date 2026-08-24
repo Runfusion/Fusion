@@ -21,6 +21,9 @@ vi.mock("../../api", () => ({
 vi.mock("../../hooks/useArtifacts", () => ({
   useArtifacts: vi.fn(),
 }));
+vi.mock("../../hooks/useArtifactImageBlob", () => ({
+  useArtifactImageBlob: vi.fn(() => ({ url: "blob:secure-preview", loading: false, error: null, reload: vi.fn() })),
+}));
 
 const mockFetchTaskDocuments = vi.mocked(fetchTaskDocuments);
 const mockFetchTaskDocumentRevisions = vi.mocked(fetchTaskDocumentRevisions);
@@ -238,7 +241,7 @@ describe("TaskDocumentsTab", () => {
       expect(screen.getByRole("heading", { name: "Media artifacts" })).toBeInTheDocument();
     });
 
-    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
+    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "blob:secure-preview");
     expect(screen.getByRole("button", { name: "Expand image artifact Image artifact" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Expand image artifact Video artifact/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
@@ -269,7 +272,7 @@ describe("TaskDocumentsTab", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(dialog).toBeInTheDocument();
-    expect(screen.getAllByRole("img", { name: "Image artifact" })[1]).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
+    expect(screen.getAllByRole("img", { name: "Image artifact" })[1]).toHaveAttribute("src", "blob:secure-preview");
 
     fireEvent.click(screen.getByRole("button", { name: "Close artifact preview" }));
 
@@ -300,7 +303,7 @@ describe("TaskDocumentsTab", () => {
     });
   });
 
-  it("traps keyboard focus inside the image artifact lightbox", async () => {
+  it("moves focus to the shared viewer close control", async () => {
     mockUseArtifacts.mockReturnValue({
       artifacts: mockArtifacts,
       loading: false,
@@ -311,18 +314,7 @@ describe("TaskDocumentsTab", () => {
     render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} projectId="project-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Expand image artifact Image artifact" }));
-    const closeButton = screen.getByRole("button", { name: "Close artifact preview" });
-    expect(closeButton).toHaveFocus();
-
-    fireEvent.keyDown(document, { key: "Tab" });
-    expect(closeButton).toHaveFocus();
-
-    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(closeButton).toHaveFocus();
-
-    screen.getAllByRole("button", { name: "Collapse" })[0].focus();
-    fireEvent.keyDown(document, { key: "Tab" });
-    expect(closeButton).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Close artifact preview" })).toHaveFocus();
   });
 
   it("surfaces artifact fetch errors", async () => {

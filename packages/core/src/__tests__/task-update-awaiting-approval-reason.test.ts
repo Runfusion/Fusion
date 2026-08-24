@@ -113,4 +113,12 @@ describe("awaitingApprovalReason survives updateTask", () => {
     expect(row.status).toBe("awaiting-approval");
     expect(row.awaitingApprovalReason).toBe("plan-review-replan-cap");
   });
+
+  it("records an operator marker when an operator reasserts an unmarked current branch", async () => {
+    const { store, row } = harness({branch: "fusion/fn-1"});
+
+    await run(store, {branch: "fusion/fn-1", branchWriteOrigin: "operator"});
+
+    expect(row.branchContext?.branchOverride).toMatchObject({by: "operator", branch: "fusion/fn-1"});
+  });
 });

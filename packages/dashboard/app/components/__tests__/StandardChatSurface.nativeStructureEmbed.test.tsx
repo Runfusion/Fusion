@@ -192,7 +192,55 @@ describe("StandardChatSurface native structure embeds", () => {
     renderMessage({ content: "fusion://mission/M-001?query [unsafe](javascript:alert(1))" });
     expect(screen.queryByTestId("native-structure-preview")).not.toBeInTheDocument();
     expect(screen.getByText("fusion://mission/M-001?query")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(Array.from(document.querySelectorAll("a")).map((link) => ({ href: link.getAttribute("href"), text: link.textContent }))).toEqual([]);
+  });
+
+  /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  Test persisted and in-flight assistant Markdown through the shared renderer. Exact hrefs and security attributes belong to the rendered anchor, while unsafe schemes remain rejected by ReactMarkdown's URL transform.
+  */
+  it("renders complete source links safely for persisted and streaming assistant content", () => {
+    const content = [
+      "Sources officielles:",
+      "",
+      "[GPT‑5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)",
+      "[GPT‑5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol)",
+      "[GPT‑5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra)",
+      "[unsafe](javascript:alert(1))",
+    ].join("\\n");
+    const expected = [
+      "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    ];
+
+    renderMessage({ content });
+    const persistedLinks = Array.from(document.querySelectorAll(".chat-message-content--markdown a"));
+    expect(persistedLinks).toHaveLength(expected.length);
+    persistedLinks.forEach((link, index) => {
+      expect(link).toHaveAttribute("href", expected[index]);
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(link.closest("a a")).toBeNull();
+    });
+    expect(screen.queryByRole("link", { name: "unsafe" })).not.toBeInTheDocument();
+
+    cleanup();
+    render(
+      <StandardStreamingMessage
+        streamingText={content}
+        forcePlain={false}
+        agentName="Assistant"
+        hideAssistantIdentity={false}
+        showAssistantModelTag={false}
+        activeModelTag={null}
+        activeModelProvider={null}
+      />,
+    );
+    const streamingLinks = Array.from(document.querySelectorAll(".chat-message-content--markdown a"));
+    expect(streamingLinks.map((link) => link.getAttribute("href"))).toEqual(expected);
+    expect(streamingLinks.every((link) => link.getAttribute("target") === "_blank")).toBe(true);
+    expect(streamingLinks.every((link) => link.getAttribute("rel") === "noopener noreferrer")).toBe(true);
   });
 
   it("does not transform native-looking Markdown link labels or inline code", () => {
@@ -218,7 +266,7 @@ describe("StandardChatSurface native structure embeds", () => {
   }
 
   function renderPlannerChat() {
-    return render(<TaskPlannerChatTab task={{ id: "FN-1", description: "Task", column: "todo", dependencies: [], steps: [], currentStep: 0, createdAt: "2026-07-19T00:00:00.000Z", updatedAt: "2026-07-19T00:00:00.000Z" } as never} active planningModel={{ provider: "anthropic", modelId: "claude" }} projectId="project-1" addToast={vi.fn()} />);
+    return render(<TaskPlannerChatTab task={{ id: "FN-1", description: "Task", column: "todo", dependencies: [], steps: [], currentStep: 0, createdAt: "2026-07-19T00:00:00.000Z", updatedAt: "2026-07-19T00:00:00.000Z" } as never} active taskChatModel={{ provider: "anthropic", modelId: "claude" }} projectId="project-1" addToast={vi.fn()} />);
   }
 
   it.each([

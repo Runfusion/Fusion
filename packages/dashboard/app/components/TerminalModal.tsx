@@ -30,13 +30,15 @@ import {
   FolderRoot,
   Pin,
   PinOff,
+  History,
 } from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
-import { currentFloatingZ } from "./floatingWindowStack";
+import { currentFloatingZ, nextFloatingZ } from "./floatingWindowStack";
+import { useConfirm } from "../hooks/useConfirm";
 import { getPathBasename } from "../utils/pathDisplay";
 import {
   DEFAULT_TERMINAL_PREFERENCES,
@@ -946,6 +948,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     bootstrapError,
     createTab, 
     closeTab, 
+    detachedSessions,
+    refreshDetachedSessions,
+    reopenSession,
     setActiveTab, 
     updateTabTitle,
     restartActiveTab,
@@ -955,6 +960,89 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     storageScope: scopeId ? `task:${scopeId}` : undefined,
     defaultCwd,
   });
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-04:10:
+  Closing a tab is ambiguous once sessions are shared, so it asks rather than guessing: "Close here"
+  detaches this browser and leaves the PTY running (for other viewers, and for the footer's reopen
+  control), while "End session" kills it for everyone. alwaysAsk is set because this GATES an
+  informed choice — auto-resolving under skip-confirmations would silently pick one, and picking
+  wrong either strands a session or destroys someone else's shell.
+  */
+  const { confirmWithChoice } = useConfirm();
+  const requestCloseTab = useCallback(async (tabId: string): Promise<void> => {
+    const choice = await confirmWithChoice({
+      title: t("terminal.closeTabTitle", "Close this terminal?"),
+      message: t(
+        "terminal.closeTabMessage",
+        "The session keeps running on the server unless you end it. Anyone else viewing it stays connected, and you can reopen it from the terminal footer.",
+      ),
+      alwaysAsk: true,
+      confirmLabel: t("terminal.closeTabHere", "Close in this browser"),
+      cancelLabel: t("actions.cancel", "Cancel"),
+      tertiaryLabel: t("terminal.closeTabEndSession", "End session"),
+      tertiaryDanger: true,
+    });
+    if (choice === "cancel") return;
+    const killSession = choice === "tertiary";
+    closeTab(tabId, { killSession });
+    // A detached session becomes reopenable immediately; a killed one must disappear from the list.
+    void refreshDetachedSessions();
+  }, [closeTab, confirmWithChoice, refreshDetachedSessions, t]);
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-04:10:
+  The footer's reopen control surfaces sessions running on the server that this browser is not
+  showing — closed here, or opened by someone else. Without it, "close in this browser" would be a
+  one-way door and another person's terminal would be unreachable from this one.
+  */
+  const [reopenMenuOpen, setReopenMenuOpen] = useState(false);
+  const reopenTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const reopenMenuRef = useRef<HTMLDivElement | null>(null);
+  const [reopenMenuPosition, setReopenMenuPosition] = useState<{ left: number; bottom: number; minWidth: number } | null>(null);
+  const [reopenMenuZ, setReopenMenuZ] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auxEffectsActive || !isReady) return;
+    void refreshDetachedSessions();
+  }, [auxEffectsActive, isReady, refreshDetachedSessions]);
+
+  const openReopenMenu = useCallback(() => {
+    const rect = reopenTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setReopenMenuPosition({
+        left: rect.left,
+        bottom: Math.max(0, window.innerHeight - rect.top + 6),
+        minWidth: Math.max(rect.width, 240),
+      });
+    }
+    setReopenMenuZ(nextFloatingZ());
+    void refreshDetachedSessions();
+    setReopenMenuOpen(true);
+  }, [refreshDetachedSessions]);
+
+  // Dismiss on outside press or Escape, matching the workspace picker's behaviour.
+  useEffect(() => {
+    if (!reopenMenuOpen) return;
+    const onPointerDown = (event: PointerEvent | MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (reopenMenuRef.current?.contains(target) || reopenTriggerRef.current?.contains(target)) return;
+      setReopenMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setReopenMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [reopenMenuOpen]);
 
   useEffect(() => {
     if (!auxEffectsActive) {
@@ -1764,7 +1852,17 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       writeToExpectedSession(data);
     });
 
-    const unsubScrollback = onScrollback((data) => {
+    /*
+    FNXC:TerminalSharing 2026-08-19-02:45:
+    A scrollback frame is either a RESUME (only the bytes this terminal missed — append them) or a
+    full replay (reset first). Appending a full replay to a terminal that still shows that history is
+    what duplicated the screen — visibly, the last prompt twice — every time a backgrounded tab
+    reconnected.
+    */
+    const unsubScrollback = onScrollback((data, reset) => {
+      if (reset && xtermInitializedRef.current === expectedSessionId) {
+        xtermRef.current?.reset();
+      }
       writeToExpectedSession(data);
     });
 
@@ -2343,8 +2441,69 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   FNXC:TerminalFooter 2026-07-11-20:20:
   FN-7829 keeps the single terminal action-control cluster (reconnect/restart, font-size, Clear, Shortcuts toggle, Preferences toggle, connection status, exit code, and help text) in the bottom `.terminal-status-bar` footer at every breakpoint. Pin/pop-out use their own single header fragment beside close; the header still never renders `.terminal-actions`, preventing handler drift across all presentation modes.
   */
+  const reopenSessionControl = detachedSessions.length > 0 ? (
+    <>
+      <button
+        type="button"
+        ref={reopenTriggerRef}
+        className="terminal-reopen-btn"
+        onClick={() => (reopenMenuOpen ? setReopenMenuOpen(false) : openReopenMenu())}
+        aria-haspopup="listbox"
+        aria-expanded={reopenMenuOpen}
+        title={t("terminal.reopenSessionTitle", "Reopen a session still running on the server")}
+        data-testid="terminal-reopen-btn"
+      >
+        <History size={14} />
+        <span className="terminal-action-label">
+          {t("terminal.reopenSession", "Reopen")} ({detachedSessions.length})
+        </span>
+      </button>
+      {reopenMenuOpen && createPortal(
+        <div
+          ref={reopenMenuRef}
+          className="terminal-reopen-menu"
+          role="listbox"
+          aria-label={t("terminal.reopenSessionTitle", "Reopen a session still running on the server")}
+          data-testid="terminal-reopen-menu"
+          style={{
+            ...(reopenMenuPosition
+              ? { left: reopenMenuPosition.left, bottom: reopenMenuPosition.bottom, minWidth: reopenMenuPosition.minWidth }
+              : { visibility: "hidden", pointerEvents: "none" }),
+            ...(reopenMenuZ ? { zIndex: reopenMenuZ } : {}),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="terminal-reopen-menu-label">
+            {t("terminal.reopenSessionHeading", "Running on the server")}
+          </div>
+          {detachedSessions.map((session) => (
+            <button
+              key={session.id}
+              type="button"
+              className="terminal-reopen-menu-option"
+              role="option"
+              aria-selected={false}
+              onClick={() => {
+                reopenSession(session.id);
+                setReopenMenuOpen(false);
+              }}
+            >
+              <span className="terminal-reopen-menu-option-main">
+                <TerminalIcon size={14} />
+                <span>{session.cwd ? session.cwd.split(/[\\/]+/).filter(Boolean).pop() : session.shell}</span>
+              </span>
+              <span className="terminal-reopen-menu-option-meta">{session.cwd}</span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  ) : null;
+
   const terminalActionControls = (
     <>
+      {reopenSessionControl}
       {connectionStatus === "disconnected" && activeTab && (
         <button
           className="terminal-reconnect-btn"
@@ -2470,7 +2629,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
               tabIndex={measuring ? -1 : undefined}
               onClick={measuring ? undefined : (e: ReactMouseEvent<HTMLButtonElement>) => {
                 e.stopPropagation();
-                closeTab(tab.id);
+                void requestCloseTab(tab.id);
               }}
               title={t("terminal.closeTab", "Close tab")}
             >
@@ -2529,7 +2688,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         <button
           type="button"
           className="terminal-mobile-tab-action terminal-mobile-tab-action--close"
-          onClick={() => closeTab(activeTab.id)}
+          onClick={() => void requestCloseTab(activeTab.id)}
           title={t("terminal.closeCurrentTab", "Close current tab")}
           aria-label={t("terminal.closeCurrentTab", "Close current tab")}
           data-testid="terminal-mobile-close-tab"

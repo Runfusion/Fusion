@@ -17,7 +17,7 @@ export type WorkflowRerunBounceDeps = {
   workflowRerunPending: Set<string>;
   getExecutionPauseLabel: () => Promise<string | null>;
   resolveResumeLanes: (taskId: string) => Promise<{ wip: string; review: string }>;
-  clearTerminalStepFailuresForRetry: (taskId: string) => Promise<void>;
+  clearTerminalStepFailuresForRetry: (taskId: string, mode: "archive" | "clear") => Promise<void>;
 };
 
 export async function performWorkflowRerunBounce(
@@ -77,9 +77,10 @@ export async function performWorkflowRerunBounce(
         await deps.store.moveTask(taskId, await resolveReboundColumnFor(deps.store, taskId), {
           preserveResumeState: true,
           preserveWorktree: true,
+          workflowMoveSource: "workflow-remediation",
         });
       } else {
-        await deps.store.moveTask(taskId, await resolveReboundColumnFor(deps.store, taskId), { preserveWorktree: true });
+        await deps.store.moveTask(taskId, await resolveReboundColumnFor(deps.store, taskId), { preserveWorktree: true, workflowMoveSource: "workflow-remediation" });
       }
       // Restore worktree + executionStartedAt unconditionally to match
       // the original bounce contract: even with preserveWorktree the
@@ -96,8 +97,8 @@ export async function performWorkflowRerunBounce(
         executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelAfterTodo} became active during bounce`);
         return "deferred-paused";
       }
-      // Now in `todo` (non-mergeable) — safe to clear prior gate failures.
-      await deps.clearTerminalStepFailuresForRetry(taskId);
+      // Now in `todo` (non-mergeable) — archive prior gate failures for the next reviewer.
+      await deps.clearTerminalStepFailuresForRetry(taskId, "archive");
       /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. The SOURCE guard four lines up already resolves via resolveReboundColumnFor; leaving the destination literal is a split brain inside one function. */
       await deps.store.moveTask(taskId, await resolveWipTargetForTask(deps.store, taskId));
       return "bounced";
@@ -110,8 +111,8 @@ export async function performWorkflowRerunBounce(
         executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelBeforeResume} became active before resume`);
         return "deferred-paused";
       }
-      // Already in `todo` (non-mergeable) — safe to clear prior gate failures.
-      await deps.clearTerminalStepFailuresForRetry(taskId);
+      // Already in `todo` (non-mergeable) — archive prior gate failures for the next reviewer.
+      await deps.clearTerminalStepFailuresForRetry(taskId, "archive");
       /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. The SOURCE guard four lines up already resolves via resolveReboundColumnFor; leaving the destination literal is a split brain inside one function. */
       await deps.store.moveTask(taskId, await resolveWipTargetForTask(deps.store, taskId));
       return "bounced";

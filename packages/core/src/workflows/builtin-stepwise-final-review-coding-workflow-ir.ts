@@ -83,11 +83,16 @@ const RAW_BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR: WorkflowIr = (() => 
   if (!ir.edges.some((edge) => edge.from === "plan-replan" && edge.to === "plan-review" && edge.condition === "success")) {
     ir.edges.push({ from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" });
   }
-  if (!ir.edges.some((edge) => edge.from === "code-review" && edge.to === "completion-summary" && edge.condition === "success")) {
-    ir.edges.push({ from: "code-review", to: "completion-summary", condition: "success" });
+  /*
+  FNXC:WorkspaceReviewSeal 2026-08-21-19:36:
+  The derived final-review preset inherits completion summary before Code Review. Keep its
+  post-review route direct to merge so no built-in agent can reopen the reviewed worktree.
+  */
+  if (!ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "code-review" && edge.condition === "success")) {
+    ir.edges.push({ from: "completion-summary", to: "code-review", condition: "success" });
   }
-  if (!ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "merge-gate" && edge.condition === "success")) {
-    ir.edges.push({ from: "completion-summary", to: "merge-gate", condition: "success" });
+  if (!ir.edges.some((edge) => edge.from === "code-review" && edge.to === "merge-gate" && edge.condition === "success")) {
+    ir.edges.push({ from: "code-review", to: "merge-gate", condition: "success" });
   }
 
   return ir;

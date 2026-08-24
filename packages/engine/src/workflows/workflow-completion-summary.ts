@@ -1,5 +1,5 @@
-import type { RunMutationContext, TaskDetail } from "@fusion/core";
-
+import type { RunMutationContext } from "@fusion/core";
+import { resolveTaskOutputLanguage, type ResolvedTaskOutputLanguage, type Settings, type TaskDetail } from "@fusion/core";
 /*
 FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
 Both members are hand-declared rather than picked off `TaskStore`, so neither inherits U18's
@@ -18,16 +18,81 @@ export interface WorkflowCompletionSummaryInput {
   reason: string;
   workflowId?: string;
   runId?: string;
+  /** Captured invocation settings; callers must not re-read mutable settings during completion. */
+  settings?: Partial<Settings>;
+  /** Original user input captured with the invocation; input mode must not infer from an AI title. */
+  originalInput?: string;
+  /** Resolved invocation target, retained by resumable workflow paths. */
+  outputLanguage?: ResolvedTaskOutputLanguage;
 }
 
-function truncateList(values: string[], limit: number): string {
+function truncateList(values: string[], limit: number, locale: string): string {
   const head = values.slice(0, limit);
   const remaining = values.length - head.length;
-  return remaining > 0 ? `${head.join(", ")} and ${remaining} more` : head.join(", ");
+  const more = locale === "fr" ? ` et ${remaining} autres`
+    : locale === "es" ? ` y ${remaining} más`
+      : locale === "pt-BR" ? ` e mais ${remaining}`
+        : locale === "ko" ? ` 외 ${remaining}개`
+          : locale === "zh-CN" || locale === "zh-TW" ? `，另有 ${remaining} 个`
+            : ` and ${remaining} more`;
+  return remaining > 0 ? `${head.join(", ")}${more}` : head.join(", ");
+}
+
+function completionCopy(locale: string, doneSteps: number, stepCount: number, passedChecks: number, checkCount: number, files: string, reason: string, workflowId?: string): string[] {
+  const source = `${reason}${workflowId ? ` (${workflowId})` : ""}`;
+  if (locale === "fr") return [
+    `Flux de travail terminé`,
+    `Étapes de tâche terminées : ${doneSteps}/${stepCount}.`,
+    `Contrôles du flux de travail réussis ou ignorés : ${passedChecks}/${checkCount}.`,
+    `Fichiers modifiés : ${files}.`,
+    `Source de fin : ${source}.`,
+  ];
+  if (locale === "es") return [
+    "Flujo de trabajo completado",
+    `Pasos de tarea completados: ${doneSteps}/${stepCount}.`,
+    `Comprobaciones del flujo aprobadas u omitidas: ${passedChecks}/${checkCount}.`,
+    `Archivos modificados: ${files}.`,
+    `Origen de finalización: ${source}.`,
+  ];
+  if (locale === "pt-BR") return [
+    "Fluxo de trabalho concluído",
+    `Etapas da tarefa concluídas: ${doneSteps}/${stepCount}.`,
+    `Verificações do fluxo aprovadas ou ignoradas: ${passedChecks}/${checkCount}.`,
+    `Arquivos alterados: ${files}.`,
+    `Origem da conclusão: ${source}.`,
+  ];
+  if (locale === "ko") return [
+    "워크플로가 완료되었습니다",
+    `완료된 작업 단계: ${doneSteps}/${stepCount}.`,
+    `통과 또는 건너뛴 워크플로 검사: ${passedChecks}/${checkCount}.`,
+    `변경된 파일: ${files}.`,
+    `완료 출처: ${source}.`,
+  ];
+  if (locale === "zh-CN") return [
+    "工作流已完成",
+    `已完成的任务步骤：${doneSteps}/${stepCount}。`,
+    `已通过或跳过的工作流检查：${passedChecks}/${checkCount}。`,
+    `已更改文件：${files}。`,
+    `完成来源：${source}。`,
+  ];
+  if (locale === "zh-TW") return [
+    "工作流程已完成",
+    `已完成的工作步驟：${doneSteps}/${stepCount}。`,
+    `已通過或略過的工作流程檢查：${passedChecks}/${checkCount}。`,
+    `已變更檔案：${files}。`,
+    `完成來源：${source}。`,
+  ];
+  return [
+    "Workflow completed",
+    `Completed ${doneSteps}/${stepCount} task step${stepCount === 1 ? "" : "s"}.`,
+    `Recorded ${passedChecks}/${checkCount} workflow check${checkCount === 1 ? "" : "s"} as passed or skipped.`,
+    `Changed files: ${files}.`,
+    `Completion source: ${source}.`,
+  ];
 }
 
 export function buildWorkflowCompletionSummary(
-  task: Pick<TaskDetail, "id" | "title" | "steps" | "modifiedFiles" | "workflowStepResults">,
+  task: Pick<TaskDetail, "id" | "title" | "description" | "steps" | "modifiedFiles" | "workflowStepResults">,
   input: WorkflowCompletionSummaryInput,
 ): string {
   const title = task.title?.trim() || task.id;
@@ -37,17 +102,23 @@ export function buildWorkflowCompletionSummary(
   const passedWorkflowSteps = workflowResults.filter((step) => step.status === "passed" || step.status === "skipped").length;
   const files = (task.modifiedFiles ?? []).filter((file) => file.trim().length > 0);
 
-  const parts = [`Workflow completed: ${title}.`];
-  if (steps.length > 0) {
-    parts.push(`Completed ${doneSteps}/${steps.length} task step${steps.length === 1 ? "" : "s"}.`);
-  }
-  if (workflowResults.length > 0) {
-    parts.push(`Recorded ${passedWorkflowSteps}/${workflowResults.length} workflow check${workflowResults.length === 1 ? "" : "s"} as passed or skipped.`);
-  }
-  if (files.length > 0) {
-    parts.push(`Changed files: ${truncateList(files, 6)}.`);
-  }
-  parts.push(`Completion source: ${input.reason}${input.workflowId ? ` (${input.workflowId})` : ""}.`);
+  /* FNXC:TaskOutputLanguage 2026-08-19-15:47: Deterministic fallback localizes every human-readable clause from the captured target and original input, never an AI-authored title. */
+  const locale = (input.outputLanguage ?? resolveTaskOutputLanguage(input.settings, input.originalInput ?? task.description ?? "")).locale ?? "en";
+  const [completed, stepCopy, checkCopy, filesCopy, sourceCopy] = completionCopy(
+    locale,
+    doneSteps,
+    steps.length,
+    passedWorkflowSteps,
+    workflowResults.length,
+    truncateList(files, 6, locale),
+    input.reason,
+    input.workflowId,
+  );
+  const parts = [`${completed}: ${title}.`];
+  if (steps.length > 0) parts.push(stepCopy);
+  if (workflowResults.length > 0) parts.push(checkCopy);
+  if (files.length > 0) parts.push(filesCopy);
+  parts.push(sourceCopy);
   return parts.join(" ");
 }
 

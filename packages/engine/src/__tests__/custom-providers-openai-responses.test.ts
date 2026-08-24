@@ -53,7 +53,8 @@ describe("custom providers openai-responses regression", () => {
       models: [{
         id: "gpt-5.4",
         name: "GPT 5.4",
-        reasoning: false,
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 128000,

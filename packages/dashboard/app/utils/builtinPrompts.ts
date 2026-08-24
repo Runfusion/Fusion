@@ -160,13 +160,6 @@ export const PROMPT_KEY_CATALOG: Record<PromptKey, PromptKeyMetadata> = {
     description: "Explicit full system-prompt replacement for Planning Mode's dedicated collaborative prompt",
     defaultContent: "Runtime default: a dedicated collaborative Planning Mode prompt with a user-validated JSON interview.",
   },
-  "subtask-breakdown-system": {
-    key: "subtask-breakdown-system",
-    name: "Subtask Breakdown System",
-    roles: ["executor"],
-    description: "System prompt for AI subtask decomposition",
-    defaultContent: "You are a task decomposition assistant...",
-  },
   "mission-interview-system": {
     key: "mission-interview-system",
     name: "Mission Interview System",

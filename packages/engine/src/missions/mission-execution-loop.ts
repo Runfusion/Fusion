@@ -39,6 +39,7 @@ import {
   resolveValidatorSessionModel,
 } from "../agents/agent-session-helpers.js";
 import { createLogger } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
@@ -265,7 +266,7 @@ export class MissionExecutionLoop extends EventEmitter {
           const milestone = await this.missionStore.getMilestone(reapedRun.milestoneId);
           const missionId = milestone ? (await this.missionStore.getMission(milestone.missionId))?.id : undefined;
           const elapsedMs = Math.max(0, Date.now() - new Date(run.startedAt).getTime());
-          void this.taskStore.recordRunAuditEvent({
+          void emitBoundedRunAudit(this.taskStore, {
             agentId: "store",
             runId: "validator-run-reaper",
             domain: "database",
@@ -278,7 +279,7 @@ export class MissionExecutionLoop extends EventEmitter {
               triggerType: reapedRun.triggerType,
               elapsedMs,
             },
-          });
+          }, { log: loopLog });
         } catch (auditErr) {
           loopLog.warn(`Failed to record validator-run reaper audit for ${run.id}:`, auditErr);
         }

@@ -103,7 +103,15 @@ pgDescribe("workflow IR provenance against a live store", () => {
   it("a task with NO selection is still reported as default", async () => {
     /* The other direction. Deleting the id check must not turn every answer into "selection". */
     const store = h.store();
-    const task = await store.createTask({ description: "no selection" });
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-23-22:35:
+    A plain create is NOT a task without a selection: creation materializes the project default
+    workflow and records it as a real `task_workflow_selection` row, so its provenance is honestly
+    "selection". `workflowId: null` is the explicit "No workflow" create that skips that
+    materialization, which is the only way a live store produces the no-selection state this case
+    is about.
+    */
+    const task = await store.createTask({ description: "no selection", workflowId: null } as never);
 
     const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
 

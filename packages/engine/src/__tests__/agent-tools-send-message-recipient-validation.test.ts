@@ -185,12 +185,18 @@ describe("createSendMessageTool recipient validation", () => {
 describe("send-message registration wiring", () => {
   it("forwards the in-scope AgentStore at every engine registration", async () => {
     const [executor, stepSessionExecutor, heartbeat] = await Promise.all([
-      readFile(fileURLToPath(new URL("../executor.ts", import.meta.url)), "utf8"),
+      /*
+      FNXC:AgentTools 2026-08-23-18:30: U4 peeled the implementation session out of `executor.ts`
+      into `executor/run-implementation.ts` (deps bag: `deps.options` / `deps.store`), so the
+      executor-side registration to pin now lives there. The invariant is unchanged — every engine
+      registration forwards the in-scope AgentStore so recipient validation is never skipped.
+      */
+      readFile(fileURLToPath(new URL("../executor/run-implementation.ts", import.meta.url)), "utf8"),
       readFile(fileURLToPath(new URL("../execution/step-session-executor.ts", import.meta.url)), "utf8"),
       readFile(fileURLToPath(new URL("../agent-heartbeat.ts", import.meta.url)), "utf8"),
     ]);
 
-    expect(executor).toContain("createSendMessageTool(this.options.messageStore, assignedAgentId, { autoRecovery: settings.autoRecovery, runAudit: audit, taskStore: this.store, settings, agentStore: this.options.agentStore })");
+    expect(executor).toContain("createSendMessageTool(deps.options.messageStore, assignedAgentId, { autoRecovery: settings.autoRecovery, runAudit: audit, taskStore: deps.store, settings, agentStore: deps.options.agentStore })");
     expect(stepSessionExecutor).toContain("createSendMessageTool(this.options.messageStore, taskDetail.assignedAgentId, { autoRecovery: settings.autoRecovery, taskStore: this.options.store!, settings, agentStore: this.options.agentStore })");
     expect(heartbeat.match(/createSendMessageTool\(this\.messageStore, agentId, \{ agentStore: this\.store \}\)/g)).toHaveLength(1);
     expect(heartbeat.match(/createSendMessageTool\(messageStore, agentId, \{ agentStore: this\.store \}\)/g)).toHaveLength(1);

@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { existsSync } from "node:fs";
-import type { Settings, Task } from "@fusion/core";
+import { classifyTaskBranchOrigin } from "@fusion/core";
+import type { Settings, Task, WorkspaceWorktreeContext } from "@fusion/core";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 
 export const ADJECTIVES = [
@@ -52,6 +53,18 @@ export function resolveTaskWorkingBranch(task: Pick<Task, "id" | "branch" | "bra
 }
 
 /**
+ * FNXC:WorkspaceBranches 2026-08-20-03:38:
+ * FN-9161 requires recorded provenance rather than name shape: an operator
+ * branch may intentionally use Fusion's namespace.
+ */
+export function resolveTaskWorkingBranchWithOrigin(
+  task: Pick<Task, "id" | "branch" | "branchContext">,
+): { branch: string; origin: ReturnType<typeof classifyTaskBranchOrigin> } {
+  const branch = resolveTaskWorkingBranch(task);
+  return { branch, origin: classifyTaskBranchOrigin(task, branch) };
+}
+
+/**
  * Convert a string to a URL-friendly slug.
  *
  * - Lowercase
@@ -83,8 +96,8 @@ export function slugify(str: string): string {
  * @param rootDir - The project root directory (parent of `.worktrees/`)
  * @returns A unique worktree directory name (not a full path)
  */
-export function generateWorktreeName(rootDir: string, settings?: Pick<Settings, "worktreesDir">): string {
-  return generateReservedWorktreeName(rootDir, new Set(), settings);
+export function generateWorktreeName(rootDir: string, settings?: Pick<Settings, "worktreesDir">, workspaceContext?: WorkspaceWorktreeContext): string {
+  return generateReservedWorktreeName(rootDir, new Set(), settings, workspaceContext);
 }
 
 /**
@@ -95,12 +108,13 @@ export function generateReservedWorktreeName(
   rootDir: string,
   reservedNames: Set<string> = new Set(),
   settings?: Pick<Settings, "worktreesDir">,
+  workspaceContext?: WorkspaceWorktreeContext,
 ): string {
   const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
   const baseName = `${adjective}-${noun}`;
 
-  const worktreesDir = resolveWorktreesDir(rootDir, settings);
+  const worktreesDir = resolveWorktreesDir(rootDir, settings, workspaceContext);
   const existing = getExistingWorktreeNames(worktreesDir);
   for (const reserved of reservedNames) {
     existing.add(reserved);
@@ -136,6 +150,7 @@ export function planTaskWorktreePath(
   naming: string | undefined,
   reservedNames: Set<string>,
   settings?: Pick<Settings, "worktreesDir">,
+  workspaceContext?: WorkspaceWorktreeContext,
 ): string {
   if (task.worktree) {
     const existingName = task.worktree.split("/").filter(Boolean).pop();
@@ -153,12 +168,12 @@ export function planTaskWorktreePath(
       break;
     case "random":
     default:
-      worktreeName = generateReservedWorktreeName(rootDir, reservedNames, settings);
+      worktreeName = generateReservedWorktreeName(rootDir, reservedNames, settings, workspaceContext);
       break;
   }
 
   reservedNames.add(worktreeName);
-  return resolveTaskWorktreePath(rootDir, settings, worktreeName);
+  return resolveTaskWorktreePath(rootDir, settings, worktreeName, workspaceContext);
 }
 
 function getExistingWorktreeNames(worktreesDir: string): Set<string> {

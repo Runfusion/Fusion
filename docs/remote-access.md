@@ -287,8 +287,10 @@ Treat these links as secrets.
 Fusion supports two token modes for remote login handoff:
 
 1. **Persistent token** (`remoteAccess.tokenStrategy.persistent`)
-   - Stored in project settings.
+   - Stored in global settings.
    - Reused across generated links until regenerated.
+   - A token minted, rotated, or saved by any Remote Access surface takes effect immediately at `GET /remote-login` in the running process, including when dashboard daemon authentication is enabled.
+   - The main Settings form intentionally does not send a persistent-token field; saving other Remote Access fields preserves the existing persistent token.
    - `GET /api/remote/settings` returns a **masked** representation only.
 
 2. **Short-lived token** (`remoteAccess.tokenStrategy.shortLived`)
@@ -320,7 +322,7 @@ Recommended usage by risk level:
 | Tunnel remains `stopped` after provider switch | Provider was activated but tunnel start was never requested | `GET /api/remote/status` and confirm no start request was made | Run explicit start (`POST /api/remote/tunnel/start`) after activation |
 | `GET /remote-login?rt=<token>` returns `401` `remote_token_missing` | Missing `rt` query token | Validate URL structure includes `?rt=<token>` | Regenerate/fetch URL via `/api/remote-access/auth/login-url`, `/api/remote/url`, or `/api/remote/qr` |
 | `GET /remote-login?rt=<token>` returns `401` `remote_token_expired` | Short-lived token expired | Check `expiresAt` from generation response and local clock drift | Generate a new short-lived token/login URL and retry |
-| `GET /remote-login?rt=<token>` returns `401` `remote_token_invalid` | Wrong/rotated token or disabled token strategy | Confirm token mode and whether persistent token was regenerated | Re-fetch a current URL; if needed re-enable token strategy and rotate token |
+| `GET /remote-login?rt=<token>` returns `401` `remote_token_invalid` | Wrong/rotated token, disabled strategy, or an out-of-date server process | Confirm token mode, provider/strategy state, and whether the dashboard was updated | Re-fetch a current URL; if the main dashboard token works but a freshly generated remote link still fails, restart into the current Fusion build and report the issue with the route response code |
 | Restart does not restore prior running tunnel even with remember enabled | Restore gates failed or stale marker reconciled | Inspect `/api/remote/status.restore` (`outcome`, `reason`, optional `message`) | Resolve reported reason (`provider_not_configured`, `runtime_prerequisite_missing`, etc.), then start manually |
 | Dashboard and headless behavior appear different | Different runtime/auth context (project selection, bearer token, host) | Confirm same project config and same endpoint calls in both modes | Use `/api/remote/status` and `/api/remote/settings` to compare canonical state; align auth/token/project context |
 

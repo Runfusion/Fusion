@@ -5,7 +5,7 @@
  */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { Settings, TaskStore } from "@fusion/core";
+import { isFusionDeletableBranch, type Settings, type TaskStore } from "@fusion/core";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
 import { RemovalReason } from "../worktree/worktree-pool.js";
 import { executorLog } from "../logger.js";
@@ -58,7 +58,7 @@ export async function handleDepAbortCleanup(
   // Delete only a Fusion-managed branch. External routes remain operator-owned.
   const branch = resolveTaskWorkingBranch(task);
   let branchDeleted = false;
-  if (!externalExecutionRoute.configured) {
+  if (!externalExecutionRoute.configured && isFusionDeletableBranch(task, branch)) {
     try {
       await execAsync(`git branch -D "${branch}"`, { cwd: deps.rootDir });
       branchDeleted = true;

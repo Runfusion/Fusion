@@ -15,16 +15,9 @@ import {
 } from "../workflows/workflow-settings.js";
 
 const expectedDefaults: Record<string, { type: string; default: unknown }> = {
-  triageProactiveSubtaskSplittingEnabled: { type: "boolean", default: true },
   triageSizeSmallMaxHours: { type: "number", default: 2 },
   triageSizeMediumMaxHours: { type: "number", default: 4 },
   triageSizeLargeMaxHours: { type: "number", default: 8 },
-  triageSubtaskStepThreshold: { type: "number", default: 7 },
-  triageSubtaskLargeStepSignal: { type: "number", default: 9 },
-  triageSubtaskAdditiveStepSignal: { type: "number", default: 12 },
-  triageSubtaskPackageThreshold: { type: "number", default: 3 },
-  triageSubtaskFileScopeThreshold: { type: "number", default: 20 },
-  triageSubtaskRemediationBatchThreshold: { type: "number", default: 30 },
   triageNoCommitsDecisionVerbs: {
     type: "multi-enum",
     default: ["Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", "Investigate and report"],
@@ -73,14 +66,50 @@ describe("workflow-native built-in workflow settings", () => {
     REVISE blocks at all. They are enum-typed with defaults, so the number-typed assertions below
     deliberately continue to cover only the three cap settings.
     */
+    /*
+    FNXC:ReviewConvergence 2026-08-23-23:05:
+    FN-149 (a786c45bb9) added the six review-convergence/arbitration keys to this catalog: they are
+    review-loop policy of the same kind as the caps and the severity gate, so they belong here and
+    stay OUT of the moved catalog / MOVED_SETTINGS_KEYS (asserted below). 455bdbc007 removed their
+    duplicate defaults from DEFAULT_PROJECT_SETTINGS, making these declarations their single source
+    of truth. The `*Enabled` pair is defaulted; the provider/model lanes are deliberately undefaulted
+    so an unset workflow value means "no alternate target configured".
+    */
     expect(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => setting.id)).toEqual([
       "reviewerInlineFixes",
       "planReviewMaxRevisions",
       "codeReviewMaxRevisions",
       "planReviewBlockingSeverity",
       "codeReviewBlockingSeverity",
+      "reviewConvergenceEscalationEnabled",
+      "reviewConvergenceEscalationProvider",
+      "reviewConvergenceEscalationModelId",
+      "reviewArbitrationEnabled",
+      "reviewArbitrationProvider",
+      "reviewArbitrationModelId",
       "planReviewReplanCap",
     ]);
+    for (const id of ["reviewConvergenceEscalationEnabled", "reviewArbitrationEnabled"]) {
+      const setting = revisionById.get(id);
+      expect(setting?.type, `${id} should be boolean`).toBe("boolean");
+      expect(setting?.default, `${id} should default on`).toBe(true);
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+    for (const id of [
+      "reviewConvergenceEscalationProvider",
+      "reviewConvergenceEscalationModelId",
+      "reviewArbitrationProvider",
+      "reviewArbitrationModelId",
+    ]) {
+      const setting = revisionById.get(id);
+      expect(setting?.type, `${id} should be a string lane`).toBe("string");
+      expect(setting, `${id} should carry no declaration default`).not.toHaveProperty("default");
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
     for (const id of ["planReviewBlockingSeverity", "codeReviewBlockingSeverity"]) {
       const setting = revisionById.get(id);
       expect(setting, `${id} should be declared`).toBeDefined();
@@ -286,18 +315,15 @@ describe("workflow-native built-in workflow settings", () => {
   it("renders placeholders from resolved settings and rejects dangling tokens", () => {
     const prompt = [
       "Size S (<{{triageSizeSmallMaxHours}}h)",
-      "MORE THAN {{triageSubtaskStepThreshold}} implementation steps",
       "verbs: {{triageNoCommitsDecisionVerbs}}",
     ].join("\n");
 
     const rendered = renderTriagePolicyPlaceholders(prompt, {
       triageSizeSmallMaxHours: 1,
-      triageSubtaskStepThreshold: 5,
       triageNoCommitsDecisionVerbs: ["Audit", "Confirm"],
     } as never);
 
     expect(rendered).toContain("Size S (<1h)");
-    expect(rendered).toContain("MORE THAN 5 implementation steps");
     expect(rendered).toContain("verbs: Audit, Confirm");
     expect(rendered).not.toContain("{{");
     expect(() => renderTriagePolicyPlaceholders("{{unknownTriageToken}}", {})).toThrow(/Unresolved triage policy placeholder/);
@@ -321,25 +347,7 @@ describe("workflow-native built-in workflow settings", () => {
     expect(fallback).not.toContain("{{");
   });
 
-  it("renders proactive splitting policy as enabled by default", () => {
-    const rendered = renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {});
-
-    expect(rendered).toContain("For tasks you assess as Size M or L, consider whether splitting");
-    expect(rendered).toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(rendered).toContain("MORE THAN 7 implementation steps");
-    expect(rendered).not.toContain("Proactive oversized-task splitting is DISABLED");
-    expect(rendered).not.toContain("{{");
-  });
-
-  it("renders disabled proactive policy without weakening explicit subtask requests", () => {
-    const rendered = renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {
-      triageProactiveSubtaskSplittingEnabled: false,
-    } as never);
-
-    expect(rendered).toContain("Proactive oversized-task splitting is DISABLED");
-    expect(rendered).toContain("Do NOT split solely because the task is Size M/L");
-    expect(rendered).toContain("Only create child tasks when `breakIntoSubtasks: true` is explicitly present");
-    expect(rendered).not.toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(rendered).not.toContain("{{");
+  it("rejects removed split-policy placeholders", () => {
+    expect(() => renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {})).toThrow(/Unresolved triage policy placeholder/);
   });
 });

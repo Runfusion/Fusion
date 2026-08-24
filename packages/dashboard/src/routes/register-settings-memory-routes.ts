@@ -1,4 +1,9 @@
-import { createLogger } from "@fusion/core";
+import {
+  createLogger,
+  effectiveEnabledBuiltinWorkflowIds,
+  getRequiredPluginIdForBuiltinWorkflow,
+  validateEnabledBuiltinWorkflowIds,
+} from "@fusion/core";
 import { resolveRequestActor } from "../request-actor.js";
 
 const severityAuditLog = createLogger("dashboard-register-settings-memory-routes");
@@ -67,6 +72,7 @@ import { mkdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import { ApiError, badRequest } from "../api-error.js";
 import { resolveGithubTrackingAuth } from "../github-auth.js";
+import { emitWorkflowSseEvent } from "../sse.js";
 import { generateRemoteToken, issueRemoteAuthToken, maskRemoteToken } from "../remote-auth.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -500,6 +506,12 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         },
       },
     });
+    /*
+    FNXC:RemoteAccessAuth 2026-08-18-06:49:
+    A token minted from any remote surface must authenticate at /remote-login
+    immediately, including when its server-level store was cached before mint.
+    */
+    invalidateAllGlobalSettingsCaches();
 
     return token;
   }
@@ -589,7 +601,11 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   router.put("/settings", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const workflowEnablementPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabledBuiltinWorkflowIds");
+      const { store: scopedStore, projectId } = await getProjectContext(req);
+      const previousWorkflowSettings = workflowEnablementPatch
+        ? await scopedStore.getSettings()
+        : undefined;
       // Strip server-owned fields that should never be persisted to config.json.
       // These are computed server-side and injected only on GET /settings.
        
@@ -609,11 +625,31 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         throw badRequest(`Cannot update global settings via this endpoint. Use PUT /settings/global instead. Global fields found: ${globalFieldsFound.join(", ")}`);
       }
 
+      if (Object.prototype.hasOwnProperty.call(clientSettings, "enabledBuiltinWorkflowIds")) {
+        try {
+          validateEnabledBuiltinWorkflowIds(clientSettings.enabledBuiltinWorkflowIds);
+          if (Array.isArray(clientSettings.enabledBuiltinWorkflowIds)) {
+            for (const workflowId of clientSettings.enabledBuiltinWorkflowIds) {
+              const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(workflowId);
+              if (requiredPluginId && !(await scopedStore.isPluginInstalled(requiredPluginId))) {
+                throw new Error(`enabledBuiltinWorkflowIds contains unavailable plugin-gated workflow id: ${workflowId}`);
+              }
+            }
+          }
+        } catch (error) {
+          throw badRequest(error instanceof Error ? error.message : String(error));
+        }
+      }
+
       if (Object.prototype.hasOwnProperty.call(clientSettings, "modelPresets")) {
         clientSettings.modelPresets = validateModelPresets(clientSettings.modelPresets);
       }
       if (Object.prototype.hasOwnProperty.call(clientSettings, "ignoreHiddenOverlapPaths")) {
         clientSettings.ignoreHiddenOverlapPaths = sanitizeBooleanSetting("ignoreHiddenOverlapPaths", clientSettings.ignoreHiddenOverlapPaths);
+      }
+      // FNXC:TaskRecommendations 2026-08-19-13:05: Keep the required-completion policy boolean-safe at the HTTP boundary while canonical project-key routing handles scope and persistence.
+      if (Object.prototype.hasOwnProperty.call(clientSettings, "requireTaskRecommendations")) {
+        clientSettings.requireTaskRecommendations = sanitizeBooleanSetting("requireTaskRecommendations", clientSettings.requireTaskRecommendations);
       }
       if (Object.prototype.hasOwnProperty.call(clientSettings, "overlapIgnorePaths")) {
         clientSettings.overlapIgnorePaths = sanitizeOverlapIgnorePaths(clientSettings.overlapIgnorePaths);
@@ -758,7 +794,20 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       }
 
       const settings = await scopedStore.updateSettings(clientSettings, resolveRequestActor(req));
-      
+      if (
+        workflowEnablementPatch
+        && previousWorkflowSettings
+        && JSON.stringify(effectiveEnabledBuiltinWorkflowIds(previousWorkflowSettings.enabledBuiltinWorkflowIds))
+          !== JSON.stringify(effectiveEnabledBuiltinWorkflowIds(settings.enabledBuiltinWorkflowIds))
+      ) {
+        /*
+        FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+        Settings changes invalidate the shared board-workflow cache only after the
+        PostgreSQL settings/revision transaction commits. One event refreshes every
+        Header, Board, List, Planning, and Graph consumer without polling.
+        */
+        emitWorkflowSseEvent("workflow:updated", { reason: "enabledBuiltinWorkflowIds" }, projectId);
+      }
       res.json(settings);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -773,6 +822,8 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         errorMessage.includes("modelPresets")
         || errorMessage.includes("must include both provider and modelId")
         || errorMessage.includes("mutually exclusive")
+        || errorMessage.includes("enabledBuiltinWorkflowIds")
+        || errorMessage.includes("requireTaskRecommendations must be a boolean")
       ) ? 400 : 500;
       throw new ApiError(status, errorMessage);
     }
@@ -877,6 +928,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       };
 
       await scopedStore.updateGlobalSettings({ remoteAccess: nextRemoteAccess });
+      invalidateAllGlobalSettingsCaches();
       res.json({ settings: toRemoteSettingsPayload(nextRemoteAccess) });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -955,6 +1007,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           activeProvider: provider,
         },
       });
+      invalidateAllGlobalSettingsCaches();
       res.json({ activeProvider: provider });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -994,8 +1047,27 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         }
       }
 
+      /*
+      FNXC:RemoteAuth 2026-08-19-01:10:
+      NO SILENT FAKE "STARTING". Without an engine nothing can start, and this used to answer
+      `{state:"starting"}` anyway — so the UI showed a tunnel coming up that never would, settling to
+      `stopped` with `lastError: null` and no way to tell a broken tunnel from an unmanaged one. The
+      operator hit exactly this: repeated starts, always stopped, never an error. It is reachable in
+      a container whose launch directory is not the registered project, because an unscoped request
+      falls back to a launch-dir store with no engine.
+
+      Still 200 and still idempotent — a dashboard legitimately runs without an engine (--no-engine),
+      and an error there would be wrong — but the state is now the truth (`stopped`, not `starting`)
+      and carries the reason, which the UI already renders from lastError.
+      */
       if (!engine) {
-        res.json({ state: "starting", provider });
+        res.json({
+          state: "stopped",
+          provider,
+          url: null,
+          lastError: "No engine is attached to this request's project scope — pass ?projectId= for the project whose tunnel should start",
+          lastErrorCode: "REMOTE_TUNNEL_ENGINE_UNAVAILABLE",
+        });
         return;
       }
 
@@ -1079,6 +1151,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           },
         },
       });
+      invalidateAllGlobalSettingsCaches();
       res.json({ token, maskedToken: maskRemoteToken(token) });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

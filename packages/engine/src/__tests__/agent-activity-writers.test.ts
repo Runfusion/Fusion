@@ -395,6 +395,11 @@ pgDescribe("engine agent activity durable writer", () => {
   */
   it("persists task completion through the merger finalization path", async () => {
     const task = await h.createTestTask();
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: this asserts agent-activity persistence on
+       completion, not review gating. The shared harness task carries the workflow's default-on
+       optional groups with no results, so the done-transition door refused it before the writer
+       under test ran. Declaring no optional gates states this fixture's intent. */
+    await h.store().updateTask(task.id, { enabledWorkflowSteps: [] });
     const settings = await h.store().getSettings();
     await h.store().moveTask(task.id, "in-progress", { moveSource: "agent" });
     await h.store().moveTask(task.id, "in-review", { moveSource: "agent" });

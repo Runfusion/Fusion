@@ -1,0 +1,12 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { execFile } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { addWorkspaceRepo, loadWorkspaceConfig, saveWorkspaceConfig, WorkspaceRepoValidationError } from "../git/git-repository.js";
+
+const exec = promisify(execFile); const roots: string[] = [];
+async function repo(root: string, name: string) { const cwd = join(root, name); mkdirSync(cwd, { recursive: true }); await exec("git", ["init", "-b", "main"], { cwd }); await exec("git", ["config", "user.email", "test@example.com"], { cwd }); await exec("git", ["config", "user.name", "Test"], { cwd }); writeFileSync(join(cwd, "a"), "a"); await exec("git", ["add", "."], { cwd }); await exec("git", ["commit", "-m", "init"], { cwd }); }
+afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
+describe("addWorkspaceRepo", () => it("adds an eligible direct child idempotently and rejects invalid members", async () => { const root = mkdtempSync(join(tmpdir(), "fusion-add-workspace-")); roots.push(root); await repo(root, "a"); await repo(root, "b"); await saveWorkspaceConfig(root, { repos: ["a"] }); expect(await addWorkspaceRepo(root, "b")).toEqual({ outcome: "added", repos: ["a", "b"] }); const configPath = join(root, ".fusion", "workspace.json"); const beforeDuplicate = readFileSync(configPath, "utf8"); expect(await addWorkspaceRepo(root, "b")).toMatchObject({ outcome: "already-member" }); expect(readFileSync(configPath, "utf8")).toBe(beforeDuplicate); await expect(addWorkspaceRepo(root, "../escape")).rejects.toMatchObject<Partial<WorkspaceRepoValidationError>>({ reason: "invalid-path" }); await expect(addWorkspaceRepo(root, ".")).rejects.toMatchObject<Partial<WorkspaceRepoValidationError>>({ reason: "not-direct-child" }); await expect(addWorkspaceRepo(root, "a/..")).rejects.toMatchObject<Partial<WorkspaceRepoValidationError>>({ reason: "not-direct-child" }); await expect(addWorkspaceRepo(root, "group/a")).rejects.toMatchObject<Partial<WorkspaceRepoValidationError>>({ reason: "not-direct-child" }); mkdirSync(join(root, "plain")); await expect(addWorkspaceRepo(root, "plain")).rejects.toMatchObject<Partial<WorkspaceRepoValidationError>>({ reason: "not-a-git-work-tree" }); expect((await loadWorkspaceConfig(root))?.repos).toEqual(["a", "b"]); }));

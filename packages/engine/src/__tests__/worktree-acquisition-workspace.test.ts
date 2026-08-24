@@ -9,16 +9,24 @@ root. The TaskStore is an in-memory fake (no DB / no network) per FN-5048 — re
 git only where the invariant needs it; everything else is a narrow seam.
 */
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Settings, Task, TaskStore } from "@fusion/core";
+import {
+  WORKSPACE_GROUP_MARKER_FILENAME,
+  workspaceRepoSegment,
+  workspaceWorktreeGroupSegment,
+  type Settings,
+  type Task,
+  type TaskStore,
+} from "@fusion/core";
 import {
   acquireTaskWorktree,
   acquireWorkspaceRepoWorktree,
   WorkspaceRepoAcquireBusyError,
 } from "../worktree/worktree-acquisition.js";
 import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
+import { cleanupOrphanedWorktrees } from "../worktree/worktree-pool.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -38,12 +46,16 @@ function makeFakeStore(
     failWhen?: (patch: Partial<Task>) => boolean;
     beforeWorkspaceMerge?: (repoRelPath: string) => Promise<void>;
   } = {},
-): { store: TaskStore; current: () => Task; logs: string[]; patches: Partial<Task>[] } {
+): { store: TaskStore; current: () => Task; logs: string[]; patches: Partial<Task>[]; mutationsDuringMerge: () => number } {
   let current = task;
+  let mergeTail = Promise.resolve();
+  let mergeCallbackActive = false;
+  let nestedMutationCount = 0;
   const logs: string[] = [];
   const patches: Partial<Task>[] = [];
   const store = {
     async updateTask(id: string, patch: Partial<Task>): Promise<void> {
+      if (mergeCallbackActive) nestedMutationCount += 1;
       // Deliberately retain wholesale replacement: the concurrent regression below must fail
       // if production returns to updateTask({ workspaceWorktrees }) instead of the key merge.
       patches.push(patch);
@@ -53,32 +65,56 @@ function makeFakeStore(
     async mergeWorkspaceWorktreeEntry(
       id: string,
       repoRelPath: string,
-      patch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>,
-      mergeOptions?: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean },
+      patch:
+        | Partial<NonNullable<Task["workspaceWorktrees"]>[string]>
+        | ((freshTask: Task) => Promise<Partial<NonNullable<Task["workspaceWorktrees"]>[string]>>),
+      mergeOptions?: {
+        requireExistingEntry?: boolean;
+        clearSingularWorktree?: boolean;
+        validateBeforePersist?: (freshTask: Task) => Promise<void>;
+      },
     ): Promise<Task> {
       if (id !== current.id) throw new Error(`Task ${id} not found`);
       await options.beforeWorkspaceMerge?.(repoRelPath);
-      // Read only after the deterministic gate: this mirrors the store primitive's locked fresh read.
-      const workspaceWorktrees = current.workspaceWorktrees ?? {};
-      const existing = workspaceWorktrees[repoRelPath];
-      if (mergeOptions?.requireExistingEntry && !existing) return current;
-      const mergedPatch: Partial<Task> = {
-        workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...patch } },
-        ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
-      };
-      patches.push(mergedPatch);
-      if (options.failWhen?.(mergedPatch)) throw new Error("injected update failure");
-      current = { ...current, ...mergedPatch };
-      return current;
+      // Mirror TaskStore.withTaskLock after the deterministic overlap gate so both contenders
+      // can arrive, then serialize the fresh read + callback + key merge exactly like production.
+      const previousMerge = mergeTail;
+      let releaseMerge!: () => void;
+      mergeTail = new Promise<void>((resolve) => { releaseMerge = resolve; });
+      await previousMerge;
+      try {
+        const workspaceWorktrees = current.workspaceWorktrees ?? {};
+        const existing = workspaceWorktrees[repoRelPath];
+        if (mergeOptions?.requireExistingEntry && !existing) return current;
+        mergeCallbackActive = true;
+        let resolvedPatch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>;
+        try {
+          resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
+        } finally {
+          mergeCallbackActive = false;
+        }
+        await mergeOptions?.validateBeforePersist?.(current);
+        const mergedPatch: Partial<Task> = {
+          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
+          ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
+        };
+        patches.push(mergedPatch);
+        if (options.failWhen?.(mergedPatch)) throw new Error("injected update failure");
+        current = { ...current, ...mergedPatch };
+        return current;
+      } finally {
+        releaseMerge();
+      }
     },
     async logEntry(_id: string, message: string): Promise<void> {
+      if (mergeCallbackActive) nestedMutationCount += 1;
       logs.push(message);
     },
     async getTask(id: string): Promise<Task | null> {
       return id === current.id ? current : null;
     },
   } as unknown as TaskStore;
-  return { store, current: () => current, logs, patches };
+  return { store, current: () => current, logs, patches, mutationsDuringMerge: () => nestedMutationCount };
 }
 
 function makeTask(id: string): Task {
@@ -164,6 +200,33 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     });
 
     expect(result.baseCommitSha).toBe(developTip);
+  });
+
+  it("materializes a remote-tracking-only requested base as a local land target", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoA = fixture.repoPath("repo-a");
+    const origin = `${repoA}-origin`;
+    git(repoA, "git init --bare " + JSON.stringify(origin));
+    git(repoA, `git remote add origin ${JSON.stringify(origin)}`);
+    git(repoA, "git checkout -qb release/remote-only");
+    git(repoA, "git commit --allow-empty -m 'release base'");
+    const releaseTip = git(repoA, "git rev-parse HEAD");
+    git(repoA, "git push -u origin release/remote-only");
+    git(repoA, "git checkout main");
+    git(repoA, "git branch -D release/remote-only");
+    expect(git(repoA, "git rev-parse origin/release/remote-only")).toBe(releaseTip);
+
+    const remoteBaseTask = makeTask("FN-9164-remote");
+    remoteBaseTask.baseBranch = "release/remote-only";
+    const { store, current } = makeFakeStore(remoteBaseTask);
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    });
+
+    expect(git(repoA, "git rev-parse release/remote-only")).toBe(releaseTip);
+    expect(git(repoA, `git merge-base ${result.branch} release/remote-only`)).toBe(releaseTip);
+    expect(current().workspaceWorktrees?.["repo-a"]?.baseBranch).toBe("release/remote-only");
   });
 
   it("reconciles a sub-repo dangling collision branch from its resolved integration tip", async () => {
@@ -295,6 +358,110 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(second.baseCommitSha).toBe(first.baseCommitSha);
     expect(patches).toHaveLength(1);
     expect(registry.isPathActive(fixture.repoPath("repo-a"))).toBe(false);
+  });
+
+  it("defers task mutations until the lifecycle-locked workspace merge callback has returned", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, logs, mutationsDuringMerge } = makeFakeStore(makeTask("FN-4-lock"));
+
+    await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(mutationsDuringMerge()).toBe(0);
+    expect(logs.some((message) => message.includes("Worktree created at"))).toBe(true);
+  });
+
+  it("creates one durable worktree when the same task acquires the same repository concurrently", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-4-concurrent");
+    const { store, current } = makeFakeStore(initial);
+    const registry = new ActiveSessionRegistry();
+    const auditEvents: Array<{ type: string }> = [];
+    const audit = {
+      async git(event: { type: string }): Promise<void> { auditEvents.push(event); },
+      async filesystem(): Promise<void> {},
+    };
+
+    const [first, second] = await Promise.all([
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+        settings: SETTINGS, registry, audit,
+      }),
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+        settings: SETTINGS, registry, audit,
+      }),
+    ]);
+
+    expect([first.alreadyAcquired, second.alreadyAcquired].sort()).toEqual([false, true]);
+    expect(first.worktreePath).toBe(second.worktreePath);
+    expect(Object.keys(current().workspaceWorktrees ?? {})).toEqual(["repo-a"]);
+    expect(auditEvents.filter((event) => event.type === "worktree:create")).toHaveLength(1);
+  });
+
+  it("replaces a concurrently persisted directory that is not a usable git worktree", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-4-stale-concurrent");
+    let store!: TaskStore;
+    const fake = makeFakeStore(initial, {
+      beforeWorkspaceMerge: async () => {
+        await store.updateTask(initial.id, {
+          workspaceWorktrees: {
+            "repo-a": { worktreePath: fixture.rootDir, branch: "fusion/stale-directory" },
+          },
+        });
+      },
+    });
+    store = fake.store;
+
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: initial,
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.alreadyAcquired).toBe(false);
+    expect(result.worktreePath).not.toBe(fixture.rootDir);
+    expect(fake.current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(result.worktreePath);
+  });
+
+  it("removes a prepared worktree when authoritative pre-persist validation rejects it", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(makeTask("FN-4-rejected-persist"));
+    const auditEvents: Array<{ type: string; target?: string }> = [];
+    let validationCalls = 0;
+
+    await expect(acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+      audit: {
+        async git(event: { type: string; target?: string }): Promise<void> { auditEvents.push(event); },
+        async filesystem(): Promise<void> {},
+      },
+      validateTaskBeforeCreate: async () => {
+        validationCalls += 1;
+        if (validationCalls === 2) throw new Error("lifecycle moved before persistence");
+      },
+    })).rejects.toThrow("lifecycle moved before persistence");
+
+    const createdPath = auditEvents.find((event) => event.type === "worktree:create")?.target;
+    expect(validationCalls).toBe(2);
+    expect(createdPath).toBeTruthy();
+    expect(existsSync(createdPath!)).toBe(false);
+    expect(current().workspaceWorktrees?.["repo-a"]).toBeUndefined();
   });
 
   it("surfaces an error and persists an audit event when acquisition fails (no swallowed stall)", async () => {
@@ -519,6 +686,47 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(current().workspaceWorktrees).toBeUndefined();
   });
 
+  /*
+  FNXC:WorkspaceWorktree 2026-08-20-02:04:
+  Grouped workspace roots must be proven through real `git worktree add` calls.
+  A path-helper fixture cannot detect the task-id collision that occurs when two
+  member repositories share a configured root.
+  */
+  it("groups real multi-repo acquisitions and protects their shared-root container from a foreign project sweep", async () => {
+    fixture = await createWorkspaceFixture(["api", "web", "foreign"]);
+    const sharedRoot = join(dirname(fixture.rootDir), "shared-worktrees");
+    const settings = { ...SETTINGS, worktreesDir: sharedRoot };
+    const { store, current } = makeFakeStore(makeTask("FN-9162"));
+    const registry = new ActiveSessionRegistry();
+
+    const api = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "api", workspaceRootDir: fixture.rootDir, task: current(), store, settings, registry,
+    });
+    const web = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "web", workspaceRootDir: fixture.rootDir, task: current(), store, settings, registry,
+    });
+
+    const group = workspaceWorktreeGroupSegment(fixture.rootDir);
+    expect(api.worktreePath).toBe(join(sharedRoot, group, workspaceRepoSegment("api"), "fn-9162"));
+    expect(web.worktreePath).toBe(join(sharedRoot, group, workspaceRepoSegment("web"), "fn-9162"));
+    expect(api.worktreePath).not.toBe(web.worktreePath);
+    expect(existsSync(join(api.worktreePath, ".git"))).toBe(true);
+    expect(existsSync(join(web.worktreePath, ".git"))).toBe(true);
+    expect(readFileSync(join(sharedRoot, group, WORKSPACE_GROUP_MARKER_FILENAME), "utf8").trim()).toBe(fixture.rootDir);
+
+    // A non-workspace project can share the configured root. Its real cleanup
+    // path must not interpret this workspace's group container as an orphan.
+    const cleaned = await cleanupOrphanedWorktrees(
+      fixture.repoPath("foreign"),
+      { listTasks: async () => [] } as unknown as TaskStore,
+      { worktreesDir: sharedRoot, workspaceMode: false },
+    );
+    expect(cleaned).toBe(0);
+    expect(existsSync(api.worktreePath)).toBe(true);
+    expect(existsSync(web.worktreePath)).toBe(true);
+    expect(existsSync(join(sharedRoot, group, WORKSPACE_GROUP_MARKER_FILENAME))).toBe(true);
+  });
+
   it("keeps the single-repo acquisition persistence contract when suppression is absent", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const initial = makeTask("FN-10");
@@ -531,6 +739,10 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
       settings: SETTINGS,
     });
 
-    expect(patches).toContainEqual({ worktree: result.worktreePath, branch: result.branch });
+    expect(patches).toContainEqual({
+      worktree: result.worktreePath,
+      branch: result.branch,
+      branchWriteOrigin: "engine",
+    });
   });
 });

@@ -216,6 +216,18 @@ export function SourceControlSection({ form, setForm, projectTrackingRepoOptions
           />
         </div>
       </details>
+      {/* FNXC:JiraBranchNaming 2026-08-20-05:10: Project JIRA overrides use the regular form; tokens remain secret references rather than settings values. */}
+      <details className="settings-gitlab-disclosure" data-testid="project-jira-configuration-disclosure">
+        <summary><span className="settings-gitlab-disclosure__title">{t("settings.jira.configuration", "JIRA Configuration")}</span><label className="checkbox-label settings-gitlab-disclosure__toggle" htmlFor="jiraEnabled" onClick={(event) => event.stopPropagation()}><input id="jiraEnabled" type="checkbox" checked={form.jiraEnabled === true} onChange={(event) => setForm((f) => ({ ...f, jiraEnabled: event.target.checked }))}/>{t("settings.jira.enable", "Enable JIRA integration")}</label></summary>
+        <div className="settings-gitlab-disclosure__body" aria-disabled={form.jiraEnabled !== true}>
+          <SettingsTextRow descriptor={{ key: "jiraBaseUrl", label: t("settings.jira.baseUrl", "JIRA site URL"), help: t("settings.jira.baseUrlHelp", "JIRA site URL. Default: unset."), type: "url", disabled: form.jiraEnabled !== true }} value={form.jiraBaseUrl ?? ""} onChange={(v) => setForm((f) => ({ ...f, jiraBaseUrl: v || undefined }))}/>
+          <SettingsTextRow descriptor={{ key: "jiraApiBaseUrl", label: t("settings.jira.apiBaseUrl", "JIRA API base URL (optional)"), help: t("settings.jira.apiBaseUrlHelp", "Default: <site>/rest/api/3."), type: "url", disabled: form.jiraEnabled !== true }} value={form.jiraApiBaseUrl ?? ""} onChange={(v) => setForm((f) => ({ ...f, jiraApiBaseUrl: v || undefined }))}/>
+          <SettingsTextRow descriptor={{ key: "jiraAuthEmail", label: t("settings.jira.email", "JIRA account email (optional)"), help: t("settings.jira.emailHelp", "Email selects Basic authentication. Default: unset."), disabled: form.jiraEnabled !== true }} value={form.jiraAuthEmail ?? ""} onChange={(v) => setForm((f) => ({ ...f, jiraAuthEmail: v || undefined }))}/>
+          <SettingsTextRow descriptor={{ key: "jiraAuthTokenSecretKey", label: t("settings.jira.secretKey", "JIRA token secret key"), help: t("settings.jira.secretHelp", "Secret-store key only. Default: JIRA_API_TOKEN."), disabled: form.jiraEnabled !== true }} value={form.jiraAuthTokenSecretKey ?? ""} onChange={(v) => setForm((f) => ({ ...f, jiraAuthTokenSecretKey: v || undefined }))}/>
+          <SettingsSelectRow descriptor={{ key: "jiraAuthTokenSecretScope", label: t("settings.jira.secretScope", "JIRA token secret scope"), help: t("settings.jira.scopeHelp", "Default: project."), disabled: form.jiraEnabled !== true, options: [{ value: "project", label: "Project" }, { value: "global", label: "Global" }] }} value={form.jiraAuthTokenSecretScope ?? "project"} onChange={(v) => setForm((f) => ({ ...f, jiraAuthTokenSecretScope: v as "project" | "global" }))}/>
+          <SettingsTextRow descriptor={{ key: "jiraBranchNameTemplate", label: t("settings.jira.template", "JIRA branch-name template"), help: t("settings.jira.templateHelp", "Default: feature/{key}-{summary}."), disabled: form.jiraEnabled !== true }} value={form.jiraBranchNameTemplate ?? ""} onChange={(v) => setForm((f) => ({ ...f, jiraBranchNameTemplate: v || undefined }))}/>
+        </div>
+      </details>
     </>);
 }
 export default SourceControlSection;

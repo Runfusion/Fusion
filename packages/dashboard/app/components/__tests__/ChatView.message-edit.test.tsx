@@ -6,6 +6,8 @@ assistant messages, CLI-agent-backed sessions, and Rooms, and is disabled while
 streaming. Also covers the inline editor save/cancel interaction and the
 editMessageAndResend wiring.
 */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "../ChatView";
@@ -16,6 +18,7 @@ import type { ChatSessionInfo, UseChatReturn } from "../../hooks/useChat";
 import type { UseChatRoomsResult } from "../../hooks/useChatRooms";
 
 Element.prototype.scrollIntoView = vi.fn();
+const chatViewCss = readFileSync(resolve(__dirname, "../ChatView.css"), "utf8");
 
 vi.mock("../SessionTerminal", () => ({
   SessionTerminal: ({ sessionId }: { sessionId: string }) => (
@@ -42,6 +45,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
     fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 vi.mock("lucide-react", async (importOriginal) => {
@@ -141,6 +145,13 @@ function baseChatState(overrides: Partial<UseChatReturn> = {}): UseChatReturn {
 }
 
 describe("ChatView message edit affordance", () => {
+  it("uses controller-owned overflow instead of a native resize grip", () => {
+    const textareaRule = chatViewCss.match(/\.chat-message-edit-textarea\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(textareaRule).toContain("resize: none");
+    expect(textareaRule).toContain("overflow-y: hidden");
+    expect(textareaRule).not.toContain("resize: vertical");
+  });
+
   beforeEach(() => {
     localStorage.clear();
     mockUseChatRooms.mockReturnValue(baseRoomsState());

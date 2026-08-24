@@ -22,6 +22,10 @@ router.get("/activity", async (req, res) => {
     const limitParam = req.query.limit;
     const sinceParam = req.query.since;
     const typeParam = req.query.type;
+    const taskIdParam = req.query.taskId;
+    if ((taskIdParam !== undefined && typeof taskIdParam !== "string") || (typeParam !== undefined && typeof typeParam !== "string")) {
+      throw badRequest("activity query filters must be single string values");
+    }
 
     // Parse and validate limit. Omitted limit intentionally defaults to 100
     // to match the documented API contract and avoid unbounded history reads.
@@ -40,10 +44,11 @@ router.get("/activity", async (req, res) => {
       throw badRequest(`Invalid type. Must be one of: ${validTypes.join(", ")}`);
     }
 
-    const options: { limit?: number; since?: string; type?: ActivityEventType } = {
+    const options: { limit?: number; since?: string; type?: ActivityEventType; taskId?: string } = {
       limit,
       since: sinceParam as string | undefined,
       type: typeParam as ActivityEventType | undefined,
+      taskId: taskIdParam,
     };
 
     const entries = await scopedStore.getActivityLog(options);
@@ -97,15 +102,24 @@ export const registerSetupActivityRoutes: ApiRouteRegistrar = (ctx) => {
 /**
  * GET /api/activity-feed
  * Get unified activity feed across all projects.
- * Query: limit, projectId, types
+ * Query: limit, since (older-than cursor), projectId, types, taskId
  * Returns: ActivityFeedEntry[]
  */
 router.get("/activity-feed", async (req, res) => {
   try {
-    const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
-    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
-    const typesParam = typeof req.query.types === "string" ? req.query.types.split(",") : undefined;
-    const types = typesParam as import("@fusion/core").ActivityEventType[] | undefined;
+    const stringQuery = (value: unknown, name: string): string | undefined => {
+      if (value === undefined) return undefined;
+      if (typeof value !== "string") throw badRequest(`${name} must be a single string value`);
+      return value;
+    };
+    const limitRaw = stringQuery(req.query.limit, "limit");
+    const limit = limitRaw === undefined ? 50 : Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(limit) || limit < 0) throw badRequest("limit must be a non-negative integer");
+    const since = stringQuery(req.query.since, "since");
+    const projectId = stringQuery(req.query.projectId, "projectId");
+    const taskId = stringQuery(req.query.taskId, "taskId");
+    const typesParam = stringQuery(req.query.types, "types");
+    const types = typesParam?.split(",") as import("@fusion/core").ActivityEventType[] | undefined;
 
     /*
     FNXC:ActivityFeed 2026-07-28-03:00:
@@ -117,7 +131,7 @@ router.get("/activity-feed", async (req, res) => {
       await central.init();
     }
 
-    const entries = await central.getRecentActivity({ limit, projectId, types });
+    const entries = await central.getRecentActivity({ limit: Math.min(limit, 1000), since, projectId, types, taskId });
     if (shouldClose) await central.close();
 
     res.json(entries);

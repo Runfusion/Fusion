@@ -517,14 +517,38 @@ describe("SettingsModal", () => {
       expect(document.querySelector(".remote-share-block")).not.toBeInTheDocument();
     });
 
-    it("renders remote-share-block when tunnel is running with a URL", async () => {
+    it("labels a running Cloudflare tunnel URL with Cloudflare terminology", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({ provider: "cloudflare", state: "running", url: "https://demo-tunnel.trycloudflare.com/", lastError: null });
+      await renderModalSection("remote", "Remote Access");
+
+      const shareBlock = document.querySelector(".remote-share-block");
+      expect(shareBlock).toBeInTheDocument();
+      expect(shareBlock?.textContent).toContain("Cloudflare tunnel URL:");
+      expect(shareBlock?.textContent).toContain("https://demo-tunnel.trycloudflare.com/");
+      expect(shareBlock?.textContent).not.toContain("Tailnet");
+    });
+
+    it("retains the Tailnet URL label for a running Tailscale tunnel", async () => {
       mockFetchRemoteStatus.mockResolvedValue({ provider: "tailscale", state: "running", url: "https://machine.ts.net/", lastError: null });
       await renderModalSection("remote", "Remote Access");
 
       const statusBar = document.querySelector(".remote-status-bar");
+      const shareBlock = document.querySelector(".remote-share-block");
       expect(statusBar).toBeInTheDocument();
       expect(statusBar?.className).toContain("remote-status-bar--running");
-      expect(document.querySelector(".remote-share-block")).toBeInTheDocument();
+      expect(shareBlock?.textContent).toContain("Tailnet URL:");
+      expect(shareBlock?.textContent).toContain("https://machine.ts.net/");
+    });
+
+    it("uses a neutral URL label when the running tunnel provider is unknown", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({ provider: null, state: "running", url: "https://unknown.example/", lastError: null });
+      await renderModalSection("remote", "Remote Access");
+
+      const shareBlock = document.querySelector(".remote-share-block");
+      expect(shareBlock).toBeInTheDocument();
+      expect(shareBlock?.textContent).toContain("Tunnel URL:");
+      expect(shareBlock?.textContent).toContain("https://unknown.example/");
+      expect(shareBlock?.textContent).not.toContain("Tailnet");
     });
 
     it("updates provider selection via radio and shows provider status", async () => {

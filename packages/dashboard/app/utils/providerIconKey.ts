@@ -66,6 +66,9 @@ export function inferProviderIconKey(modelOrProviderName: string): string {
   if (normalized.includes("opencode")) {
     return "opencode";
   }
+  if (normalized.includes("orcarouter")) {
+    return "orcarouter";
+  }
   if (normalized.includes("copilot") || normalized === "github copilot") {
     return "github-copilot";
   }

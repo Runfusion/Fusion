@@ -5,6 +5,7 @@ import type { ProjectInfo } from "../api";
 import { replaceProjectIdInUrl } from "../utils/projectUrlState";
 import type { ViewMode, TaskView } from "./useViewState";
 import type { ToastType } from "./useToast";
+import type { OnboardingCompletionOutcome } from "../components/ModelOnboardingModal";
 
 interface UseProjectActionsOptions {
   setCurrentProject: (project: ProjectInfo) => void;
@@ -21,6 +22,13 @@ interface UseProjectActionsOptions {
   closeSetupWizard: () => void;
   closeModelOnboarding: () => void;
   /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  Fired once onboarding is FINISHED (not dismissed) so the dashboard can make its one post-onboarding
+  ask — currently the GitHub star prompt. The prompt owns its own "already asked" state; this hook
+  only reports the moment.
+  */
+  onOnboardingCompleted?: () => void;
+  /*
   FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
   Every project-switch entry point (select, view-all, setup-complete) must dismiss
   modals scoped to the previous project so its task detail / planning payloads do not
@@ -35,7 +43,7 @@ export interface UseProjectActionsResult {
   handleOpenSettings: () => void;
   handleAddProject: () => void;
   handleSetupComplete: (project: ProjectInfo) => void;
-  handleModelOnboardingComplete: () => void;
+  handleModelOnboardingComplete: (outcome?: OnboardingCompletionOutcome) => void;
   handlePauseProject: (project: ProjectInfo) => Promise<void>;
   handleResumeProject: (project: ProjectInfo) => Promise<void>;
   handleRemoveProject: (project: ProjectInfo) => Promise<void>;
@@ -60,13 +68,14 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     closeSetupWizard,
     closeModelOnboarding,
     closeProjectScopedModals,
+    onOnboardingCompleted,
   } = options;
 
   const handleSelectProject = useCallback((project: ProjectInfo) => {
     /*
     FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
     Swapping projects must not leave the previous project's modals (task detail, group,
-    subtask, git manager, …) rendering over the new project. Re-selecting the already
+    git manager, …) rendering over the new project. Re-selecting the already
     current project is a no-op navigation and must NOT dismiss whatever the user has open.
     */
     if (project.id !== currentProject?.id) {
@@ -105,9 +114,11 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     void refreshProjects();
   }, [closeSetupWizard, closeProjectScopedModals, currentProject?.id, setCurrentProject, setViewMode, addToast, refreshProjects, t]);
 
-  const handleModelOnboardingComplete = useCallback(() => {
+  const handleModelOnboardingComplete = useCallback((outcome?: OnboardingCompletionOutcome) => {
     closeModelOnboarding();
-  }, [closeModelOnboarding]);
+    // FNXC:GithubStarAsk 2026-08-19-03:59: only a finished onboarding earns the star ask; a dismissal does not.
+    if (outcome !== "dismissed") onOnboardingCompleted?.();
+  }, [closeModelOnboarding, onOnboardingCompleted]);
 
   const handlePauseProject = useCallback(async (project: ProjectInfo) => {
     try {

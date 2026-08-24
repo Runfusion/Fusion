@@ -2,8 +2,15 @@ import "./NewTaskModal.css";
 import { useState, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { DEFAULT_TASK_PRIORITY, type Task, type TaskPriority } from "@fusion/core";
-import { getErrorMessage } from "@fusion/core";
+import {
+  DEFAULT_TASK_PRIORITY,
+  getErrorMessage,
+  isValidTaskBranchName,
+  type ColumnId,
+  type Task,
+  type TaskPriority,
+  type ThinkingLevel,
+} from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import {
   apiFetchGitHubIssues,
@@ -11,6 +18,9 @@ import {
   checkDuplicateTasks,
   fetchGitRemotes,
   uploadAttachment,
+  fetchBoardWorkflows,
+  fetchWorkspaceRepos,
+  type BoardWorkflowsPayload,
   type CreateTaskInput,
   type DuplicateMatch,
   type GitHubIssue,
@@ -31,6 +41,7 @@ import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { FloatingWindow } from "./FloatingWindow";
+import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, resolveQuickAddStartWorkflowTarget, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 
 type NewTaskCreateInput = Omit<CreateTaskInput, "branchSelection"> & {
   branchSelection?: {
@@ -46,11 +57,11 @@ interface NewTaskModalProps {
   projectId?: string;
   tasks: Task[]; // for dependency selection
   onCreateTask: (input: NewTaskCreateInput) => Promise<Task>;
+  onMoveTask?: (taskId: string, column: ColumnId) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
   initialDescription?: string;
   initialWorkflowId?: string | null;
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
-  onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
 }
 
 /*
@@ -85,6 +96,14 @@ function buildGitHubIssuePrompt(issue: GitHubReferenceOption): string {
 
 function buildGitHubPullPrompt(pull: GitHubReferenceOption): string {
   return `Fetch and read this GitHub pull request, inspect the conversation, review comments, check failures, and changed files as needed, then resolve or address all actionable PR review comments.\n\nPR: ${pull.url}\n\nKeep the PR intent intact while making the requested fixes, and verify the result with targeted tests.`;
+}
+
+function isUsableBoardWorkflowsPayload(value: unknown): value is BoardWorkflowsPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const payload = value as Partial<BoardWorkflowsPayload>;
+  return payload.flagEnabled === true
+    && typeof payload.defaultWorkflowId === "string"
+    && Array.isArray(payload.workflows);
 }
 
 function defaultGitHubRemote(remotes: GitRemote[]): GitRemote | undefined {
@@ -323,7 +342,7 @@ function NewTaskGitHubReferencePicker({ isOpen, projectId, disabled = false, onS
   );
 }
 
-export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, initialDescription = "", initialWorkflowId, onPlanningMode, onSubtaskBreakdown }: NewTaskModalProps) {
+export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, onMoveTask, addToast, initialDescription = "", initialWorkflowId, onPlanningMode }: NewTaskModalProps) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const viewportMode = useViewportMode();
@@ -351,6 +370,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const isFloating = viewportMode !== "mobile";
 
   const [dependencies, setDependencies] = useState<string[]>([]);
+  const [workspaceRepositories, setWorkspaceRepositories] = useState<string[]>([]);
+  const [selectedRepositoryScope, setSelectedRepositoryScope] = useState<string[]>([]);
   const [branchMode, setBranchMode] = useState<BranchSelectionMode>("project-default");
   const [branch, setBranch] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
@@ -373,11 +394,20 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   // `null` = explicit "No workflow", `string` = a specific workflow. Materialized
   // atomically at create time via the `workflowId` create parameter.
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null | undefined>(undefined);
+  /*
+  FNXC:NewTaskWorkflowStart 2026-08-19-00:16:
+  Preserve the tri-state workflow choice across duplicate acknowledgement. The modal locks the
+  controls while checking duplicates, but this snapshot also prevents a late rerender from
+  replacing the operator's explicit string, null opt-out, or omitted default intent.
+  */
+  const pendingWorkflowSelectionRef = useRef<string | null | undefined>(undefined);
+  const pendingStartWorkflowRef = useRef<ValidatedQuickAddWorkflow | null>(null);
   // Optional workflow steps the user opted into; TaskForm fetches + seeds these
   // from the selected workflow's defaultOn and lifts the enabled set up here.
   const [enabledWorkflowSteps, setEnabledWorkflowSteps] = useState<string[]>([]);
   const [shouldSubmitEnabledWorkflowSteps, setShouldSubmitEnabledWorkflowSteps] = useState(false);
   const [hasUserSelectedEnabledWorkflowSteps, setHasUserSelectedEnabledWorkflowSteps] = useState(false);
+  const [boardWorkflows, setBoardWorkflows] = useState<BoardWorkflowsPayload | null>(null);
   const [reviewLevel, setReviewLevel] = useState<number | undefined>(undefined);
   const [autoMerge, setAutoMerge] = useState<boolean | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -459,6 +489,31 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     wasOpenRef.current = isOpen;
   }, [initialDescription, initialWorkflowId, isOpen]);
 
+  /*
+  FNXC:NewTaskWorkflowStart 2026-08-19-00:17:
+  Start eligibility comes from the board endpoint's resolved manualIntake metadata, not the
+  editable workflow picker catalog. Clear it on every modal open so stale project/workflow data
+  cannot expose a lifecycle action after a project switch or metadata failure.
+  */
+  useEffect(() => {
+    if (!isOpen) {
+      setBoardWorkflows(null);
+      return;
+    }
+    let cancelled = false;
+    setBoardWorkflows(null);
+    fetchBoardWorkflows(projectId)
+      .then((payload) => {
+        if (!cancelled && isUsableBoardWorkflowsPayload(payload)) setBoardWorkflows(payload);
+      })
+      .catch(() => {
+        if (!cancelled) setBoardWorkflows(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, projectId]);
+
   // Load agents for agent picker
   const loadAgents = useCallback(() => {
     setShowAgentPicker(true);
@@ -518,7 +573,29 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const githubRepoOverrideTrimmed = githubRepoOverride.trim();
   const githubRepoOverrideInvalid = githubRepoOverrideTrimmed.length > 0 && !REPO_OVERRIDE_RE.test(githubRepoOverrideTrimmed);
   const isBranchNameRequired = branchMode === "existing" || branchMode === "custom-new" || branchMode === "shared-group";
-  const hasInvalidBranchSelection = isBranchNameRequired && !branch.trim();
+  /*
+  FNXC:WorkspaceBranchInput 2026-08-20-03:38:
+  FN-9161 accepts an operator branch for workspace reuse, but the dashboard must
+  reject malformed refs before it submits the create request. Match core's write
+  boundary predicate so the client help and server outcome cannot drift.
+  */
+  const hasInvalidBranchSelection = isBranchNameRequired && (!branch.trim() || !isValidTaskBranchName(branch.trim()));
+
+  const resolvedStartWorkflowId = selectedWorkflowId === null
+    ? null
+    : selectedWorkflowId ?? boardWorkflows?.defaultWorkflowId;
+  const startWorkflowCandidate = resolvedStartWorkflowId && boardWorkflows
+    ? boardWorkflows.workflows.find((workflow) => workflow.id === resolvedStartWorkflowId)
+    : undefined;
+  const validatedStartWorkflow = validateQuickAddStartWorkflow(startWorkflowCandidate);
+  const startWorkflowTarget = resolveQuickAddStartWorkflowTarget(validatedStartWorkflow);
+  const canStartTask = Boolean(
+    validatedStartWorkflow
+    && workflowSupportsQuickAddStart(validatedStartWorkflow)
+    && startWorkflowTarget
+    && onMoveTask,
+  );
+  const canStartTaskNow = canStartTask && Boolean(description.trim()) && !isSubmitting;
 
   const handleExecutorModelChange = useCallback((value: string, meta?: TaskFormValueChangeMeta) => {
     setExecutorModel(value);
@@ -565,10 +642,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       branchMode !== "project-default" ||
       branch !== "" ||
       baseBranch !== "" ||
+      selectedRepositoryScope.length > 0 ||
       githubTrackingEnabled !== initialDefaultValues.githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, selectedRepositoryScope, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -577,6 +655,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setPendingImages([]);
     setDescription("");
     setDependencies([]);
+    setSelectedRepositoryScope([]);
     setExecutorModel("");
     setCredentialInstanceId(undefined);
     setValidatorModel("");
@@ -609,6 +688,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     githubGeneratedDescriptionRef.current = "";
   }, [pendingImages]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    void fetchWorkspaceRepos(projectId).then(({ repos }) => setWorkspaceRepositories(repos)).catch(() => setWorkspaceRepositories([]));
+  }, [isOpen, projectId]);
+
   const handleClose = useCallback(async () => {
     if (hasDirtyState) {
       const shouldDiscard = await confirm({
@@ -624,14 +708,19 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   /**
    * FNXC:NewTaskDialogAffordances 2026-06-21-17:50:
-   * The New Task dialog must expose the same Plan and Subtask quick-add handoff affordances as QuickEntryBox. Close without the dirty-state discard confirmation because the typed description is intentionally handed off to the planning/subtask modal instead of discarded.
+   * The New Task dialog must expose the Plan quick-add handoff affordance as QuickEntryBox. Close without the dirty-state discard confirmation because the typed description is intentionally handed off to the planning modal instead of discarded.
    */
   const handleAiAssistClose = useCallback(() => {
     resetForm();
     onClose();
   }, [onClose, resetForm]);
 
-  const performCreate = useCallback(async (trimmedDesc: string, acknowledgedDuplicates?: string[]) => {
+  const performCreate = useCallback(async (
+    trimmedDesc: string,
+    acknowledgedDuplicates: string[] | undefined,
+    workflowSelection: string | null | undefined,
+    startWorkflow: ValidatedQuickAddWorkflow | null,
+  ) => {
     const executorSlashIdx = executorModel.indexOf("/");
     const validatorSlashIdx = validatorModel.indexOf("/");
     const planningSlashIdx = planningModel.indexOf("/");
@@ -644,11 +733,21 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       title: undefined,
       description: trimmedDesc,
       dependencies: dependencies.length ? dependencies : undefined,
-      // U6/R3: forward the workflow selection only when the user changed it.
+      ...(selectedRepositoryScope.length > 0 ? { repositoryScope: selectedRepositoryScope } : {}),      // U6/R3: forward the workflow selection only when the user changed it.
       //  - undefined → omit (store inherits the project default, today's behavior)
       //  - null      → explicit "No workflow" (store skips default materialization)
       //  - string    → that workflow, materialized atomically at create time.
-      ...(selectedWorkflowId !== undefined ? { workflowId: selectedWorkflowId } : {}),
+      ...(startWorkflow
+        ? { workflowId: startWorkflow.id }
+        : workflowSelection !== undefined
+          ? { workflowId: workflowSelection }
+          : {}),
+      ...(startWorkflow
+        ? (() => {
+            const initialColumn = resolveQuickAddStartInitialColumn(startWorkflow);
+            return initialColumn ? { column: initialColumn as ColumnId } : {};
+          })()
+        : {}),
       // Optional steps are omitted only when no controls were available. Fast always submits explicit []/ids so async metadata races cannot fall back to store defaultOn gates.
       ...(shouldSubmitEnabledWorkflowSteps || executionMode === "fast" ? { enabledWorkflowSteps } : {}),
       ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
@@ -662,7 +761,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       planningModelProvider: planningModel && planningSlashIdx !== -1 ? planningModel.slice(0, planningSlashIdx) : undefined,
       planningModelId: planningModel && planningSlashIdx !== -1 ? planningModel.slice(planningSlashIdx + 1) : undefined,
       ...(planningCredentialInstanceId ? { planningCredentialInstanceId } : {}),
-      thinkingLevel: thinkingLevel !== "" ? thinkingLevel as "minimal" | "low" | "medium" | "high" | "xhigh" : undefined,
+      thinkingLevel: thinkingLevel !== "" ? thinkingLevel as ThinkingLevel : undefined,
       // FNXC:PlannerOversight 2026-07-04-00:00: omit when "Inherit from workflow" ("") is selected so the task falls back to the workflow's effective plannerOversightLevel.
       ...(plannerOversightLevel !== "" ? { plannerOversightLevel: plannerOversightLevel as "off" | "observe" | "steer" | "autonomous" } : {}),
       reviewLevel,
@@ -691,6 +790,33 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     // the executor can never observe the task with the wrong step set.
     const task = await onCreateTask(createInput);
 
+    let startSucceeded = false;
+    if (startWorkflow) {
+      const initialColumn = resolveQuickAddStartInitialColumn(startWorkflow);
+      if (initialColumn) {
+        // Coding (Ideas) has a proven direct destination in the atomic create request.
+        startSucceeded = true;
+      } else if (
+        onMoveTask
+        && typeof task.id === "string"
+        && task.id.trim()
+        && typeof task.column === "string"
+        && task.column.trim()
+        && typeof (task as Task & { workflowId?: unknown }).workflowId === "string"
+        && (task as Task & { workflowId?: string }).workflowId === startWorkflow.id
+      ) {
+        const target = resolveQuickAddStartTargetColumn(startWorkflow, task.column);
+        if (target) {
+          try {
+            await onMoveTask(task.id, target as ColumnId);
+            startSucceeded = true;
+          } catch {
+            // The created task remains visible; the final toast reports this partial outcome.
+          }
+        }
+      }
+    }
+
     // Upload pending images as attachments
     if (pendingImages.length > 0) {
       const failures: string[] = [];
@@ -707,11 +833,23 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     }
 
     resetForm();
-    addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
+    if (startWorkflow) {
+      addToast(
+        startSucceeded
+          ? t("newTaskModal.taskQueued", "Queued {{taskId}} for planning", { taskId: task.id })
+          : t("newTaskModal.taskCreatedNotStarted", "Created {{taskId}}, but could not start it", { taskId: task.id }),
+        startSucceeded ? "success" : "error",
+      );
+    } else {
+      addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
+    }
     onClose();
-  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async (startWorkflow: ValidatedQuickAddWorkflow | null = null) => {
+    const workflowSelection = selectedWorkflowId;
+    pendingWorkflowSelectionRef.current = workflowSelection;
+    pendingStartWorkflowRef.current = startWorkflow;
     const trimmedDesc = description.trim();
     if (!trimmedDesc || isSubmitting || githubRepoOverrideInvalid || hasInvalidBranchSelection) return;
 
@@ -729,15 +867,22 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     }
 
     try {
-      await performCreate(trimmedDesc);
+      await performCreate(trimmedDesc, undefined, workflowSelection, startWorkflow);
     } catch (err) {
       addToast(getErrorMessage(err) || t("newTaskModal.failedToCreate", "Failed to create task"), "error");
     } finally {
       if (!keepSubmittingForDuplicateChoice) {
+        pendingWorkflowSelectionRef.current = undefined;
+        pendingStartWorkflowRef.current = null;
         setIsSubmitting(false);
       }
     }
-  }, [description, isSubmitting, githubRepoOverrideInvalid, hasInvalidBranchSelection, projectId, addToast, t, performCreate]);
+  }, [description, isSubmitting, githubRepoOverrideInvalid, hasInvalidBranchSelection, projectId, addToast, t, performCreate, selectedWorkflowId]);
+
+  const handleStartSubmit = useCallback(() => {
+    if (!canStartTaskNow || !validatedStartWorkflow) return;
+    void handleSubmit(validatedStartWorkflow);
+  }, [canStartTaskNow, handleSubmit, validatedStartWorkflow]);
 
   const handleDuplicateOpen = useCallback((taskId: string) => {
     setDuplicateMatches(null);
@@ -752,6 +897,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     const trimmedDesc = description.trim();
     const matches = duplicateMatches;
     if (!trimmedDesc || !matches || matches.length === 0) {
+      pendingWorkflowSelectionRef.current = undefined;
+      pendingStartWorkflowRef.current = null;
       setDuplicateMatches(null);
       setIsSubmitting(false);
       return;
@@ -760,15 +907,23 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setDuplicateMatches(null);
     setIsSubmitting(true);
     try {
-      await performCreate(trimmedDesc, matches.map((match) => match.id));
+      await performCreate(
+        trimmedDesc,
+        matches.map((match) => match.id),
+        pendingWorkflowSelectionRef.current,
+        pendingStartWorkflowRef.current,
+      );
     } catch (err) {
       addToast(getErrorMessage(err) || t("newTaskModal.failedToCreate", "Failed to create task"), "error");
     } finally {
+      pendingWorkflowSelectionRef.current = undefined;
       setIsSubmitting(false);
     }
   }, [description, duplicateMatches, performCreate, addToast, t]);
 
   const handleDuplicateCancel = useCallback(() => {
+    pendingWorkflowSelectionRef.current = undefined;
+    pendingStartWorkflowRef.current = null;
     setDuplicateMatches(null);
     setIsSubmitting(false);
   }, []);
@@ -1066,8 +1221,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         isActive={isOpen}
         onClose={handleAiAssistClose}
         onPlanningMode={onPlanningMode}
-        onSubtaskBreakdown={onSubtaskBreakdown}
-        planningModel={planningModel}
+                planningModel={planningModel}
         onPlanningModelChange={(value) => { setPlanningCredentialInstanceId(undefined); setPlanningModel(value); }}
         planningCredentialInstanceId={planningCredentialInstanceId}
         onPlanningCredentialInstanceIdChange={(instanceId) => setPlanningCredentialInstanceId(instanceId || undefined)}
@@ -1096,10 +1250,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         onGithubTrackingEnabledChange={handleGithubTrackingEnabledChange}
         githubRepoOverride={githubRepoOverride}
         onGithubRepoOverrideChange={setGithubRepoOverride}
-        onCreateSubmit={handleSubmit}
+        onCreateSubmit={() => { void handleSubmit(); }}
         createSubmitLabel={isSubmitting ? t("newTaskModal.creating", "Creating...") : t("newTaskModal.createTask", "Create Task")}
         createSubmitDisabled={!description.trim() || isSubmitting || githubRepoOverrideInvalid || hasInvalidBranchSelection}
-        renderBelowPrimary={quickFields}
+        onStartSubmit={canStartTask && (Boolean(description.trim()) || isSubmitting) ? handleStartSubmit : undefined}
+        startSubmitLabel={isSubmitting ? t("newTaskModal.starting", "Starting...") : t("newTaskModal.startTask", "Start")}
+        startSubmitDisabled={!canStartTaskNow}
+        renderBelowPrimary={<>{quickFields}{workspaceRepositories.length > 0 && <fieldset className="form-group" data-testid="repository-scope-selector"><legend>{t("newTaskModal.repositoryScope", "Repository scope")}</legend><p className="form-hint">{t("newTaskModal.repositoryScopeHint", "Select the repositories this task intends to change.")}</p>{workspaceRepositories.map((repository) => <label key={repository} className="checkbox-label"><input type="checkbox" checked={selectedRepositoryScope.includes(repository)} onChange={() => setSelectedRepositoryScope((current) => current.includes(repository) ? current.filter((item) => item !== repository) : [...current, repository])} />{repository}</label>)}</fieldset>}</>}
         hideDependencies={true}
         autoExpandMoreOptionsOnSelection={false}
       />
@@ -1107,7 +1264,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         </div>
 
         {hasInvalidBranchSelection && (
-      <div className="form-error new-task-branch-error">{t("newTaskModal.branchRequired", "Branch name is required for this branch strategy.")}</div>
+      <div className="form-error new-task-branch-error">
+        {!branch.trim()
+          ? t("newTaskModal.branchRequired", "Branch name is required for this branch strategy.")
+          : t("newTaskModal.branchInvalid", "Enter a valid Git branch name (no spaces or ref punctuation).")}
+      </div>
         )}
 
       <div className="modal-actions">

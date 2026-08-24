@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
@@ -29,6 +29,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchTasks: vi.fn().mockResolvedValue([]),
     fetchSettings: vi.fn().mockResolvedValue({}),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 
@@ -150,6 +151,10 @@ describe("ChatView draft persistence", () => {
     mockFetchSettings.mockResolvedValue({} as Awaited<ReturnType<typeof api.fetchSettings>>);
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("writes direct-session drafts to localStorage while typing", async () => {
     await renderChatView();
 
@@ -158,6 +163,36 @@ describe("ChatView draft persistence", () => {
     await waitFor(() => {
       expect(localStorage.getItem("fusion:chat-draft:direct:session-001")).toBe("hello draft");
     });
+  });
+
+  it("keeps the chat composer usable when its raw draft storage throws a quota error", async () => {
+    const sendMessage = vi.fn();
+    const draftKey = "fusion:chat-draft:direct:session-001";
+    setup({ sendMessage });
+    vi.spyOn(localStorage, "setItem").mockImplementation((key) => {
+      if (key === draftKey) throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+
+    await renderChatView();
+    const composer = screen.getByPlaceholderText("Type a message...");
+    await expect(userEvent.type(composer, "still sends despite quota")).resolves.toBeUndefined();
+
+    expect(composer).toHaveValue("still sends despite quota");
+    await userEvent.click(screen.getAllByTestId("chat-send-btn")[0]);
+    expect(sendMessage).toHaveBeenCalledWith("still sends despite quota", [], expect.anything());
+  });
+
+  it("keeps empty-draft removal throw-safe", async () => {
+    const draftKey = "fusion:chat-draft:direct:session-001";
+    await renderChatView();
+    const composer = screen.getByPlaceholderText("Type a message...");
+    await userEvent.type(composer, "temporary");
+    vi.spyOn(localStorage, "removeItem").mockImplementation((key) => {
+      if (key === draftKey) throw new DOMException("Storage disabled", "QuotaExceededError");
+    });
+
+    await expect(userEvent.clear(composer)).resolves.toBeUndefined();
+    expect(composer).toHaveValue("");
   });
 
   it("restores the persisted direct-session draft when remounted", async () => {

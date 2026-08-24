@@ -44,8 +44,8 @@ describe("identity schema: migration identity", () => {
   on upgraded databases.
   */
   it("assigns the identity schema its own immutable migration version at the current ceiling", () => {
-    expect(IDENTITY_ACTORS_VERSION).toBe("0061");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0061");
+    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
   });
 });
 

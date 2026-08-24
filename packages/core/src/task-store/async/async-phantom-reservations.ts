@@ -4,6 +4,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import * as schema from "../../postgres/schema/index.js";
 import type { TaskStore } from "../../store.js";
+import { emitBoundedRunAuditWithOutcome } from "../../run-audit/emit-bounded-run-audit.js";
 
 export interface PhantomReservationReconcileResult {
   reconciled: string[];
@@ -144,24 +145,30 @@ export async function reconcilePhantomCommittedReservationsAsync(
       continue;
     }
     if (pruned.prunedActivityLog > 0 || pruned.prunedAgents > 0) {
-      try {
-        await store.recordRunAuditEvent({
-          agentId: "self-healing",
-          runId: `phantom-reservation:${taskId}`,
-          taskId,
-          domain: "database",
-          mutationType: "task:reconcile-phantom-committed-reservation",
-          target: taskId,
-          metadata: { reservationStatus: "committed", ...pruned },
-        });
-      } catch (error) {
+      const auditResult = await emitBoundedRunAuditWithOutcome(store, {
+        agentId: "self-healing",
+        runId: `phantom-reservation:${taskId}`,
+        taskId,
+        domain: "database",
+        mutationType: "task:reconcile-phantom-committed-reservation",
+        target: taskId,
+        metadata: { reservationStatus: "committed", ...pruned },
+      });
+      if (auditResult.outcome === "failed" || auditResult.outcome === "timed-out") {
         /*
         FNXC:PostgresReservationRecovery 2026-07-14-21:55:
         Audit emission is isolated per reconciled reservation. One failed audit must not relabel earlier successful reconciliations as skipped or prevent later IDs from completing their own bookkeeping.
+
+        FNXC:RunAudit 2026-08-20-07:14:
+        FN-9182 bounds this awaited audit and classifies its outcome. Preserve the
+        audit-failed prefix because callers already expose it per reservation; timeout
+        is a new bounded failure state rather than an indefinitely stalled sweep.
         */
         result.skipped.push({
           id: taskId,
-          reason: `audit-failed: ${error instanceof Error ? error.message : String(error)}`,
+          reason: auditResult.outcome === "timed-out"
+            ? "audit-failed: timed-out"
+            : `audit-failed: ${auditResult.error instanceof Error ? auditResult.error.message : String(auditResult.error)}`,
         });
         continue;
       }

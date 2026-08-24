@@ -133,26 +133,29 @@ describe("Mobile Feature Access Regression Guard", () => {
     document.documentElement.style.removeProperty("--mobile-nav-height");
   });
 
-  it("list view is accessible via mobile nav bar", () => {
+  it("list view is independently accessible via mobile nav bar", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} view="board" />);
 
-    const tasksTab = screen.getByTestId("mobile-nav-tab-tasks");
-    expect(tasksTab.textContent).toContain("Tasks");
-
-    fireEvent.click(tasksTab);
-    expect(props.onChangeView).toHaveBeenCalledWith("board");
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-list"));
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
-  it("board view is accessible via mobile nav bar", () => {
+  it("board view is accessible from Tasks on mobile nav bar", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} view="list" />);
 
-    const tasksTab = screen.getByTestId("mobile-nav-tab-tasks");
-    expect(tasksTab.textContent).toContain("Tasks");
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
+    expect(props.onChangeView).toHaveBeenCalledWith("board");
+  });
 
-    fireEvent.click(tasksTab);
-    expect(props.onChangeView).toHaveBeenCalledWith("list");
+  it("mobile Header exposes New Task without the retired view toggle", () => {
+    const onNewTask = vi.fn();
+    render(<Header projectId="proj_1" mobileNavEnabled onNewTask={onNewTask} />);
+
+    expect(screen.queryByTestId("mobile-view-toggle")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-header-new-task"));
+    expect(onNewTask).toHaveBeenCalledOnce();
   });
 
   it("agents view is accessible via mobile nav bar", () => {

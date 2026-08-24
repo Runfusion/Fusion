@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import { persistWorkflowStepResult } from "../executor/execute-workflow-graph.js";
@@ -159,5 +158,59 @@ describe("review finding supersession production carrier", () => {
     expect(persisted.store.withPlanningLifecycleLock).toHaveBeenCalledOnce();
     expect(persisted.store.updateTask).toHaveBeenCalledOnce();
     expect(persisted.row.workflowStepResults[0].findings[0]).toMatchObject({ id: "c1", resolution: "superseded" });
+  });
+
+  /*
+  FNXC:ReviewConvergence 2026-08-22-06:06:
+  FN-149 must reset convergence state in the same persistence mutation that records proof of
+  progress or approval. A later independent gate must not inherit an exhausted cycle, while
+  progress alone deliberately keeps the absolute cycle count spent.
+  */
+  it("resets the whole convergence episode on a non-blocking pre-merge approval", async () => {
+    const row = task([{
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", source: "optional-group", status: "failed", reviewKind: "code", verdict: "REVISE",
+      reviewInputFingerprint: "before", startedAt: "2026-08-12T00:00:00.000Z", completedAt: "2026-08-12T00:01:00.000Z",
+    }]);
+    row.reviewConvergenceStage = 2;
+    row.reviewConvergenceEscalationCount = 3;
+    const persisted = sink(row);
+    await persisted.record(row.id, {
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", source: "optional-group", status: "passed", reviewKind: "code", verdict: "APPROVE",
+      reviewInputFingerprint: "after", startedAt: "2026-08-12T00:02:00.000Z", completedAt: "2026-08-12T00:03:00.000Z",
+    });
+    expect(row).toMatchObject({ reviewConvergenceStage: 0, reviewConvergenceEscalationCount: 0 });
+  });
+
+  it("supersedes an own archived finding without changing attempt lifecycle fields", async () => {
+    const row = task([{
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", source: "optional-group", status: "skipped", reviewKind: "code",
+      startedAt: "carrier-start", completedAt: "carrier-complete", priorAttempts: [{
+        workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "failed", verdict: "REVISE",
+        startedAt: "failed-start", completedAt: "failed-complete", findings: [{ id: "own", title: "Own finding", body: "Must fix" }],
+      }],
+    }]);
+    const persisted = sink(row);
+    await persisted.record(row.id, {
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", source: "optional-group", status: "pending", reviewKind: "code",
+      startedAt: "next-start", supersededFindingSourceWorkflowStepId: "code-review", supersededFindingIds: ["own"],
+    });
+    const prior = row.workflowStepResults[0].priorAttempts[0];
+    expect(prior).toMatchObject({ status: "failed", startedAt: "failed-start", completedAt: "failed-complete" });
+    expect(prior.findings[0]).toMatchObject({ id: "own", resolution: "superseded" });
+  });
+
+  it("re-arms only the convergence stage when a new review fingerprint proves progress", async () => {
+    const row = task([{
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", source: "optional-group", status: "failed", reviewKind: "code", verdict: "REVISE",
+      reviewInputFingerprint: "before", startedAt: "2026-08-12T00:00:00.000Z", completedAt: "2026-08-12T00:01:00.000Z",
+    }]);
+    row.reviewConvergenceStage = 1;
+    row.reviewConvergenceEscalationCount = 2;
+    const persisted = sink(row);
+    await persisted.record(row.id, {
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", source: "optional-group", status: "failed", reviewKind: "code", verdict: "REVISE",
+      reviewInputFingerprint: "after", startedAt: "2026-08-12T00:02:00.000Z", completedAt: "2026-08-12T00:03:00.000Z",
+    });
+    expect(row).toMatchObject({ reviewConvergenceStage: 0, reviewConvergenceEscalationCount: 2 });
   });
 });

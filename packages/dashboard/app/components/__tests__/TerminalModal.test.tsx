@@ -15,6 +15,7 @@ import {
   XTERM_FONT_FAMILY,
   resolveTerminalFontFamily,
 } from "../../utils/terminalPreferences";
+import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 import * as useTerminalModule from "../../hooks/useTerminal";
 import * as useTerminalSessionsModule from "../../hooks/useTerminalSessions";
 import * as useWorkspacesModule from "../../hooks/useWorkspaces";
@@ -356,6 +357,26 @@ describe("evaluateTabsOverflow", () => {
   });
 });
 
+/*
+FNXC:TerminalSharing 2026-08-19-04:10:
+Closing a tab now asks which close was meant, because PTYs are shared: "Close in this browser"
+detaches and leaves the session running for other viewers, "End session" kills it for everyone.
+These helpers drive that prompt so the desktop and mobile close controls are both proven to route
+through it — the mobile control was a second, separate call site that an earlier UI change would
+have left on the old always-kill path.
+*/
+function renderWithConfirm(ui: React.ReactElement) {
+  return render(<ConfirmDialogProvider>{ui}</ConfirmDialogProvider>);
+}
+
+async function chooseCloseIntent(intent: "detach" | "end"): Promise<void> {
+  const label = intent === "detach" ? "Close in this browser" : "End session";
+  const button = await screen.findByRole("button", { name: label });
+  await act(async () => {
+    fireEvent.click(button);
+  });
+}
+
 // Default tab state
 const defaultTab = {
   id: "tab-1",
@@ -378,6 +399,9 @@ const defaultSessionState = {
   restartActiveTab: vi.fn(),
   retryBootstrap: vi.fn(),
   replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+  detachedSessions: [],
+  refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+  reopenSession: vi.fn(),
 };
 
 describe("TerminalModal", () => {
@@ -1974,7 +1998,7 @@ describe("TerminalModal", () => {
       closeTab: mockCloseTab,
     });
 
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+    renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
       // Find the close button for the zsh tab (second tab)
@@ -1985,7 +2009,91 @@ describe("TerminalModal", () => {
       }
     });
 
-    expect(mockCloseTab).toHaveBeenCalledWith("tab-2");
+    // Detach: the tab goes away here, the PTY keeps running for anyone else attached.
+    await chooseCloseIntent("detach");
+    expect(mockCloseTab).toHaveBeenCalledWith("tab-2", { killSession: false });
+  });
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-04:10:
+  Detaching would be a one-way door without a way back: the footer control lists sessions the server
+  still runs that this browser is not showing (closed here, or opened by someone else) and reattaches
+  to them rather than starting a new PTY.
+  */
+  it("offers detached server sessions in the footer and reopens them", async () => {
+    const mockReopenSession = vi.fn();
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      detachedSessions: [
+        { id: "session-detached", cwd: "/project/api", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:30:00.000Z" },
+      ],
+      reopenSession: mockReopenSession,
+    });
+
+    renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const reopenButton = await screen.findByTestId("terminal-reopen-btn");
+    expect(reopenButton).toHaveTextContent("Reopen (1)");
+
+    fireEvent.click(reopenButton);
+    const menu = await screen.findByTestId("terminal-reopen-menu");
+    const option = menu.querySelector<HTMLButtonElement>(".terminal-reopen-menu-option");
+    expect(option?.textContent).toContain("api");
+
+    fireEvent.click(option!);
+    expect(mockReopenSession).toHaveBeenCalledWith("session-detached");
+  });
+
+  it("hides the reopen control when every server session is already open here", async () => {
+    mockUseTerminalSessions.mockReturnValue({ ...defaultSessionState, detachedSessions: [] });
+
+    renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await screen.findByTestId("terminal-tabs");
+    expect(screen.queryByTestId("terminal-reopen-btn")).toBeNull();
+  });
+
+  it("tab close button can end the session for everyone", async () => {
+    const mockCloseTab = vi.fn();
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [
+        { ...defaultTab, isActive: true },
+        { id: "tab-2", sessionId: "test-session-456", title: "zsh", isActive: false, createdAt: Date.now() },
+      ],
+      closeTab: mockCloseTab,
+    });
+
+    renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const closeButtons = await screen.findAllByTitle("Close tab");
+    fireEvent.click(closeButtons[1]!);
+
+    await chooseCloseIntent("end");
+    expect(mockCloseTab).toHaveBeenCalledWith("tab-2", { killSession: true });
+  });
+
+  it("cancelling the close prompt leaves the tab alone", async () => {
+    const mockCloseTab = vi.fn();
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [
+        { ...defaultTab, isActive: true },
+        { id: "tab-2", sessionId: "test-session-456", title: "zsh", isActive: false, createdAt: Date.now() },
+      ],
+      closeTab: mockCloseTab,
+    });
+
+    renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const closeButtons = await screen.findAllByTitle("Close tab");
+    fireEvent.click(closeButtons[1]!);
+
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    await act(async () => {
+      fireEvent.click(cancel);
+    });
+    expect(mockCloseTab).not.toHaveBeenCalled();
   });
 
   it("new tab button creates new tab", async () => {
@@ -2047,7 +2155,7 @@ describe("TerminalModal", () => {
     Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
 
     try {
-      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+      renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
       const expandedTabs = await screen.findByTestId("terminal-tabs");
       defineMetric(expandedTabs, "scrollWidth", 360);
@@ -2070,7 +2178,8 @@ describe("TerminalModal", () => {
       expect(mockCreateTab).toHaveBeenCalledWith();
       expectTerminalCloseAfterNewTerminal("terminal-mobile-new-tab");
       fireEvent.click(screen.getByTestId("terminal-mobile-close-tab"));
-      expect(mockCloseTab).toHaveBeenCalledWith("tab-1");
+      await chooseCloseIntent("detach");
+      expect(mockCloseTab).toHaveBeenCalledWith("tab-1", { killSession: false });
 
       defineMetric(measuringTabs, "scrollWidth", 199);
       defineMetric(measuringTabs, "clientWidth", 200);
@@ -2141,13 +2250,15 @@ describe("TerminalModal", () => {
     Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
 
     try {
-      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+      renderWithConfirm(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
       fireEvent.click(await screen.findByTestId("terminal-mobile-new-tab"));
       expect(mockCreateTab).toHaveBeenCalledWith();
 
+      // Mobile is a SECOND close call site; it must route through the same prompt as desktop.
       fireEvent.click(screen.getByLabelText("Close current tab"));
-      expect(mockCloseTab).toHaveBeenCalledWith("tab-1");
+      await chooseCloseIntent("end");
+      expect(mockCloseTab).toHaveBeenCalledWith("tab-1", { killSession: true });
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
     }
@@ -4467,6 +4578,9 @@ describe("TerminalModal — mobile layout contract", () => {
     restartActiveTab: vi.fn(),
     retryBootstrap: vi.fn(),
     replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+    detachedSessions: [],
+    refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+    reopenSession: vi.fn(),
   };
 
   beforeEach(() => {
@@ -5426,6 +5540,9 @@ describe("TerminalModal — FN-1234 mobile tab switch with keyboard", () => {
     restartActiveTab: vi.fn(),
     retryBootstrap: vi.fn(),
     replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+    detachedSessions: [],
+    refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+    reopenSession: vi.fn(),
   });
 
   const createTerminalInstance = (cols: number, rows: number) => ({
@@ -5825,6 +5942,9 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
     restartActiveTab: vi.fn(),
     retryBootstrap: vi.fn(),
     replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+    detachedSessions: [],
+    refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+    reopenSession: vi.fn(),
   };
 
   let savedVisualViewport: typeof window.visualViewport;
@@ -6325,6 +6445,9 @@ describe("TerminalModal — close and reopen scrollback replay", () => {
     restartActiveTab: vi.fn(),
     retryBootstrap: vi.fn(),
     replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+    detachedSessions: [],
+    refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+    reopenSession: vi.fn(),
   };
 
   beforeEach(() => {
@@ -6532,6 +6655,9 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
     restartActiveTab: vi.fn(),
     retryBootstrap: vi.fn(),
     replaceActiveTabSession: vi.fn().mockResolvedValue(undefined),
+    detachedSessions: [],
+    refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+    reopenSession: vi.fn(),
   };
 
   let savedVisualViewport: typeof window.visualViewport;
@@ -8255,6 +8381,9 @@ describe("TerminalModal — project-context propagation (FN-1765)", () => {
       restartActiveTab: vi.fn(),
       retryBootstrap: vi.fn(),
       replaceActiveTabSession: vi.fn(),
+      detachedSessions: [],
+      refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+      reopenSession: vi.fn(),
     });
   });
 
@@ -8310,6 +8439,9 @@ describe("TerminalModal — project-context propagation (FN-1765)", () => {
       restartActiveTab: vi.fn(),
       retryBootstrap: vi.fn(),
       replaceActiveTabSession: vi.fn(),
+      detachedSessions: [],
+      refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+      reopenSession: vi.fn(),
     });
 
     const { rerender } = render(
@@ -8345,6 +8477,9 @@ describe("TerminalModal — project-context propagation (FN-1765)", () => {
       restartActiveTab: vi.fn(),
       retryBootstrap: vi.fn(),
       replaceActiveTabSession: vi.fn(),
+      detachedSessions: [],
+      refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+      reopenSession: vi.fn(),
     });
 
     // Switch project
@@ -8392,6 +8527,9 @@ describe("TerminalModal — project-context propagation (FN-1765)", () => {
       restartActiveTab: vi.fn(),
       retryBootstrap: vi.fn(),
       replaceActiveTabSession: vi.fn(),
+      detachedSessions: [],
+      refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+      reopenSession: vi.fn(),
     });
 
     // Switch to project B
@@ -8440,6 +8578,9 @@ describe("TerminalModal — project-context propagation (FN-1765)", () => {
       restartActiveTab: vi.fn(),
       retryBootstrap: vi.fn(),
       replaceActiveTabSession: vi.fn(),
+      detachedSessions: [],
+      refreshDetachedSessions: vi.fn().mockResolvedValue(undefined),
+      reopenSession: vi.fn(),
     });
 
     // Switch tab (not project)

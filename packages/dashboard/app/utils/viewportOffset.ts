@@ -48,6 +48,14 @@ export function computeIcbOffsets(input: ComputeIcbOffsetsInput): IcbOffsets {
   const rightOffset = Math.max(0, innerWidth - vvOffsetLeft - vvWidth);
   const rawBottomOffset = Math.max(0, innerHeight - vvOffsetTop - vvHeight);
 
+  /*
+  FNXC:ViewportChrome 2026-08-23-18:14:
+  While a keyboard-focusable element is focused at scale <= 1.01, fixed bottom bars must stay pinned to the page bottom and be covered by the keyboard. A stale or absent baseline must never lift them.
+  */
+  if (activeElementIsKeyboardFocusable && vvScale <= 1.01) {
+    return { rightOffset, bottomOffset: 0 };
+  }
+
   if (!activeElementIsKeyboardFocusable || vvScale > 1.01 || baselineViewportHeight == null) {
     return { rightOffset, bottomOffset: rawBottomOffset };
   }

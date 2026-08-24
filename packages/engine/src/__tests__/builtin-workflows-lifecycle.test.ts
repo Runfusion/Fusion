@@ -337,6 +337,10 @@ const EXPECTATIONS: BuiltinExpectation[] = [
       ["triage", "todo", "graph"],
       ["todo", "in-progress", "scheduler"],
       ["in-progress", "in-review", "graph"],
+      // FNXC:WorkspaceReviewSeal 2026-08-21-19:39: completion summary precedes Code Review,
+      // so legacy Coding re-enters execution before the final sealed review episode.
+      ["in-review", "in-progress", "graph"],
+      ["in-progress", "in-review", "graph"],
       ["in-review", "done", "graph"],
     ],
     finalColumn: "done",

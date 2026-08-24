@@ -44,6 +44,7 @@ describe("useUpdateCheck", () => {
       { response: { currentVersion: "1.2.3", latestVersion: "1.2.2", updateAvailable: false }, expected: false },
       { response: { currentVersion: "0.0.0", latestVersion: null, updateAvailable: false, error: "Current Fusion version is unavailable" }, expected: false },
       { response: { currentVersion: "1.2.3", latestVersion: null, updateAvailable: false, disabled: true }, expected: false },
+      { response: { currentVersion: "1.2.3", latestVersion: "9.9.9", updateAvailable: true, disabled: true, externallyManaged: true }, expected: false },
     ];
 
     for (const testCase of cases) {

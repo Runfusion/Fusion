@@ -104,6 +104,13 @@ export {
   signalTaskComplete as signalTaskCompleteImpl,
   triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureImpl,
 } from "./signal-task-complete.js";
+/*
+FNXC:StashSessionCapture 2026-08-19-05:09:
+(RUFU-122) impl binding for the terminal-failure capture seam facade —
+triggerTaskMemoryCapture is shared verbatim with the completion seam so the
+at-most-once gate and anchor semantics can never diverge between them.
+*/
+export { triggerTaskMemoryCapture as triggerTaskMemoryCaptureImpl } from "./memory-capture.js";
 export { listWipLaneTasks as listWipLaneTasksImpl } from "./list-wip-lane-tasks.js";
 export { resolveSeamColumnAgent as resolveSeamColumnAgentImpl } from "./resolve-seam-column-agent.js";
 export { resumeOrphaned as resumeOrphanedImpl } from "./resume-orphaned.js";
@@ -140,6 +147,7 @@ export { createSpawnAgentTool as createSpawnAgentToolImpl } from "./create-spawn
 export { createTaskUpdateTool as createTaskUpdateToolImpl } from "./create-task-update-tool.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } from "./attempt-executor-verification-fix.js";
 export { createTaskDoneTool as createTaskDoneToolImpl } from "./create-task-done-tool.js";
+export { createReviewDisputeTool as createReviewDisputeToolImpl } from "./create-review-dispute-tool.js";
 export {
   finalizeAcceptedNoOpCompletion as finalizeAcceptedNoOpCompletionImpl,
   completePlanReviewNoOp as completePlanReviewNoOpImpl,

@@ -5,8 +5,17 @@ import { describe, expect, it } from "vitest";
 
 const sourceRoot = join(process.cwd(), "src");
 const WINDOW_LINES = 80;
+/*
+FNXC:CommandCenterActivity 2026-08-23-18:40:
+The U4 executor peel reduced executor.ts to a TaskExecutor shell and moved its three agent-session
+lanes into executor/. The inventory tracks the same three constructions at their new owning files —
+workflow-step sessions, the implementation session, and the verification-fix session — so the total
+of 15 executable AgentLogger sites is unchanged.
+*/
 const expectedSites = new Map([
-  ["agent-heartbeat.ts", 2], ["executor.ts", 3], ["merger.ts", 5], ["merge/merger-ai.ts", 2],
+  ["agent-heartbeat.ts", 2], ["executor/execute-workflow-step.ts", 1],
+  ["executor/run-implementation.ts", 1], ["executor/attempt-executor-verification-fix.ts", 1],
+  ["merger.ts", 5], ["merge/merger-ai.ts", 2],
   ["triage.ts", 1], ["execution/reviewer.ts", 1], ["execution/step-session-executor.ts", 1],
 ]);
 
@@ -17,7 +26,8 @@ callbacks and a model-refresh attachment later. Count the initial attachment sep
 later refresh cannot mask a dark logger site in a multi-site file.
 */
 const PRE_RESOLUTION_ATTACH_FILES = new Set([
-  "agent-heartbeat.ts", "executor.ts", "merger.ts", "triage.ts",
+  "agent-heartbeat.ts", "executor/execute-workflow-step.ts", "executor/run-implementation.ts",
+  "executor/attempt-executor-verification-fix.ts", "merger.ts", "triage.ts",
   "execution/reviewer.ts", "execution/step-session-executor.ts",
 ]);
 

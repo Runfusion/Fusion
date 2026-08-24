@@ -145,7 +145,6 @@ describe("shared task read tools", () => {
     const triageNames = toolNames((triageProcessor as unknown as { createTriageTools: (opts: unknown) => Array<{ name: string }> }).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     })).filter((name) => name.startsWith("fn_task_") && name !== "fn_task_create");
 
     const surfaces = {

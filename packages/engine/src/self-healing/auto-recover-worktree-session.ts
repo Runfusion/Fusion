@@ -8,7 +8,7 @@
  */
 import { resolve } from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
-import { resolveReboundTarget, resolveWorkflowIrForTask, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+import { isWorkspaceTask, loadWorkspaceConfig, resolveReboundTarget, resolveWorkflowIrForTask, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { hasUsableWorktreeShape } from "../worktree/worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
@@ -24,7 +24,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
   task: Task,
   opts: {
     failure: unknown;
-    source: "executor-session-start" | "in-review-sweep" | "merge-active-sweep" | "resume-guard";
+    source: "executor-session-start" | "workspace-preparation" | "in-review-sweep" | "merge-active-sweep" | "resume-guard";
     auditor: RunAuditor | null;
     forceClearWorktreeMetadata?: boolean;
     resetRetryBudgetOnStaleMetadataClear?: boolean;
@@ -39,6 +39,25 @@ export async function autoRecoverWorktreeSessionStartFailure(
   },
 ): Promise<{ outcome: "requeue-todo" | "escalate-exhausted"; retries: number; classification: "missing" | "incomplete" | "unregistered" | "unknown" }> {
   const classification = classifyMissingWorktreeSessionStartFailure(opts.failure);
+  let configuredWorkspace = false;
+  if (opts.rootDir) {
+    try {
+      configuredWorkspace = ((await loadWorkspaceConfig(opts.rootDir))?.repos.length ?? 0) > 0;
+    } catch { /* an unreadable config cannot authorize workspace cleanup */ }
+  }
+  const workspaceTask = configuredWorkspace || isWorkspaceTask(task);
+  if (workspaceTask) {
+    /*
+    FNXC:WorkspaceRootRouting 2026-08-19-12:15:
+    Recovery of a workspace task is map-preserving. A root or singular worktree reference can never
+    authorize clearing/recreating a declared repository checkout, and it cannot be used to decide
+    that implementation progress was lost. Normalize only the stale singular metadata first.
+    */
+    const normalize = (store as typeof store & {
+      normalizeWorkspaceTaskWorktreeMetadata?: (id: string) => Promise<Task>;
+    }).normalizeWorkspaceTaskWorktreeMetadata;
+    if (typeof normalize === "function") task = await normalize.call(store, task.id);
+  }
   /*
   FNXC:MissingWorktreeRecovery 2026-07-10-18:15:
   Upstream #1992 showed merge-active review-fix sessions can exhaust the unusable-worktree retry budget while every retry reuses the same phantom worktree metadata. When a guarded recovery clears that stale worktree/branch/session reference, the next dispatch must get a fresh session-start retry budget instead of inheriting the exhausted context that caused the strand.
@@ -104,19 +123,23 @@ export async function autoRecoverWorktreeSessionStartFailure(
   (in-review/in-progress -> todo|triage), and a reopen CLEARS `task.worktree` unless the caller
   passes `preserveWorktree`. Clearing `branch` is only safe for the CANONICAL `fusion/<id>` name.
   */
-  const recordedWorktreeStillUsable = hasUsableWorktreeShape(staleWorktree, opts.rootDir);
+  const recordedWorktreeStillUsable = workspaceTask
+    ? false
+    : hasUsableWorktreeShape(staleWorktree, opts.rootDir);
   const hasMismatchedLiveWorktree =
     recordedWorktreeStillUsable
     && typeof missingWorktreePath === "string" && missingWorktreePath.length > 0
     && resolve(staleWorktree as string) !== resolve(missingWorktreePath);
   const noProgress = !hasStepProgress(task);
   const forceClearWorktreeMetadata = opts.forceClearWorktreeMetadata === true;
-  const clearWorktreeMetadata = noProgress || forceClearWorktreeMetadata || !hasMismatchedLiveWorktree;
+  const clearWorktreeMetadata = workspaceTask || noProgress || forceClearWorktreeMetadata || !hasMismatchedLiveWorktree;
   const branchIsRederivable =
     typeof task.branch !== "string"
     || task.branch.length === 0
     || task.branch.toLowerCase() === `fusion/${task.id}`.toLowerCase();
-  const nextBranch = clearWorktreeMetadata && branchIsRederivable ? null : task.branch ?? null;
+  const nextBranch = workspaceTask
+    ? null
+    : clearWorktreeMetadata && branchIsRederivable ? null : task.branch ?? null;
 
   await store.updateTask(task.id, {
     status: null,
@@ -124,7 +147,15 @@ export async function autoRecoverWorktreeSessionStartFailure(
     worktreeSessionRetryCount: nextCount,
     ...(nextStaleMetadataClearRecoveryCount === undefined ? {} : { recoveryRetryCount: nextStaleMetadataClearRecoveryCount }),
     worktree: clearWorktreeMetadata ? null : staleWorktree,
-    branch: nextBranch,
+    /*
+     * FNXC:BranchNaming 2026-08-21-09:36:
+     * Session recovery often changes only worktree/session metadata. Do not reassert an unchanged
+     * branch with engine provenance: that would erase a matching operator override and later make
+     * its branch eligible for engine cleanup. A real canonical clear remains an explicit engine write.
+     */
+    ...((task.branch ?? null) === nextBranch
+      ? {}
+      : { branch: nextBranch, branchWriteOrigin: "engine" as const }),
     sessionFile: null,
   }, UNATTRIBUTED_MUTATION_CONTEXT);
   await opts.auditor?.database({

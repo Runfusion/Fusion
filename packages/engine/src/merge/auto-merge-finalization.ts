@@ -1,5 +1,6 @@
 import {
-  getTaskHardMergeBlocker,
+  getMergeConfirmedFinalizationBlocker,
+  getUnfinishedStepTitles,
   resolveWorkflowIrForTask,
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
@@ -287,7 +288,10 @@ export async function finalizeProvenAutoMergeTask({
     return { outcome: "blocked", task: latest, previousColumn: latest.column, reason };
   }
 
-  const hardBlocker = getTaskHardMergeBlocker({
+  /* FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193): landing is already proven above by
+     `hasDurableMergeProof`, so incomplete steps must not hold the card out of `done` — see the
+     core helper for why that hold was self-defeating. Unfinished steps are logged, not dropped. */
+  const hardBlocker = getMergeConfirmedFinalizationBlocker({
     ...latest,
     /*
     FNXC:WorkflowMerge 2026-06-29-09:15:
@@ -302,6 +306,14 @@ export async function finalizeProvenAutoMergeTask({
     status: clearMergeConfirmedTransientStatus(latest.status),
     error: undefined,
   });
+  const unfinishedSteps = getUnfinishedStepTitles(latest);
+  if (unfinishedSteps.length > 0) {
+    await store.logEntry(
+      taskId,
+      `Finalizing proven merge with ${unfinishedSteps.length} unfinished step(s) — the branch already landed, so these did not run: ${unfinishedSteps.slice(0, 8).join("; ")}`,
+      "MergeConfirmedFinalizeUnfinishedSteps",
+    ).catch(() => undefined);
+  }
   if (hardBlocker) {
     // FNXC:MergeReliability 2026-08-11-21:39: A blocker discovered before finalization
     // still writes task lifecycle state, so an orphan must reject rather than return a blocked result.

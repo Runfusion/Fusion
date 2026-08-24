@@ -67,6 +67,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchTasks: vi.fn().mockResolvedValue([]),
     fetchSettings: vi.fn().mockResolvedValue({}),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 
@@ -188,6 +189,11 @@ async function waitForSettings() {
   await act(async () => undefined);
 }
 
+async function selectDirectSession(sessionId = "sess-1") {
+  fireEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
+  await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
+}
+
 describe("ChatView New Chat project default behavior", () => {
   beforeEach(() => {
     _resetInitialViewportHeight();
@@ -198,7 +204,25 @@ describe("ChatView New Chat project default behavior", () => {
     mockFetchSettings.mockResolvedValue({ defaultThinkingLevel: "medium" } as Awaited<ReturnType<typeof api.fetchSettings>>);
   });
 
-  it("always-default model creates directly from the desktop New Chat entry without opening the dialog", async () => {
+  it("starts prompt-mode New Chat from a selected untitled Direct thread without leaving detail", async () => {
+    const session = makeSession({ title: "", lastMessageAt: undefined });
+    mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session], filteredSessions: [session] }));
+
+    await renderWithAct(<ChatView projectId="project-a" addToast={vi.fn()} />);
+    await waitForSettings();
+    await selectDirectSession();
+
+    const header = document.querySelector(".view-header");
+    expect(header?.querySelectorAll("[data-testid='chat-new-btn']")).toHaveLength(1);
+    expect(screen.getByTestId("chat-new-btn").closest(".view-header")).toBe(header);
+    expect(screen.getByTestId("chat-back-btn").closest(".chat-thread-header")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("chat-new-btn"));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+  });
+
+  it("always-default model creates directly from selected desktop detail without opening the dialog", async () => {
     const createSession = vi.fn();
     mockFetchSettings.mockResolvedValue({
       chatNewSessionMode: "always-default",
@@ -208,13 +232,16 @@ describe("ChatView New Chat project default behavior", () => {
       chatDefaultThinkingLevel: "high",
       defaultThinkingLevel: "medium",
     } as Awaited<ReturnType<typeof api.fetchSettings>>);
-    mockUseChat.mockReturnValue(chatState({ createSession }));
+    const session = makeSession({ title: "Populated chat" });
+    mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session], filteredSessions: [session], createSession }));
 
     await renderWithAct(<ChatView projectId="project-a" addToast={vi.fn()} />);
     await waitForSettings();
+    await selectDirectSession();
 
-    fireEvent.click(screen.getAllByTestId("chat-new-btn")[0]);
+    fireEvent.click(screen.getByTestId("chat-new-btn"));
 
+    expect(createSession).toHaveBeenCalledTimes(1);
     expect(createSession).toHaveBeenCalledWith({
       agentId: "__fn_agent__",
       modelProvider: "anthropic",
@@ -222,6 +249,27 @@ describe("ChatView New Chat project default behavior", () => {
       thinkingLevel: "high",
     });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps selected detail visible and reports the existing toast when default creation rejects", async () => {
+    const addToast = vi.fn();
+    const session = makeSession({ title: "Existing thread" });
+    const createSession = vi.fn().mockRejectedValue(new Error("create failed"));
+    mockFetchSettings.mockResolvedValue({
+      chatNewSessionMode: "always-default",
+      chatDefaultKind: "agent",
+      chatDefaultAgentId: "agent-beta",
+    } as Awaited<ReturnType<typeof api.fetchSettings>>);
+    mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session], filteredSessions: [session], createSession }));
+
+    await renderWithAct(<ChatView projectId="project-a" addToast={addToast} />);
+    await waitForSettings();
+    await selectDirectSession();
+    fireEvent.click(screen.getByTestId("chat-new-btn"));
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to create chat session", "error"));
+    expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    expect(document.querySelector(".chat-view")).toHaveClass("chat-view--detail");
   });
 
   it("always-default agent creates directly without opening the dialog", async () => {
@@ -302,32 +350,22 @@ describe("ChatView New Chat project default behavior", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("mobile session switcher New Chat shares the always-default model path", async () => {
+  it("mobile list New Chat shares the always-default model path", async () => {
     mockMobileViewport();
     const createSession = vi.fn();
     const session = makeSession();
     mockFetchSettings.mockResolvedValue({
-      chatNewSessionMode: "always-default",
-      chatDefaultKind: "model",
-      chatDefaultModelProvider: "anthropic",
-      chatDefaultModelId: "claude-sonnet-4-5",
+      chatNewSessionMode: "always-default", chatDefaultKind: "model", chatDefaultModelProvider: "anthropic", chatDefaultModelId: "claude-sonnet-4-5",
     } as Awaited<ReturnType<typeof api.fetchSettings>>);
     mockUseChat.mockReturnValue(chatState({ activeSession: session, sessions: [session], filteredSessions: [session], createSession }));
 
     await renderWithAct(<ChatView projectId="project-a" addToast={vi.fn()} />);
     await waitForSettings();
+    fireEvent.click(screen.getByTestId("chat-new-btn"));
 
-    fireEvent.click(screen.getByTestId(`chat-session-${session.id}`));
-    fireEvent.click(await screen.findByTestId("chat-mobile-session-trigger"));
-    fireEvent.click(screen.getByTestId("chat-mobile-session-new"));
-
-    expect(createSession).toHaveBeenCalledWith({
-      agentId: "__fn_agent__",
-      modelProvider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: undefined,
-    });
+    expect(createSession).toHaveBeenCalledWith({ agentId: "__fn_agent__", modelProvider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: undefined });
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByTestId("chat-mobile-session-trigger")).toBeNull();
   });
 
   it("switching projects clears the previous default while the new project settings load", async () => {

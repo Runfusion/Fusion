@@ -6,6 +6,7 @@ vi.mock("../process-manager.js", () => ({ discoverGrokModels: vi.fn() }));
 import { discoverGrokModels } from "../process-manager.js";
 import { probeGrokBinary } from "../probe.js";
 import { discoverGrokProviderModels } from "../provider.js";
+import { createEventBridge } from "../acp/event-bridge.js";
 
 describe("discoverGrokProviderModels", () => {
   beforeEach(() => {
@@ -53,5 +54,38 @@ describe("discoverGrokProviderModels", () => {
       fallbackUsed: true,
       reason: "Configured Grok CLI binary '/missing/grok' failed; PATH fallback grok also failed",
     });
+  });
+});
+
+/*
+FNXC:ChatStreaming 2026-08-19-13:52:
+The Grok ACP bridge normalizes before callbacks append output, preserving numeric model versions and URL path segments in both Chat text and independent thinking streams.
+*/
+describe("Grok ACP stream numeric token preservation", () => {
+  it("keeps dotted source links and thinking versions intact", () => {
+    const onText = vi.fn<(text: string) => void>();
+    const onThinking = vi.fn<(text: string) => void>();
+    const bridge = createEventBridge({ onText, onThinking });
+    for (const text of [
+      "[GPT‑5.",
+      "6 Luna](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-luna) [GPT‑5.",
+      "6 Sol](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-sol) [GPT‑5.",
+      "6 Terra](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-terra)",
+    ]) {
+      bridge.handleSessionUpdate({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } } as any);
+    }
+    bridge.handleSessionUpdate({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Version 5." } } as any);
+    bridge.handleSessionUpdate({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "6" } } as any);
+
+    const output = onText.mock.calls.map(([text]) => text).join("");
+    expect(output).not.toContain("5. 6");
+    expect(output).toContain("GPT‑5.6 Luna");
+    expect(output).toContain("/gpt-5.6-luna");
+    expect(output).toContain("/gpt-5.6-sol");
+    expect(output).toContain("/gpt-5.6-terra");
+    expect(onThinking.mock.calls.map(([text]) => text).join("")).toBe("Version 5.6");
   });
 });

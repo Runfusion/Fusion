@@ -195,6 +195,22 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
 
 
 
+  it("composes central task-ID search with project and type filters", async () => {
+    const project = await ctx.central.registerProject({ name: "Activity search", path: makeProjectDir(ctx, "activity-search") });
+    const other = await ctx.central.registerProject({ name: "Other activity", path: makeProjectDir(ctx, "other-activity") });
+    await ctx.central.logActivity({ type: "task:created", timestamp: "2026-08-20T04:15:00.000Z", projectId: project.id, projectName: project.name, taskId: "FN-066", details: "first match" });
+    await ctx.central.logActivity({ type: "task:moved", timestamp: "2026-08-20T04:16:00.000Z", projectId: project.id, projectName: project.name, taskId: "FN-066", details: "newest match" });
+    await ctx.central.logActivity({ type: "task:moved", timestamp: "2026-08-20T04:17:00.000Z", projectId: other.id, projectName: other.name, taskId: "FN-066", details: "other project" });
+    await ctx.central.logActivity({ type: "task:moved", timestamp: "2026-08-20T04:18:00.000Z", projectId: project.id, projectName: project.name, taskId: "FN-999", details: "other task" });
+
+    expect((await ctx.central.getRecentActivity({ taskId: "FN-066", projectId: project.id })).map((entry) => entry.details))
+      .toEqual(["newest match", "first match"]);
+    expect((await ctx.central.getRecentActivity({ taskId: "FN-066", projectId: project.id, types: ["task:moved"] })).map((entry) => entry.details))
+      .toEqual(["newest match"]);
+    expect((await ctx.central.getRecentActivity({ taskId: "FN-066", projectId: project.id, since: "2026-08-20T04:16:00.000Z" })).map((entry) => entry.details))
+      .toEqual(["first match"]);
+  });
+
   it("records project-node path mappings through PostgreSQL", async () => {
     const projectPath = makeProjectDir(ctx, "epsilon");
     const project = await ctx.central.registerProject({

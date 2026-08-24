@@ -65,8 +65,34 @@ capacity-model table drop that landed while this PR was open.
 /* FNXC:MessageArchive 2026-08-12-22:14: 0058 persists non-destructive mailbox archival on upgrades. */
 /* FNXC:TaskRecommendations 2026-08-13-22:23: upgrades must install the source-agent index before duplicate intake queries it. */
 /* FNXC:WorkspaceLease 2026-08-15-12:00: the baseline ceiling must include durable coordination tables so an upgraded database is never rejected by the current binary. */
-/* FNXC:Identity 2026-08-15-22:52: 0061 is the identity actors schema. Main already shipped 0060 as workspace coordination leases, so identity cannot keep 0060 or upgraded DBs would skip the identity tables. */
-export const SCHEMA_BASELINE_VERSION = "0061";
+/* FNXC:ActivityLogTaskSearch 2026-08-20-04:17: advance the schema ceiling so durable central task-ID lookups receive their indexed upgrade. */
+/*
+FNXC:ReviewConvergence 2026-08-22-18:58:
+Advance the ceiling to 0065 for FN-149's review-convergence columns. FN-149 registered
+REVIEW_CONVERGENCE_STAGE_VERSION and wired the migration but left this marker at 0064, which is a
+SELF-REJECTION rather than a compatibility guard: the first open applies 0065 and records it in
+fusion_schema_migrations, then the NEXT open (the project store, in the same boot) hits
+assertBinaryNotOlderThanDatabase, sees 0065 > 0064, and throws StaleBinarySchemaError. Every
+startup died with "this binary only knows up to 0064" on fresh and upgraded databases alike. This
+marker is ONLY the binary's "highest migration I know" claim — bumping it applies no SQL and
+touches no data; it must advance in the same change that ships a new migration file.
+*/
+/* FNXC:MemoryFocus 2026-08-13-15:57: chat_sessions.memory_focus (RUFU-068) renumbered 0059->0060->0061 as upstream claimed 0059 (FN-9037) and 0060 (FN-9059). */
+/* FNXC:MemoryFocus 2026-08-20-22:10: the upstream 2026-08-20 batch (FN-066..FN-094) claimed 0061-0064 after this branch had already taken 0061, so the memory-focus migration was renumbered to 0065 and the baseline ceiling advanced with it. */
+/* FNXC:MemoryFocus 2026-08-23-12:50: upstream then shipped FN-149's 0065_fn_149_review_convergence_stage.sql on origin/main, claiming 0065 for its own migration. Upstream's 0065 is canonical (already released), so the memory-focus migration is renumbered to 0066 and the ceiling advances to 0066. Production databases that already applied the memory-focus SQL under ledger row "0065" (v17-era ledger) need a one-time ledger remap 0065->0066 before first boot of a 0066-ceiling binary, or the fresh 0065_fn_149 migration would be skipped as "already applied". */
+/*
+FNXC:Identity 2026-08-23-06:40:
+Identity renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067. Upstream claimed 0060 (workspace leases),
+0061-0064 (the FN-066..FN-094 batch), 0065 (FN-149 review convergence) and 0066 (memory focus) while
+this branch was in review. A released upstream number is canonical, so identity moves rather than
+upstream; keeping 0061 would make an upgraded database SKIP the identity tables entirely, because the
+ledger would already record 0061 as applied.
+
+This marker is the binary's "highest migration I know" claim: it applies no SQL, but it MUST advance
+in the same change that ships a new migration file, or the next store open throws
+StaleBinarySchemaError against a ledger the same boot just wrote.
+*/
+export const SCHEMA_BASELINE_VERSION = "0067";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -227,6 +253,17 @@ export const PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION = "0057";
 export const MESSAGE_ARCHIVE_SCHEMA_VERSION = "0058";
 export const TASK_SOURCE_AGENT_INDEX_VERSION = "0059";
 export const WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION = "0060";
+/** FNXC:ActivityLogTaskSearch 2026-08-20-04:17: explicit registration prevents the central durable task-ID index from being skipped on upgrades. */
+export const ACTIVITY_LOG_TASK_ID_INDEX_VERSION = "0061";
+export const REMOVE_TASK_SUBTASK_SPLITTING_VERSION = "0062";
+export const AI_MERGE_REVIEW_RECONCILIATION_VERSION = "0063";
+/** FNXC:RepositoryScope 2026-08-20-23:07: upgraded projects need explicit task repository intent before workspace lifecycle readers use it. */
+export const TASK_REPOSITORY_SCOPE_VERSION = "0064";
+/** FNXC:ReviewConvergence 2026-08-22-05:42: explicit migration registration preserves bounded review recovery state on upgraded projects. */
+export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
+
+/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 
 /**
  * FNXC:Identity 2026-08-15-22:52:
@@ -238,7 +275,7 @@ export const WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION = "0060";
  * immutable only once RELEASED; this one has not been. Main shipped 0060 as workspace coordination
  * leases, so identity must be 0061.
  */
-export const IDENTITY_ACTORS_VERSION = "0061";
+export const IDENTITY_ACTORS_VERSION = "0067";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -473,7 +510,14 @@ const PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_
 const MESSAGE_ARCHIVE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0058_fn_9014_message_archive.sql");
 const TASK_SOURCE_AGENT_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0059_fn_9037_tasks_source_agent_index.sql");
 const WORKSPACE_COORDINATION_LEASES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0060_fn_9059_workspace_coordination_leases.sql");
-const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0061_fn_identity_actors.sql");
+const ACTIVITY_LOG_TASK_ID_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0061_fn_066_activity_log_task_id_index.sql");
+const REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0062_remove_task_subtask_splitting.sql");
+const AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0063_fn_090_ai_merge_review_reconciliation.sql");
+const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_task_repository_scope.sql");
+const REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_fn_149_review_convergence_stage.sql");
+/* FNXC:MemoryFocus 2026-08-14-10:30: renumbered to 0061 (FN-9059 workspace leases own 0060), then to 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064, then to 0066 (2026-08-23) when upstream's FN-149 claimed 0065. */
+const CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_chat_session_memory_focus.sql");
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0067_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -604,6 +648,12 @@ export async function applySchemaBaseline(
     const messageArchiveSchemaAlreadyApplied = applied.includes(MESSAGE_ARCHIVE_SCHEMA_VERSION);
     const taskSourceAgentIndexAlreadyApplied = applied.includes(TASK_SOURCE_AGENT_INDEX_VERSION);
     const workspaceCoordinationLeasesAlreadyApplied = applied.includes(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION);
+    const activityLogTaskIdIndexAlreadyApplied = applied.includes(ACTIVITY_LOG_TASK_ID_INDEX_VERSION);
+    const removeTaskSubtaskSplittingAlreadyApplied = applied.includes(REMOVE_TASK_SUBTASK_SPLITTING_VERSION);
+    const aiMergeReviewReconciliationAlreadyApplied = applied.includes(AI_MERGE_REVIEW_RECONCILIATION_VERSION);
+    const taskRepositoryScopeAlreadyApplied = applied.includes(TASK_REPOSITORY_SCOPE_VERSION);
+    const reviewConvergenceStageAlreadyApplied = applied.includes(REVIEW_CONVERGENCE_STAGE_VERSION);
+    const chatSessionMemoryFocusAlreadyApplied = applied.includes(CHAT_SESSION_MEMORY_FOCUS_VERSION);
     const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
@@ -1318,17 +1368,63 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    if (!activityLogTaskIdIndexAlreadyApplied) {
+      const migrationSql = await readFile(ACTIVITY_LOG_TASK_ID_INDEX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${ACTIVITY_LOG_TASK_ID_INDEX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:TaskSplittingRemoval 2026-08-20-17:42: Explicit registration guarantees upgrades drop only the obsolete split request column before current task persistence runs. */
+    if (!removeTaskSubtaskSplittingAlreadyApplied) {
+      const migrationSql = await readFile(REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REMOVE_TASK_SUBTASK_SPLITTING_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:AIMergeReviewReconciliation 2026-08-20-21:56:
+    FN-090 has one durable, structured review authority. Explicit migration registration is
+    required because migrations are never discovered and upgraded projects must not fall back to log parsing.
+    */
+    if (!aiMergeReviewReconciliationAlreadyApplied) {
+      const migrationSql = await readFile(AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AI_MERGE_REVIEW_RECONCILIATION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:RepositoryScope 2026-08-20-23:07: migrations are explicitly registered so upgrade paths cannot silently omit task intent. */
+    if (!taskRepositoryScopeAlreadyApplied) {
+      const migrationSql = await readFile(TASK_REPOSITORY_SCOPE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_REPOSITORY_SCOPE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!reviewConvergenceStageAlreadyApplied) {
+      const migrationSql = await readFile(REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REVIEW_CONVERGENCE_STAGE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:MemoryFocus 2026-08-14-10:30: register 0066 explicitly (renumbered from 0061 on 2026-08-20 — the upstream FN-066..FN-094 batch owns 0061-0064 — and from 0065 on 2026-08-23 when upstream's FN-149 claimed 0065). */
+    if (!chatSessionMemoryFocusAlreadyApplied) {
+      const migrationSql = await readFile(CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_MEMORY_FOCUS_VERSION}) ON CONFLICT (version) DO NOTHING`);
     /*
     FNXC:Identity 2026-08-15-22:52:
     Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
     writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
-    error, so dropping them would brick legacy upgrades). Apply AFTER main's 0060 workspace leases so
-    upgraded databases that already recorded 0060 still receive the identity tables as 0061.
+    error, so dropping them would brick legacy upgrades). Apply AFTER every upstream migration (through 0066) so
+    upgraded databases that already recorded 0060 still receive the identity tables as 0067.
     */
     if (!identityActorsAlreadyApplied) {
       const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDENTITY_ACTORS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

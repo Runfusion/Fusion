@@ -94,7 +94,22 @@ export async function ensureTenancyFenceRef(input: {
     throw new WorkspaceFenceRefError(`Workspace lease ${handle.leaseKey} has no recorded fence pin`, "transport");
   }
 
-  const observed = await remoteRefSha(input.remote, input.fenceRefName, input.cwd);
+  /*
+  FNXC:WorkspaceIntegration 2026-08-21-22:20:
+  Remote discovery is itself a transport operation. Normalize its Git failure to the fence error
+  contract so the workspace lander can surface a repository environment repair instead of burning
+  the internal-technical retry budget before it reaches fence publication.
+  */
+  let observed: string | undefined;
+  try {
+    observed = await remoteRefSha(input.remote, input.fenceRefName, input.cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new WorkspaceFenceRefError(
+      `Unable to inspect required workspace fence ref ${input.fenceRefName}: ${message}`,
+      "transport",
+    );
+  }
   // Reentrant callers normally find their pin already present. A workspace has one dispatch
   // tenancy but multiple remotes, so an absent/different remote must receive the same pin too.
   if (handle.fenceRefSha && observed === handle.fenceRefSha) return handle;

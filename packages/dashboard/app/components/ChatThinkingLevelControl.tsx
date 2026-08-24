@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, Brain } from "lucide-react";
 import { THINKING_LEVELS } from "@fusion/core";
+import { Bot, Brain } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import type { ModelInfo } from "../api";
 import { FN_AGENT_ID } from "../hooks/useChat";
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 
 /*
-FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+FNXC:Chat-ThinkingLevel 2026-08-18-23:38:
 FN-7775 only let a user pick a direct chat session's thinking (reasoning-effort) level once, at
 session creation, via the New Chat dialog's model-mode picker (CustomModelDropdown's inline
 selector). FN-7898 closes that gap with a small `Brain`-icon trigger next to the composer's
-attach button that opens a popup listing the six THINKING_LEVELS plus a "Default" (clear/inherit)
+attach button that opens a popup listing the canonical THINKING_LEVELS plus a "Default" (clear/inherit)
 option; selecting one persists immediately via PATCH /api/chat/sessions/:id and takes effect on
 the session's next send. This mirrors ThemeDropdown.tsx's small-popover interaction pattern
 (rootRef + pointerdown outside-close, Escape, aria-haspopup listbox) and reuses
@@ -55,7 +55,6 @@ export interface ChatThinkingLevelControlProps {
   disabled?: boolean;
 }
 
-const THINKING_LEVEL_OPTIONS = ["", ...THINKING_LEVELS] as const;
 type TargetMode = "model" | "agent";
 
 export function ChatThinkingLevelControl({
@@ -80,6 +79,13 @@ export function ChatThinkingLevelControl({
   const normalizedLevel = level ?? "";
   const currentModelValue = modelProvider && modelId ? `${modelProvider}/${modelId}` : "";
   const selectedAgentId = agentId && agentId !== FN_AGENT_ID ? agentId : "";
+  const selectedModel = useMemo(() => {
+    if (!showTargetSection || selectedAgentId || !currentModelValue) return undefined;
+    const slashIdx = currentModelValue.indexOf("/");
+    return models.find((model) => model.provider === currentModelValue.slice(0, slashIdx) && model.id === currentModelValue.slice(slashIdx + 1));
+  }, [currentModelValue, models, selectedAgentId, showTargetSection]);
+  const thinkingLevelOptions = useMemo(() => ["", ...(selectedModel?.supportedThinkingLevels ?? THINKING_LEVELS)], [selectedModel]);
+  const hasStaleThinkingLevel = Boolean(normalizedLevel) && !thinkingLevelOptions.includes(normalizedLevel);
   const isActive = normalizedLevel !== "" || (showTargetSection && (Boolean(currentModelValue) || Boolean(selectedAgentId)));
   const listboxId = "chat-thinking-level-listbox";
 
@@ -314,7 +320,19 @@ export function ChatThinkingLevelControl({
               role="listbox"
               aria-label={t("chat.thinkingLevelButton", "Thinking level")}
             >
-              {THINKING_LEVEL_OPTIONS.map((value) => {
+              {hasStaleThinkingLevel ? (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected
+                  disabled
+                  className="chat-thinking-popover-option"
+                  data-testid={`chat-thinking-option-${normalizedLevel}`}
+                >
+                  {t("models.options.unavailable", "Unavailable: {{level}}", { level: normalizedLevel })}
+                </button>
+              ) : null}
+              {thinkingLevelOptions.map((value) => {
                 const selected = normalizedLevel === value;
                 return (
                   <button

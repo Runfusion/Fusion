@@ -13,12 +13,18 @@
  * Code nodes reacquire with refresh enabled; planning/review keep C0 checkout.
  */
 import { existsSync } from "node:fs";
-import type { Settings, TaskDetail, TaskStore, WorkflowIrNode } from "@fusion/core";
+import type { Settings, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig } from "@fusion/core";
 import type { WorkflowNodePreparationRequirement } from "../workflows/workflow-graph-executor.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
+import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 
 export type PrepareGraphNodeExecutionDeps = {
   store: TaskStore;
+  rootDir: string;
+  workspaceConfigOwner: object;
+  getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
+  setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   ensureGraphCustomNodeWorktree: (
@@ -38,6 +44,12 @@ export async function prepareGraphNodeExecution(
 ): Promise<void> {
   if (!requirement.requiresWorktree) return;
   const live = await deps.store.getTask(nodeTask.id);
+  const workspaceConfig = await resolveWorkspaceConfigOnce(deps);
+  const writeCapable = workflowNodeRequiresWorktree(node);
+  // FNXC:WorkspaceBoundary 2026-08-22-23:05: workspace read-only graph
+  // nodes plan against the root before a repository scope exists; acquisition
+  // belongs exclusively to write-capable nodes after confirmation.
+  if (workspaceConfig && !writeCapable) return;
   const executionCodeNode = node.kind === "code";
   if (live.worktree && existsSync(live.worktree) && !executionCodeNode) return;
   const taskForAcquisition = live.worktree && !existsSync(live.worktree)

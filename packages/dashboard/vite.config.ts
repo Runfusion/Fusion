@@ -151,7 +151,6 @@ export default defineConfig({
       "@fusion/dashboard/app/api/tasks/task-content": resolve(__dirname, "app/api/tasks/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
       "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
-      "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),
       "@fusion-plugin-examples/compound-engineering/dashboard-view": resolve(
         __dirname,
         "../../plugins/fusion-plugin-compound-engineering/src/dashboard-view.tsx",

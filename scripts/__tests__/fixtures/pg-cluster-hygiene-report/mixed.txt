@@ -1,0 +1,17 @@
+# fusion-hygiene-capture v1
+# kind: databases
+# cluster: 5432|PostgreSQL 16.0|postgres
+# captured_at: 2026-08-19T18:18:00Z
+# query: leftover-v1
+# rows: 10
+fusion_schema_template_22_nonce|eclipxe|f|0
+fusion_test_one|eclipxe|f|2
+fusion_pool_one|eclipxe|f|0
+archive_live_fence_1|eclipxe|f|0
+ce_pipeline_pg_1|eclipxe|f|0
+fn-extension-1|eclipxe|f|0
+fusion_pool_one|eclipxe|f|0
+custom_prefix_1|eclipxe|f|0
+autotrade|eclipxe|f|0
+eclipxe|eclipxe|f|0
+# end

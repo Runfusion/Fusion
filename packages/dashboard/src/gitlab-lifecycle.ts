@@ -39,10 +39,10 @@ export type ResolveGitLabTargetOptions = {
 };
 
 /*
-FNXC:GitLabCloseOnDelete 2026-08-01-10:46:
+FNXC:GitLabCloseOnDelete 2026-08-20-18:40:
 Malformed tracking data is inert by default. Only ordinary task deletion opts into source fallback,
 mirroring FN-8673's GitHub early-return fix without causing done-close, comment, tracking-state, or
-split-close consumers to mutate GitLab items they previously left untouched.
+ordinary lifecycle consumers to mutate GitLab items they previously left untouched.
 */
 export function resolveGitLabTarget(
   task: Pick<Task, "gitlabTracking" | "sourceIssue" | "source">,

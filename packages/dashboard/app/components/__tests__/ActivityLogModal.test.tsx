@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ActivityLogModal } from "../ActivityLogModal";
 import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import * as apiModule from "../../api";
@@ -100,6 +101,63 @@ describe("ActivityLogModal", () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it("normalizes task search for durable modal and embedded requests, then clears it", async () => {
+    const user = userEvent.setup();
+    const taskEntries = [
+      { ...mockActivityEntries[0], id: "task-match-1", taskId: "FN-066" },
+      { ...mockActivityEntries[1], id: "task-match-2", taskId: "FN-066" },
+      { ...mockActivityEntries[2], id: "task-other", taskId: "FN-999" },
+    ];
+    mockFetchActivityLog.mockImplementation(async ({ taskId } = {}) =>
+      taskId === "FN-066" ? taskEntries.filter((entry) => entry.taskId === "FN-066") : taskEntries,
+    );
+    const { rerender } = render(
+      <ActivityLogModal isOpen={true} onClose={mockOnClose} tasks={mockTasks} onOpenTaskDetail={mockOnOpenTaskDetail} />,
+    );
+
+    await user.type(screen.getByTestId("activity-task-search"), " fn-066 ");
+    await waitFor(() => expect(mockFetchActivityLog).toHaveBeenLastCalledWith(expect.objectContaining({ taskId: "FN-066" })));
+    expect(screen.getAllByTestId("activity-entry")).toHaveLength(2);
+    expect(screen.getByText("Task: FN-066")).toBeTruthy();
+
+    await user.click(screen.getByText("Clear all"));
+    await waitFor(() => expect(mockFetchActivityLog).toHaveBeenLastCalledWith(expect.objectContaining({ taskId: undefined })));
+
+    rerender(<ActivityLogModal isOpen={true} onClose={mockOnClose} tasks={mockTasks} presentation="embedded" />);
+    expect(screen.getByTestId("activity-task-search")).toBeTruthy();
+  });
+
+  it("loads older durable task-ID history from the shared modal control", async () => {
+    const user = userEvent.setup();
+    const newestPage = Array.from({ length: 100 }, (_, index) => ({
+      ...mockActivityEntries[0],
+      id: `newest-${index}`,
+      taskId: "FN-066",
+      timestamp: new Date(Date.now() - index * 60_000).toISOString(),
+    }));
+    const olderPage = Array.from({ length: 100 }, (_, index) => ({
+      ...mockActivityEntries[1],
+      id: `older-${index}`,
+      taskId: "FN-066",
+      timestamp: new Date(Date.now() - (100 + index) * 60_000).toISOString(),
+    }));
+    let taskPage = 0;
+    mockFetchActivityLog.mockImplementation(async ({ taskId } = {}) =>
+      taskId === "FN-066" ? [newestPage, olderPage][taskPage++] ?? [] : [],
+    );
+
+    render(<ActivityLogModal isOpen={true} onClose={mockOnClose} tasks={mockTasks} onOpenTaskDetail={mockOnOpenTaskDetail} />);
+    await user.type(screen.getByTestId("activity-task-search"), "fn-066");
+    await waitFor(() => expect(screen.getByTestId("activity-load-more")).toBeTruthy());
+
+    await user.click(screen.getByTestId("activity-load-more"));
+    await waitFor(() => expect(screen.getAllByTestId("activity-entry")).toHaveLength(200));
+    expect(mockFetchActivityLog).toHaveBeenLastCalledWith(expect.objectContaining({
+      taskId: "FN-066",
+      since: newestPage[99]?.timestamp,
+    }));
   });
 
   it("displays activity entries correctly", async () => {

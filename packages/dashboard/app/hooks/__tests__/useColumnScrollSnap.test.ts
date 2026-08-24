@@ -447,7 +447,13 @@ describe("useColumnScrollSnap", () => {
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
   });
 
-  it("hard-settles a zero-direction pan at the nearest column center", () => {
+  /*
+  FNXC:BoardNavigation 2026-08-18-19:10:
+  A direction-zero release still has a meaningful correction when the finger leaves the viewport
+  between columns. Keep that correction on the normal-motion path so proximity does not create an
+  abrupt lock, while the nearest reachable column remains the same target.
+  */
+  it("smoothly settles a zero-direction pan at the nearest column center", () => {
     const scroller = createScroller(3, 40);
     renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
 
@@ -460,6 +466,22 @@ describe("useColumnScrollSnap", () => {
       scroller.dispatchEvent(new Event("scroll"));
       dispatchPointerEvent(scroller, "pointerup", 200);
     });
+    expect(scroller.scrollLeft).toBe(40);
+
+    const samples: number[] = [];
+    for (let index = 0; index < 4; index++) {
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+      samples.push(scroller.scrollLeft);
+    }
+
+    expect(samples.some((value) => value > 0 && value < 40)).toBe(true);
+    expect(samples.every((value) => value >= 0 && value <= 40)).toBe(true);
+    for (let index = 1; index < samples.length; index++) {
+      expect(samples[index]).toBeLessThanOrEqual(samples[index - 1]);
+    }
+
     settleAfterMomentum();
 
     // Regression: proximity alone previously left this invalid mid-column rest at 40.
@@ -506,6 +528,40 @@ describe("useColumnScrollSnap", () => {
   });
 
   /*
+  FNXC:BoardNavigation 2026-08-18-19:10:
+  Backward phone releases must use the same continuous normal-motion path as forward releases;
+  direction changes the existing target only, not whether the board visibly jumps to it.
+  */
+  it("smoothly settles a backward release without overshooting the target", () => {
+    const scroller = createScroller(3, COLUMN_WIDTH);
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchPointerEvent(scroller, "pointerdown", 100);
+      dispatchPointerEvent(scroller, "pointermove", 140);
+      scroller.scrollLeft = COLUMN_WIDTH - 8;
+      scroller.dispatchEvent(new Event("scroll"));
+      dispatchPointerEvent(scroller, "pointerup", 140);
+    });
+
+    const samples: number[] = [];
+    for (let index = 0; index < 4; index++) {
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+      samples.push(scroller.scrollLeft);
+    }
+    expect(samples.some((value) => value > 0 && value < COLUMN_WIDTH - 8)).toBe(true);
+    expect(samples.every((value) => value >= 0 && value <= COLUMN_WIDTH - 8)).toBe(true);
+    for (let index = 1; index < samples.length; index++) {
+      expect(samples[index]).toBeLessThanOrEqual(samples[index - 1]);
+    }
+
+    settleAfterMomentum();
+    expect(scroller.scrollLeft).toBe(0);
+  });
+
+  /*
   FNXC:BoardNavigation 2026-07-24-11:20:
   Free-scroll while the finger is DOWN is still untouched. What changed is after lift: the hook
   animates to the target column itself, so a residual native-inertia write mid-animation cannot
@@ -547,12 +603,18 @@ describe("useColumnScrollSnap", () => {
 
     act(() => dispatchShortSwipe(scroller, { scrollDelta: 8, clientDelta: 20 }));
 
-    act(() => {
-      vi.advanceTimersByTime(64);
-    });
-    const midFlight = scroller.scrollLeft;
-    expect(midFlight).toBeGreaterThan(8);
-    expect(midFlight).toBeLessThan(COLUMN_WIDTH);
+    const samples: number[] = [];
+    for (let index = 0; index < 4; index++) {
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+      samples.push(scroller.scrollLeft);
+    }
+    expect(samples.some((value) => value > 8 && value < COLUMN_WIDTH)).toBe(true);
+    expect(samples.every((value) => value >= 8 && value <= COLUMN_WIDTH)).toBe(true);
+    for (let index = 1; index < samples.length; index++) {
+      expect(samples[index]).toBeGreaterThanOrEqual(samples[index - 1]);
+    }
 
     settleAfterMomentum();
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
@@ -809,7 +871,7 @@ describe("useColumnScrollSnap", () => {
   /*
   FNXC:BoardNavigation 2026-07-22-15:10 / 2026-07-22-15:26:
   Tap-to-stop during post-lift momentum must not page with the original swipe direction, and
-  must hard-jump to the nearest column center so the board never rests between columns.
+  must smoothly settle to the nearest column center so the board never rests between columns.
   */
   it("tap during momentum settles to nearest column, not the cancelled swipe direction", () => {
     const scroller = createScroller(3, 0);
@@ -882,6 +944,37 @@ describe("useColumnScrollSnap", () => {
     const columns = [...scroller.children] as HTMLElement[];
     expect(isColumnCentered(scroller, columns)).toBe(true);
     expect([0, COLUMN_WIDTH, COLUMN_WIDTH * 2]).toContain(scroller.scrollLeft);
+  });
+
+  /*
+  FNXC:BoardNavigation 2026-08-18-19:10:
+  A nearest-column animation owns inline overflow only while it runs. Unmounting the Board must
+  restore that style and cancel future frame writes rather than leaving a frozen or stale scroller.
+  */
+  it("restores styles and cancels a nearest-column animation on unmount", () => {
+    const scroller = createScroller(3, 40);
+    scroller.style.overflowX = "auto";
+    const { unmount } = renderHook(() =>
+      useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }),
+    );
+
+    act(() => {
+      dispatchPointerEvent(scroller, "pointerdown", 200);
+      scroller.dispatchEvent(new Event("scroll"));
+      dispatchPointerEvent(scroller, "pointerup", 200);
+      vi.advanceTimersByTime(64);
+    });
+    const inFlightPosition = scroller.scrollLeft;
+    expect(inFlightPosition).toBeGreaterThan(0);
+    expect(inFlightPosition).toBeLessThan(40);
+    expect(scroller.style.overflowX).toBe("hidden");
+
+    unmount();
+    expect(scroller.style.overflowX).toBe("auto");
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(scroller.scrollLeft).toBe(inFlightPosition);
   });
 
   it("starts a new directional settle after a pan that continues from a mid-momentum re-touch", () => {

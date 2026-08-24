@@ -39,6 +39,16 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     keywords: ["suggestions", "follow-up", "cap", "limit"],
   },
   {
+    /* FNXC:TaskRecommendations 2026-08-19-13:05: Keep the required completion toggle searchable through the same descriptor index as its shared GeneralSection row. */
+    sectionId: "general",
+    key: "requireTaskRecommendations",
+    labelKey: "settings.general.requireTaskRecommendations",
+    labelFallback: "Require automatic task recommendations",
+    helpKey: "settings.general.requireTaskRecommendationsHelp",
+    helpFallback: "Default: disabled. When enabled, successful completion must explicitly evaluate grounded follow-ups. The executor aims toward the configured maximum, but fewer or [] are correct when relevance does not support more; cap 0 disables capture regardless of this setting.",
+    keywords: ["recommendations", "automatic", "completion", "required", "quality"],
+  },
+  {
     /*
     FNXC:SettingsSearch 2026-08-16-05:07:
     FN-9021 (ea53cbd4ff) added the mailbox-notice toggle without an index entry;

@@ -103,6 +103,24 @@ describe("default-workflow-hooks registry wiring", () => {
     expect(ctx.task.userPaused).toBe(true);
   });
 
+  /*
+  FNXC:SelfHealing 2026-08-21-16:06:
+  FN-9186 writes the no-progress backoff immediately before its engine wip-to-todo
+  rebound. Only review-origin moves clear this display mirror, so this pins the
+  move-hook contract that keeps the scheduler from immediately redispatching it.
+  */
+  it("preserves no-progress recovery backoff on an engine wip-to-rebound move", () => {
+    registerDefaultWorkflowHooks();
+    const ctx = makeCtx({ fromColumn: "in-progress", toColumn: "todo", moveSource: "engine", options: { recoveryRehome: true } });
+    ctx.task.recoveryRetryCount = 1;
+    ctx.task.nextRecoveryAt = "2026-08-21T16:07:00.000Z";
+
+    applyDefaultWorkflowMoveEffects(ctx);
+
+    expect(ctx.task.recoveryRetryCount).toBe(1);
+    expect(ctx.task.nextRecoveryAt).toBe("2026-08-21T16:07:00.000Z");
+  });
+
   it("preservePause never SETS a pause on an unpaused reopen, and default reopen still clears one", () => {
     registerDefaultWorkflowHooks();
     // preservePause on an unpaused task: nothing appears.
@@ -165,6 +183,19 @@ describe("applyReopenFieldClears — graph-owned review-gate remediation crossin
     applyDefaultWorkflowMoveEffects(ctx);
     expect(ctx.task.workflowStepResults).toHaveLength(2);
     expect(ctx.task.workflowStepResults?.find((r) => r.workflowStepId === "code-review")?.status).toBe("failed");
+  });
+
+  it("retains only review evidence for remediation-owned review -> planning bounce", () => {
+    const ctx = withResults({
+      fromColumn: "in-review",
+      toColumn: "todo",
+      moveSource: "engine",
+      workflowMoveSource: "workflow-remediation",
+    });
+    ctx.task.branch = "fusion/FN-1";
+    applyDefaultWorkflowMoveEffects(ctx);
+    expect(ctx.task.workflowStepResults).toHaveLength(2);
+    expect(ctx.task.branch).toBeUndefined();
   });
 
   it("still CLEARS on an operator reopen in-review -> in-progress (no graph provenance)", () => {

@@ -211,6 +211,27 @@ export class SelfDefeatingDependencyError extends Error {
   }
 }
 
+/*
+FNXC:TaskExecutionTaskCreation 2026-08-21-23:16:
+FN-125 prevents a task from blocking on work it spawned, independent of which
+API writes the dependency edge. This store invariant protects legacy and host paths.
+*/
+export class SelfSpawnedDependencyError extends Error {
+  readonly code = "SELF_SPAWNED_DEPENDENCY" as const;
+  constructor(readonly taskId: string, readonly dependencyId: string) {
+    super(`Task ${taskId} cannot depend on self-spawned task ${dependencyId}`);
+    this.name = "SelfSpawnedDependencyError";
+  }
+}
+
+export function detectSelfSpawnedDependency(
+  taskId: string,
+  candidates: ReadonlyArray<{ id: string; sourceParentTaskId?: string }>,
+): { dependencyId: string } | null {
+  const match = candidates.find((candidate) => candidate.sourceParentTaskId === taskId);
+  return match ? { dependencyId: match.id } : null;
+}
+
 export function detectSelfDefeatingDependency(
   title: string | undefined,
   dependencies: readonly string[],

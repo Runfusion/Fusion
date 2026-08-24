@@ -1,6 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposeChatPanel } from "../ComposeChatPanel";
+import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
+
+const composeChatPanelCss = readFileSync(resolve(__dirname, "../ComposeChatPanel.css"), "utf8");
 
 const createSession = vi.fn();
 const archiveSession = vi.fn();
@@ -91,6 +96,26 @@ describe("ComposeChatPanel", () => {
 
     await waitFor(() => expect(archiveSession).toHaveBeenCalledWith("scratch"));
     expect(selectSession).toHaveBeenCalledWith("user-session", prior);
+  });
+
+  it("caps and clears the assistant request with controller-owned overflow", () => {
+    render(<ComposeChatPanel embeds={[]} draftBody="" onUseDraft={vi.fn()} onClose={vi.fn()} />);
+    const input = screen.getByLabelText("Draft narrative") as HTMLTextAreaElement;
+    Object.defineProperty(input, "scrollHeight", { configurable: true, get: () => input.value.length > 10 ? 500 : 24 });
+
+    fireEvent.change(input, { target: { value: "one\ntwo\nthree\nfour\nfive\nsix" } });
+    expect(input.style.height).toBe(`${clampChatInputHeight(500, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(input)))}px`);
+    expect(input.style.overflowY).toBe("auto");
+
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input.style.height).toBe(`${clampChatInputHeight(24, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(input)))}px`);
+  });
+
+  it("uses controller-owned overflow instead of a native resize grip", () => {
+    const textareaRule = composeChatPanelCss.match(/\.compose-chat-panel__input\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(textareaRule).toContain("resize: none");
+    expect(textareaRule).toContain("overflow-y: hidden");
+    expect(textareaRule).not.toContain("resize: vertical");
   });
 
   it("returns generated text through Use draft", () => {

@@ -286,12 +286,25 @@ describe("planLegacyAdoption (U9b consumers)", () => {
       .toBe("skip");
   });
 
-  it("lands a reviewLevel backfill even on a preserve gate (orthogonal metadata)", () => {
+  it("lands a reviewLevel backfill even on a preserve gate before review (orthogonal metadata)", () => {
     const plan = planLegacyAdoption({ status: "awaiting-approval", reviewLevel: 2 }, NOW);
     expect(plan.action).not.toBe("skip");
     expect(plan.patch?.enabledWorkflowSteps).toEqual([PLAN_REVIEW_GROUP_ID, CODE_REVIEW_GROUP_ID]);
     // ...but the gate's status is still untouched.
     expect(plan.patch?.status).toBeUndefined();
+  });
+
+  it.each(["in-review", "done", "archived"])("does not backfill resultless pre-merge gates after the %s lane", (column) => {
+    const plan = planLegacyAdoption({ column, reviewLevel: 2 }, NOW);
+    expect(plan.action).toBe("skip");
+    expect(plan.patch).toBeUndefined();
+  });
+
+  it("continues migratable status adoption when post-review backfill is withheld", () => {
+    const plan = planLegacyAdoption({ column: "in-review", status: "cancelling", reviewLevel: 2 }, NOW);
+    expect(plan.action).toBe("clear");
+    expect(plan.patch).toMatchObject({ status: null, legacyAdoptedAt: NOW });
+    expect(plan.patch?.enabledWorkflowSteps).toBeUndefined();
   });
 
   /*

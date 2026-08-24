@@ -1118,11 +1118,14 @@ describe("Workflow Steps Execution", () => {
     expect(outcome).toBe("bounced");
     // in-review → todo (preserving step progress + worktree) → in-progress, so
     // the reopened step is re-executed rather than left stranded.
+    /* FNXC:WorkflowMoveProvenance 2026-08-23-23:35: the bounce now stamps its move source so a
+       remediation hop is distinguishable from an operator or engine move. */
     expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "todo", {
       preserveResumeState: true,
       preserveWorktree: true,
-    }, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "in-progress", undefined, ANY_MUTATION_CONTEXT);
+      workflowMoveSource: "workflow-remediation",
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "in-progress", ANY_MUTATION_CONTEXT);
     expect(onError).not.toHaveBeenCalled();
   });
 

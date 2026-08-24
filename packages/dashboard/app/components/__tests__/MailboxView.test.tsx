@@ -29,6 +29,7 @@ vi.mock("../../api", () => ({
   fetchApprovalDetail: vi.fn(),
   decideApproval: vi.fn(),
   artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}&` : "?"}fn_token=daemon-token`),
+  artifactMediaUrl: vi.fn(),
   fetchNativeStructurePreview: vi.fn(),
 }));
 
@@ -55,6 +56,10 @@ Report-mode prefill opens the existing drafting panel by default. Keep mailbox i
 on the real host-to-composer handoff rather than the panel's separately tested chat session.
 */
 vi.mock("../ComposeChatPanel", () => ({ ComposeChatPanel: () => null }));
+vi.mock("../ArtifactImageViewer", () => ({
+  ArtifactImage: ({ title }: { title: string }) => <img alt={title} src="blob:secure-preview" />,
+  ArtifactImageViewer: () => null,
+}));
 
 const sseSubscriptions: Array<Record<string, () => void>> = [];
 vi.mock("../../sse-bus", () => ({
@@ -68,13 +73,13 @@ vi.mock("../../sse-bus", () => ({
 vi.mock("lucide-react", () => ({
   X: () => <span data-testid="icon-x">X</span>,
   Mail: () => <span data-testid="icon-mail">Mail</span>,
-  Send: () => <span data-testid="icon-send">Send</span>,
-  Inbox: () => <span data-testid="icon-inbox">Inbox</span>,
-  Bot: () => <span data-testid="icon-bot">Bot</span>,
+  Send: () => <svg data-testid="icon-send" />,
+  Inbox: () => <svg data-testid="icon-inbox" />,
+  Bot: () => <svg data-testid="icon-bot" />,
   Trash2: () => <span data-testid="icon-trash">Trash</span>,
   Archive: () => <span data-testid="icon-archive">Archive</span>,
   Check: () => <span data-testid="icon-check">Check</span>,
-  CheckCheck: () => <span data-testid="icon-checkcheck">CheckCheck</span>,
+  CheckCheck: () => <svg data-testid="icon-checkcheck" />,
   Loader2: ({ className }: { className?: string }) => (
     <span data-testid="icon-loader" className={className}>Loader</span>
   ),
@@ -978,12 +983,11 @@ describe("MailboxView", () => {
         taskId: "FN-1234",
       },
     };
-    const onOpenTask = vi.fn();
     mockFetchInbox.mockResolvedValue(makeInboxResponse([artifactMessage], 1));
     mockFetchConversation.mockResolvedValue([artifactMessage]);
     mockMarkMessageRead.mockResolvedValue({ ...artifactMessage, read: true });
 
-    render(<MailboxView {...defaultProps} projectId="project-a" onOpenTask={onOpenTask} />);
+    render(<MailboxView {...defaultProps} projectId="project-a" />);
 
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
@@ -996,14 +1000,8 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-message-body")).toHaveTextContent(artifactMessage.content);
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
-      expect(screen.getByRole("img", { name: "Mailbox Screenshot" })).toHaveAttribute("src", "/api/artifacts/art-mailbox-image/media?projectId=project-a&fn_token=daemon-token");
-      expect(screen.getByRole("link", { name: "Open artifact: Mailbox Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-mailbox-image/media?projectId=project-a&fn_token=daemon-token");
-      expect(screen.getByTestId("mailbox-view-task")).toBeInTheDocument();
-      expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
+      expect(screen.getByRole("img", { name: "Mailbox Screenshot" })).toHaveAttribute("src", "blob:secure-preview");
     });
-
-    fireEvent.click(screen.getByTestId("mailbox-view-task"));
-    expect(onOpenTask).toHaveBeenCalledWith("FN-1234");
   });
 
   it("does not render a View task affordance for artifact messages without task metadata", async () => {
@@ -1093,7 +1091,7 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument();
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
-      expect(screen.getByRole("img", { name: "Thread Image" })).toHaveAttribute("src", "/api/artifacts/art-thread-image/media?fn_token=daemon-token");
+      expect(screen.getByRole("img", { name: "Thread Image" })).toHaveAttribute("src", "blob:secure-preview");
       expect(screen.getByTestId("mailbox-view-task")).toBeInTheDocument();
       expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
     });
@@ -2471,6 +2469,28 @@ describe("MailboxView", () => {
 
       // The runtime class, not a height or pointer media proxy, is the only FN-8407 gate.
       expect(css).not.toMatch(/@media\s*\([^)]*(?:max-height:\s*480px|pointer:\s*coarse)[^)]*\)\s*\{[\s\S]*?\.mailbox-view--mobile/);
+    });
+
+    it("keeps mailbox tab icons and badges from shrinking in the mobile flex track", async () => {
+      mockUseViewportMode.mockReturnValue("mobile");
+      mockFetchInbox.mockResolvedValue(makeInboxResponse([], 16));
+      mockFetchApprovals.mockResolvedValue({ requests: [], total: 0, pendingCount: 16 });
+
+      const style = document.createElement("style");
+      style.textContent = loadAllAppCss();
+      document.head.append(style);
+      try {
+        render(<MailboxView {...defaultProps} />);
+        fireEvent.click(screen.getByTestId("mailbox-tab-approvals"));
+        await screen.findByTestId("mailbox-approvals-pending-badge");
+
+        for (const tab of ["inbox", "outbox", "agents", "approvals"]) {
+          expect(getComputedStyle(screen.getByTestId(`mailbox-tab-${tab}`).querySelector("svg")!).flexShrink).toBe("0");
+        }
+        expect(getComputedStyle(screen.getByTestId("mailbox-approvals-pending-badge")).flexShrink).toBe("0");
+      } finally {
+        style.remove();
+      }
     });
 
     it("keeps system and agent message actions on the mobile detail row", async () => {

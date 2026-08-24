@@ -203,7 +203,8 @@ type PauseAbortInternals = {
     settings: unknown,
     isExecuting: boolean,
     columns: { review: ReadonlySet<string>; activeWork: ReadonlySet<string> },
-  ): { kind: string; reason: string };
+    /* FNXC:SelfHealingPauseAbort 2026-08-23-20:30: the router is async in production (self-healing.ts awaits it at both call sites); mirror that here so the assertions await the verdict instead of comparing a Promise. */
+  ): Promise<{ kind: string; reason: string }>;
 };
 
 const parked = (column: string, steps: Array<{ status: string }> = []): Task => ({
@@ -229,7 +230,7 @@ describe("self-healing pause-abort router column vocabulary", () => {
   it("requeues a park sitting in a RENAMED wip lane", async () => {
     const manager = managerFor(storeFor(RENAMED_WITH_REVIEW)) as unknown as PauseAbortInternals;
     const columns = await manager.resolvePauseAbortColumnsFor("FN-9100", new Map());
-    const route = manager.classifyPausedAbortWorkflowRecovery(parked("building"), settings, false, columns);
+    const route = await manager.classifyPausedAbortWorkflowRecovery(parked("building"), settings, false, columns);
     expect(route).toEqual({ kind: "node-requeue", reason: "pause-abort-active-work" });
   });
 
@@ -237,7 +238,7 @@ describe("self-healing pause-abort router column vocabulary", () => {
     const manager = managerFor(storeFor(RENAMED_WITH_REVIEW)) as unknown as PauseAbortInternals;
     const columns = await manager.resolvePauseAbortColumnsFor("FN-9100", new Map());
     const task = parked("signoff", [{ status: "done" }, { status: "done" }]);
-    const route = manager.classifyPausedAbortWorkflowRecovery(task, settings, false, columns);
+    const route = await manager.classifyPausedAbortWorkflowRecovery(task, settings, false, columns);
     expect(route).toEqual({ kind: "work-item-resume", reason: "pause-abort-review-progress" });
   });
 
@@ -248,9 +249,9 @@ describe("self-healing pause-abort router column vocabulary", () => {
   it("keeps recovering legacy-id boards when the workflow is unresolvable", async () => {
     const manager = managerFor(storeFor(undefined)) as unknown as PauseAbortInternals;
     const columns = await manager.resolvePauseAbortColumnsFor("FN-9100", new Map());
-    expect(manager.classifyPausedAbortWorkflowRecovery(parked("in-progress"), settings, false, columns).kind)
+    expect((await manager.classifyPausedAbortWorkflowRecovery(parked("in-progress"), settings, false, columns)).kind)
       .toBe("node-requeue");
-    expect(manager.classifyPausedAbortWorkflowRecovery(parked("todo"), settings, false, columns).kind)
+    expect((await manager.classifyPausedAbortWorkflowRecovery(parked("todo"), settings, false, columns)).kind)
       .toBe("node-requeue");
   });
 });

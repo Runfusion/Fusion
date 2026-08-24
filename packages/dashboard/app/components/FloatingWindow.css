@@ -262,32 +262,47 @@ FNXC:ChatModal 2026-06-22-14:49:
 On mobile/narrow app viewports, opening Quick Chat should present the full Chat modal as a full-screen sheet instead of a small draggable desktop window. Scope this to the chat FloatingWindow and override the inline desktop geometry only at the mobile breakpoint; desktop pop-out behavior remains movable/resizable.
 */
 /*
-FNXC:TaskDetailLayout 2026-08-03-19:36:
-FN-8766 keeps the desktop Task Detail popup's visible header/content edge symmetric while
-preserving the shared body's scrollbar clearance for every other FloatingWindow consumer. This
-headerless host owns its close button, so remove only its visible body gutter and move its desktop
-east resize hit areas outside the painted shell; the scrollbar remains fully usable and the close
-control does not sit behind a resize target. Tablet retains its existing touch geometry and phones
-remain full-screen sheets below.
+FNXC:TaskDetailLayout 2026-08-17-23:47:
+FN-8766 gave the desktop Task Detail popup a symmetric painted edge by removing the shared body
+gutter here and moving its east resize hit areas OUTSIDE the painted shell, so the scrollbar stays
+usable and the header-owned close control does not sit behind a resize target. The shared gutter is
+now gone for every caller, so the local zeroing that used to accompany these rules is deleted; the
+outboard targets remain, and they are the pattern to copy wherever a hosted scrollbar and a resize
+hot zone actually collide. Tablet retains its existing touch geometry and phones remain full-screen
+sheets below.
 */
-.floating-window--task-detail:not(.floating-window--tablet-viewport) {
+/*
+FNXC:FloatingWindow 2026-08-18-00:26:
+OUTBOARD EAST TARGETS ARE THE SHARED DESKTOP CONTRACT, not a task-detail special case. With
+FN-8015's body gutter deleted, a hosted scrollbar sits flush against the painted right edge, where
+the east/north-east/south-east hit zones used to cover it — the exact grab conflict (issue #2140)
+the gutter existed to prevent. FN-8766 proved the better remedy on Task Detail: let the panel keep
+its full width and move the hit areas OUTSIDE the painted shell, so the scrollbar is fully grabbable
+and nothing is inset. Promoted here for every desktop window rather than waiting for each caller to
+rediscover the conflict.
+
+Requires `overflow: visible` on the host, which stops the window clipping its children — so the body
+and its direct child inherit the corner radius below, since only 8 of ~30 callers used to set that
+themselves and the rest would paint square corners over the rounded shell. Phones re-assert clipping
+(they hide every resize handle, so they need no outboard room) and tablets keep touch geometry.
+*/
+.floating-window:not(.floating-window--tablet-viewport) {
   overflow: visible;
 }
 
-.floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__body {
-  margin-inline-end: 0;
-}
-
-.floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--e {
+.floating-window:not(.floating-window--tablet-viewport) .floating-window__resize-handle--e {
   right: calc(var(--space-sm) * -1);
 }
 
-.floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--ne {
+.floating-window:not(.floating-window--tablet-viewport) .floating-window__resize-handle--ne,
+.floating-window:not(.floating-window--tablet-viewport) .floating-window__resize-handle--se {
   right: calc(var(--space-lg) * -1);
 }
 
-.floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--se {
-  right: calc(var(--space-lg) * -1);
+/* The window no longer clips, so clipping moves to the surfaces that actually paint. */
+.floating-window__body,
+.floating-window__body > * {
+  border-radius: inherit;
 }
 
 /*
@@ -334,6 +349,18 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
 }
 
 @media (max-width: 767.98px), (max-height: 480px) {
+  /*
+  FNXC:FloatingWindow 2026-08-18-00:26:
+  Phones re-assert clipping for EVERY window. The desktop rule above drops `overflow: hidden` so the
+  east resize targets can sit outside the painted shell, and its `:not(--tablet-viewport)` predicate
+  also matches phones — where those handles are hidden anyway, so the unclipped host buys nothing and
+  a sheet child could paint past the shell. Task Detail already needed this reassertion for its own
+  FN-8766 rule; promoting the outboard targets to every window promotes this with them.
+  */
+  .floating-window {
+    overflow: hidden;
+  }
+
   /*
   FNXC:FloatingWindow 2026-07-12-17:35:
   Mobile keeps the global `styles.css` pan-y lockdown so the dashboard cannot drift, but movable FloatingWindow headers must still resolve to an effective `touch-action: none`. Reassert the drag-handle contract at the mobile breakpoint, excluding full-screen sheet variants, so a single-finger header drag stays on the captured pointermove stream instead of being intersected back into page pan by the ancestor chain. Desktop drag/resize and mobile sheet variants are unchanged.
@@ -498,49 +525,18 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   }
 
   /*
-  FNXC:MobileTaskPopups 2026-07-17-08:20:
-  FN-8015 reserves `margin-inline-end: var(--space-lg)` on the shared
-  `.floating-window__body` so a hosted scrollbar clears the desktop
-  east/north-east/south-east resize hot zones. The mobile task-detail sheet is
-  full-screen and hides every resize handle (above), so that gutter protects
-  nothing and instead shifts the whole panel left — leaving an uneven right
-  inset on every row. Zero it here so `.detail-body`'s own symmetric padding
-  defines both insets equally. Desktop resize-handle clearance is untouched
-  (this rule is mobile-only).
+  FNXC:MobileTaskPopups 2026-08-17-23:47:
+  The mobile task-detail and standalone GitHub Import sheets each carried a local
+  `margin-inline-end: 0` to undo the shared body gutter, which left them shifted left with an uneven
+  right inset on every row (FN-8722, and the mobile task-detail left-shift fix). The shared gutter is
+  deleted, so both overrides are gone: `.detail-body` and the import shell's own symmetric padding
+  now define both insets directly.
   */
-  .floating-window--task-detail .floating-window__body {
-    margin-inline-end: 0;
-  }
-
-  /*
-  FNXC:GitHubImport 2026-08-02-02:47:
-  FN-8722 makes the standalone GitHub Import host follow the full width-or-height
-  sheet contract. Its shared body gutter exists only to clear desktop resize handles;
-  once this predicate hides those handles, retaining the gutter shifts every shell
-  region left. Do not broaden this rule to embedded Import Tasks or the independent
-  detail window, and keep non-short tablet/desktop resize clearance intact.
-  */
-  .floating-window--github-import .floating-window__body {
-    margin-inline-end: 0;
-  }
-
   .floating-window--task-detail .task-detail-content--embedded,
   .floating-window--task-detail .task-detail-content--embedded > .modal-header {
     border-radius: 0;
     cursor: default;
     touch-action: auto;
-  }
-}
-
-@media (max-width: 767.98px) {
-  /*
-  FNXC:GitManagerMobileSpacing 2026-08-01-19:10:
-  FN-8702 keeps the shared desktop resize-handle clearance for tablet and desktop windows.
-  A standalone Git Manager phone sheet hides those handles, so only below the strict 768px
-  boundary its body clears the obsolete inline-end gutter and aligns its header and close control.
-  */
-  .floating-window--git-manager .floating-window__body {
-    margin-inline-end: 0;
   }
 }
 
@@ -581,32 +577,29 @@ Reintroducing flex here (e.g. to lay out an element title) re-breaks truncation 
 FNXC:FloatingWindow 2026-06-22-20:45:
 Body is a flex host that lets its single child stretch to the full panel width/height (min-width/min-height:0 so a wide child cannot collapse the flex line, and the child's own overflow can engage).
 
-FNXC:FloatingWindow 2026-07-15-00:00:
-FN-8015 / issue #2140 requires every shared FloatingWindow caller to keep its hosted vertical scrollbar clear of the right-edge and right-corner resize hot zones. Reserve the corner-width gutter on the body rather than specializing task detail: this applies equally when the body itself scrolls and when a headerless caller delegates scrolling to its full-size child. The panel border and its right handles remain available for desktop resizing, while the scrollbar is always inboard of the east, north-east, and south-east hit targets.
+FNXC:FloatingWindow 2026-08-17-23:47:
+THE SHARED BODY HAS NO INLINE-END GUTTER. FN-8015 / issue #2140 previously reserved
+`margin-inline-end: var(--space-lg)` here so a hosted vertical scrollbar stayed inboard of the east,
+north-east, and south-east resize hot zones. Operator removed it: one shared reservation that every
+caller had to know about produced a recurring class of asymmetric-right-inset bugs instead — the
+window's own surface showed through beside each child panel, so callers read it as unexplained
+padding on the right. It was zeroed piecemeal five separate times (desktop task detail FN-8766,
+mobile task detail, mobile GitHub import FN-8722, phone Git Manager FN-8702, and every tablet
+window), and the callers that instead LEANED on it for their right inset had to restore it locally
+whenever one of those predicates fired. FN-8630 / FN-8634 and the 2026-08-01 tablet fix are the same
+bug recurring.
+
+The accepted trade-off: a hosted scrollbar now sits under the east/corner resize targets. Where that
+conflict is actually felt, fix it the FN-8766 way — move that caller's east targets outboard of the
+painted shell (`overflow: visible` plus negative `right` offsets on --e/--ne/--se) — rather than
+reintroducing a shared gutter. Do not re-add `margin-inline-end` to this rule.
 */
 .floating-window__body {
   display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  margin-inline-end: var(--space-lg);
   overflow: auto;
-}
-
-/*
-FNXC:ModalTouchGeometry 2026-08-01-03:48:
-Tablet windows drop FN-8015's inline-end scrollbar gutter. On tablet the gutter reads as a
-too-big, uneven right border inside Task Detail popups and the floating terminal (the inner
-surfaces already carry their own symmetric padding), and the mouse conflict FN-8015 solves —
-grabbing a hosted scrollbar thumb versus the east resize hot zone — does not apply to touch
-input, which never grabs scrollbar thumbs. This keys on tablet MODE (`.floating-window--tablet-viewport`,
-set from `useViewportMode()`), not `--touch-geometry`, so a non-touch window at tablet widths
-gets the same symmetric inset the operator sees on an iPad. Desktop keeps the FN-8015 gutter.
-Callers that relied on the gutter as their right inset must compensate under the same class
-(see `.github-import-detail-panel`).
-*/
-.floating-window--tablet-viewport .floating-window__body {
-  margin-inline-end: 0;
 }
 
 .floating-window__body > * {

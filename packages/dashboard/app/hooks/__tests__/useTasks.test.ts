@@ -2012,7 +2012,7 @@ describe("useTasks", () => {
       });
 
       expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(1);
-      expect(mockFetchArchivedTasks).toHaveBeenCalledWith("proj-1", 100, 0);
+      expect(mockFetchArchivedTasks).toHaveBeenCalledWith("proj-1", 100, 0, "completion-date-desc");
       expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-NEW", "FN-OLD"]);
       expect(result.current.archivedHasMore).toBe(false);
       // fetchTasks must never be called with includeArchived=true by this flow.
@@ -2037,6 +2037,63 @@ describe("useTasks", () => {
       });
 
       expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("switches Archive order with one replacement page and preserves active rows", async () => {
+      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
+      const arrivalPage = [createMockTask({ id: "FN-ARRIVAL", column: "archived" as Column })];
+      const idPage = [createMockTask({ id: "FN-ID", column: "archived" as Column })];
+      mockFetchTasks.mockResolvedValueOnce([active]);
+      mockFetchArchivedTasks
+        .mockResolvedValueOnce({ tasks: arrivalPage, total: 1, hasMore: false })
+        .mockResolvedValueOnce({ tasks: idPage, total: 3, hasMore: true });
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]));
+      await act(async () => { await result.current.loadArchivedTasks(); });
+      await act(async () => { await result.current.changeArchivedSortMode("task-id-desc"); });
+
+      expect(mockFetchArchivedTasks).toHaveBeenNthCalledWith(1, "proj-1", 100, 0, "completion-date-desc");
+      expect(mockFetchArchivedTasks).toHaveBeenNthCalledWith(2, "proj-1", 100, 0, "task-id-desc");
+      expect(result.current.archivedSortMode).toBe("task-id-desc");
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-ID"]);
+      expect(result.current.archivedHasMore).toBe(true);
+    });
+
+    it("keeps the committed mode and rows when a replacement page fails", async () => {
+      const arrivalPage = [createMockTask({ id: "FN-ARRIVAL", column: "archived" as Column })];
+      mockFetchTasks.mockResolvedValueOnce([]);
+      mockFetchArchivedTasks
+        .mockResolvedValueOnce({ tasks: arrivalPage, total: 1, hasMore: false })
+        .mockRejectedValueOnce(new Error("temporary archive failure"));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalled());
+      await act(async () => { await result.current.loadArchivedTasks(); });
+      await act(async () => { await result.current.changeArchivedSortMode("task-id-desc"); });
+
+      expect(result.current.archivedSortMode).toBe("completion-date-desc");
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ARRIVAL"]);
+    });
+
+    it("does not let an old first page overwrite a newer Archive mode", async () => {
+      let resolveOld!: (value: { tasks: Task[]; total: number; hasMore: boolean }) => void;
+      const oldPage = new Promise<{ tasks: Task[]; total: number; hasMore: boolean }>((resolve) => { resolveOld = resolve; });
+      const newPage = { tasks: [createMockTask({ id: "FN-ID", column: "archived" as Column })], total: 1, hasMore: false };
+      mockFetchTasks.mockResolvedValueOnce([]);
+      mockFetchArchivedTasks
+        .mockImplementationOnce(() => oldPage)
+        .mockResolvedValueOnce(newPage);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalled());
+      const oldLoad = result.current.loadArchivedTasks();
+      await act(async () => { await result.current.changeArchivedSortMode("task-id-desc"); });
+      resolveOld({ tasks: [createMockTask({ id: "FN-OLD", column: "archived" as Column })], total: 1, hasMore: false });
+      await act(async () => { await oldLoad; });
+
+      expect(result.current.archivedSortMode).toBe("task-id-desc");
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ID"]);
     });
 
     it("loadMoreArchivedTasks fetches only the next page and flips archivedHasMore at the boundary", async () => {
@@ -2067,7 +2124,7 @@ describe("useTasks", () => {
       });
 
       expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(2);
-      expect(mockFetchArchivedTasks).toHaveBeenLastCalledWith("proj-1", 100, 1);
+      expect(mockFetchArchivedTasks).toHaveBeenLastCalledWith("proj-1", 100, 1, "completion-date-desc");
       expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-P1", "FN-P2"]);
       expect(result.current.archivedHasMore).toBe(false);
 
@@ -3319,6 +3376,44 @@ describe("useTasks", () => {
 
       expect(result.current.tasks).toHaveLength(1);
       expect(result.current.tasks[0]?.id).toBe("FN-020");
+    });
+
+    it("merges a duplicate live arrival after immediately ingesting a refinement child", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+      const refinementChild = createMockTask({
+        id: "FN-REFINE",
+        column: "todo",
+        updatedAt: "2026-01-01T00:00:00Z",
+      });
+      const liveUpdate = createMockTask({
+        id: "FN-REFINE",
+        column: "todo",
+        updatedAt: "2026-01-02T00:00:00Z",
+        size: "L",
+      });
+
+      const { result } = renderHook(() => useTasks());
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      act(() => result.current.ingestCreatedTasks([refinementChild]));
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0]?.id).toBe("FN-REFINE");
+
+      act(() => MockEventSource.instances[0]._emit("task:created", liveUpdate));
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0]).toMatchObject({ id: "FN-REFINE", updatedAt: "2026-01-02T00:00:00Z", size: "L" });
+    });
+
+    it("refetches active search instead of locally inserting a refinement child", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      const { result } = renderHook(() => useTasks({ searchQuery: "matching-only" }));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      mockFetchTasks.mockClear();
+
+      act(() => result.current.ingestCreatedTasks([createMockTask({ id: "FN-NONMATCH", column: "todo" })]));
+
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(1));
+      expect(result.current.tasks).toEqual([]);
     });
 
     it("does not overwrite fresher task data when SSE already updated the task", async () => {

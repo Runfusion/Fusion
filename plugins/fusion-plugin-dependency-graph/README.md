@@ -34,7 +34,7 @@ The dependency graph view is registered as a **bundled plugin view** in the dash
 - **In-review visual treatment**: `in-review` nodes get a static `.graph-task-node--in-review` left accent in `--in-review` to distinguish waiting-review work from active execution nodes
 - **Graph node classes**: `.graph-task-node`, `.graph-task-node--active`, `.graph-task-node--in-review`, `.graph-task-node--highlighted`, `.graph-task-node--dimmed`, `.graph-node--highlighted`, and `.graph-node--dimmed` are available for graph-specific layering/highlight states while card internals remain owned by `TaskCard.css`
 - **Graph edge classes**: `.graph-edge--highlighted` and `.graph-edge--dimmed` are applied during dependency-chain emphasis states
-- **Drag behavior**: graph nodes pass `disableDrag={true}` to `TaskCard` so card-level HTML5 drag does not conflict with canvas pan/zoom
+- **Drag behavior**: native task dragging was removed from `TaskCard` entirely (FN-051), so graph nodes no longer pass any drag prop — canvas pan/zoom never conflicts with card-level HTML5 drag
 
 ## Position persistence
 

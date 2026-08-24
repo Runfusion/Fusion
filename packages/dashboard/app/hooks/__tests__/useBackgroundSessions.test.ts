@@ -18,14 +18,12 @@ vi.mock("../../api", () => ({
   fetchAiSessions: vi.fn(),
   deleteAiSession: vi.fn(),
   cancelPlanning: vi.fn(),
-  cancelSubtaskBreakdown: vi.fn(),
   cancelMissionInterview: vi.fn(),
 }));
 
 const mockFetchAiSessions = vi.mocked(apiModule.fetchAiSessions);
 const mockDeleteAiSession = vi.mocked(apiModule.deleteAiSession);
 const mockCancelPlanning = vi.mocked(apiModule.cancelPlanning);
-const mockCancelSubtaskBreakdown = vi.mocked(apiModule.cancelSubtaskBreakdown);
 const mockCancelMissionInterview = vi.mocked(apiModule.cancelMissionInterview);
 
 function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiModule.AiSessionSummary, "id">): apiModule.AiSessionSummary {
@@ -47,7 +45,6 @@ describe("useBackgroundSessions", () => {
     mockFetchAiSessions.mockResolvedValue([]);
     mockDeleteAiSession.mockResolvedValue(undefined);
     mockCancelPlanning.mockResolvedValue(undefined);
-    mockCancelSubtaskBreakdown.mockResolvedValue(undefined);
     mockCancelMissionInterview.mockResolvedValue(undefined);
   });
 
@@ -592,25 +589,6 @@ describe("useBackgroundSessions", () => {
     });
   });
 
-  it("dismissSession calls cancelSubtaskBreakdown for subtask sessions", async () => {
-    mockFetchAiSessions.mockResolvedValueOnce([
-      makeSession({ id: "subtask-session", status: "generating", type: "subtask" }),
-    ]);
-
-    const { result } = renderHook(() => useBackgroundSessions());
-
-    await waitFor(() => {
-      expect(result.current.sessions.map((session) => session.id)).toEqual(["subtask-session"]);
-    });
-
-    await act(async () => {
-      await result.current.dismissSession("subtask-session");
-    });
-
-    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined);
-    expect(mockDeleteAiSession).toHaveBeenCalledWith("subtask-session");
-  });
-
   it("dismissSession calls cancelMissionInterview for mission_interview sessions", async () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "interview-session", status: "generating", type: "mission_interview" }),
@@ -633,8 +611,8 @@ describe("useBackgroundSessions", () => {
   it("returns accurate generating/needsInput counts and planningSessions filter", async () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "count-generating", status: "generating", type: "planning" }),
-      makeSession({ id: "count-awaiting", status: "awaiting_input", type: "subtask" }),
       makeSession({ id: "count-error-plan", status: "error", type: "planning" }),
+      makeSession({ id: "count-awaiting", status: "awaiting_input", type: "planning" }),
       makeSession({ id: "count-complete", status: "complete", type: "mission_interview" }),
     ]);
 
@@ -644,6 +622,7 @@ describe("useBackgroundSessions", () => {
       expect(result.current.generating).toBe(1);
       expect(result.current.needsInput).toBe(1);
       expect(result.current.planningSessions.map((session) => session.id).sort()).toEqual([
+        "count-awaiting",
         "count-error-plan",
         "count-generating",
       ]);

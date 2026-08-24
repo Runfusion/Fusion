@@ -291,6 +291,35 @@ export function resolveReboundTarget(ir: WorkflowIr): string | undefined {
   return columns[0].id;
 }
 
+/**
+ * Resolve the destination for an automatic dependency-driven re-specification.
+ * A manual intake is a capture lane, so its intake target is not safe for an
+ * automated replan; use the workflow's hold lane instead. Returns undefined
+ * when the workflow has no usable trait-derived destination.
+ *
+ * FNXC:WorkflowLifecycleTraits 2026-08-19-02:45:
+ * Dependency-driven replans must not auto-route into a manual intake. Coding
+ * (Ideas) therefore returns its Planning hold column while automatic workflows
+ * retain their declared intake destination. This policy affects only automatic
+ * dependency-driven replan relocation; new-task creation and manual promotion
+ * keep their existing intake behavior.
+ */
+export function resolveDependencyReplanTarget(ir: WorkflowIr | undefined): string | undefined {
+  if (!ir) return undefined;
+  const columns = columnsOf(ir);
+  if (columns.length === 0) return undefined;
+
+  const registry = getTraitRegistry();
+  const intake = columns.find((column) => registry.resolveColumnFlags(column).intake === true);
+  if (!intake) return undefined;
+
+  const intakeTrait = intake.traits.find((trait) => trait.trait === "intake");
+  if (intakeTrait?.config?.autoTriage === false) {
+    return columns.find((column) => registry.resolveColumnFlags(column).hold === true)?.id;
+  }
+  return intake.id;
+}
+
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-27-09:10 (U1 / KTD-2 — workflow-owned lifecycle):
 THE lifecycle-column resolution seam. ~207 production sites decide the lifecycle by

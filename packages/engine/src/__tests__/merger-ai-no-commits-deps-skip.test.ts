@@ -15,7 +15,13 @@ import os from "node:os";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 
-vi.mock("../merge-dependency-sync.js", async (importOriginal) => {
+/*
+FNXC:MergeNoCommits 2026-08-23-20:00:
+The mock specifier must match the module the file imports. `merge-dependency-sync` moved under
+`merge/`, and the stale `"../merge-dependency-sync.js"` specifier silently mocked nothing — the
+assertions then failed with "not a spy" rather than a missing-module error.
+*/
+vi.mock("../merge/merge-dependency-sync.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../merge/merge-dependency-sync.js")>();
   return { ...actual, installWorktreeDependencies: vi.fn() };
 });
@@ -88,16 +94,29 @@ function createRepoFixture(withChanges: boolean): RepoFixture {
 function createStore(): TaskStore & { logs: string[] } {
   const emitter = new EventEmitter();
   const logs: string[] = [];
+  const task = {
+    id: TASK_ID, column: "in-review", branch: BRANCH,
+    comments: [], steeringComments: [], steps: [], log: [],
+  } as unknown as Task;
   return Object.assign(emitter, {
     logs,
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false }),
     updateTask: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:MergeReviewReconciliation 2026-08-23-19:58:
+    `mergeAndReview` persists its reconciliation state through the compare-and-set `updateTaskAtomic`
+    seam, which this fake predates. Copy the faithful implementation from `merger-ai.test.ts`: the
+    updater must see a live task object and its patch must be applied, otherwise the CAS re-read
+    detects unexpected drift.
+    */
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Task) => Record<string, unknown> | undefined | null) => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     logEntry: vi.fn((_id: string, message: string) => { logs.push(message); return Promise.resolve(undefined); }),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
-    getTask: vi.fn().mockResolvedValue({
-      id: TASK_ID, column: "in-review", branch: BRANCH,
-      comments: [], steeringComments: [], steps: [], log: [],
-    }),
+    getTask: vi.fn(async () => task),
     moveTask: vi.fn().mockResolvedValue({ id: TASK_ID, column: "done" } as Task),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),

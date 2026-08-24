@@ -3,6 +3,7 @@ import {
   derivePerTaskBranchName,
   resolveEntryPointBranchAssignment,
   sanitizeBranchSegment,
+  isValidTaskBranchName,
 } from "@fusion/core";
 import type {
   EntryPointAssignmentMode,
@@ -115,6 +116,9 @@ export function resolveBranchSelection(
     if (!branchName) {
       throw badRequest("branchSelection.branchName is required for shared-group mode");
     }
+    if (!isValidTaskBranchName(branchName)) {
+      throw badRequest(`Invalid branch name: ${JSON.stringify(branchName)}`);
+    }
     return {
       branch: undefined,
       baseBranch,
@@ -124,6 +128,9 @@ export function resolveBranchSelection(
 
   if (!branchName) {
     throw badRequest("branchSelection.branchName is required for existing/custom-new modes");
+  }
+  if (!isValidTaskBranchName(branchName)) {
+    throw badRequest(`Invalid branch name: ${JSON.stringify(branchName)}`);
   }
 
   return {

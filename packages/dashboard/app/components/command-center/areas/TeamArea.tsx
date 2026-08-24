@@ -42,6 +42,8 @@ type ExecutorStats = {
   globalPause: boolean;
   enginePaused: boolean;
   maxConcurrent: number;
+  effectiveMaxConcurrent: number;
+  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
   lastActivityAt?: string;
 };
 
@@ -521,7 +523,13 @@ export function TeamArea({
             </div>
             <div>
               <dt>{t("commandCenter.controls.status.maxConcurrent", "Max concurrent")}</dt>
-              <dd>{executorStatsState.data?.maxConcurrent ?? "—"}</dd>
+              <dd>
+                {executorStatsState.data
+                  ? executorStatsState.data.effectiveMaxConcurrent === executorStatsState.data.maxConcurrent
+                    ? executorStatsState.data.maxConcurrent
+                    : `${executorStatsState.data.maxConcurrent} (${executorStatsState.data.effectiveMaxConcurrent} effective: ${executorStatsState.data.concurrencyBindingKnob})`
+                  : "—"}
+              </dd>
             </div>
           </dl>
           {executorStatsState.status === "error" ? <p className="cc-team-error" role="alert">{executorStatsState.error}</p> : null}

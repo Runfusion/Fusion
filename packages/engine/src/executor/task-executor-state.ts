@@ -77,6 +77,8 @@ export abstract class TaskExecutorState {
   protected approvalResumeAfterUnwind = new Set<string>();
   protected recoveringCompleted = new Set<string>();
   protected capturedReflectionTaskIds = new Set<string>();
+  /** Task ids that already had their Stash memory capture attempted (completion-gated). */
+  protected capturedMemoryTaskIds = new Set<string>();
   protected workflowRerunPending = new Set<string>();
   protected workflowLifecycleMovesInFlight = new Set<string>();
   protected pendingTaskDisposals = new Map<string, Promise<void>>();

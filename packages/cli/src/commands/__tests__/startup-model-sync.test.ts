@@ -39,6 +39,13 @@ describe("startup-model-sync", () => {
         json: vi.fn().mockResolvedValue(response.body ?? { data: [] }),
       });
     }
+    // OrcaRouter sync runs alongside OpenRouter by default; give it a benign
+    // catalog response so OpenRouter-focused tests do not consume an undefined mock.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [] }),
+    });
     vi.stubGlobal("fetch", fetchMock);
   }
 
@@ -88,7 +95,7 @@ describe("startup-model-sync", () => {
     const registerProvider = vi.fn();
 
     await syncStartupModels({
-      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false }),
+      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false }),
       authStorage: { getApiKey: vi.fn() },
       modelRegistry: { registerProvider },
       log: vi.fn(),
@@ -97,6 +104,55 @@ describe("startup-model-sync", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(mockSpawn).not.toHaveBeenCalled();
     expect(registerProvider).not.toHaveBeenCalled();
+  });
+
+  it("syncs OrcaRouter models as a named OpenAI-compatible provider", async () => {
+    mockOpenRouterFetchSequence({ ok: true });
+
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue("sk-orca-test") },
+      modelRegistry: { registerProvider },
+      log,
+    });
+
+    const orcaRouterCall = registerProvider.mock.calls.find(([name]) => name === "orcarouter");
+    expect(orcaRouterCall).toBeDefined();
+    expect(orcaRouterCall?.[1]).toMatchObject({
+      baseUrl: "https://api.orcarouter.ai/v1",
+      apiKey: "ORCAROUTER_API_KEY",
+      api: "openai-completions",
+      models: expect.any(Array),
+    });
+    expect(log).toHaveBeenCalledWith("orcarouter", expect.stringContaining("Synced"));
+  });
+
+  it("sends an OrcaRouter bearer token when an API key is stored", async () => {
+    mockOpenRouterFetchSequence({ ok: true });
+
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue("sk-orca-secret") },
+      modelRegistry: { registerProvider: vi.fn() },
+      log: vi.fn(),
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.some(([url]) => String(url).includes("api.orcarouter.ai"))).toBe(true);
+    const orcaCall = calls.find(([url]) => String(url).includes("api.orcarouter.ai"))!;
+    expect(orcaCall?.[1]).toEqual({
+      headers: { Authorization: "Bearer sk-orca-secret" },
+    });
   });
 
   it("sends default OpenRouter attribution headers", async () => {

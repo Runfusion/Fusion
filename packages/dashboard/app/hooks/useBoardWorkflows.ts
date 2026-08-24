@@ -228,11 +228,19 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
 
   const workflowOptions = useMemo<BoardWorkflowDefinition[]>(() => {
     if (!workflowMode || !boardWorkflows) return [];
-    return [...boardWorkflows.workflows].sort((a, b) => {
-      if (a.id === boardWorkflows.defaultWorkflowId) return -1;
-      if (b.id === boardWorkflows.defaultWorkflowId) return 1;
-      return a.name.localeCompare(b.name);
-    });
+    /*
+    FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+    The payload retains disabled definitions only for cards with explicit legacy
+    assignments. Switcher options must use the server's selectable marker so
+    those compatibility lanes cannot leak into any shared picker.
+    */
+    return boardWorkflows.workflows
+      .filter((workflow) => workflow.selectable !== false)
+      .sort((a, b) => {
+        if (a.id === boardWorkflows.defaultWorkflowId) return -1;
+        if (b.id === boardWorkflows.defaultWorkflowId) return 1;
+        return a.name.localeCompare(b.name);
+      });
   }, [boardWorkflows, workflowMode]);
 
   const isAllWorkflowsSelected = selectedWorkflowId === ALL_WORKFLOWS_BOARD_VIEW_ID;

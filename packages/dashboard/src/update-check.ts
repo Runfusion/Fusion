@@ -3,7 +3,13 @@ import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { resolveGlobalDir, isVersionNewer, resolveUpdateTargetVersion } from "@fusion/core";
+import {
+  EXTERNALLY_MANAGED_UPDATE_MESSAGE,
+  resolveGlobalDir,
+  resolveUpdatesExternallyManaged,
+  isVersionNewer,
+  resolveUpdateTargetVersion,
+} from "@fusion/core";
 import type { UpdateChannel } from "@fusion/core";
 
 const CACHE_FILENAME = "update-check.json";
@@ -191,10 +197,14 @@ export function isHomebrewInstall(binaryPath: string | null): boolean {
 }
 
 export function detectUnsupportedInstallMethod(input: {
+  externallyManaged?: boolean;
   sourceWorkspaceRoot?: string;
   binaryPath?: string | null;
   hasNpm?: boolean;
-}): { reason: "source-checkout" | "homebrew" | "npm-missing"; message: string } | null {
+}): { reason: "externally-managed" | "source-checkout" | "homebrew" | "npm-missing"; message: string } | null {
+  if (input.externallyManaged) {
+    return { reason: "externally-managed", message: EXTERNALLY_MANAGED_UPDATE_MESSAGE };
+  }
   if (input.sourceWorkspaceRoot) {
     return { reason: "source-checkout", message: `This Fusion is running from a source checkout at ${input.sourceWorkspaceRoot}; a global npm install will not change it — pull and rebuild the checkout instead.` };
   }
@@ -203,15 +213,34 @@ export function detectUnsupportedInstallMethod(input: {
     return { reason: "homebrew", message: "This Fusion install is managed by Homebrew and cannot be updated with npm. Update it from a terminal with: brew upgrade fusion" };
   }
   if (input.hasNpm === false) {
-    return { reason: "npm-missing", message: "`npm` was not found on this process's PATH; update from a terminal with `npm install -g @runfusion/fusion@<version>`." };
+    return {
+      reason: "npm-missing",
+      message:
+        "Update failed: npm is not available on this host, so the in-app updater cannot run. " +
+        "This Fusion install is managed outside npm — update it the way it was installed. " +
+        "If npm can be installed for this host, use `npm install -g @runfusion/fusion@<version>` from a terminal.",
+    };
   }
   return null;
 }
 
+/*
+FNXC:UpdateInstall 2026-08-21-16:37:
+`/bin/sh` reports a missing command as exit 127 with `npm: not found`, not ENOENT or
+`command not found`. Recognize each shell form so the updater returns actionable guidance
+rather than leaking raw stderr to the operator.
+*/
 function isNpmMissingError(error: unknown): boolean {
   const installError = error as InstallError;
-  const message = [installError?.message, installError?.stderr, installError?.stdout].filter((part): part is string => typeof part === "string").join("\n");
-  return installError?.code === "ENOENT" || /command not found|not recognized as an internal/i.test(message);
+  const message = [installError?.message, installError?.stderr, installError?.stdout]
+    .filter((part): part is string => typeof part === "string")
+    .join("\n");
+  const mentionsNpm = /\bnpm\b/i.test(message);
+  return (
+    installError?.code === 127 ||
+    (installError?.code === "ENOENT" && mentionsNpm) ||
+    /\bnpm\b[^\n]*\bnot found\b|\bnpm\b[^\n]*command not found|['"]npm['"]\s+is not recognized as an internal or external command|spawn\s+npm\s+ENOENT/i.test(message)
+  );
 }
 
 function getPermissionRemediationMessage(binaryPath: string | null): string {
@@ -281,7 +310,11 @@ export async function clearUpdateCheckCache(fusionDir: string): Promise<void> {
 export async function performUpdateInstall(
   currentVersion: string,
   latestVersion: string | null,
-  options: { exec?: ExecInstall; fusionDir?: string; installMethod?: { sourceWorkspaceRoot?: string } } = {},
+  options: {
+    exec?: ExecInstall;
+    fusionDir?: string;
+    installMethod?: { sourceWorkspaceRoot?: string; externallyManaged?: boolean };
+  } = {},
 ): Promise<UpdateInstallResult> {
   const runExec = options.exec ?? execAsync;
   const fusionDir = options.fusionDir ?? resolveGlobalDir();
@@ -291,7 +324,10 @@ export async function performUpdateInstall(
   checks and an up-to-date re-check must never share an outcome; host-only source
   checkout context is injected here so unsupported installs are refused pre-flight.
   */
-  const unsupported = detectUnsupportedInstallMethod({ sourceWorkspaceRoot: options.installMethod?.sourceWorkspaceRoot });
+  const unsupported = detectUnsupportedInstallMethod({
+    externallyManaged: options.installMethod?.externallyManaged ?? resolveUpdatesExternallyManaged(),
+    sourceWorkspaceRoot: options.installMethod?.sourceWorkspaceRoot,
+  });
   if (unsupported) return { currentVersion, latestVersion, updated: false, outcome: "unsupported-install-method", message: unsupported.message, error: unsupported.message };
   if (!latestVersion || !SAFE_VERSION_RE.test(latestVersion)) {
     const error = `No valid update target version to install${latestVersion ? ` ('${latestVersion}')` : ""}.`;

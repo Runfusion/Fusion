@@ -9,6 +9,7 @@ import type { TaskDetail, TaskStore } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { executorLog } from "../logger.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
@@ -59,8 +60,7 @@ export async function reenterPausedAbortedWorkflowNode(
     await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     await deps.store.logEntry(live.id, `Auto-recovered: re-entering paused-aborted workflow graph node '${nodeId}' — failure notification suppressed`, undefined, deps.runContextFor(live.id));
     await deps.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, deps.runContextFor(live.id));
-    try {
-      await deps.store.recordRunAuditEvent?.({
+      await emitBoundedRunAudit(deps.store, {
         taskId: live.id,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-node-reentry", live.id),
@@ -77,9 +77,6 @@ export async function reenterPausedAbortedWorkflowNode(
           mode: preservedInReview ? "preserved-in-review" : live.column === reentryLanes.hold ? "reexecuted-from-todo" : "reentered-graph",
         },
       });
-    } catch (error) {
-      executorLog.warn(`${live.id}: failed to record paused-node graph re-entry audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
     await deps.persistTokenUsage(live.id);
 
     const scheduleRetry = () => {

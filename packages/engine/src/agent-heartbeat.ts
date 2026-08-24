@@ -2803,6 +2803,11 @@ export class HeartbeatMonitor {
               agentName: agent.name,
               memory: agent.memory,
             },
+            // FNXC:MemoryFocusEngine 2026-08-13-15:57 (RUFU-068): agent heartbeat
+            // lanes are agent-scoped, not conversation-scoped; no /focus topic →
+            // whole-project scope. The optional focus seam stays wired so a heartbeat
+            // bound to a topic-scoped conversation can scope recall within the project.
+            focus: undefined,
           }));
         } catch (memorySettingsError) {
           const message = memorySettingsError instanceof Error ? memorySettingsError.message : String(memorySettingsError);

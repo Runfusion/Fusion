@@ -44,14 +44,25 @@ describe("CustomProviderForm", () => {
 
     await user.click(screen.getByRole("button", { name: "Save Provider" }));
 
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+    expect(onSave).toHaveBeenCalledWith({
       id: "my-proxy",
       name: "My Proxy",
       baseUrl: "https://proxy.example.com/v1",
       api: "openai-responses",
       apiKey: "MY_API_KEY",
-      models: [expect.objectContaining({ id: "gpt-4.1-mini", name: "GPT 4.1 Mini" })],
-    }));
+      models: [{
+        id: "gpt-4.1-mini",
+        name: "GPT 4.1 Mini",
+        contextWindow: undefined,
+        maxTokens: undefined,
+      }],
+    });
+  });
+
+  it("does not render a reasoning capability toggle", () => {
+    render(<CustomProviderForm onSave={vi.fn()} />);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reasoning")).not.toBeInTheDocument();
   });
 
   it("shows external error state", () => {
@@ -132,8 +143,8 @@ describe("Detect Models", () => {
   it("calls probeProviderModels and adds discovered models", async () => {
     const mockProbe = vi.spyOn(api, "probeProviderModels").mockResolvedValue({
       models: [
-        { id: "gpt-4o", name: "GPT 4o", reasoning: false },
-        { id: "gpt-4", name: "GPT 4", reasoning: false },
+        { id: "gpt-4o", name: "GPT 4o" },
+        { id: "gpt-4", name: "GPT 4" },
       ],
       count: 2,
     });
@@ -146,7 +157,7 @@ describe("Detect Models", () => {
           baseUrl: "https://api.example.com/v1",
           api: "openai-completions",
           apiKey: "sk-test",
-          models: [{ id: "", name: "", reasoning: false }],
+          models: [{ id: "", name: "" }],
         }}
       />
     );
@@ -170,8 +181,8 @@ describe("Detect Models", () => {
   it("deduplicates models when detecting", async () => {
     const mockProbe = vi.spyOn(api, "probeProviderModels").mockResolvedValue({
       models: [
-        { id: "gpt-4o", name: "GPT 4o", reasoning: false },
-        { id: "gpt-4", name: "GPT 4", reasoning: false },
+        { id: "gpt-4o", name: "GPT 4o" },
+        { id: "gpt-4", name: "GPT 4" },
       ],
       count: 2,
     });
@@ -185,8 +196,8 @@ describe("Detect Models", () => {
           api: "openai-completions",
           apiKey: "sk-test",
           models: [
-            { id: "gpt-4o", name: "GPT 4o", reasoning: false },
-            { id: "", name: "", reasoning: false },
+            { id: "gpt-4o", name: "GPT 4o" },
+            { id: "", name: "" },
           ],
         }}
       />
@@ -215,7 +226,7 @@ describe("Detect Models", () => {
           baseUrl: "https://api.example.com/v1",
           api: "openai-completions",
           apiKey: "sk-invalid",
-          models: [{ id: "", name: "", reasoning: false }],
+          models: [{ id: "", name: "" }],
         }}
       />
     );
@@ -235,7 +246,7 @@ describe("Detect Models", () => {
           baseUrl: "",
           api: "openai-completions",
           apiKey: "sk-test",
-          models: [{ id: "", name: "", reasoning: false }],
+          models: [{ id: "", name: "" }],
         }}
       />
     );

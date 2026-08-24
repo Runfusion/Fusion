@@ -9,6 +9,7 @@ describe("computeMobileBarKeyboardFlags", () => {
     // with no dead band. `footerKeyboardOpen` stays iOS-only.
     const flags = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: false,
@@ -23,6 +24,7 @@ describe("computeMobileBarKeyboardFlags", () => {
   it("hides and collapses footer on iOS when keyboard is open and no overlay is open", () => {
     const flags = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: false,
@@ -37,6 +39,7 @@ describe("computeMobileBarKeyboardFlags", () => {
   it("keeps footer visible when iOS keyboard is open over a modal", () => {
     const flags = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: true,
       overlayOpen: false,
@@ -48,9 +51,23 @@ describe("computeMobileBarKeyboardFlags", () => {
     expect(flags.navKeyboardOpen).toBe(true);
   });
 
+  it("slides the nav on focus without changing settled footer behavior", () => {
+    const flags = computeMobileBarKeyboardFlags({
+      isMobile: true,
+      keyboardFocusPending: true,
+      keyboardOpen: false,
+      anyModalOpen: false,
+      overlayOpen: false,
+      isIOS: true,
+    });
+
+    expect(flags).toEqual({ footerHidden: false, navKeyboardOpen: true, footerKeyboardOpen: false });
+  });
+
   it("returns all false when keyboard is closed", () => {
     const flags = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: false,
       anyModalOpen: false,
       overlayOpen: false,
@@ -67,6 +84,7 @@ describe("computeMobileBarKeyboardFlags", () => {
   it("returns all false when not mobile", () => {
     const flags = computeMobileBarKeyboardFlags({
       isMobile: false,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: false,
@@ -83,6 +101,7 @@ describe("computeMobileBarKeyboardFlags", () => {
   it("keeps the board footer visible on iOS when a fullscreen overlay owns the keyboard", () => {
     const flags = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: true,
@@ -97,6 +116,7 @@ describe("computeMobileBarKeyboardFlags", () => {
   it("keeps Android board-layout behavior unchanged when a fullscreen overlay owns the keyboard", () => {
     const flags = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: true,
@@ -111,6 +131,7 @@ describe("computeMobileBarKeyboardFlags", () => {
   it("suppresses the original iOS board-shift trigger only when the Quick Chat overlay flag is set", () => {
     const originalBoardShiftTrigger = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: false,
@@ -118,6 +139,7 @@ describe("computeMobileBarKeyboardFlags", () => {
     });
     const quickChatOverlayKeyboard = computeMobileBarKeyboardFlags({
       isMobile: true,
+      keyboardFocusPending: false,
       keyboardOpen: true,
       anyModalOpen: false,
       overlayOpen: true,

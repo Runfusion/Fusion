@@ -1,0 +1,11 @@
+# fusion-hygiene-capture v1
+# kind: databases
+# cluster: 5432|PostgreSQL 16.0|postgres
+# captured_at: 2026-08-19T18:18:00Z
+# query: leftover-v1
+# rows: 4
+not-a-database-row
+fusion_test_valid|eclipxe|f|0
+fusion_pool_bad|eclipxe|not-bool|zero
+fusion_schema_template_99_nonce|eclipxe|false|0
+# end

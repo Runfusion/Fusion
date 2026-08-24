@@ -23,6 +23,10 @@
 
 - None recorded.
 
+## Measurement notes
+
+- **2026-W33** (2026-08-16T06:01:44.671Z): single-sample measurement variance; FN-9144 controlled warm median 9.0s over three samples; see docs/solutions/developer-experience/merge-gate-w33-walltime-regression.md
+
 ## Timing snapshot notes
 
 - No stale or missing timing metadata detected in the rendered slowest-file rows.
@@ -96,3 +100,11 @@ Report-only regeneration is cheap and does not run any suite:
 ```bash
 pnpm test:velocity
 ```
+
+Add a durable measurement verdict without running a suite:
+
+```bash
+pnpm test:velocity -- --note "<text>" [--note-target <capturedAt|ISO-cycle>]
+```
+
+Notes are stored on their history entries and rendered from every past annotated cycle, newest first, with no window cap. The baseline document is generated; never hand-edit it.

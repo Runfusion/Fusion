@@ -955,41 +955,31 @@ describe("session failure diagnostics", () => {
     expect(prompt).toHaveBeenCalledWith("Use docs", expect.objectContaining({ mcpServers }));
   });
 
-  it("skips MCP forwarding for unsupported mock provider and emits a content-free skip log", async () => {
+  /*
+  FNXC:McpConfig 2026-08-23-18:36:
+  The mock provider never reaches pi's MCP forwarding seam. `createFnAgent` routes through the
+  registered agent-session factory, whose `useMockRuntime` short-circuit resolves the mock runtime
+  singleton directly and never re-enters pi session construction — so no pi session, and therefore
+  no MCP server definition (or its materialized secrets), can be built for a mock lane at all.
+  That is a strictly stronger guarantee than the pi-lane `mcp.forwarding.skipped` log this case used
+  to assert, and the log itself is unreachable from here. The pi-lane skip decision and its
+  content-free log stay directly covered by `mcp-runtime-support.test.ts`
+  (`runtimeSupportsMcp("pi", "mock") === false`, plus the log's field/redaction contract).
+  */
+  it("never builds a pi session for the mock provider, so MCP definitions cannot reach it", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    const prompt = vi.fn();
-    const session = {
-      model: { provider: "test", id: "primary-model" },
-      prompt,
-      subscribe: vi.fn(),
-      dispose: vi.fn(),
-      sessionFile: undefined,
-    } as unknown as AgentSession;
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
     createAgentSessionMock.mockReset();
-    createAgentSessionMock.mockResolvedValueOnce({ session } as any);
 
-    try {
-      const created = await createFnAgent({
-        cwd: "/test/project",
-        systemPrompt: "Test MCP skip",
-        defaultProvider: "mock",
-        defaultModelId: "scripted",
-        mcpServers: [{ name: "docs", transport: "stdio", command: "node", env: { TOKEN: "SECRET" } }],
-      });
-      await (created.session as any).promptWithFallback("Use docs");
+    const created = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test MCP skip",
+      defaultProvider: "mock",
+      defaultModelId: "scripted",
+      mcpServers: [{ name: "docs", transport: "stdio", command: "node", env: { TOKEN: "SECRET" } }],
+    });
 
-      expect(createAgentSessionMock.mock.calls[0]?.[0]).not.toHaveProperty("mcpServers");
-      expect(prompt).toHaveBeenCalledWith("Use docs");
-      const skipLog = consoleErrorSpy.mock.calls.find(([message]) => String(message).includes("mcp.forwarding.skipped"));
-      expect(skipLog?.[0]).toContain('"skippedCount":1');
-      expect(skipLog?.[0]).toContain('"provider":"mock"');
-      expect(skipLog?.[0]).not.toContain("SECRET");
-      expect(skipLog?.[0]).not.toContain("docs");
-    } finally {
-      consoleErrorSpy.mockRestore();
-    }
+    expect(created.session).toBeDefined();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
   });
 
   it("retries prompt on thinking/reasoning conflict without switching fallback models", async () => {

@@ -20,11 +20,26 @@ export interface AiMergeReviewVerdict {
   verdict: "approve" | "reject";
   reasons: string[];
   severity?: AiMergeReviewSeverity;
+  /** Prior findings the reviewer explicitly confirmed are fixed in this squash. */
+  resolvedPriorReasons: string[];
+  priorFindingDispositions?: Array<{ id: string; disposition: "corrected" | "absent-from-squash" | "still-present" }>;
 }
 
 export const REVIEW_VERDICT_MARKER = "REVIEW_VERDICT:";
+export const SEVERITY_MARKER = "SEVERITY:";
+export const RESOLVED_PRIOR_FINDINGS_MARKER = "RESOLVED_PRIOR_FINDINGS:";
+export const PRIOR_FINDING_DISPOSITIONS_MARKER = "PRIOR_FINDING_DISPOSITIONS:";
+/*
+FNXC:MergerAiReview 2026-08-22-22:04:
+FN-090 added the fourth protocol marker without teaching reason recovery about it, letting
+Fusion persist its own acknowledgement syntax as blocking feedback. Keep every marker in this
+registry so a future fifth marker is rejected by construction at both parser and durable seams.
+*/
+export const AI_MERGE_PROTOCOL_MARKERS = [REVIEW_VERDICT_MARKER, SEVERITY_MARKER, RESOLVED_PRIOR_FINDINGS_MARKER, PRIOR_FINDING_DISPOSITIONS_MARKER] as const;
+const DISPOSITION_BODY_RE = /^[A-Za-z0-9_-]+\s*:\s*(corrected|absent-from-squash|still-present)$/i;
 const VERDICT_LINE_RE = /REVIEW_VERDICT:\s*(approve|reject)\b/i;
 const SEVERITY_LINE_RE = /SEVERITY:\s*(blocking|advisory)\b/i;
+const RESOLVED_PRIOR_FINDINGS_LINE_RE = /RESOLVED_PRIOR_FINDINGS:\s*(.*)$/i;
 
 /*
 FNXC:MergerAiReview 2026-07-15-21:30:
@@ -33,6 +48,7 @@ free-form analysis can run long; the corrective re-merge prompt only needs the c
 and an unbounded splice would paste an entire transcript into it.
 */
 const MAX_RECOVERED_PRECEDING_REASONS = 8;
+export const MAX_REASON_CHARS = 500;
 
 /**
  * Parse the reviewer's free-form output. Fail-safe: no/garbled output, or a
@@ -49,6 +65,7 @@ export function parseReviewVerdict(
       verdict: "reject",
       reasons: ["reviewer produced no output"],
       severity: "blocking",
+      resolvedPriorReasons: [],
     };
 
   const lines = text.split(/\r?\n/);
@@ -69,31 +86,86 @@ export function parseReviewVerdict(
         `reviewer did not emit a "${REVIEW_VERDICT_MARKER} approve|reject" line`,
       ],
       severity: "blocking",
+      resolvedPriorReasons: [],
     };
   }
-  if (decision === "approve") return { verdict: "approve", reasons: [] };
+  const resolvedPriorReasons = extractResolvedPriorReasons(lines);
+  const priorFindingDispositions = extractPriorFindingDispositions(lines);
+  if (decision === "approve") return { verdict: "approve", reasons: [], resolvedPriorReasons, ...(priorFindingDispositions.length ? { priorFindingDispositions } : {}) };
 
   const severity: AiMergeReviewSeverity = SEVERITY_LINE_RE.test(text)
     ? (text.match(SEVERITY_LINE_RE)![1].toLowerCase() as AiMergeReviewSeverity)
     : "blocking";
+  const resolvedKeys = new Set(resolvedPriorReasons.map(normalizeReasonIdentity));
   return {
     verdict: "reject",
-    reasons: extractRejectReasons(lines, verdictLineIndex),
+    // Marker bullets are acknowledgements; reconciliation separately promotes
+    // unknown acknowledgements to new findings instead of dropping them.
+    reasons: extractRejectReasons(lines, verdictLineIndex)
+      .filter((reason) => !resolvedKeys.has(normalizeReasonIdentity(reason))),
     severity,
+    resolvedPriorReasons,
+    ...(priorFindingDispositions.length ? { priorFindingDispositions } : {}),
   };
 }
 
+/**
+ * Extract only a clearly delimited, bullet-form resolution acknowledgement.
+ * A missing or malformed marker intentionally yields no resolutions: callers
+ * retain every prior blocker rather than guessing that reviewer prose cleared it.
+ */
+function extractResolvedPriorReasons(lines: string[]): string[] {
+  const markerIndex = lines.findIndex((line) => RESOLVED_PRIOR_FINDINGS_LINE_RE.test(line));
+  if (markerIndex === -1) return [];
+  const inline = lines[markerIndex].match(RESOLVED_PRIOR_FINDINGS_LINE_RE)?.[1].trim();
+  const resolved = inline && !/^none\b/i.test(inline) ? [inline] : [];
+  for (let index = markerIndex + 1; index < lines.length; index++) {
+    const line = lines[index];
+    if (VERDICT_LINE_RE.test(line) || SEVERITY_LINE_RE.test(line) || line.trim().toLowerCase().startsWith(PRIOR_FINDING_DISPOSITIONS_MARKER.toLowerCase()) || !line.trim()) break;
+    if (!/^\s*(?:[-*•]|\d+[.)])\s+/.test(line)) return [];
+    resolved.push(cleanReasonLine(line));
+  }
+  return resolved;
+}
+
+/** Parse only explicit stable ids; prose never clears a structured prior finding. */
+function extractPriorFindingDispositions(lines: string[]): Array<{ id: string; disposition: "corrected" | "absent-from-squash" | "still-present" }> {
+  const index = lines.findIndex((line) => line.trim().toLowerCase().startsWith(PRIOR_FINDING_DISPOSITIONS_MARKER.toLowerCase()));
+  if (index === -1) return [];
+  const result: Array<{ id: string; disposition: "corrected" | "absent-from-squash" | "still-present" }> = [];
+  for (let i = index + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || VERDICT_LINE_RE.test(line) || SEVERITY_LINE_RE.test(line) || line.trim().toLowerCase().startsWith(RESOLVED_PRIOR_FINDINGS_MARKER.toLowerCase())) break;
+    const match = cleanReasonLine(line).match(/^([A-Za-z0-9_-]+)\s*:\s*(corrected|absent-from-squash|still-present)\s*$/i);
+    if (match) result.push({ id: match[1], disposition: match[2].toLowerCase() as "corrected" | "absent-from-squash" | "still-present" });
+  }
+  return result;
+}
 /** Strip bullet/numeric list markers and surrounding whitespace from one line. */
 function cleanReasonLine(line: string): string {
   return line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").trim();
 }
 
+function normalizeReasonIdentity(reason: string): string {
+  return reason.trim().toLocaleLowerCase().replace(/[\s\p{P}]+/gu, " ").trim();
+}
+
+/** Whether a line is Fusion review protocol rather than reviewer reasoning. */
+export function isAiMergeProtocolLine(text: string): boolean {
+  const clean = cleanReasonLine(text);
+  return AI_MERGE_PROTOCOL_MARKERS.some((marker) => clean.toLowerCase().includes(marker.toLowerCase())) || DISPOSITION_BODY_RE.test(clean);
+}
+
 /** Lines that carry no reviewer reasoning and must never be reported as a reason. */
-function isNonReasonLine(line: string): boolean {
+export function isNonReasonLine(line: string): boolean {
   const t = line.trim();
   if (!t) return true;
   if (SEVERITY_LINE_RE.test(t)) return true;
   if (VERDICT_LINE_RE.test(t)) return true;
+  if (RESOLVED_PRIOR_FINDINGS_LINE_RE.test(t)) return true;
+  /* FNXC:MergerAiReview 2026-08-22-22:26: Protocol markers at line start stay non-reasons even with malformed values; inline marker prose is left to the durable-corpus defence-in-depth boundary. */
+  if (AI_MERGE_PROTOCOL_MARKERS.some((marker) => t.toLowerCase().startsWith(marker.toLowerCase()))) return true;
+  if (DISPOSITION_BODY_RE.test(cleanReasonLine(t))) return true;
   // Markdown scaffolding the reviewer may emit around its analysis.
   if (/^#{1,6}\s/.test(t)) return true;
   if (/^(?:-{3,}|={3,}|`{3,})/.test(t)) return true;
@@ -103,20 +175,34 @@ function isNonReasonLine(line: string): boolean {
 /*
 FNXC:MergerAiReview 2026-07-15-14:45:
 FN-8004 corrective merges must receive reviewer conclusions, never pasted diff or tool output. Track Markdown fences while recovering reasons on either side of a verdict so nearby evidence cannot displace actionable feedback.
+
+FNXC:MergerAiReview 2026-08-22-22:04:
+FN-159 groups contiguous review prose because treating every line as a finding split one actionable
+multi-line objection into truncated fragments that no corrective merge could address reliably.
 */
 function collectReasonLines(lines: string[], start: number, end: number, step: 1 | -1): string[] {
   const reasons: string[] = [];
+  let group: string[] = [];
   let inFence = false;
+  const flush = () => {
+    if (!group.length) return;
+    const ordered = step === -1 ? group.reverse() : group;
+    const reason = ordered.join(" ");
+    reasons.push(reason.length > MAX_REASON_CHARS ? `${reason.slice(0, MAX_REASON_CHARS - 1)}…` : reason);
+    group = [];
+  };
   for (let i = start; step === 1 ? i < end : i >= end; i += step) {
-    if (/^\s*(?:`{3,}|~{3,})/.test(lines[i])) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence || isNonReasonLine(lines[i])) continue;
-    reasons.push(cleanReasonLine(lines[i]));
+    const line = lines[i];
+    const bullet = /^\s*(?:[-*•]|\d+[.)])\s+/.test(line);
+    if (/^\s*(?:`{3,}|~{3,})/.test(line)) { flush(); inFence = !inFence; continue; }
+    if (inFence || isNonReasonLine(line)) { flush(); continue; }
+    if (bullet && step === 1) flush();
+    group.push(cleanReasonLine(line));
+    if (bullet && step === -1) flush();
     if (reasons.length >= MAX_RECOVERED_PRECEDING_REASONS) break;
   }
-  return reasons;
+  flush();
+  return reasons.slice(0, MAX_RECOVERED_PRECEDING_REASONS);
 }
 
 /*
@@ -277,19 +363,24 @@ export function buildReviewSystemPrompt(): string {
     "merged into the integration branch and decide whether it is safe to land.",
     "",
     "Investigate with read-only commands (git show, git diff, git log, cat, grep).",
-    "Judge on four axes:",
-    "  1. Completeness — does the squash contain ALL of the task branch's intended",
+    "Judge the squash's fidelity on four axes:",
+    "  1. Branch preservation — does the squash preserve the task branch's",
     "     changes? Flag any hunk silently dropped during conflict resolution.",
-    "  2. No collateral — does it touch only files within the task's footprint?",
-    "  3. Conflict soundness — were conflicts resolved coherently (both sides'",
-    "     intent preserved), not by blindly discarding one side?",
+    "  2. No collateral — does the squash add unrelated changes outside its",
+    "     branch/squash footprint?",
+    "  3. Conflict soundness — were conflicts resolved coherently (both relevant",
+    "     branch intents retained), not by blindly discarding one side?",
     "  4. Commit message — read `git show`'s message: the subject must concisely",
     "     and ACCURATELY summarize the actual changes (not vague, not a mere",
     "     restatement of the task title, not misleading). A poor/inaccurate",
     "     message is an ADVISORY concern (it should be rewritten on retry, but",
     "     must not block the merge).",
     "",
-    "Bias toward rejection when uncertain.",
+    "Whole-tree semantic or intent concerns in files untouched by this squash are",
+    "ADVISORY or follow-up material, never a blocking veto: the merger is not",
+    "authorized to edit outside branch reconciliation.",
+    "",
+    "Bias toward rejection when uncertain about squash fidelity.",
     "",
     /*
     FNXC:MergerAiReview 2026-07-15-21:30:
@@ -306,9 +397,9 @@ export function buildReviewSystemPrompt(): string {
     "vague reason produces a blind retry rather than a fix.",
     "",
     `Then add a "SEVERITY:" line:`,
-    "  - SEVERITY: blocking — a correctness problem (dropped/lost task changes,",
-    "    incomplete squash, or a conflict resolution that discards intent). The",
-    "    merge must NOT land if this is unfixable.",
+    "  - SEVERITY: blocking — a squash-fidelity defect: dropped/lost branch",
+    "    changes, unrelated collateral in the squash, or a conflict resolution",
+    "    that discards relevant branch intent. The merge must NOT land if unfixable.",
     "  - SEVERITY: advisory — a quality/style concern that does not risk",
     "    correctness; acceptable to land if unresolved.",
     "",
@@ -325,6 +416,7 @@ export function buildReviewPrompt(input: {
   squashSha: string;
   diffStat: string;
   priorReasons?: string[];
+  priorFindings?: Array<{ id: string; text: string }>;
   userComments?: TaskComment[];
 }): string {
   const lines = [
@@ -349,10 +441,10 @@ export function buildReviewPrompt(input: {
   if (input.priorReasons && input.priorReasons.length > 0) {
     lines.push(
       "",
-      "A prior pass rejected an earlier attempt for these reasons — confirm they",
-      "are now resolved in the complete resulting tree, including code outside",
-      "this squash diff. Do not approve merely because the rebuilt diff became smaller:",
-      ...input.priorReasons.map((r) => `  - ${r}`)
+      "Report each numbered prior finding under PRIOR_FINDING_DISPOSITIONS: as <id>: corrected, absent-from-squash, or still-present.",
+      "Omitted, malformed, duplicate, and unknown IDs retain the finding; prose never clears it.",
+      "Do not use whole-tree concerns outside this squash's footprint as blockers:",
+      ...(input.priorFindings ?? input.priorReasons.map((text, index) => ({ id: `legacy-${index + 1}`, text }))).map((finding) => `  - ${finding.id}: ${finding.text}`)
     );
   }
   return lines.join("\n");

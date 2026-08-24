@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * branch-group-ops operations.
  *
@@ -431,7 +433,7 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
     if (fromColumn === targetColumn) {
       // Already in the target column — nothing to move, but still record the
       // reconciliation decision for audit traceability.
-      void store.recordRunAuditEvent({
+      void emitBoundedRunAudit(store, {
         taskId,
         agentId: "system",
         runId: `workflow-reconcile-${reason}-${taskId}-${Date.now()}`,
@@ -464,7 +466,7 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
-    void store.recordRunAuditEvent({
+    void emitBoundedRunAudit(store, {
       taskId,
       agentId: "system",
       runId: `workflow-reconcile-${reason}-${taskId}-${Date.now()}`,

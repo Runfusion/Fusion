@@ -52,6 +52,8 @@ function healableTask(column: string, id = "FN-1"): Task {
     id,
     column,
     mergeRetries: 5,
+    enabledWorkflowSteps: [],
+    updatedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
     error: "Deterministic test verification failed",
     log: [{ action: "[verification] test command failed (exit 0) — output exceeded buffer" }],
     dependencies: [],
@@ -129,6 +131,14 @@ describe("the in-review enqueue sweep resolves each card's own review lane", () 
       allowInReviewMergeProcessing: vi.fn(async () => true),
       internalEnqueueMerge: (id: string) => enqueued.push(id),
       canMergeTask: ProjectEngine.prototype["canMergeTask" as keyof ProjectEngine],
+      /* FNXC:MergeAuthority 2026-08-23-18:05: the sweep now also proves graph authority per card.
+         These retry-exhausted cards are admitted as `interrupted-merge-attempt` (mergeRetries > 0),
+         and the classifier reuses the SAME IR cache, so the one-read contract below still holds. */
+      classifyMergeSweepCandidate:
+        ProjectEngine.prototype["classifyMergeSweepCandidate" as keyof ProjectEngine],
+      loadMergeSweepBatch: ProjectEngine.prototype["loadMergeSweepBatch" as keyof ProjectEngine],
+      isMergePending: async () => false,
+      mergeSweepHoldReasons: new Map<string, string>(),
       hasAutoHealableVerificationBufferFailure:
         ProjectEngine.prototype["hasAutoHealableVerificationBufferFailure" as keyof ProjectEngine],
       isRetryCooldownElapsed: () => false,

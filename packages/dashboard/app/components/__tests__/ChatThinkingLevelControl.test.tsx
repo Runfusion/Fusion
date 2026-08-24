@@ -51,7 +51,7 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("opens a popup listing Default plus all six THINKING_LEVELS and the Model / Agent section", () => {
+  it("opens a popup listing Default plus all canonical THINKING_LEVELS and the Model / Agent section", () => {
     render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={models} agents={agents} />);
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
@@ -66,6 +66,31 @@ describe("ChatThinkingLevelControl", () => {
       expect(screen.getByTestId(`chat-thinking-option-${level}`)).toBeDefined();
     }
     expect(screen.getAllByRole("option")).toHaveLength(THINKING_LEVELS.length + 1);
+  });
+
+  it("filters direct-chat levels to the selected model capability map", () => {
+    const onChange = vi.fn();
+    render(
+      <ChatThinkingLevelControl
+        level={null}
+        onChange={onChange}
+        modelProvider="openai-codex"
+        modelId="gpt-5.6-luna"
+        models={[{
+          provider: "openai-codex",
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          reasoning: true,
+          contextWindow: 372000,
+          supportedThinkingLevels: ["off", "minimal", "low", "medium", "high", "max"],
+        }]}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByTestId("chat-thinking-option-max")).toBeDefined();
+    expect(screen.queryByTestId("chat-thinking-option-xhigh")).toBeNull();
+    fireEvent.click(screen.getByTestId("chat-thinking-option-max"));
+    expect(onChange).toHaveBeenCalledWith("max");
   });
 
   it("renders only thinking-level options in level-only mode and persists selections", () => {

@@ -14,6 +14,7 @@ import "./AgentLogViewer.css";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { ToolCallDetails } from "./ToolCallDetails";
+import { ThinkingTrace } from "./ThinkingTrace";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -758,15 +759,7 @@ export function AgentLogViewer({
               <div key={group.key} className="agent-log-thinking">
                 {agentBadge}
                 <AgentLogTimingLabels entry={firstEntry} />
-                {renderMarkdown ? (
-                  <div className="markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {groupedText}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <pre className="agent-log-plain-block">{linkifyFilePaths(groupedText)}</pre>
-                )}
+                <ThinkingTrace text={groupedText} format={renderMarkdown ? "markdown" : "plain"} className={renderMarkdown ? undefined : "agent-log-plain-block"} />
               </div>
             );
           }

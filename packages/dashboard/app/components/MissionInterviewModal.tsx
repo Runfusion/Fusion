@@ -46,6 +46,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
+import { ThinkingTrace } from "./ThinkingTrace";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FloatingWindow } from "./FloatingWindow";
@@ -1000,7 +1001,7 @@ export function MissionInterviewModal({
                 </button>
                 {showThinking && streamingOutput && (
                   <div className="planning-thinking-output">
-                    <pre>{streamingOutput}</pre>
+                    <ThinkingTrace text={streamingOutput} format="plain" />
                   </div>
                 )}
               </div>

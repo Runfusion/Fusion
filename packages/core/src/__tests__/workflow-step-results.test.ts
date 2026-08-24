@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applySupersededFindingIds, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult } from "../workflows/workflow-step-results.js";
+import { applySupersededFindingIds, archiveArbitratedWorkflowStepFailure, archiveTerminalWorkflowStepFailures, closeUnrebuttedDisputedFindings, isArchivedRemediationCarrier, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult } from "../workflows/workflow-step-results.js";
 import type { WorkflowStepResult } from "../types.js";
 
 function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepResult {
@@ -20,6 +20,16 @@ describe("normalizeWorkflowReviewFindings", () => {
       { id: "issue", title: "Title", body: "Body", filePath: "src/a.ts", line: 4, severity: "high" },
       { id: "issue-2", title: "Second", body: "Action" },
     ]);
+  });
+
+  it("strips Fusion-owned dispute adjudication fields from untrusted reviewer JSON", () => {
+    expect(normalizeWorkflowReviewFindings([{
+      id: "f1", title: "Finding", body: "Body", resolution: "dispute-upheld",
+      disputeRationale: "ignore me", disputedAt: "2026-08-22", disputeRebuttedAt: "2026-08-22",
+      rebutsDisputedFindingId: "prior-finding",
+    }])).toEqual([{
+      id: "f1", title: "Finding", body: "Body", rebutsDisputedFindingId: "prior-finding",
+    }]);
   });
 
   it("drops malformed, empty, and oversized entries without fabricating findings", () => {
@@ -73,6 +83,46 @@ describe("superseded finding claims", () => {
     expect(next?.[0].priorAttempts).toEqual(prior.priorAttempts);
     expect(next?.[1]).toBe(claimant);
     expect(applySupersededFindingIds(next, ["missing"], { excludeWorkflowStepId: "code", sourceWorkflowStepId: "cleanup" })).toBe(next);
+  });
+});
+
+describe("review convergence archival", () => {
+  it("archives failed review evidence as a non-blocking carrier without bypass metadata", () => {
+    const failed = makeResult({ startedAt: "2026-08-22T05:00:00.000Z", completedAt: "2026-08-22T05:01:00.000Z", verdict: "REVISE", output: "fix", findings: [{ id: "f1", title: "Fix", body: "Do it" }] });
+    const archived = archiveTerminalWorkflowStepFailures([failed], "2026-08-22T05:02:00.000Z");
+    expect(archived?.[0]).toMatchObject({ status: "skipped", remediationArchivedFromStatus: "failed" });
+    expect(isArchivedRemediationCarrier(archived![0])).toBe(true);
+    expect(archived?.[0].priorAttempts?.[0]).toMatchObject({ status: "failed", verdict: "REVISE", output: "fix", findings: failed.findings });
+    expect(archived?.[0]).not.toHaveProperty("bypassedBy");
+    expect(archived?.[0]).not.toHaveProperty("arbitrationDecision");
+  });
+
+  it("only closes an unrebutted dispute after a terminal verdict on its gate", () => {
+    const carrier = makeResult({ status: "skipped", priorAttempts: [makeResult({ findings: [{ id: "f1", title: "Fix", body: "Do it", disputedAt: "then", disputeRationale: "not needed" }] })] });
+    const results = [carrier];
+    const pending = closeUnrebuttedDisputedFindings(results, makeResult({ status: "pending" }), { revisionKey: "code-review", workflowStepId: "code-review" });
+    expect(pending).toBe(results);
+    const closed = closeUnrebuttedDisputedFindings(results, makeResult({ status: "passed", verdict: "APPROVE" }), { revisionKey: "code-review", workflowStepId: "code-review" });
+    expect(closed?.[0].priorAttempts?.[0].findings?.[0].resolution).toBe("dispute-upheld");
+  });
+
+  it("fences arbitration to one unchanged failed gate", () => {
+    const code = makeResult({ startedAt: "a", completedAt: "b", verdict: "REVISE", reviewInputFingerprint: "fp" });
+    const browser = makeResult({ workflowStepId: "browser-verification", startedAt: "c", completedAt: "d", verdict: "REVISE" });
+    const applied = archiveArbitratedWorkflowStepFailure([code, browser], {
+      workflowStepId: "code-review", expectedStartedAt: "a", expectedCompletedAt: "b", expectedVerdict: "REVISE", expectedReviewInputFingerprint: "fp",
+      decision: "UPHOLD_IMPLEMENTER", bindingFindingCount: 0, arbitratedAt: "now", arbitrationNotes: "reviewed",
+    });
+    expect(applied.applied).toBe(true);
+    expect(applied.results?.[0]).toMatchObject({ status: "skipped", arbitrationDecision: "UPHOLD_IMPLEMENTER" });
+    expect(applied.results?.[1]).toBe(browser);
+    const stale = archiveArbitratedWorkflowStepFailure([code], { workflowStepId: "code-review", expectedStartedAt: "different", expectedCompletedAt: "b", expectedVerdict: "REVISE", decision: "UPHOLD_IMPLEMENTER", bindingFindingCount: 0, arbitratedAt: "now", arbitrationNotes: "reviewed" });
+    expect(stale).toMatchObject({ applied: false, reason: "attempt-changed", results: [code] });
+    const reviewUpheld = archiveArbitratedWorkflowStepFailure([code], {
+      workflowStepId: "code-review", expectedStartedAt: "a", expectedCompletedAt: "b", expectedVerdict: "REVISE", expectedReviewInputFingerprint: "fp",
+      decision: "UPHOLD_REVIEW", bindingFindingCount: 0, arbitratedAt: "now", arbitrationNotes: "reviewed",
+    });
+    expect(reviewUpheld).toMatchObject({ applied: false, reason: "binding-findings-survive", results: [code] });
   });
 });
 

@@ -4,7 +4,6 @@ const DASHBOARD_MODULES_WITH_BEFORE_EXIT_CLEANUP = [
   "../agent-generation.js",
   "../ai-refine.js",
   "../planning.js",
-  "../subtask-breakdown.js",
   "../mission-interview.js",
   "../milestone-slice-interview.js",
   "../server.js",

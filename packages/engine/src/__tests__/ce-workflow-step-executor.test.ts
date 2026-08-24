@@ -36,7 +36,7 @@ import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BUILTIN_WORKFLOWS, type WorkflowIr } from "@fusion/core";
+import { BUILTIN_WORKFLOWS, resolveTaskOutputLanguage, type WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
 // captureBaseCommitSha was peeled off TaskExecutor into executor/worktree-git-refs.ts (wave 18),
 // so the old per-test `vi.spyOn(executor, "captureBaseCommitSha")` seam no longer exists.
@@ -48,6 +48,7 @@ vi.mock("../executor/worktree-git-refs.js", async (importOriginal) => ({
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import {
   createMockStore,
@@ -331,6 +332,49 @@ describe("CE workflow-step executor integration", () => {
       expect(captured.step.prompt).toContain('Invoke the "compound-engineering:ce-plan" skill');
       // Original node prompt still present after the preamble.
       expect(captured.step.prompt).toContain("Plan the work.");
+    });
+
+    it("preserves the graph-start output target when a later prompt step sees edited input and settings", async () => {
+      const store = createMockStore();
+      const live = baseStepTask({
+        description: "Necesito desplegar el flujo de validación del proyecto en español.",
+      });
+      store.getTask.mockResolvedValue(live as any);
+      const { executor } = makeExecutor(store);
+      const graphStartTarget = resolveTaskOutputLanguage(
+        { taskOutputLanguage: "input" },
+        "Bonjour, ceci est une demande détaillée pour déployer le flux de validation.",
+      );
+      const executeWorkflowStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
+      const node = {
+        id: "language-snapshot-review",
+        kind: "prompt",
+        column: "review",
+        config: { prompt: "Review the implementation." },
+      };
+
+      await (executor as any).runGraphCustomNode(
+        node,
+        live,
+        { taskOutputLanguage: "interface", language: "es" },
+        undefined,
+        undefined,
+        graphStartTarget,
+      );
+
+      /*
+      FNXC:TaskOutputLanguage 2026-08-19-16:34:
+      A graph can yield before a custom prompt node executes. The node must use the
+      graph-start target rather than re-detecting this later live Spanish description.
+      */
+      expect(executeWorkflowStep).toHaveBeenCalledWith(
+        expect.objectContaining({ description: live.description }),
+        expect.anything(),
+        expect.any(String),
+        expect.objectContaining({ taskOutputLanguage: "interface", language: "es" }),
+        expect.anything(),
+        expect.objectContaining({ outputLanguage: graphStartTarget }),
+      );
     });
 
     it("lets the graph prepare a task worktree before the first CE coding-mode node runs", async () => {
@@ -669,9 +713,17 @@ describe("CE workflow-step executor integration", () => {
         live,
       );
 
+      /*
+      FNXC:WorkflowMerge 2026-08-23-23:50:
+      FN-9157 made an unprovable merge boundary its own TERMINAL failure value
+      (`MERGE_BOUNDARY_UNPROVEN_VALUE`) instead of the retryable `implementation-incomplete`
+      classification, precisely so a card that cannot prove implementation is parked rather than
+      re-entering the bounded merge retry. The property this case owns — the requester is never
+      called and the card never reaches review — is unchanged.
+      */
       expect(result).toEqual(expect.objectContaining({
         outcome: "failure",
-        value: "implementation-incomplete",
+        value: MERGE_BOUNDARY_UNPROVEN_VALUE,
       }));
       expect(mergeRequester).not.toHaveBeenCalled();
       /*
@@ -696,12 +748,13 @@ describe("CE workflow-step executor integration", () => {
         undefined,
         ANY_MUTATION_CONTEXT,
       );
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-CE-1",
-        expect.stringContaining("implementation did not run:"),
-        undefined,
-        ANY_MUTATION_CONTEXT,
-      );
+      /*
+      FNXC:WorkflowMerge 2026-08-23-23:50:
+      The later "implementation did not run:" diagnostic belonged to the implementation-proof check
+      that ran AFTER the boundary; FN-9157's boundary now refuses first (here: "no pre-merge node
+      result recorded"), so that second log line is unreachable on this path and asserting it would
+      only re-describe the retired two-stage order.
+      */
       // The card must never reach the review column on unproven implementation.
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", expect.anything(), ANY_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", undefined, ANY_MUTATION_CONTEXT);

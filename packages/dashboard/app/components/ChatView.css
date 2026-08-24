@@ -20,12 +20,11 @@
   overflow: hidden;
 }
 
-/* Sidebar */
+/* Conversation list */
 .chat-sidebar {
   min-width: 0;
-  max-width: 500px; /* FN-6210: defensive cap — matches CHAT_SIDEBAR_MAX_WIDTH */
-  border-right: 1px solid var(--border);
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   background: var(--bg-secondary);
 }
@@ -34,34 +33,49 @@
   display: none;
 }
 
-.chat-sidebar-resize-handle {
+/*
+FNXC:ViewportChrome 2026-08-23-03:40:
+FN-9193 tablet-class touch devices can be 768 CSS pixels wide, so this scoped docked rule
+must override the mobile one-pane rule while phone mode remains unchanged.
+
+FNXC:ViewportChrome 2026-08-23-17:07:
+FN-9200 keeps the docked pane width exclusively in its inline width and min-width style because
+no docked-sidebar custom-property producer exists; the tablet cascade only restores its layout bounds.
+*/
+.chat-view--docked-list .chat-sidebar--docked {
+  flex: 0 0 auto;
   position: relative;
-  width: var(--space-sm);
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-  transition: background var(--transition-fast);
+  border-right: 1px solid var(--border);
+  min-width: 0;
 }
 
-.chat-sidebar-resize-handle::before {
-  content: "";
+.chat-view--docked-list .chat-sidebar--docked .chat-sidebar-list {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.chat-sidebar__resize-handle {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
+  inset-block: 0;
+  inset-inline-end: calc(var(--space-xs) / -2);
+  width: var(--space-sm);
+  cursor: col-resize;
+  z-index: 1;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--duration-fast) var(--transition-default);
 }
 
-.chat-sidebar-resize-handle:hover::before,
-.chat-sidebar-resize-handle:active::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.chat-sidebar-resize-handle:focus-visible {
+.chat-sidebar__resize-handle:hover,
+.chat-sidebar__resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--border), transparent 35%);
   outline: none;
-  box-shadow: var(--focus-ring-strong);
+}
+
+html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked {
+  min-width: 0;
+  max-width: none;
+  height: auto;
 }
 
 .chat-sidebar-scope-toggle {
@@ -411,12 +425,6 @@ FN-8173 replaces the inline Pin/Rename/Delete cluster with one overflow trigger.
   color: var(--text);
 }
 
-.chat-mobile-session-pin:disabled {
-  color: var(--text-dim);
-  cursor: not-allowed;
-  opacity: var(--opacity-disabled);
-}
-
 .chat-session-pinned-indicator {
   flex: 0 0 auto;
   color: var(--color-warning);
@@ -491,6 +499,31 @@ FN-8191 gives the conversation action menu a token-composed border-box width. Ch
   position: relative;
 }
 
+/*
+FNXC:ChatComposer 2026-08-23-16:07:
+This clamp is class-gated rather than width-gated: iPhone landscape, iPad, compact dock, and
+narrow floating Chat can all have a visible keyboard outside a phone-width media query. The
+measured thread top accounts for host chrome above Chat instead of assuming only the app header.
+*/
+.chat-thread--keyboard-active {
+  height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--chat-thread-viewport-top, var(--header-height)));
+  max-height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--chat-thread-viewport-top, var(--header-height)));
+  /* NOTE: the translateY drift compensation is applied imperatively in
+     JS (see ChatView's vv `apply()`), NOT here. Declaring
+     `transform`/`will-change: transform` in CSS keeps a non-`none`
+     transform on .chat-thread for the entire keyboard-active window —
+     and since .chat-thread is an ancestor of the focused composer
+     textarea, iOS Safari treats establishing that containing block as a
+     reason to blur the input and collapse the keyboard the instant it
+     opens. JS only sets a transform when there is real viewport drift
+     (offsetTop > 0); at the focus moment offsetTop is 0, so the
+     ancestor stays `transform: none` and the keyboard stays up. */
+}
+
+.chat-thread--keyboard-active .chat-input-area {
+  padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--chat-keyboard-accessory-clearance, 0px));
+}
+
 .chat-thread-header {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
@@ -528,7 +561,7 @@ The active-chat pane header must give the title the full available line to the L
 
 /*
 FNXC:ChatContextWindow 2026-06-27-00:00:
-The Direct-chat context budget indicator is a secondary desktop/tablet header affordance. Keep it badge-like and shrinkable so the thread title and render toggle retain priority, and hide it at mobile widths where the session switcher owns the header.
+The Direct-chat context budget indicator is a secondary desktop/tablet header affordance. Keep it badge-like and shrinkable so the thread title retains priority, and hide it at mobile widths where Back is the only detail-navigation control.
 */
 .chat-thread-header-context {
   flex: 0 1 auto;
@@ -544,253 +577,15 @@ The Direct-chat context budget indicator is a secondary desktop/tablet header af
   color: var(--text-muted);
 }
 
-.chat-mobile-session-menu {
-  position: relative;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.chat-room-switcher-menu {
-  position: relative;
-  min-width: 0;
-}
-
-.chat-room-switcher-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  padding: 0;
-  font: inherit;
-  line-height: normal;
-  cursor: pointer;
-}
-
-.chat-room-switcher-trigger:hover {
-  color: var(--text);
-  background: var(--card-hover);
-}
-
-.chat-room-switcher-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-room-switcher-trigger > svg {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.chat-room-switcher-dropdown {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  left: 0;
-  min-width: calc(var(--space-xl) * 6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: var(--space-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-  z-index: 4;
-  max-height: calc(var(--space-xl) * 10);
-  overflow-y: auto;
-}
-
-.chat-room-switcher-option {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  padding: var(--space-sm) var(--space-md);
-  line-height: normal;
-}
-
-.chat-room-switcher-option:hover {
-  background: var(--card-hover);
-}
-
-.chat-room-switcher-option:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-room-switcher-option--active {
-  background: color-mix(in srgb, var(--todo) 12%, transparent);
-}
-
-.chat-mobile-session-trigger {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-sm);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text);
-  padding: var(--space-xs) var(--space-sm);
-  min-height: calc(var(--space-lg) * 2 + var(--space-xs));
-  font: inherit;
-  line-height: normal;
-  text-align: left;
-}
-
-.chat-mobile-session-trigger .chat-thread-header-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-mobile-session-trigger .provider-icon,
-.chat-mobile-session-trigger > svg:first-child {
-  flex-shrink: 0;
-}
-
-.chat-mobile-session-trigger > svg {
-  width: var(--icon-size-md);
-  height: var(--icon-size-md);
-}
-
-.chat-mobile-session-trigger svg:last-child {
-  margin-left: auto;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.chat-mobile-session-trigger:hover {
-  background: var(--card-hover);
-}
-
-.chat-mobile-session-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-mobile-session-dropdown {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: var(--space-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-  z-index: 4;
-  max-height: calc(var(--space-xl) * 10);
-  overflow-y: auto;
-}
-
 /*
-FNXC:Chat 2026-06-16-22:12:
-Mobile chat session switching needs a dedicated rename tap target beside each session without nesting buttons, so the row owns layout while the title and rename controls remain independently keyboard accessible.
+FNXC:ChatNavigation 2026-08-20-05:25:
+FN-068 puts the only Back action beside the selected conversation title. Do not override ViewHeader actions for detail mode: floating Open in Chat view and Close must retain ViewHeader's canonical right alignment.
+
+FNXC:ChatNavigation 2026-08-20-23:57:
+FN-096 keeps the shared-header New Chat action visible in selected detail as well as list mode. Its shrinkable token-based sizing preserves the floating Close and the thread-row Back action on narrow embedded, floating, and dock hosts.
 */
-.chat-mobile-session-option-row {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-xs);
-  border-radius: var(--radius-sm);
-}
-
-.chat-mobile-session-option {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  min-height: calc(var(--space-lg) * 2.25);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  padding: var(--space-sm) var(--space-md);
-  line-height: normal;
-}
-
-.chat-mobile-session-pin,
-.chat-mobile-session-rename {
-  flex-shrink: 0;
-  align-self: stretch;
-  color: var(--text-muted);
-}
-
-.chat-mobile-session-pin:hover,
-.chat-mobile-session-pin:focus-visible,
-.chat-mobile-session-rename:hover {
-  color: var(--text);
-  background: var(--card-hover);
-}
-
-.chat-mobile-session-option:hover {
-  background: var(--card-hover);
-}
-
-.chat-mobile-session-option:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-mobile-session-option--active {
-  background: color-mix(in srgb, var(--todo) 12%, transparent);
-}
-
-.chat-mobile-session-new {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: 100%;
-  margin-top: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  border: none;
-  border-top: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  line-height: normal;
-}
-
-.chat-mobile-session-new svg {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.chat-mobile-session-new:hover {
-  background: var(--card-hover);
-}
-
-.chat-mobile-session-new:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-mobile-session-option-title {
-  width: 100%;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  line-height: normal;
-  white-space: normal;
-  overflow-wrap: anywhere;
+.chat-thread-header-back {
+  flex: 0 0 auto;
 }
 
 .chat-view-header-new-chat {
@@ -803,42 +598,6 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
 }
 
 .chat-view .view-header__actions {
-  min-width: 0;
-}
-
-/*
-FNXC:ChatHeader 2026-07-02-17:26:
-Mobile direct-chat detail uses ViewHeader as the only visible header row. The back arrow must be the far-left visible/focusable control and the session selector must stay on that same non-wrapping row, so hide the entire Chat title/icon shell from layout while retaining the accessible heading and make the actions cluster own the row from the left edge.
-*/
-.chat-view--mobile-direct-thread > .view-header {
-  flex-wrap: nowrap;
-}
-
-.chat-view--mobile-direct-thread > .view-header .view-header__title {
-  position: absolute;
-  inline-size: var(--btn-border-width);
-  block-size: var(--btn-border-width);
-  margin: calc(var(--btn-border-width) * -1);
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.chat-view--mobile-direct-thread > .view-header .view-header__actions {
-  flex: 1 1 auto;
-  width: 100%;
-  min-width: 0;
-  margin-left: 0;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-}
-
-.chat-view--mobile-direct-thread .chat-back-btn {
-  flex: 0 0 auto;
-}
-
-.chat-view--mobile-direct-thread .chat-mobile-session-menu {
-  flex: 1 1 0;
   min-width: 0;
 }
 
@@ -897,8 +656,8 @@ Mobile direct-chat detail uses ViewHeader as the only visible header row. The ba
 }
 
 /*
-FNXC:ChatModal 2026-06-22-13:22:
-The old Quick Chat panel is replaced by the full ChatView inside a movable FloatingWindow. In floating mode ChatView's shared header is the only visible modal header and doubles as the drag handle, with minimize/close controls in the same action row.
+FNXC:ChatModal 2026-08-20-05:25:
+FN-068 keeps the floating Chat ViewHeader as the only visible modal header and drag handle. Its action row contains Open in Chat view and Close only; Close remains available at narrow sizes while CSS hides only Open in Chat view when it cannot fit.
 */
 .chat-view--floating .view-header {
   cursor: grab;
@@ -924,8 +683,8 @@ desktop geometry, and every other ViewHeader consumer remain unchanged.
 }
 
 /*
-FNXC:ChatModal 2026-06-22-14:38:
-Floating Chat can become narrow while the browser viewport remains desktop-sized. Mirror the mobile one-pane layout with a class driven by the modal ResizeObserver so a narrow pop-out hides the sidebar and shows the mobile thread/list surfaces.
+FNXC:ChatNavigation 2026-08-23-03:55:
+A narrow floating host keeps the one-pane list/detail flow. FN-9193 adds a docked list only for non-floating tablet-or-wider hosts, so this narrow layout must still hide selected detail through .chat-sidebar--hidden.
 */
 .chat-view--narrow .chat-view__body {
   flex-direction: column;
@@ -950,19 +709,19 @@ Floating Chat can become narrow while the browser viewport remains desktop-sized
   min-height: calc(var(--space-2xl) + var(--space-xs));
 }
 
+.chat-view--narrow .chat-sidebar-filter-row {
+  flex-wrap: wrap;
+}
+
 .chat-view--narrow .chat-sidebar-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
 
-.chat-view--narrow .chat-sidebar:not(.chat-sidebar--hidden) + .chat-thread {
-  display: none;
-}
-
 /*
-FNXC:ChatModal 2026-06-22-18:00:
-In the narrow/mobile chat layout there is no room for an expand/maximize affordance in the header. Hide only the expand controls (main Chat pop-out and floating-modal maximize); keep minimize/close visible so the user can still dismiss or dock the chat.
+FNXC:ChatModal 2026-08-20-05:25:
+In the narrow/mobile chat layout there is no room for an Open in Chat view affordance in the header. Hide only the expand controls (main Chat pop-out and floating-modal maximize); keep Close visible so the user can still dismiss floating Chat.
 */
 .chat-view--narrow [data-testid="chat-pop-out"],
 .chat-view--narrow [data-testid="chat-modal-maximize"] {
@@ -988,20 +747,51 @@ In the narrow/mobile chat layout there is no room for an expand/maximize afforda
   margin-bottom: var(--space-md);
 }
 
-@media (max-width: 768px) {
-  .chat-mobile-session-option-row {
-    align-items: stretch;
-  }
-
-  .chat-mobile-session-rename {
-    min-width: calc(var(--space-lg) * 2.25);
-  }
-}
-
 /*
 FNXC:ChatRenderToggle 2026-07-04-00:00:
 The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle*`, desktop + mobile floating variants) was removed per FN-7541. Chat always renders Markdown now; the button and its CSS shells no longer exist.
 */
+
+/*
+FNXC:ChatFind 2026-08-21-16:29:
+FN-110 keeps the conversation-local Find row compact across Chat hosts and distinguishes a matching row from the currently navigated result using existing semantic tokens.
+*/
+.chat-conversation-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.chat-conversation-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-conversation-search-status {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chat-message--search-match {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 55%, transparent);
+}
+
+.chat-message--search-active {
+  box-shadow: inset 0 0 0 2px var(--color-warning);
+}
+
+@media (max-width: 768px) {
+  .chat-conversation-search {
+    flex-wrap: wrap;
+  }
+
+  .chat-conversation-search-input {
+    min-inline-size: 0;
+  }
+}
 
 /* Messages */
 .chat-messages {
@@ -1046,6 +836,29 @@ The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
+}
+
+/*
+FNXC:ChatMessageLayout 2026-08-18-20:27:
+Full-width conversation mode is scoped to the ChatView root so normal Chat, Rooms, CLI transcripts, Quick Chat, and dock hosts share one override while the default bubble selectors remain unchanged. Stretch the message blocks, not their shared StandardChatSurface markup, so streaming, failures, tools, thinking, and attachments retain their existing semantics.
+*/
+.chat-view--full-width .chat-message,
+.chat-view--full-width .chat-message--user,
+.chat-view--full-width .chat-message--assistant,
+.chat-view--full-width .chat-message--streaming,
+.chat-view--full-width .chat-message--failure {
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+}
+
+/* Keep the selected mode explicit in narrow hosts; container/mobile rules must not reintroduce side alignment or a cap. */
+@media (max-width: 768px) {
+  .chat-view--full-width .chat-message {
+    width: 100%;
+    max-width: 100%;
+    align-self: stretch;
+  }
 }
 
 /*
@@ -1191,6 +1004,30 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
 .chat-message-content--markdown {
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/*
+FNXC:ChatStreaming 2026-08-19-13:52:
+Shared Chat Markdown links need page-text contrast against assistant bubbles and a persistent affordance in desktop, compact, and mobile hosts. Scope the treatment here so terminal-only and unrelated Markdown renderers keep their own contracts.
+*/
+.chat-message-content--markdown a,
+.chat-message-content--markdown a:visited {
+  color: var(--text);
+  text-decoration-line: underline;
+  text-decoration-color: var(--text);
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+
+.chat-message-content--markdown a:hover,
+.chat-message-content--markdown a:focus-visible {
+  color: var(--text);
+  text-decoration-color: var(--text);
+}
+
+.chat-message-content--markdown a:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .chat-message-content--failure {
@@ -1466,7 +1303,9 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
 
 .chat-message-edit-textarea {
   width: 100%;
-  resize: vertical;
+  resize: none;
+  overflow-y: hidden;
+  max-height: none;
   min-height: calc(var(--space-lg) * 4);
   font: inherit;
   color: var(--text);
@@ -1573,14 +1412,14 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
 }
 
 .chat-message-thinking-content {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 8px;
+  padding: var(--space-2);
   background: var(--bg);
-  border-radius: 6px;
-  margin-top: 4px;
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-1);
   white-space: pre-wrap;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   overflow-x: auto;
 }
 
@@ -1912,6 +1751,10 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   font-size: 0.8125rem;
 }
 
+/*
+FNXC:ChatComposer 2026-08-20-19:25:
+FN-076 requires ChatView composers to use automatic-only sizing through five rendered lines. The controller owns capped overflow and shrink-to-minimum behavior, while this rule removes native mouse resizing at every breakpoint.
+*/
 .chat-input-textarea {
   /* FN-5322: this textarea sits directly inside `.chat-input-wrapper`, which
      is a column flex container (via AgentMentionPopup.css). Keep it out of
@@ -1924,19 +1767,16 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   appearance: none;
   resize: none;
   overflow-y: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-sm) var(--space-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   font-family: inherit;
   line-height: 1.4;
-  max-height: 640px;
-  min-height: 40px;
-  /* Mobile keeps the desktop 640px cap because the surrounding chat-input-area
-     and thread flex bounds already prevent the composer from overtaking
-     the message pane before textarea scrolling engages. */
+  max-height: none;
+  min-height: calc(var(--space-2xl) + var(--space-sm));
   /* touch-action: manipulation allows tap-to-focus (so iOS doesn't
      auto-dismiss the keyboard between gesture frames) and blocks
      double-tap zoom + pan/zoom gestures. We previously tried `none`
@@ -1946,12 +1786,9 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   overscroll-behavior: contain;
 }
 
-/* FN-6212: On tablet viewports (769–1024px), cap the composer to 200px
-   so it doesn't consume most of the visible thread. Desktop keeps 640px;
-   mobile is already flex-constrained by the chat-thread layout. */
-@media (min-width: 769px) and (max-width: 1024px) {
+@media (max-width: 768px) {
   .chat-input-textarea {
-    max-height: 200px;
+    resize: none;
   }
 }
 
@@ -2356,61 +2193,6 @@ Thinking-section text uses the defined muted text token across all themes. The m
   box-shadow: var(--focus-ring-strong);
 }
 
-/* === Chat Pending Message === */
-/*
-FNXC:ChatComposer 2026-06-27-00:00:
-Queued-message banners stack above the composer input with a capped scroll area, and the shared divider below them makes the queued state visually distinct without rendering an empty rule when the FIFO queue is empty.
-*/
-.chat-pending-stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  width: 100%;
-  max-height: calc(var(--space-xl) * 6);
-  overflow-y: auto;
-}
-
-.chat-pending-message {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: 100%;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--todo) 10%, transparent);
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.chat-pending-divider {
-  width: 100%;
-  border-top: 1px solid var(--border);
-}
-
-.chat-pending-message span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-pending-message-dismiss {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: var(--space-xs);
-  line-height: 1;
-  flex-shrink: 0;
-  font-size: 0.875rem;
-}
-
-.chat-pending-message-dismiss:hover {
-  color: var(--text-muted);
-}
-
 /* Sidebar footer contains the primary chat-scope action on desktop and mobile. */
 .chat-sidebar-footer {
   display: block;
@@ -2431,14 +2213,18 @@ Queued-message banners stack above the composer input with a capped scroll area,
    visible, the thread is hidden; when the sidebar is hidden (a session is
    open), the sidebar is collapsed via .chat-sidebar--hidden and the
    thread takes the full viewport. The thread already renders a back
-   button (ChevronLeft) on mobile to flip back to the session list. */
+   button (ArrowLeft) on mobile to flip back to the session list. */
 @media (max-width: 768px) {
-  .chat-pending-stack {
-    max-height: calc(var(--space-xl) * 5);
+  html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-view__body {
+    flex-direction: row;
   }
 
-  .chat-pending-message {
-    align-items: flex-start;
+  html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked {
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
   }
 
   .chat-view__body {
@@ -2468,32 +2254,6 @@ Queued-message banners stack above the composer input with a capped scroll area,
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-  }
-
-  /* When the sidebar is shown, the thread is hidden so only the session
-     list is visible. When the sidebar is hidden, the thread fills the
-     viewport. Adjacent-sibling selector keeps logic in CSS only. */
-  .chat-sidebar:not(.chat-sidebar--hidden) + .chat-thread {
-    display: none;
-  }
-
-  .chat-thread--keyboard-active {
-    height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--header-height));
-    max-height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--header-height));
-    /* NOTE: the translateY drift compensation is applied imperatively in
-       JS (see ChatView's vv `apply()`), NOT here. Declaring
-       `transform`/`will-change: transform` in CSS keeps a non-`none`
-       transform on .chat-thread for the entire keyboard-active window —
-       and since .chat-thread is an ancestor of the focused composer
-       textarea, iOS Safari treats establishing that containing block as a
-       reason to blur the input and collapse the keyboard the instant it
-       opens. JS only sets a transform when there is real viewport drift
-       (offsetTop > 0); at the focus moment offsetTop is 0, so the
-       ancestor stays `transform: none` and the keyboard stays up. */
-  }
-
-  .chat-thread--keyboard-active .chat-input-area {
-    padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--chat-keyboard-accessory-clearance, 0px));
   }
 
   /* On mobile, the active scope affordance uses a full-width pinned footer. */
@@ -2537,18 +2297,6 @@ Queued-message banners stack above the composer input with a capped scroll area,
     white-space: nowrap;
     overflow: visible;
   }
-
-  .chat-mobile-session-menu {
-    width: 100%;
-  }
-
-  .chat-room-switcher-dropdown {
-    left: 0;
-    right: auto;
-    min-width: calc(var(--space-xl) * 5);
-    max-width: min(calc(var(--space-xl) * 10), calc(100vw - var(--space-2xl)));
-  }
-
   .chat-thread-header-identity .chat-thread-header-title,
   .chat-thread-header-identity .chat-model-tag {
     overflow: hidden;
@@ -2751,9 +2499,23 @@ Queued-message banners stack above the composer input with a capped scroll area,
   border-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
 }
 
-/* FNXC:ChatTags 2026-08-05-10:55: shared ChatView hosts expose Direct-only tag filters and compact chips without introducing a second sidebar layout. */
-.chat-tag-filter { display: flex; align-items: center; gap: var(--space-xs); color: var(--text-muted); }
-.chat-tag-filter select { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--text); padding: var(--space-xs); }
+/*
+FNXC:ChatTags 2026-08-05-10:55:
+Shared ChatView hosts expose Direct-only tag filters and compact chips without introducing a second sidebar layout.
+
+FNXC:ChatTags 2026-08-23-15:51:
+The tag filter select must use the sibling sidebar search input's comfortable token-based inner padding so "All tags" is not flush against its border across desktop, narrow, and mobile hosts.
+
+FNXC:ChatArchived 2026-08-23-16:27:
+The compact Archived toggle shares the narrowed tag-filter line, with tokenized row padding separating the search input and session list. Narrow and mobile sidebars may wrap the controls rather than clipping or horizontally overflowing them.
+*/
+.chat-sidebar-filter-row { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) 0; min-width: 0; }
+.chat-tag-filter { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-xs); min-width: 0; overflow: hidden; color: var(--text-muted); }
+.chat-tag-filter > svg,
+.chat-tag-filter > .btn-icon { flex: 0 0 auto; }
+.chat-tag-filter select { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--text); padding: var(--space-sm) var(--space-md); }
+.chat-archived-toggle { flex: 0 0 auto; padding-inline: var(--space-sm); white-space: nowrap; }
+.chat-archived-toggle--active { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .chat-session-tags { display: flex; flex-wrap: wrap; gap: var(--space-xs); overflow: hidden; }
 .chat-session-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-muted); font-size: var(--font-size-xs); }
 /* FNXC:ChatTags 2026-08-05-12:15: direct-conversation tag controls keep assignment, rename, and deletion in the existing context menu so shared Chat hosts do not grow another sidebar action row. */
@@ -2764,6 +2526,7 @@ Queued-message banners stack above the composer input with a capped scroll area,
 .chat-tag-create-row { display: flex; gap: var(--space-xs); }
 .chat-tag-create-row .input { min-width: 0; }
 @media (max-width: 768px) {
+  .chat-sidebar-filter-row { flex-wrap: wrap; }
   .chat-session-tags { max-height: calc(var(--space-lg) * 2); }
   /*
   FNXC:ChatTags 2026-07-24-23:05:

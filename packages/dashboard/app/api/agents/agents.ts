@@ -63,9 +63,14 @@ export interface AgentPromptSizePoint {
   totalChars: number;
 }
 
-/** Fetch workspace sub-repos for a project */
-export function fetchWorkspaceRepos(projectId?: string): Promise<{ repos: string[] }> {
-  return api<{ repos: string[] }>(withProjectId("/git/workspace-repos", projectId));
+/** Fetch workspace sub-repos for a project. Existing callers keep the no-options shape. */
+export function fetchWorkspaceRepos(projectId?: string, options?: { includeAvailable?: boolean }): Promise<{ repos: string[]; available?: string[] }> {
+  const suffix = options?.includeAvailable ? "?includeAvailable=1" : "";
+  return api<{ repos: string[]; available?: string[] }>(withProjectId(`/git/workspace-repos${suffix}`, projectId));
+}
+
+export function addWorkspaceRepo(repo: string, projectId?: string): Promise<{ repos: string[]; outcome: "added" | "already-member" }> {
+  return api<{ repos: string[]; outcome: "added" | "already-member" }>(withProjectId("/git/workspace-repos", projectId), { method: "POST", body: JSON.stringify({ repo }) });
 }
 
 /** Fetch all agents, optionally filtered by state or role */

@@ -707,7 +707,8 @@ async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
     expect(fetchSettings).toHaveBeenCalled();
     if (mockUseViewportMode() === "mobile") {
-      expect(screen.getByTestId("mobile-view-toggle")).toBeTruthy();
+      expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeTruthy();
+      expect(screen.getByTestId("mobile-nav-tab-list")).toBeTruthy();
     } else {
       expect(screen.getByTitle("Settings")).toBeTruthy();
     }
@@ -781,7 +782,7 @@ describe("FN-8698 retained Board and List task popups", () => {
     const overlayFor = (view: "board" | "list") => `floating-window-overlay-task-detail-FN-8698-${view}`;
     const showView = async (view: "board" | "list") => {
       const navigationTestId = viewport === "mobile"
-        ? `mobile-view-toggle-${view}`
+        ? `mobile-nav-tab-${view === "board" ? "tasks" : "list"}`
         : `sidebar-nav-${view}`;
       fireEvent.click(screen.getByTestId(navigationTestId));
       await waitFor(() => expect(document.querySelector(taskSelector(view))).toBeTruthy());
@@ -4873,7 +4874,8 @@ describe("FN-5817 mobile auto-merge toggle stability", () => {
     render(<App />);
 
     const toggle = await screen.findByRole("checkbox", { name: "Auto-merge" });
-    expect(screen.getByTestId("mobile-view-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-list")).toBeInTheDocument();
     expect(document.querySelector("main.board")).not.toBeNull();
     expect(screen.getByText("In review task")).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong")).toBeNull();
@@ -4885,7 +4887,8 @@ describe("FN-5817 mobile auto-merge toggle stability", () => {
         expect.objectContaining({ autoMerge: expect.any(Boolean) }),
         DEFAULT_PROJECT_ID,
       );
-      expect(screen.getByTestId("mobile-view-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-list")).toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Auto-merge" })).toBeInTheDocument();
       expect(document.querySelector("main.board")).not.toBeNull();
       expect(screen.getByText("In review task")).toBeInTheDocument();
@@ -4955,7 +4958,8 @@ describe("App shell connection status plumbing", () => {
 
     await waitFor(() => {
       expect(mockGetShellConnectionNativeResult).toHaveBeenCalledWith(mockShellHostContextValue.host);
-      expect(screen.getByTestId("mobile-view-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-list")).toBeInTheDocument();
     });
 
     expect(screen.queryByTestId("shell-connection-status-button")).toBeNull();

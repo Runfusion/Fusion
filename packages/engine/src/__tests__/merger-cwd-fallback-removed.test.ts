@@ -29,6 +29,8 @@ describe("FN-5348 cwd integration fallback removed", () => {
   it.skipIf(!hasGit || !hasPg)("Scenario A/B: dirty reused worktree is autostashed and the merge proceeds without any cwd fallback", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-5348-DIRTY-AUTOSTASH",
+      /* FNXC:MergeFixtures 2026-08-23-18:36: this scenario exercises merge MECHANICS, not review gating. The built-in workflow enables Plan/Code Review by default and the merge door refuses a task whose enabled optional pre-merge groups produced no result, so the fixture declares no enabled steps. */
+      task: { enabledWorkflowSteps: [] } as any,
       settings: {
         baseBranch: "master",
         mergeIntegrationWorktree: "reuse-task-worktree",
@@ -47,6 +49,8 @@ describe("FN-5348 cwd integration fallback removed", () => {
       await store.updateTask(task.id, {
         baseBranch: "master",
         branch,
+        // FNXC:MergeFixtures 2026-08-23-18:32: TaskStore requires branchWriteOrigin whenever `branch` is written; the engine binds a task to its worktree branch, so fixtures declare "engine".
+        branchWriteOrigin: "engine",
         steps: completedSteps,
         currentStep: completedSteps.length,
       } as any);
@@ -54,7 +58,7 @@ describe("FN-5348 cwd integration fallback removed", () => {
       await fixture.writeAndCommit("packages/engine/src/fn-5348-dirty.ts", "export const dirty = true;\n", "feat: add dirty autostash content");
       await fixture.checkout("master");
       git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
-      await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
+      await store.updateTask(task.id, { worktree: worktreePath, branch, branchWriteOrigin: "engine" } as any);
       await store.enqueueMergeQueue(task.id);
       git(worktreePath, "sh -c 'printf dirty > DIRTY.txt'");
 
@@ -92,6 +96,8 @@ describe("FN-5348 cwd integration fallback removed", () => {
   it.skipIf(!hasGit || !hasPg)("Scenario D: explicit opt-in (legacy alias) emits warning", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-5348-CWD-OPTIN",
+      /* FNXC:MergeFixtures 2026-08-23-18:36: merge-mechanics fixture; no pre-merge review gate is under test. */
+      task: { enabledWorkflowSteps: [] } as any,
       settings: {
         baseBranch: "master",
         mergeIntegrationWorktree: "cwd-main",
@@ -110,6 +116,8 @@ describe("FN-5348 cwd integration fallback removed", () => {
       await store.updateTask(task.id, {
         baseBranch: "master",
         branch,
+        // FNXC:MergeFixtures 2026-08-23-18:32: TaskStore requires branchWriteOrigin whenever `branch` is written; the engine binds a task to its worktree branch, so fixtures declare "engine".
+        branchWriteOrigin: "engine",
         steps: completedSteps,
         currentStep: completedSteps.length,
       } as any);

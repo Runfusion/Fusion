@@ -17,7 +17,9 @@ vi.mock("../agents/agent-instructions.js", async () => {
   const actual = await vi.importActual<typeof import("../agents/agent-instructions.js")>("../agents/agent-instructions.js");
   return { ...actual, ensureDefaultHeartbeatProcedureFile: memory.ensure };
 });
-vi.mock("../logger.js", () => ({ heartbeatLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() }, createLogger: vi.fn(() => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() })) }));
+// FNXC:EngineTests 2026-08-23-18:50: createLogger returns four channels; a three-method mock throws
+// "<log>.debug is not a function" on the first demoted call and fails every case in this file.
+vi.mock("../logger.js", () => ({ heartbeatLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }, createLogger: vi.fn(() => ({ log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() })) }));
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
 import { MemoryConsolidationError } from "../memory/index.js";
 

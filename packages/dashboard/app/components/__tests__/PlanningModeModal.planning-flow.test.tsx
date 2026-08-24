@@ -1776,6 +1776,25 @@ describe("PlanningModeModal sequential flow", () => {
   the workspace loader (summary present), which previously showed only a spinner + elapsed
   time; this pins the streamed thinking pane there too.
   */
+  it("keeps titled reasoning expanded in the initial Planning Mode loader while streaming appends", async () => {
+    const trace = "**Ensuring Docker build includes dev dependencies for tests**\n\nDocker tests need development dependencies.\n\n**Planning deployment commit structure**\n\nDeployment commits remain independently reviewable.";
+    mockFetchAiSession.mockResolvedValue({ ...base, status: "generating", currentQuestion: null, result: null, inputPayload: "{}" });
+    renderSession();
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
+    const handlers = mockConnectPlanningStream.mock.calls[0]?.[2];
+    act(() => handlers?.onThinking?.(trace));
+
+    const output = await screen.findByText("Deployment commits remain independently reviewable.");
+    const container = output.closest(".planning-thinking-output")!;
+    const sections = container.querySelectorAll<HTMLElement>("[data-testid='thinking-trace-section']");
+    expect(sections).toHaveLength(2);
+    expect([...sections].every((section) => section.open)).toBe(true);
+    const first = sections[0];
+    act(() => handlers?.onThinking?.("\n\n**Editing README content**\n\nREADME edits remain visible in their own section."));
+    expect(container.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(3);
+    expect(container.querySelector("[data-testid='thinking-trace-section']")).toBe(first);
+  });
+
   it("streams thinking in the workspace loader during follow-up generations", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
@@ -1788,11 +1807,17 @@ describe("PlanningModeModal sequential flow", () => {
 
     await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
     const handlers = mockConnectPlanningStream.mock.calls[0]?.[2];
-    act(() => handlers?.onThinking?.("Weighing the tradeoffs between approaches…"));
+    const trace = "**Ensuring Docker build includes dev dependencies for tests**\n\nDocker tests need development dependencies.\n\n**Planning deployment commit structure**\n\nDeployment commits remain independently reviewable.";
+    act(() => handlers?.onThinking?.(trace));
 
-    expect(await screen.findByText("Weighing the tradeoffs between approaches…")).toBeInTheDocument();
+    const output = await screen.findByText("Deployment commits remain independently reviewable.");
+    const container = output.closest(".planning-thinking-output")!;
+    const sections = container.querySelectorAll<HTMLElement>("[data-testid='thinking-trace-section']");
+    expect(sections).toHaveLength(2);
+    expect([...sections].every((section) => section.open)).toBe(true);
+    expect(container.parentElement?.classList).toContain("planning-thinking-container");
     fireEvent.click(screen.getByRole("button", { name: "Hide thinking" }));
-    expect(screen.queryByText("Weighing the tradeoffs between approaches…")).toBeNull();
+    expect(screen.queryByText("Deployment commits remain independently reviewable.")).toBeNull();
   });
   it("returns to the prior question without an error when generation is stopped", async () => {
     const priorQuestion = { id: "q-prior", type: "text", question: "What should change?" };

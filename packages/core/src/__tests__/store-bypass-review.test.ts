@@ -48,9 +48,9 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
     return h.store();
   }
 
-  async function seedInReviewTask(id: string, options: { workflowStepResults?: WorkflowStepResult[]; paused?: boolean } = {}) {
+  async function seedInReviewTask(id: string, options: { workflowStepResults?: WorkflowStepResult[]; paused?: boolean; workflowId?: string } = {}) {
     await store().createTaskWithReservedId(
-      { description: `Task ${id}`, column: "in-review" },
+      { description: `Task ${id}`, column: "in-review", workflowId: options.workflowId },
       { taskId: id, applyDefaultWorkflowSteps: false },
     );
     await store().updateTask(id, {
@@ -144,8 +144,26 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
     ).rejects.toThrow(/paused/);
   });
 
-  it("rejects when there is no failed pre-merge step", async () => {
+  it("records a skipped result for an enabled gate that never produced a result", async () => {
+    await seedInReviewTask("FN-BYP-ABSENT", { workflowStepResults: [], workflowId: "builtin:coding" });
+
+    const updated = await store().bypassFailedPreMergeReviewStep("FN-BYP-ABSENT", {
+      reason: "operator bypass for a resultless required gate",
+      actor: "operator-absent",
+    });
+
+    const result = updated.workflowStepResults?.find((entry) => entry.workflowStepId === "plan-review");
+    expect(result).toMatchObject({
+      status: "skipped",
+      bypassedFromStatus: "absent",
+      bypassedBy: "operator-absent",
+    });
+    expect(result?.verdict).toBeUndefined();
+  });
+
+  it("rejects when there is no failed or enabled resultless pre-merge step", async () => {
     await seedInReviewTask("FN-BYP-005", { workflowStepResults: [failedStep({ status: "passed" })] });
+    await store().updateTask("FN-BYP-005", { enabledWorkflowSteps: [] });
     await expect(
       store().bypassFailedPreMergeReviewStep("FN-BYP-005", { reason: "x", actor: "operator" }),
     ).rejects.toThrow(/no failed pre-merge review step/);

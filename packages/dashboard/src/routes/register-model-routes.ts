@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "@fusion/core";
+import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
@@ -9,8 +9,12 @@ import { getGrokPickerModels, GROK_PICKER_PROVIDER_ID } from "../grok-model-cach
 import { getClaudePickerModels, CLAUDE_PICKER_PROVIDER_ID } from "../claude-model-cache.js";
 import { getOmpPickerModels, OMP_PICKER_PROVIDER_ID } from "../omp-model-cache.js";
 import { getHermesPickerModels, HERMES_PICKER_PROVIDER_ID } from "../hermes-model-cache.js";
-import { refreshModelRegistryForRequest } from "../model-registry-refresh-cache.js";
-import type { AuthStorageLike } from "../routes.js";
+import {
+  invalidateModelRegistryRefreshCache,
+  refreshModelRegistryForRequest,
+} from "../model-registry-refresh-cache.js";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import type { AuthStorageLike, ModelRegistryModelLike } from "../routes.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 /**
@@ -184,6 +188,26 @@ function getAdvertisedModelIdsForCredential(
 FNXC:ProviderAuth 2026-08-01-08:39:
 Expose instance availability beside the catalog rather than copying every model per credential. Reuse the existing API-key/OAuth configured-provider gate to derive only real default-versus-instance deltas; an arbitrary stored field or a network probe would fabricate availability data.
 */
+/*
+FNXC:ModelThinkingCapabilities 2026-08-18-23:38:
+Pi's model registry is the source of truth for model-bound thinking controls. The pinned SDK helper implements the documented reasoning=false and thinkingLevelMap tristate rules; the structural fallback keeps this route compatible with registry facades and older SDKs without inferring capabilities from provider or model names.
+*/
+function deriveSupportedThinkingLevels(model: ModelRegistryModelLike): ThinkingLevel[] | undefined {
+  if (!model.reasoning) return ["off"];
+  if (!model.thinkingLevelMap || typeof model.thinkingLevelMap !== "object") return undefined;
+
+  try {
+    const supported = getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]);
+    return supported.filter((level): level is ThinkingLevel => (THINKING_LEVELS as readonly string[]).includes(level));
+  } catch {
+    return THINKING_LEVELS.filter((level) => {
+      const mapped = model.thinkingLevelMap?.[level];
+      if (mapped === null) return false;
+      return level !== "xhigh" && level !== "max" ? true : typeof mapped === "string";
+    });
+  }
+}
+
 function getProviderInstances(
   authStorage: AuthStorageLike | undefined,
   advertisedProviders: Iterable<string>,
@@ -227,6 +251,23 @@ function getProviderInstances(
 
 export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, options, store, runtimeLogger } = ctx;
+
+  /*
+  FNXC:BuiltInModelRefresh 2026-08-18-23:05:
+  The Authentication action is an explicit operator refresh for the shared built-in catalog. Invalidate only this registry generation, then reuse the existing bounded single-flight seam so a hung or stale refresh retains its last good rows and cannot overlap provider reloads.
+  */
+  router.post("/models/refresh", async (_req, res) => {
+    if (!options?.modelRegistry) {
+      res.json({ outcome: "failed", error: "Model registry unavailable" });
+      return;
+    }
+
+    invalidateModelRegistryRefreshCache(options.modelRegistry);
+    const outcome = await refreshModelRegistryForRequest(options.modelRegistry);
+    res.json(outcome === "failed"
+      ? { outcome, error: "Model catalog refresh failed; showing the last available models." }
+      : { outcome });
+  });
 
   router.get("/models", async (_req, res) => {
     // Get favoriteProviders/favoriteModels and default model from global settings.
@@ -348,13 +389,17 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
          */
         mergeSupplementalOpenAiCodexModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalOpenAiCodexModels>[0], (message) => runtimeLogger.child("models").warn(message));
       }
-      let models = options.modelRegistry.getAvailable().map((m) => ({
-        provider: m.provider,
-        id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-      }));
+      let models = options.modelRegistry.getAvailable().map((m) => {
+        const supportedThinkingLevels = deriveSupportedThinkingLevels(m);
+        return {
+          provider: m.provider,
+          id: m.id,
+          name: m.name,
+          reasoning: m.reasoning,
+          contextWindow: m.contextWindow,
+          ...(supportedThinkingLevels ? { supportedThinkingLevels } : {}),
+        };
+      });
 
       /*
       FNXC:ProviderAuth 2026-08-15-20:57:

@@ -1,3 +1,5 @@
+import type { ThinkingLevel } from "../types/board/board.js";
+
 type OpenAiCodexModelInput = "text" | "image";
 
 export const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
@@ -35,7 +37,8 @@ interface OpenAiCodexModelRegistration {
   api?: "openai-codex-responses";
   baseUrl?: string;
   reasoning: boolean;
-  thinkingLevelMap?: Record<string, string | null>;
+  /** Pi's documented tristate model capability map; omitted levels retain provider defaults only for standard levels. */
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
   input: OpenAiCodexModelInput[];
   cost: {
     input: number;

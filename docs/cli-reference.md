@@ -149,10 +149,9 @@ fn init
 fn init --name my-project --path /absolute/path/to/project
 ```
 
-When the target directory is not already a Git repository, Fusion initializes
-minimal Git metadata during registration so task worktrees can be created. Use
-`fn init --git` only when you also want Fusion to create the explicit starter
-commit used by that flag.
+Project initialization is always execution-ready. When the target directory is not already a Git repository, Fusion runs `git init`, creates a verifiable baseline `HEAD` containing only the managed `.gitignore`, and verifies that task worktrees can be created. An existing committed repository keeps its history, branch, remotes, configuration, index, and user changes; missing managed ignore rules are left visible as user changes rather than committed automatically.
+
+The managed ignore entries are `.fusion/`, `.pi/`, `.worktrees/`, `fusion.db`, `fusion.db-wal`, and `fusion.db-shm`. Git readiness is required before registration or activation, so Git and filesystem failures fail the command instead of reporting a usable local project. `fn init --git` remains accepted for script compatibility and has the same behavior as the default; it is no longer a separate Git initialization path.
 
 During fresh initialization, Fusion also installs the bundled `fusion` skill into supported local agent homes when the target skill does not already exist:
 
@@ -248,7 +247,7 @@ Unknown options and positional arguments are rejected with an error and non-zero
 
 If your installed CLI predates `--channel`, bootstrap onto beta with `npm install -g @runfusion/fusion@beta`. Once installed, use `fn update --channel beta` to persist the beta track.
 
-`fn upgrade` is an alias for `fn update`. Installs always pin the exact resolved version rather than a dist-tag, so a beta-channel install can never silently land on stable (or vice versa).
+`fn upgrade` is an alias for `fn update`. Installs always pin the exact resolved version rather than a dist-tag, so a beta-channel install can never silently land on stable (or vice versa). When `FUSION_UPDATES_EXTERNALLY_MANAGED` is `1`, `true`, `yes`, or `on`, `fn update` refuses installation so a deployment-owned release pipeline remains authoritative; use the deployment's normal update process instead.
 
 ---
 
@@ -390,6 +389,7 @@ Remote actions support:
 > ⚠️ Remote URL/QR payloads include tokenized query data. Treat them like credentials and avoid sharing them in screenshots/chat/logs. Prefer short-lived links for ad-hoc phone login.
 
 Settings pane navigation and editing:
+- The TUI shows the live project **Max Concurrent Tasks** and **Max Worktrees** values. Max Concurrent Tasks defaults to 2; when worktree limiting is on, admission uses the lower value and dashboard status surfaces identify the binding setting.
 - `Tab` switches focus between the settings list and the detail/edit pane.
 - In the settings list, `↑`/`↓` or `k`/`j` moves the selected setting.
 - In the detail/edit pane, `←`/`→` or `h`/`l` cycles enum values such as **Remote Provider**; `Space` toggles booleans; `+`/`-` adjusts numbers.
@@ -820,6 +820,7 @@ fn task delete FN-001 --force
 ```
 
 Notes:
+- Interrupting `fn task merge` aborts its merge and clears its transient merge status: Ctrl-C (`SIGINT`) exits 130, `SIGTERM` exits 143, and a closed terminal (`SIGHUP`) exits 129. Unlike `fn serve`, `fn dashboard`, and the daemon, this one-shot foreground command deliberately does not survive terminal disconnects.
 - `fn task archive` accepts live-board tasks and preserves the original column for restore. It refuses tasks in a WIP lane or active merge pipeline to protect another process's worktrees; a human operator may use `--force` to override this destructive guard.
 - The agent-facing `fn_task_archive` tool returns a structured error for the same live-task refusal and deliberately has no force parameter.
 - `fn task unarchive` restores to the saved pre-archive column when available, with legacy archives falling back to `done`.
@@ -884,9 +885,7 @@ Subcommands: `list|ls`, `add`, `remove|rm`, `show`, `info`, `set-default|default
 
 `fn project list` and `fn project show/info` report `In-Flight Agents` from live task state: in-progress executors plus triage planners whose task is in `triage` with `status === "planning"` and is not paused. The readout intentionally ignores stale persisted `projectHealth.inFlightAgentCount` bookkeeping.
 
-`fn project add` registers an existing directory with Fusion. If the directory
-does not contain a Git repository yet, Fusion runs a minimal `git init` during
-registration and fails the registration if Git is unavailable.
+`fn project add` registers an existing directory with Fusion. Registration first establishes the shared Git-readiness contract: non-Git and unborn repositories receive a baseline `HEAD`, managed Fusion-local paths are ignored, and committed repositories are preserved. If Git, ignore reconciliation, or baseline creation fails, the project is not registered or activated.
 
 ---
 

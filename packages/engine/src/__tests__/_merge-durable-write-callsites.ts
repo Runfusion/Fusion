@@ -271,7 +271,24 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   updatePrInfo: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updatePrInfoByNumber: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateSettings: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  /*
+  FNXC:DurableWriteInventory 2026-08-23-00:40:
+  Public TaskStore write surfaces added since this inventory was last regenerated. Each persists or
+  mutates task state, so each is a durable writer:
+    - dismissAiMergeReviewFinding / mutateTaskRepositoryScope / resetTaskPublication /
+      normalizeWorkspaceTaskWorktreeMetadata -> updateTask(Atomic) mutations
+    - logEntryOnce -> appends a deduplicated task log entry
+    - seedWorkspaceCodeReviewContinuationIfIdle -> inserts a workflow continuation row
+  */
+  dismissAiMergeReviewFinding: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  logEntryOnce: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  mutateTaskRepositoryScope: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  normalizeWorkspaceTaskWorktreeMetadata: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  resetTaskPublication: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  seedWorkspaceCodeReviewContinuationIfIdle: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateStep: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  updateTaskRepositoryScope: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  updateWorkspaceReviewState: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskAtomic: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskComment: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskCustomFields: { kind: "writer", reason: "persists or mutates TaskStore state" },
@@ -492,6 +509,8 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "getMergeQueuedTaskIdsAsync",
   "getMergeRequestRecord",
   "getMergeRequestRecordAsync",
+  /* FNXC:MergeAuthority 2026-08-23-00:40: batched sibling of the read above; same read-only shape. */
+  "getMergeRequestRecordsAsync",
   "getMissionStore",
   "getMutationsForRun",
   "getOrCreateForProject",
@@ -604,6 +623,8 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "listWorkflowSettingValuesForProject",
   "listWorkflowSteps",
   "listWorkflowWorkItemsForTask",
+  /* FNXC:MergeAuthority 2026-08-23-00:40: batched sibling of the read above; same read-only shape. */
+  "listWorkflowWorkItemsForTasks",
   "listWorkflowWorkItemsForTaskSync",
   "loadWorkflowRunBranches",
   "loadWorkflowRunStepInstances",

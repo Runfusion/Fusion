@@ -9,9 +9,19 @@ import { withProjectId } from "../client/health.js";
 import type { UpdateCheckResponse } from "../client/health.js";
 import { dedupe } from "../client/dedupe.js";
 
-export function fetchConfig(projectId?: string): Promise<{ maxConcurrent: number; rootDir: string }> {
+export function fetchConfig(projectId?: string): Promise<{
+  maxConcurrent: number;
+  effectiveMaxConcurrent: number;
+  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+  rootDir: string;
+}> {
   const path = withProjectId("/config", projectId);
-  return dedupe(path, () => api<{ maxConcurrent: number; rootDir: string }>(path));
+  return dedupe(path, () => api<{
+    maxConcurrent: number;
+    effectiveMaxConcurrent: number;
+    concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+    rootDir: string;
+  }>(path));
 }
 
 export function fetchSettings(projectId?: string, options?: FetchOptions): Promise<Settings> {
@@ -48,7 +58,14 @@ export interface UpdateInstallResponse {
   outcome?: "installed" | "no-update-available" | "check-failed" | "unsupported-install-method" | "failed";
   message?: string;
   error?: string;
+  restartAttempted?: boolean;
+  restartScheduled?: boolean;
+  /** PID of the process that accepted an automatic update restart. */
+  priorPid?: number;
 }
+
+/** The old dashboard process retains this successful install until it restarts. */
+export type PendingUpdateInstall = UpdateInstallResponse;
 
 export function installUpdate(projectId?: string): Promise<UpdateInstallResponse> {
   return api<UpdateInstallResponse>(withProjectId("/update-check/install", projectId), {

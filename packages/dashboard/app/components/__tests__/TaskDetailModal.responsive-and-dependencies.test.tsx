@@ -722,7 +722,6 @@ describe("TaskDetailModal", () => {
         ".task-detail-content--embedded .modal-header,\n.task-detail-content--embedded .detail-body,\n.task-detail-content--embedded .detail-tabs,\n.task-detail-content--embedded .modal-actions",
       );
 
-      expect(css).toContain("FNXC:TaskDetailFeed 2026-08-04-08:12:");
       expect(rootBlock).toContain("height: 100%;");
       expect(rootBlock).toContain("min-height: 0;");
       expect(detailBodyBlock).toContain("flex: 1;");
@@ -905,26 +904,27 @@ describe("TaskDetailModal", () => {
 
     it("keeps the floating task header symmetric without sacrificing its resize targets", () => {
       const floatingCss = readFileSync(resolve(__dirname, "../FloatingWindow.css"), "utf8");
-      const desktopTaskSelector = ".floating-window--task-detail:not(.floating-window--tablet-viewport)";
-      const taskPopupBody = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__body`);
+      const desktopWindowSelector = ".floating-window:not(.floating-window--tablet-viewport)";
       const sharedBody = getExactCssRuleBlock(floatingCss, ".floating-window__body");
       const header = getExactCssRuleBlock(readDashboardStylesSource(), ".modal-header");
-      const eastResize = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__resize-handle--e`);
-      const northEastResize = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__resize-handle--ne`);
-      const southEastResize = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__resize-handle--se`);
+      const eastResize = getExactCssRuleBlock(floatingCss, `${desktopWindowSelector} .floating-window__resize-handle--e`);
+      const cornerResize = floatingCss.match(
+        /\.floating-window:not\(\.floating-window--tablet-viewport\) \.floating-window__resize-handle--ne,[\s\S]*?\}/
+      )?.[0] ?? "";
       const onRequestClose = vi.fn();
 
       /*
-      FNXC:TaskDetailLayout 2026-08-03-19:36:
-      The shared body reserves desktop scrollbar clearance. Task Detail moves only its resize
-      hit areas outboard, so the embedded header retains matching tokenized edges.
+      FNXC:TaskDetailLayout 2026-08-18-00:26:
+      The shared body reserves NOTHING on its inline end any more — FN-8015's gutter is deleted for
+      every caller, so this popup's symmetric edge no longer depends on a local zeroing that undoes
+      it. FN-8766's outboard resize targets that make the scrollbar grabbable are likewise no longer
+      task-detail-scoped: they are the shared desktop rule, and this popup inherits them.
       */
-      expect(sharedBody).toContain("margin-inline-end: var(--space-lg);");
-      expect(taskPopupBody).toContain("margin-inline-end: 0;");
+      expect(sharedBody).not.toMatch(/margin-inline-end\s*:/);
       expect(header).toContain("padding: var(--modal-padding);");
       expect(eastResize).toContain("right: calc(var(--space-sm) * -1);");
-      expect(northEastResize).toContain("right: calc(var(--space-lg) * -1);");
-      expect(southEastResize).toContain("right: calc(var(--space-lg) * -1);");
+      expect(cornerResize).toContain("resize-handle--se");
+      expect(cornerResize).toContain("right: calc(var(--space-lg) * -1);");
 
       const { baseElement, unmount } = render(
         <FloatingWindow

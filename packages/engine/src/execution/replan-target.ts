@@ -491,6 +491,7 @@ export async function moveTaskToReplanColumn(
   store: TaskStore,
   task: Pick<Task, "id" | "column">,
   target?: string,
+  options?: { workflowMoveSource?: string },
 ): Promise<string | undefined> {
   const replanColumn = target ?? await resolveReplanTargetColumn(store, task.id);
   /*
@@ -507,7 +508,10 @@ export async function moveTaskToReplanColumn(
     return undefined;
   }
   if (task.column !== replanColumn) {
-    await store.moveTask(task.id, replanColumn as Task["column"], { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+    await store.moveTask(task.id, replanColumn as Task["column"], {
+      preserveWorktree: true,
+      ...(options?.workflowMoveSource ? { workflowMoveSource: options.workflowMoveSource } : {}),
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
   }
   return replanColumn;
 }

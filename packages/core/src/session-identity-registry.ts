@@ -52,6 +52,13 @@ export interface FusionSessionIdentity {
   isEphemeral?: boolean;
   /** Session lane, e.g. "executor", "heartbeat", "chat". Diagnostic only. */
   purpose?: string;
+  /*
+  FNXC:TaskExecutionTaskCreation 2026-08-21-23:16:
+  FN-125 marks only engine sessions executing a board task so host extension tools
+  can withhold task creation. A durable Workflow Executor bypasses ephemerality,
+  so this must be an explicit session-lane signal rather than a policy inference.
+  */
+  taskExecutionSession?: boolean;
   /** Epoch ms at registration; diagnostic only (no TTL semantics). */
   registeredAt: number;
 }

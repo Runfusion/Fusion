@@ -382,6 +382,14 @@ export function applyReopenFieldClears(ctx: DefaultWorkflowMoveContext): void {
   const graphOwnedReviewToWip = ctx.workflowMoveSource === "workflow-graph"
     && fromColumn === reviewLane
     && toColumn === wipLane;
+  /*
+  FNXC:ReviewConvergence 2026-08-22-05:00:
+  Automatic remediation leaves review for planning or WIP before it archives the failed entry.
+  Preserve only workflow-step evidence for that provenance; operator and ordinary engine reopens
+  retain the destructive reset, and the branch/base/summary reset below remains unconditional.
+  */
+  const remediationOwnedReopen = ctx.workflowMoveSource === "workflow-remediation"
+    && fromColumn === reviewLane;
   const leftReviewForPlanningOrWip =
     fromColumn === reviewLane && (planning.includes(toColumn) || toColumn === wipLane);
   const leftCompleteForPlanning = fromColumn === completeLane && planning.includes(toColumn);
@@ -394,7 +402,7 @@ export function applyReopenFieldClears(ctx: DefaultWorkflowMoveContext): void {
   prior review results exactly as before.
   */
   const preservesApprovedPlanReview = ctx.workflowMoveSource === "plan-approval";
-  if (!preservesApprovedPlanReview && !graphOwnedReviewToWip && (leftReviewForPlanningOrWip || leftCompleteForPlanning)) {
+  if (!preservesApprovedPlanReview && !graphOwnedReviewToWip && !remediationOwnedReopen && (leftReviewForPlanningOrWip || leftCompleteForPlanning)) {
     task.workflowStepResults = undefined;
   }
   if (fromColumn === reviewLane && planning.includes(toColumn)) {

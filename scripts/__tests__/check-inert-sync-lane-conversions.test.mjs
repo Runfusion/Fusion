@@ -22,7 +22,7 @@ about its output.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -95,26 +95,19 @@ test("an unrecorded DROP fails, so the allowance cannot stay stale-high", () => 
   assert.match(`${result.stdout}${result.stderr}`, /--update-baseline/);
 });
 
-test("a RISE still fails, and names the file it rose in", () => {
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
-  The expected filename is DERIVED, not written down. My first version asserted `scheduler.ts`, which
-  #3128 then took to zero inert guards — so the case failed for a reason unrelated to the gate. The
-  same coupling mistake as asserting the committed baseline matches the tree, one line lower.
-  */
-  const live = liveCounts();
-  const [someFile] = Object.keys(live.byFile);
-  const result = withBaseline(
-    (baseline) => ({
-      ...baseline,
-      total: Math.max(0, baseline.total - 1),
-      byFile: Object.fromEntries(Object.entries(baseline.byFile).map(([f, n]) => [f, Math.max(0, n - 1)])),
-    }),
-    runGate,
-  );
-
-  assert.equal(result.status, 1, "more inert conversions than the baseline must fail");
-  assert.match(`${result.stdout}${result.stderr}`, new RegExp(someFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+test("a RISE still fails, and names the staged file", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-rise.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, column: string) { const lanes = localSync(store, id); return column === lanes.hold; }`,
+    "",
+  ].join("\n"));
+  try {
+    const result = withBaseline((baseline) => ({ ...baseline, total: 0, byFile: {} }), runGate);
+    assert.equal(result.status, 1, "more inert conversions than the baseline must fail");
+    assert.match(`${result.stdout}${result.stderr}`, /__probe-inert-rise\.ts/);
+  } finally { rmSync(probe, { force: true }); }
 });
 
 /*
@@ -122,10 +115,16 @@ ANTI-VACUITY. The two cases above mutate the baseline, so they would both keep p
 stopped scanning any source at all and simply compared a number to itself. This asserts the scan
 still finds the guards it is supposed to be counting.
 */
-test("the gate is still actually scanning source, not just comparing numbers", () => {
-  const result = runGate();
-  assert.match(`${result.stdout}${result.stderr}`, /guard\(s\) consuming a sync-resolved lane/);
-  assert.ok(JSON.parse(readFileSync(BASELINE, "utf8")).total > 0, "baseline should not be empty");
+test("the gate scans a staged source even with a zero baseline", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-scan.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, column: string) { return column === localSync(store, id).hold; }`,
+    "",
+  ].join("\n"));
+  try { assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-scan.ts"], 1); }
+  finally { rmSync(probe, { force: true }); }
 });
 
 /*
@@ -301,5 +300,39 @@ test("does NOT count an object whose KEY merely shares a sync local's name", () 
     assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-keyname.ts"] ?? 0, 0);
   } finally {
     rmSync(probe, { force: true });
+  }
+});
+
+test("counts a tainted role inside an array/filter membership receiver once", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-membership.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, column: string) { const lanes = localSync(store, id); return ![lanes.wip, lanes.review].filter(Boolean).includes(column); }`,
+    "",
+  ].join("\n"));
+  try { assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-membership.ts"], 1); }
+  finally { rmSync(probe, { force: true }); }
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-08-22-00:30:
+A zero baseline must not turn a renamed or moved reader into a permanent green. Run a copied checker
+from an empty in-repository tree so its own repository-root calculation sees no source while Node can
+still resolve TypeScript through this workspace's node_modules.
+*/
+test("fails closed when the scanned tree has no sync-lane source", () => {
+  const root = mkdtempSync(join(REPO_ROOT, ".inert-sync-empty-"));
+  const script = join(root, "scripts/check-inert-sync-lane-conversions.mjs");
+  try {
+    mkdirSync(join(root, "scripts/lib"), { recursive: true });
+    mkdirSync(join(root, "packages"), { recursive: true });
+    copyFileSync(SCRIPT, script);
+    writeFileSync(join(root, "scripts/lib/inert-sync-lane-baseline.json"), "{\n  \"total\": 0,\n  \"byFile\": {}\n}\n");
+    const result = spawnSync(process.execPath, [script], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(`${result.stdout}${result.stderr}`, /no resolveTaskWorkflowIrSync source found under/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

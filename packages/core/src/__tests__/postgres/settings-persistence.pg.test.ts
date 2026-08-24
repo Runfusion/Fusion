@@ -13,6 +13,7 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import { GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "../../config/settings-schema.js";
 import { sql } from "drizzle-orm";
+import { DEFAULT_GLOBAL_SETTINGS } from "../../types.js";
 
 const credentialLaneKeys = [
   ["defaultProvider", "defaultCredentialInstanceId"],
@@ -43,6 +44,53 @@ pgTest("VAL-CROSS-004: Settings persistence (PostgreSQL)", () => {
     const settings = await store.getSettings();
     expect(settings.defaultProvider).toBe("anthropic");
     expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("deep-merges main remote settings patches without clearing a persistent token", async () => {
+    const store = h.store();
+    const persistent = { enabled: true, token: "frt_preserved_persistent_token" };
+    await store.updateGlobalSettings({
+      remoteAccess: {
+        ...DEFAULT_GLOBAL_SETTINGS.remoteAccess,
+        activeProvider: "cloudflare",
+        providers: {
+          ...DEFAULT_GLOBAL_SETTINGS.remoteAccess.providers,
+          cloudflare: { ...DEFAULT_GLOBAL_SETTINGS.remoteAccess.providers.cloudflare, enabled: true },
+        },
+        tokenStrategy: { ...DEFAULT_GLOBAL_SETTINGS.remoteAccess.tokenStrategy, persistent },
+      },
+    });
+
+    // This matches buildRemoteAccessPatch: it intentionally omits persistent.
+    await store.updateGlobalSettings({
+      remoteAccess: {
+        activeProvider: "tailscale",
+        providers: { tailscale: { enabled: true, hostname: "tail.example.test" } },
+        tokenStrategy: { shortLived: { enabled: true, ttlMs: 120_000 } },
+        lifecycle: { rememberLastRunning: true },
+      },
+    } as never);
+
+    const updated = (await store.getSettings()).remoteAccess!;
+    expect(updated.tokenStrategy.persistent).toEqual(persistent);
+    expect(updated.activeProvider).toBe("tailscale");
+    expect(updated.providers.tailscale).toMatchObject({ enabled: true, hostname: "tail.example.test" });
+    expect(updated.tokenStrategy.shortLived).toMatchObject({ enabled: true, ttlMs: 120_000 });
+    expect(updated.lifecycle).toMatchObject({ rememberLastRunning: true });
+
+    /*
+    FNXC:RemoteAccessSettings 2026-08-23-17:05:
+    `null` is the explicit CLEAR sentinel, and clearing a global key means "fall back to its
+    default" — `GlobalSettingsStore.updateSettings` deletes the key and then re-applies
+    `DEFAULT_GLOBAL_SETTINGS`, so `remoteAccess` can never read back as `undefined`. Assert the
+    contract that actually matters after a clear: the settings return to the shipped defaults and
+    the previously persisted token is gone.
+    */
+    await store.updateGlobalSettings({ remoteAccess: null });
+    const cleared = (await store.getSettings()).remoteAccess!;
+    expect(cleared).toEqual(DEFAULT_GLOBAL_SETTINGS.remoteAccess);
+    expect(cleared.tokenStrategy.persistent.token).toBeNull();
+    expect(cleared.activeProvider).toBeNull();
   });
 
   it("persists project-level settings via updateSettings", async () => {
@@ -85,6 +133,24 @@ pgTest("VAL-CROSS-004: Settings persistence (PostgreSQL)", () => {
     expect(settings).not.toHaveProperty("ephemeralAgentsEnabled");
     expect(settings.ephemeralAgentTaskCreationPolicy).toBe("deny");
     expect(settings.taskPrefix).toBe("ACTIVE");
+  });
+
+  it("keeps recommendation policy project-scoped and validates it atomically", async () => {
+    const store = h.store();
+    expect((await store.getSettings()).requireTaskRecommendations).toBe(false);
+
+    await store.updateSettings({ requireTaskRecommendations: true });
+    expect((await store.getSettings()).requireTaskRecommendations).toBe(true);
+
+    // JSON/API callers can evade the GlobalSettings TypeScript shape; global persistence must not.
+    await store.updateGlobalSettings({ requireTaskRecommendations: false } as never);
+    expect((await store.getSettings()).requireTaskRecommendations).toBe(true);
+
+    await expect(store.updateSettings({ requireTaskRecommendations: "yes" } as never)).rejects.toThrow("requireTaskRecommendations must be a boolean");
+    expect((await store.getSettings()).requireTaskRecommendations).toBe(true);
+
+    await store.updateSettings({ requireTaskRecommendations: null });
+    expect((await store.getSettings()).requireTaskRecommendations).toBe(false);
   });
 
   it("keeps the recommendation cap project-scoped when an untyped global patch includes it", async () => {

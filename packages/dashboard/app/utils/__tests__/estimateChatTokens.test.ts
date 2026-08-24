@@ -17,6 +17,12 @@ describe("estimateChatTokens", () => {
   it("guards against null or undefined content", () => {
     expect(estimateChatTokens([{ content: null }, {}, { content: "abcde" }])).toBe(2);
   });
+
+  it("includes thinking and tool payloads per message without throwing on circular values", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(estimateChatTokens([{ content: "abcd", thinkingOutput: "abcd", toolCalls: [{ toolName: "read", args: { path: "a" }, result: circular }] }])).toBe(6);
+  });
 });
 
 describe("formatTokenCount", () => {
@@ -30,5 +36,9 @@ describe("formatTokenCount", () => {
 
   it("rounds larger thousands without a decimal", () => {
     expect(formatTokenCount(200_000)).toBe("200k");
+  });
+
+  it("omits the approximate marker for measured values", () => {
+    expect(formatTokenCount(1234, { approximate: false })).toBe("1.2k");
   });
 });

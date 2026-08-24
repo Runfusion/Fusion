@@ -172,7 +172,9 @@ the mobile column layout stay correct without hardcoded colors.
   width: 100%;
   min-height: calc(var(--space-xl) * 3);
   margin-block-start: var(--space-xs);
-  resize: vertical;
+  resize: none;
+  overflow-y: hidden;
+  max-height: none;
   line-height: 1.45;
 }
 

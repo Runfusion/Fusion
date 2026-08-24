@@ -4,6 +4,10 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MutableRe
 import { useTranslation } from "react-i18next";
 import type { ChatQuestion, ChatQuestionAnswers, ChatQuestionAnswerValue, ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { formatQuestionAnswer } from "../utils/parseQuestionToolCall";
+import {
+  createChatInputAutosizeController,
+  type ChatInputAutosizeController,
+} from "../utils/chatInputAutosize";
 
 export interface ChatQuestionResponseProps {
   parsed: ParsedQuestionToolCall;
@@ -29,7 +33,7 @@ export function ChatQuestionResponse({
 }: ChatQuestionResponseProps) {
   const { t } = useTranslation("app");
   const [answers, setAnswers] = useState<ChatQuestionAnswers>({});
-  const textareaRefs = useRef(new Map<string, HTMLTextAreaElement>());
+  const autosizeControllers = useRef(new Map<string, ChatInputAutosizeController>());
 
   const isValid = useMemo(
     () => parsed.questions.every((question) => isQuestionAnswerValid(question, answers[question.id])),
@@ -37,9 +41,8 @@ export function ChatQuestionResponse({
   );
 
   useLayoutEffect(() => {
-    for (const textarea of textareaRefs.current.values()) {
-      textarea.style.height = "0";
-      textarea.style.height = `${textarea.scrollHeight}px`;
+    for (const controller of autosizeControllers.current.values()) {
+      controller.resize();
     }
   }, [answers]);
 
@@ -93,7 +96,7 @@ export function ChatQuestionResponse({
                 disabled={disabled}
                 setQuestionAnswer={setQuestionAnswer}
                 toggleMultiSelect={toggleMultiSelect}
-                textareaRefs={textareaRefs}
+                autosizeControllers={autosizeControllers}
               />
             )}
           </article>
@@ -130,7 +133,7 @@ interface QuestionControlsProps {
   disabled: boolean;
   setQuestionAnswer: (questionId: string, value: ChatQuestionAnswerValue) => void;
   toggleMultiSelect: (questionId: string, optionId: string, checked: boolean) => void;
-  textareaRefs: MutableRefObject<Map<string, HTMLTextAreaElement>>;
+  autosizeControllers: MutableRefObject<Map<string, ChatInputAutosizeController>>;
 }
 
 function QuestionControls({
@@ -140,7 +143,7 @@ function QuestionControls({
   disabled,
   setQuestionAnswer,
   toggleMultiSelect,
-  textareaRefs,
+  autosizeControllers,
 }: QuestionControlsProps) {
   const { t } = useTranslation("app");
 
@@ -154,10 +157,10 @@ function QuestionControls({
         disabled={disabled}
         rows={3}
         ref={(element) => {
+          autosizeControllers.current.get(question.id)?.destroy();
+          autosizeControllers.current.delete(question.id);
           if (element) {
-            textareaRefs.current.set(question.id, element);
-          } else {
-            textareaRefs.current.delete(question.id);
+            autosizeControllers.current.set(question.id, createChatInputAutosizeController(element));
           }
         }}
         onChange={(event) => setQuestionAnswer(question.id, event.target.value)}

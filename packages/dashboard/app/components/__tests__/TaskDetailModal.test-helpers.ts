@@ -138,6 +138,8 @@ vi.mock("lucide-react", () => ({
   Square: (props: any) => React.createElement("svg", { "data-testid": "square-icon", ...props }),
   Info: (props: any) => React.createElement("svg", { "data-testid": "info-icon", ...props }),
   Bot: () => null,
+  // FNXC:TaskChatDefaultModel 2026-08-19-12:12: Task Chat reuses the Direct Chat thinking-level control, so its Brain icon is part of the shared modal mock surface.
+  Brain: () => null,
   CircleDot: () => null,
   XCircle: () => null,
   Workflow: () => null,
@@ -174,6 +176,7 @@ vi.mock("lucide-react", () => ({
   Paperclip: (props: any) => React.createElement("svg", { "data-testid": "paperclip-icon", ...props }),
   Eye: (props: any) => React.createElement("svg", { "data-testid": "eye-icon", ...props }),
   EyeOff: (props: any) => React.createElement("svg", { "data-testid": "eye-off-icon", ...props }),
+  Copy: (props: any) => React.createElement("svg", { "data-testid": "copy-icon", ...props }),
   // FNXC:Test 2026-07-05-11:20: FN-7579 added "ask-user"/"exit-gate" workflow node types to
   // WorkflowNodeTypes.tsx (HelpCircle, DoorOpen), which WorkflowNodeEditor/WorkflowResultsTab
   // import transitively behind TaskDetailModal's lazy workflow surfaces. The explicit mock list

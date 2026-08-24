@@ -64,12 +64,27 @@ describe("injectWorkflowStepFailureInstructions", () => {
     expect(content).toContain("### P1 — should fix");
     expect(content).toContain("### P2 — optional");
     expect(content).toContain("src/a.ts:9");
-    // The decline path is what lets a disputed finding terminate instead of ping-ponging.
-    expect(content).toContain("a recorded decline is a valid resolution");
+    /*
+    FNXC:ReviewConvergence 2026-08-22-05:33:
+    FN-149 replaced a silent decline with the dispute tool. A dispute remains a blocking
+    obligation until a reviewer adjudicates it, so the remediation prompt must name that path.
+    */
+    expect(content).toContain("call fn_review_dispute(findingId, rationale)");
     expect(content).toContain("P2 items are optional");
     // Structured findings REPLACE the prose blob rather than appearing alongside it.
     expect(content).not.toContain("prose feedback");
     expect(content).toContain("Original plan body.");
+  });
+
+  it("keeps a disputed finding actionable rather than moving it to the do-not-redo receipts", async () => {
+    await injectWorkflowStepFailureInstructions(
+      store, task, "prose feedback", "Code Review", { attempt: 2, max: 3 },
+      [finding({ id: "disputed", title: "Transaction rollback", body: "The implementer disputes this.", severity: "critical", disputedAt: "2026-08-22T06:41:00.000Z", disputeRationale: "The transaction is atomic." })],
+    );
+    const content = await readFile(promptPath, "utf-8");
+    expect(content).toContain("Transaction rollback");
+    expect(content).toContain("### P0 — must fix");
+    expect(content).not.toContain("Already resolved during this review pass — do NOT redo");
   });
 
   it("keeps receipts out of actionable findings while preserving a do-not-redo audit block", async () => {

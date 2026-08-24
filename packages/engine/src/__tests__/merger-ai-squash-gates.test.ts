@@ -38,6 +38,11 @@ function createRepo(change: (dir: string) => void): string {
 
 function makeStore(scope: string[], overrides: Record<string, unknown> = {}) {
   const task: any = {
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture, not a review-gating one.
+       The door refuses a card whose enabled optional pre-merge groups produced no result, and the
+       built-in workflow enables Plan and Code Review by default, so an unspecified list failed the
+       door before the behaviour under test ran. An explicit empty list states the intent. */
+    enabledWorkflowSteps: [],
     id: "FN-9050", title: "squash gates", column: "in-review", branch: "fusion/fn-9050",
     comments: [], steeringComments: [], steps: [], log: [], ...overrides,
   };
@@ -46,6 +51,12 @@ function makeStore(scope: string[], overrides: Record<string, unknown> = {}) {
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 0 } })),
     parseFileScopeFromPrompt: vi.fn(async () => scope),
     updateTask: vi.fn(async (_id: string, patch: object) => Object.assign(task, patch)),
+    /* FNXC:MergerAiReview 2026-08-22-22:20: FN-159 reconciliation persists every candidate and verdict through the production atomic CAS seam, so this mutable store double must apply its callback patch to the same task returned by getTask. */
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: typeof task) => Partial<typeof task> | undefined) => {
+      const patch = mutate(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     moveTask: vi.fn(async (_id: string, column: string) => Object.assign(task, { column })),
     appendAgentLog: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
@@ -132,7 +143,23 @@ describe("runAiMerge approved-squash gates", () => {
     git(cleanRoom, "add -A && git commit -q -m squash -m 'Fusion-Task-Id: FN-9050'");
     const squashSha = git(cleanRoom, "rev-parse HEAD");
     const { store, task } = makeStore(["allowed/**"]);
-    task.log = [{ action: `AI merge review (pass 1): approved squash ${squashSha}`, timestamp: new Date().toISOString() }];
+    /*
+    FNXC:AIMergeReviewReconciliation 2026-08-23-21:50:
+    FN-090 (f714e45bda) made the DURABLE reconciliation record the sole authority for reviving a
+    pre-existing clean room: recovery admits only a twice-confirmed candidate whose source and
+    integration identities still match. Task-log prose is audit history and is deliberately no
+    longer sufficient, so this fixture states the approval the way the product now records it —
+    seeding the old log line instead meant recovery selected nothing and the merge agent ran.
+    */
+    task.aiMergeReviewReconciliation = {
+      sourceSha: git(dir, "rev-parse --verify fusion/fn-9050"),
+      integrationTipSha: before,
+      candidateSha: squashSha,
+      candidateTreeSha: git(cleanRoom, "rev-parse HEAD^{tree}"),
+      findings: [],
+      consecutiveCleanApprovals: 2,
+      correctivePasses: 0,
+    };
 
     await expect(runAiMerge(store, dir, "FN-9050", { manual: true }, {
       mergeAgent: async () => { throw new Error("recovery should not re-merge"); }, reviewAgent: approve,

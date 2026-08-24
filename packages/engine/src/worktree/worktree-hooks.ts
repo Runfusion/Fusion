@@ -32,11 +32,15 @@ function toShellCasePattern(pattern: string): string {
  * Build the shared pre-commit identity-guard hook.
  *
  * The emitted script must stay metadata-aware because linked git worktrees share
- * the common hooks directory. It bakes in the install-time taskId as the default
- * expected branch, then falls back to `fusion-task-id` when runtime metadata
- * drifts so the shared hook still follows the current owning task.
+ * the common hooks directory. It bakes in the install-time working branch,
+ * then falls back to `fusion-task-id` when runtime metadata drifts so the shared
+ * hook still follows the current owning task.
  */
-export function buildIdentityGuardHook(taskId: string, allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS): string {
+export function buildIdentityGuardHook(
+  taskId: string,
+  allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS,
+  expectedBranch = `fusion/${taskId.toLowerCase()}`,
+): string {
   const allowChecks = allowedBranchPatterns.map((pattern) => `  ${toShellCasePattern(pattern)}) exit 0 ;;`).join("\n");
 
   return `#!/bin/sh
@@ -71,7 +75,10 @@ fi
 
 WORKTREE_TASK_ID=$(cat "$TASK_FILE")
 # Keep this canonicalized in lockstep with canonicalFusionBranchName(taskId)
-EXPECTED_BRANCH=${JSON.stringify(`fusion/${taskId.toLowerCase()}`)}
+# FNXC:WorktreeIdentity 2026-08-20-03:38: FN-9161 permits an operator-selected
+# branch for a task worktree, so the hook follows that branch rather than
+# reconstructing Fusion's default.
+EXPECTED_BRANCH=${JSON.stringify(expectedBranch)}
 
 if [ "$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')" != ${JSON.stringify(taskId.toLowerCase())} ]; then
   EXPECTED_BRANCH="fusion/$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"
@@ -330,6 +337,7 @@ export async function installTaskWorktreeIdentityGuard(input: {
   worktreePath: string;
   taskId: string;
   allowedBranchPatterns?: readonly string[];
+  expectedBranch?: string;
   commitMsgHookEnabled?: boolean;
   taskPrefix?: string;
   taskAttributionTrailerName?: string;
@@ -337,7 +345,11 @@ export async function installTaskWorktreeIdentityGuard(input: {
   commitAuthorName?: string;
   commitAuthorEmail?: string;
 }): Promise<void> {
-  const hook = buildIdentityGuardHook(input.taskId, input.allowedBranchPatterns ?? DEFAULT_ALLOWED_BRANCH_PATTERNS);
+  const hook = buildIdentityGuardHook(
+    input.taskId,
+    input.allowedBranchPatterns ?? DEFAULT_ALLOWED_BRANCH_PATTERNS,
+    input.expectedBranch,
+  );
   const metadataPath = await resolveGitPath(input.worktreePath, "fusion-task-id");
   const hookPath = await resolveGitPath(input.worktreePath, "hooks/pre-commit");
 

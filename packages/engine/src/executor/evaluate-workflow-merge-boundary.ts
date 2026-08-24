@@ -18,6 +18,7 @@ export type WorkflowMergeBoundaryProof = {
   hasRelevantNodeResult: boolean;
   allResultsTerminal: boolean;
   coverageComplete: boolean;
+  hasLiveStepImplementationProof: boolean;
   hasForeachStepExecute: boolean;
   missingInstanceIds: string[];
   nonTerminalResult?: CoreWorkflowStepResult;
@@ -40,13 +41,24 @@ export async function evaluateWorkflowMergeBoundary(
   const allResultsTerminal = nonTerminalResult === undefined;
   let ir: WorkflowIr | undefined;
   try { ir = await resolveWorkflowIrForTask(deps.store, task.id); } catch { /* preserve legacy behavior for unresolved IRs */ }
-  if (!ir) return { resolved: false, hasRelevantNodeResult, allResultsTerminal, coverageComplete: true, hasForeachStepExecute: false, missingInstanceIds: [], nonTerminalResult, complete: false };
+  if (!ir) return { resolved: false, hasRelevantNodeResult, allResultsTerminal, coverageComplete: true, hasLiveStepImplementationProof: false, hasForeachStepExecute: false, missingInstanceIds: [], nonTerminalResult, complete: false };
 
   let persistedInstances: Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }> = [];
   try { persistedInstances = await deps.loadMergeBoundaryInstances(task.id, runId); } catch { /* persistence is additive */ }
   const coverage = evaluateForeachMergeProof({ ir, steps: task.steps, workflowStepResults: task.workflowStepResults, persistedInstances });
-  const complete = hasRelevantNodeResult && allResultsTerminal && coverage.missingInstanceIds.length === 0;
-  return { resolved: true, hasRelevantNodeResult, allResultsTerminal, coverageComplete: coverage.missingInstanceIds.length === 0, hasForeachStepExecute: coverage.hasForeachStepExecute, missingInstanceIds: coverage.missingInstanceIds, nonTerminalResult, complete };
+  const coverageComplete = coverage.missingInstanceIds.length === 0;
+  /*
+  FNXC:WorkflowMerge 2026-08-20-00:50:
+  FN-9157 accepts terminal live step-execute coverage as implementation proof for
+  Review Level 0, whose explicit optional-group opt-out creates no node results.
+  Require at least one expected instance and every identity to be live-step
+  satisfied: zero parsed steps still need a node result, and any pending step
+  remains incomplete.
+  */
+  const hasLiveStepImplementationProof = coverage.expectedInstanceIds.length > 0
+    && coverage.expectedInstanceIds.every((id) => coverage.liveStepSatisfiedInstanceIds.includes(id));
+  const complete = allResultsTerminal && coverageComplete && (hasRelevantNodeResult || hasLiveStepImplementationProof);
+  return { resolved: true, hasRelevantNodeResult, allResultsTerminal, coverageComplete, hasLiveStepImplementationProof, hasForeachStepExecute: coverage.hasForeachStepExecute, missingInstanceIds: coverage.missingInstanceIds, nonTerminalResult, complete };
 }
 
 export type GetWorkflowMergeImplementationProofFailureDeps = {

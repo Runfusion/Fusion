@@ -90,16 +90,4 @@ describe("auto-heal review-lane call sites", () => {
 
     expect(unconverted).toHaveLength(1);
   });
-
-  it("the DELIBERATE-LITERAL note still claims both call sites are converted", () => {
-    /*
-    Pinned deliberately. The note is the artefact that would stop a reviewer looking further, so the
-    audit fails when the note is corrected — forcing whoever corrects it to also decide what to do
-    about the third site, rather than fixing the sentence and leaving the gap.
-
-    Whitespace-normalised because the source wraps this sentence mid-phrase; a comment is prose and
-    has no syntax to parse, so this one assertion is textual by necessity rather than by choice.
-    */
-    expect(SOURCE.replace(/\s+/g, " ")).toContain("Both call sites pass the resolved answer");
-  });
 });

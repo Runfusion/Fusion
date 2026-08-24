@@ -2,16 +2,25 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
+import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
+import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 
 const taskPlannerChatCss = readFileSync(resolve(__dirname, "../TaskPlannerChatTab.css"), "utf8");
 const originalScrollTopDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
 const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
 const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 
-const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockStreamChatResponse, mockAttachChatStream, mockEditChatMessage, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
+const mockModelCatalog = vi.hoisted(() => ({
+  models: [
+    { provider: "anthropic", id: "claude-plan", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
+    { provider: "enterprise-provider", id: "very-long-production-model", name: "Enterprise Production Model With A Readable Long Name", reasoning: true, contextWindow: 200000 },
+  ],
+}));
+
+const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockUpdateChatSession, mockStreamChatResponse, mockAttachChatStream, mockCancelChatResponse, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
   const translations = new Map<string, string>();
   return {
     mockEnsureTaskPlannerChatSession: vi.fn(),
@@ -19,14 +28,27 @@ const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockF
     mockFetchChatSession: vi.fn(),
     mockFetchChatMessages: vi.fn(),
     mockFetchTaskDetail: vi.fn(),
+    mockUpdateChatSession: vi.fn(),
     mockStreamChatResponse: vi.fn(),
     mockAttachChatStream: vi.fn(),
-    mockEditChatMessage: vi.fn(),
+    mockCancelChatResponse: vi.fn(),
     mockAddSteeringComment: vi.fn(),
     mockTranslations: translations,
-    mockT: (key: string, fallback: string) => translations.get(key) ?? fallback,
+    mockT: (key: string, fallback: string | { defaultValue?: string; defaultValue_one?: string; defaultValue_other?: string; count?: number }) => {
+      if (translations.has(key)) return translations.get(key)!;
+      if (typeof fallback === "string") return fallback;
+      return (fallback.count === 1 ? fallback.defaultValue_one : fallback.defaultValue_other) ?? fallback.defaultValue ?? key;
+    },
   };
 });
+
+vi.mock("../../hooks/useModelsCache", () => ({
+  useModelsCache: () => ({
+    models: mockModelCatalog.models,
+    favoriteProviders: [],
+    favoriteModels: [],
+  }),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -43,9 +65,10 @@ vi.mock("../../api", async (importOriginal) => {
     fetchChatSession: mockFetchChatSession,
     fetchChatMessages: mockFetchChatMessages,
     fetchTaskDetail: mockFetchTaskDetail,
+    updateChatSession: mockUpdateChatSession,
     streamChatResponse: mockStreamChatResponse,
     attachChatStream: mockAttachChatStream,
-    editChatMessage: mockEditChatMessage,
+    cancelChatResponse: mockCancelChatResponse,
     addSteeringComment: mockAddSteeringComment,
   };
 });
@@ -106,7 +129,7 @@ function renderPlannerChat(overrides: Partial<React.ComponentProps<typeof TaskPl
     <TaskPlannerChatTab
       task={makeTask("FN-7310")}
       active
-      planningModel={{ provider: "anthropic", modelId: "claude-plan" }}
+      taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
       addToast={vi.fn()}
       {...overrides}
     />,
@@ -177,10 +200,15 @@ describe("TaskPlannerChatTab", () => {
     mockEnsureTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     mockFetchTaskDetail.mockResolvedValue(makeTask("FN-7310"));
+    mockUpdateChatSession.mockResolvedValue({ session: makePlannerSession() });
     mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
     mockAttachChatStream.mockReturnValue({ close: vi.fn(), isConnected: () => true });
-    mockEditChatMessage.mockResolvedValue({ retained: [] });
+    mockCancelChatResponse.mockResolvedValue({ success: true, interrupted: false });
     mockAddSteeringComment.mockResolvedValue(makeTask("FN-7310"));
+    mockModelCatalog.models = [
+      { provider: "anthropic", id: "claude-plan", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
+      { provider: "enterprise-provider", id: "very-long-production-model", name: "Enterprise Production Model With A Readable Long Name", reasoning: true, contextWindow: 200000 },
+    ];
   });
 
   afterEach(() => {
@@ -196,11 +224,11 @@ describe("TaskPlannerChatTab", () => {
     expect(emptyState).toHaveTextContent("Start a task-aware chat");
     expect(document.querySelector(".task-planner-chat-header")).toBeNull();
     expect(screen.queryByText("Planner Chat")).toBeNull();
-    expect(emptyState).toHaveTextContent("Ask planning questions about this task's current status, recent activity, blockers, next steps, or definition.");
+    expect(emptyState).toHaveTextContent("Ask questions about this task's current status, recent activity, blockers, next steps, or definition.");
     expect(emptyState).toHaveTextContent("Starter prompts send as normal chat messages.");
     expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledWith(
       "FN-7310",
-      { modelProvider: "anthropic", modelId: "claude-plan" },
+      {},
       undefined,
     );
     expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
@@ -219,6 +247,226 @@ describe("TaskPlannerChatTab", () => {
     expect(screen.getAllByTestId(/task-planner-chat-starter-/)).toHaveLength(4);
   });
 
+  it("uses the Direct Chat model target and exposes model/thinking controls without losing task scope", async () => {
+    const user = userEvent.setup();
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
+    renderPlannerChat({
+      taskChatModel: { provider: "openai", modelId: "gpt-direct", thinkingLevel: "high" },
+    });
+
+    await screen.findByTestId("task-planner-chat-empty");
+    expect(screen.getByRole("button", { name: "Chat model" })).toBeInTheDocument();
+    expect(screen.getByTestId("chat-thinking-btn")).toHaveAccessibleName("Thinking level");
+    await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+
+    expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
+      "FN-7310",
+      { modelProvider: "openai", modelId: "gpt-direct", thinkingLevel: "high" },
+      undefined,
+    );
+    expect(mockStreamChatResponse).toHaveBeenCalledWith(
+      "chat-planner",
+      "Summarize the recent activity for this task and call out anything important I should know.",
+      expect.any(Object),
+      undefined,
+      undefined,
+      { taskId: "FN-7310" },
+    );
+  });
+
+  it("uses Direct Chat's readable portal for compact task-chat triggers and keeps long models searchable", async () => {
+    const user = userEvent.setup();
+    const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(1000);
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({
+      top: 100, left: 50, bottom: 136, width: 200, height: 36, right: 250, x: 50, y: 100, toJSON: () => ({}),
+    } as DOMRect));
+
+    try {
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: "Chat model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+
+      expect(portal).toHaveAttribute("data-menu-width", "readable");
+      expect(Number.parseFloat(portal.style.width)).toBeGreaterThan(200);
+      await user.type(within(portal).getByPlaceholderText("Filter models…"), "readable long");
+      expect(within(portal).getByText("Enterprise Production Model With A Readable Long Name")).toBeInTheDocument();
+      await user.click(within(portal).getByText("Enterprise Production Model With A Readable Long Name"));
+      await waitFor(() => expect(mockUpdateChatSession).toHaveBeenCalledWith(
+        "chat-planner",
+        expect.objectContaining({ modelProvider: "enterprise-provider", modelId: "very-long-production-model" }),
+        undefined,
+      ));
+    } finally {
+      Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
+  it("keeps readable task-chat menus viewport-clamped for undefined selections and duplicate mobile catalogues", async () => {
+    const user = userEvent.setup();
+    const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+    const originalVisualViewport = window.visualViewport;
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { width: 320, height: 640, offsetTop: 0, offsetLeft: 20, addEventListener: vi.fn(), removeEventListener: vi.fn() },
+    });
+    mockModelCatalog.models = [
+      { provider: "anthropic", id: "claude-plan", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
+      { provider: "anthropic", id: "claude-plan-copy", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
+    ];
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({
+      top: 100, left: 250, bottom: 136, width: 160, height: 36, right: 410, x: 250, y: 100, toJSON: () => ({}),
+    } as DOMRect));
+
+    try {
+      renderPlannerChat({ taskChatModel: {} });
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: "Chat model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+      const left = Number.parseFloat(portal.style.left);
+      const width = Number.parseFloat(portal.style.width);
+
+      expect(portal).toHaveAttribute("data-menu-width", "readable");
+      expect(left - 20).toBeGreaterThanOrEqual(16);
+      expect(left - 20 + width).toBeLessThanOrEqual(320 - 16);
+    } finally {
+      Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: originalVisualViewport });
+    }
+  });
+
+  /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  Task-detail Planner Chat must use the same shared Markdown anchor contract for both loaded history and an in-flight reattached response; this catches a renderer fork that would regress only task-bound Chat.
+  */
+  it("renders complete source links in persisted and streaming Planner Chat", async () => {
+    const sourceMarkdown = [
+      "Sources officielles:",
+      "",
+      "[GPT‑5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)",
+      "[GPT‑5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol)",
+      "[GPT‑5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra)",
+    ].join("\\n");
+    const inFlightGeneration = {
+      status: "generating",
+      streamingText: sourceMarkdown,
+      streamingThinking: "",
+      toolCalls: [],
+      replayFromEventId: 1,
+      updatedAt: "2026-07-01T14:00:00.000Z",
+    };
+    const session = makePlannerSession({ isGenerating: true, inFlightGeneration });
+    mockFetchTaskPlannerChatSession.mockResolvedValue({ session });
+    mockFetchChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({
+      messages: [{ id: "planner-source", sessionId: "chat-planner", role: "assistant", content: sourceMarkdown, thinkingOutput: null, metadata: null, createdAt: "2026-07-01T13:59:00.000Z" }],
+    });
+    mockAttachChatStream.mockReturnValue({ close: vi.fn(), isConnected: () => true });
+
+    renderPlannerChat();
+
+    await waitFor(() => {
+      expect(document.querySelectorAll(".chat-message-content--markdown a")).toHaveLength(6);
+    });
+    const links = Array.from(document.querySelectorAll(".chat-message-content--markdown a"));
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    ]);
+    expect(links.every((link) => link.getAttribute("target") === "_blank")).toBe(true);
+    expect(links.every((link) => link.getAttribute("rel") === "noopener noreferrer")).toBe(true);
+    expect(document.body.textContent).toContain("GPT‑5.6");
+    expect(document.body.textContent).not.toContain("5. 6");
+  });
+
+  it("caps the loaded planner composer, ignores pointer resizing, and collapses on clear", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "planner-history", sessionId: "chat-planner", role: "assistant", content: "Loaded planner history", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" }],
+    });
+    renderPlannerChat();
+
+    await screen.findByText("Loaded planner history");
+    const input = await screen.findByLabelText("Message task chat") as HTMLTextAreaElement;
+    Object.defineProperty(input, "scrollHeight", {
+      configurable: true,
+      get: () => input.value.length > 0 ? 500 : 24,
+    });
+
+    fireEvent.change(input, { target: { value: "one\ntwo\nthree\nfour\nfive\nsix" } });
+    const automaticHeight = clampChatInputHeight(500, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(input)));
+    expect(input.style.height).toBe(`${automaticHeight}px`);
+    expect(input.style.overflowY).toBe("auto");
+    expect(screen.getByTestId("task-planner-chat-transcript")).toBeInTheDocument();
+
+    const pointer = (type: string, clientY: number) => input.dispatchEvent(Object.assign(
+      new Event(type, { bubbles: true, cancelable: true }), { clientY, pointerId: 1, pointerType: "mouse" },
+    ));
+    pointer("pointerdown", 0);
+    pointer("pointermove", -200);
+    pointer("pointerup", -200);
+    expect(Number.parseInt(input.style.height, 10)).toBe(automaticHeight);
+
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => {
+      expect(input).toHaveValue("");
+      expect(input.style.height).toBe(`${clampChatInputHeight(24, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(input)))}px`);
+      expect(input.style.overflowY).toBe("hidden");
+    });
+  });
+
+  it.each([
+    ["desktop", "mouse"],
+    ["mobile", "touch"],
+  ])("FN-016 keeps a planner partial reply after Stop on %s", async (_label, pointerType) => {
+    let streamHandlers: any;
+    const interrupted = {
+      id: "planner-interrupted",
+      sessionId: "chat-planner",
+      role: "assistant" as const,
+      content: "Distinct planner stopped prefix",
+      thinkingOutput: null,
+      metadata: { interrupted: true },
+      createdAt: "2026-08-18T21:55:00.000Z",
+    };
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const plannerRender = renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+    mockFetchChatMessages.mockResolvedValue({ messages: [interrupted] });
+    mockCancelChatResponse.mockResolvedValue({ success: true, interrupted: true, message: interrupted });
+
+    await userEvent.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+    await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(1));
+    act(() => streamHandlers?.onText("Distinct planner stopped prefix"));
+    await screen.findByText("Distinct planner stopped prefix");
+
+    const stopButton = screen.getByTestId("chat-stop-btn");
+    if (pointerType === "touch") {
+      fireEvent.pointerDown(stopButton, { pointerType: "touch" });
+    } else {
+      fireEvent.click(stopButton);
+    }
+    await waitFor(() => expect(mockCancelChatResponse).toHaveBeenCalledWith("chat-planner", undefined));
+    await waitFor(() => expect(screen.getAllByText("Distinct planner stopped prefix")).toHaveLength(1));
+    expect(screen.getByTestId("chat-send-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-stop-btn")).not.toBeInTheDocument();
+
+    act(() => streamHandlers?.onText(" stale late callback"));
+    expect(screen.queryByText("stale late callback")).not.toBeInTheDocument();
+
+    plannerRender.unmount();
+    renderPlannerChat();
+    expect(await screen.findByText("Distinct planner stopped prefix")).toBeInTheDocument();
+  });
+
   it("does not create a planner session when no existing history is found on tab activation", async () => {
     mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
 
@@ -228,7 +476,7 @@ describe("TaskPlannerChatTab", () => {
     expect(emptyState).toHaveTextContent("Start a task-aware chat");
     expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledWith(
       "FN-7310",
-      { modelProvider: "anthropic", modelId: "claude-plan" },
+      {},
       undefined,
     );
     expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
@@ -269,7 +517,7 @@ describe("TaskPlannerChatTab", () => {
     await screen.findByTestId("task-planner-chat-empty");
 
     expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
-    await user.type(screen.getByLabelText("Message planner chat"), "What changed in this completed task?");
+    await user.type(screen.getByLabelText("Message task chat"), "What changed in this completed task?");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
@@ -318,12 +566,12 @@ describe("TaskPlannerChatTab", () => {
     expect(await screen.findByTestId("task-planner-chat-empty")).toBeInTheDocument();
     const toggle = screen.getByTestId("task-planner-chat-expand-toggle");
     const modelBadge = screen.getByTestId("task-planner-chat-model");
-    expect(toggle).toHaveAccessibleName("Collapse planner chat");
+    expect(toggle).toHaveAccessibleName("Collapse task chat");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(toggle).toHaveClass("task-planner-chat-expand-toggle--overlay");
     expect(screen.getByTestId("task-planner-chat-panel")).toContainElement(toggle);
     expect(screen.getByTestId("task-planner-chat-empty")).toContainElement(modelBadge);
-    expect(screen.getByTestId("task-planner-chat-panel")).toContainElement(screen.getByLabelText("Message planner chat"));
+    expect(screen.getByTestId("task-planner-chat-panel")).toContainElement(screen.getByLabelText("Message task chat"));
     expect(screen.getByTestId("task-planner-chat-panel")).toContainElement(screen.getByRole("button", { name: "Send" }));
 
     await userEvent.click(toggle);
@@ -331,8 +579,9 @@ describe("TaskPlannerChatTab", () => {
     expect(onExpandedChange).toHaveBeenCalledWith(false);
   });
 
-  it("omits model override when the effective planning model is undefined", async () => {
-    renderPlannerChat({ planningModel: {} });
+  it("omits model override when the effective task Chat model is undefined", async () => {
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
+    renderPlannerChat({ taskChatModel: {} });
 
     await screen.findByTestId("task-planner-chat-empty");
     expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledWith("FN-7310", {}, undefined);
@@ -348,7 +597,7 @@ describe("TaskPlannerChatTab", () => {
       <TaskPlannerChatTab
         task={makeTask("FN-7310")}
         active
-        planningModel={{ provider: "anthropic", modelId: "claude-plan" }}
+        taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
         addToast={vi.fn()}
       />,
     );
@@ -392,12 +641,15 @@ describe("TaskPlannerChatTab", () => {
       <TaskPlannerChatTab
         task={makeTask("FN-7312")}
         active
-        planningModel={{ provider: "anthropic", modelId: "claude-plan" }}
+        taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
         addToast={vi.fn()}
       />,
     );
 
     await screen.findByTestId("task-planner-chat-empty");
+    mockEnsureTaskPlannerChatSession.mockImplementationOnce((taskId: string) => Promise.resolve({
+      session: makePlannerSession({ id: taskId === "FN-7312" ? "chat-new-task" : "chat-planner", agentId: `task-planner:${taskId}` }),
+    }));
     firstLoad.resolve({
       session: {
         id: "chat-old-task",
@@ -463,7 +715,7 @@ describe("TaskPlannerChatTab", () => {
       <TaskPlannerChatTab
         task={makeTask("FN-7312")}
         active
-        planningModel={{ provider: "anthropic", modelId: "claude-plan" }}
+        taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
         addToast={vi.fn()}
       />,
     );
@@ -610,7 +862,7 @@ describe("TaskPlannerChatTab", () => {
 
     renderPlannerChat();
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Loading planner chat…");
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading task chat…");
     expect(screen.queryByTestId("task-planner-chat-empty")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Summarize recent activity/ })).not.toBeInTheDocument();
   });
@@ -632,7 +884,7 @@ describe("TaskPlannerChatTab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
     expect(screen.queryByTestId("task-planner-chat-empty")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Message planner chat")).toBeEnabled();
+    expect(screen.getByLabelText("Message task chat")).toBeEnabled();
   });
 
   it("renders persisted planner-chat messages", async () => {
@@ -651,6 +903,37 @@ describe("TaskPlannerChatTab", () => {
     expect(screen.queryByRole("button", { name: /Summarize recent activity/ })).not.toBeInTheDocument();
   });
 
+  it("applies full-width layout to persisted and streaming Planner Chat messages", async () => {
+    mockFetchChatMessages.mockResolvedValue({
+      messages: [
+        { id: "layout-planner-user", sessionId: "chat-planner", role: "user", content: "Planner question", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" },
+        { id: "layout-planner-assistant", sessionId: "chat-planner", role: "assistant", content: "Planner answer", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:02:00.000Z" },
+      ],
+    });
+
+    render(
+      <ChatMessageLayoutProvider value="full-width">
+        <TaskPlannerChatTab
+          task={makeTask("FN-7310")}
+          active
+          taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
+          addToast={vi.fn()}
+        />
+      </ChatMessageLayoutProvider>,
+    );
+
+    expect(await screen.findByTestId("task-planner-chat-panel")).toHaveClass("task-planner-chat--full-width");
+    expect(screen.getByTestId("chat-message-layout-planner-user")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-message-layout-planner-assistant")).toBeInTheDocument();
+    expect(taskPlannerChatCss).toContain(".task-planner-chat--full-width .chat-message");
+    expect(taskPlannerChatCss).toContain("max-width: 100%");
+  });
+
+  it("keeps Planner Chat bubbles when no full-width context is provided", async () => {
+    renderPlannerChat();
+    expect(await screen.findByTestId("task-planner-chat-panel")).not.toHaveClass("task-planner-chat--full-width");
+  });
+
   it("keeps an unsnapped planner transcript in place during streamed growth", async () => {
     const user = userEvent.setup();
     const metrics = mockPlannerTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240 });
@@ -667,7 +950,7 @@ describe("TaskPlannerChatTab", () => {
     await screen.findByText("Earlier plan");
     expect(metrics.scrollTop).toBe(metrics.scrollHeight);
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Keep streaming");
+    await user.type(screen.getByLabelText("Message task chat"), "Keep streaming");
     await user.click(screen.getByRole("button", { name: "Send" }));
     metrics.scrollTop = 120;
     fireEvent.scroll(screen.getByTestId("task-planner-chat-transcript"));
@@ -692,7 +975,7 @@ describe("TaskPlannerChatTab", () => {
 
     renderPlannerChat();
     await screen.findByText("Earlier plan");
-    await user.type(screen.getByLabelText("Message planner chat"), "Keep streaming");
+    await user.type(screen.getByLabelText("Message task chat"), "Keep streaming");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     metrics.scrollHeight = 1400;
@@ -747,7 +1030,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Help plan this");
+    await user.type(screen.getByLabelText("Message task chat"), "Help plan this");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(mockStreamChatResponse).toHaveBeenCalledWith(
@@ -772,7 +1055,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
 
-    const input = screen.getByLabelText("Message planner chat");
+    const input = screen.getByLabelText("Message task chat");
     await user.type(input, "First reply");
     await user.click(screen.getByRole("button", { name: "Send" }));
     act(() => {
@@ -811,7 +1094,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat({ projectId: "project-1" });
     await screen.findByTestId("task-planner-chat-empty");
 
-    const input = screen.getByLabelText("Message planner chat");
+    const input = screen.getByLabelText("Message task chat");
     fireEvent.change(input, { target: { value: "First mobile tap planner message" } });
     firstTapSendFromFocusedPlannerTextarea(input, screen.getByRole("button", { name: "Send" }));
 
@@ -838,17 +1121,22 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
 
-    const input = screen.getByLabelText("Message planner chat");
+    const input = screen.getByLabelText("Message task chat");
     const sendButton = screen.getByRole("button", { name: "Send" });
     expect(sendButton).toBeDisabled();
     fireEvent.change(input, { target: { value: "   \n  " } });
     expect(sendButton).toBeDisabled();
     firstTapSendFromFocusedPlannerTextarea(input, sendButton);
     expect(mockStreamChatResponse).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 
     fireEvent.change(input, { target: { value: "Do not duplicate planner tap" } });
     expect(sendButton).not.toBeDisabled();
     firstTapSendFromFocusedPlannerTextarea(input, sendButton);
+    await waitFor(() => expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(1));
     fireEvent.pointerDown(sendButton, { pointerType: "touch" });
     fireEvent.click(sendButton);
 
@@ -873,7 +1161,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Think with an icon");
+    await user.type(screen.getByLabelText("Message task chat"), "Think with an icon");
     const sendButton = screen.getByTestId("chat-send-btn");
     expect(sendButton).toHaveAccessibleName("Send");
     expect(sendButton.querySelector("svg")).toBeTruthy();
@@ -882,6 +1170,7 @@ describe("TaskPlannerChatTab", () => {
     expect(sendButton.querySelector("span")).toBeNull();
 
     fireEvent.pointerDown(sendButton, { pointerType: "touch" });
+    await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(1));
     act(() => {
       streamHandlers.onThinking?.("checking the plan");
     });
@@ -951,14 +1240,20 @@ describe("TaskPlannerChatTab", () => {
     // the Send or Stop variant above the textarea.
     const desktopTabletHeight = "calc(var(--space-2xl) + var(--space-sm))";
     const mobileHeight = "calc(var(--space-2xl) + var(--space-lg))";
-    expect(desktopInputRule).toContain(`height: ${desktopTabletHeight};`);
+    expect(desktopInputRule).not.toMatch(/(?:^|\n)\s+height:/);
     expect(desktopInputRule).toContain(`min-height: ${desktopTabletHeight};`);
+    expect(desktopInputRule).toContain("max-height: none;");
+    expect(desktopInputRule).toContain("resize: none;");
+    expect(desktopInputRule).not.toContain("resize: vertical;");
+    expect(desktopInputRule).toContain("overflow-y: hidden;");
     expect(desktopSendRule).toContain(`block-size: ${desktopTabletHeight};`);
     expect(desktopSendRule).toContain(`min-block-size: ${desktopTabletHeight};`);
     expect(desktopSendRule).toContain("box-sizing: border-box;");
     expect(desktopSendRule).toContain("padding: 0;");
-    expect(mobileInputRule).toContain(`height: ${mobileHeight};`);
+    expect(mobileInputRule).not.toMatch(/(?:^|\n)\s+height:/);
     expect(mobileInputRule).toContain(`min-height: ${mobileHeight};`);
+    expect(mobileInputRule).toContain("max-height: none;");
+    expect(mobileInputRule).toContain("resize: none;");
     expect(mobileSendRule).toContain(`block-size: ${mobileHeight};`);
     expect(mobileSendRule).toContain(`min-block-size: ${mobileHeight};`);
     expect(mobileSendRule).toContain("padding: 0;");
@@ -988,7 +1283,7 @@ describe("TaskPlannerChatTab", () => {
     expect(await screen.findByText("Stored answer")).toBeInTheDocument();
     expect(screen.getByText("stored plan notes")).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Think about this");
+    await user.type(screen.getByLabelText("Message task chat"), "Think about this");
     fireEvent.pointerDown(screen.getByTestId("chat-send-btn"), { pointerType: "touch" });
 
     expect(await screen.findByText("Thinking…")).toBeInTheDocument();
@@ -1000,12 +1295,12 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Mobile first tap");
+    await user.type(screen.getByLabelText("Message task chat"), "Mobile first tap");
     const sendButton = screen.getByTestId("chat-send-btn");
     fireEvent.pointerDown(sendButton, { pointerType: "touch" });
     fireEvent.click(sendButton);
 
-    expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(1));
     expect(mockStreamChatResponse).toHaveBeenCalledWith(
       "chat-planner",
       "Mobile first tap",
@@ -1035,7 +1330,7 @@ describe("TaskPlannerChatTab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Refresh unavailable");
     expect(addToast).toHaveBeenCalledWith("Refresh unavailable", "error");
-    expect(screen.getByLabelText("Message planner chat")).toBeEnabled();
+    expect(screen.getByLabelText("Message task chat")).toBeEnabled();
   });
 
   it("sends manual status/progress questions with the current task identity", async () => {
@@ -1043,7 +1338,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat({ task: makeTask("FN-STATUS") });
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "What is the current status and progress?");
+    await user.type(screen.getByLabelText("Message task chat"), "What is the current status and progress?");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(mockStreamChatResponse).toHaveBeenCalledWith(
@@ -1108,11 +1403,11 @@ describe("TaskPlannerChatTab", () => {
     mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
     renderPlannerChat({
       task: { ...makeTask("FN-MISSING-CONTEXT"), dependencies: [], prompt: undefined, log: undefined } as any,
-      planningModel: { provider: "openai", modelId: "gpt-planner" },
+      taskChatModel: { provider: "openai", modelId: "gpt-planner" },
     });
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Explain the current task state with whatever context exists.");
+    await user.type(screen.getByLabelText("Message task chat"), "Explain the current task state with whatever context exists.");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
@@ -1165,6 +1460,53 @@ describe("TaskPlannerChatTab", () => {
     await userEvent.click(details.querySelector("summary") as HTMLElement);
     expect(details).toHaveTextContent(longCommand);
     expect(details).toHaveTextContent("PLANNER_RESULT_SUFFIX");
+  });
+
+  it.each([
+    ["desktop", false],
+    ["mobile", true],
+  ] as const)("keeps reattached planner tools and thinking collapsed on %s", async (_viewport, matchesMobile) => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: matchesMobile && query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+    const inFlightGeneration = {
+      status: "generating",
+      streamingText: "Planner is working",
+      streamingThinking: "Planner is checking the task",
+      toolCalls: [
+        { toolName: "read", args: { path: "one.ts" }, status: "running", isError: false },
+        { toolName: "read", args: { path: "two.ts" }, status: "running", isError: false },
+      ],
+      replayFromEventId: 3,
+      updatedAt: "2026-07-01T14:00:00.000Z",
+    };
+    const plannerSession = makePlannerSession({ isGenerating: true, inFlightGeneration });
+    mockFetchTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
+    mockFetchChatSession.mockResolvedValue({ session: plannerSession });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const user = userEvent.setup();
+    renderPlannerChat();
+
+    const group = await screen.findByTestId("chat-tool-calls-group") as HTMLDetailsElement;
+    expect(group).not.toHaveAttribute("open");
+    const thinking = await screen.findByTestId("chat-message-__streaming__").then((message) => message.querySelector("details.chat-message-thinking") as HTMLDetailsElement);
+    expect(thinking).not.toHaveAttribute("open");
+    await user.click(within(thinking).getByText("Thinking"));
+    expect(thinking).toHaveAttribute("open");
+    await user.click(within(thinking).getByText("Planner is checking the task"));
+    expect(thinking).not.toHaveAttribute("open");
   });
 
   it("renders mixed persisted planner question tool calls with the shared answer UI outside collapsed details", async () => {
@@ -1241,7 +1583,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat({ projectId: "project-1", onTaskUpdated });
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Tell the executor to keep Activity and Chat separate");
+    await user.type(screen.getByLabelText("Message task chat"), "Tell the executor to keep Activity and Chat separate");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByTestId("task-planner-chat-steering-confirmation")).toHaveTextContent("Added as steering comment");
@@ -1335,7 +1677,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat({ projectId: "project-1", onTaskUpdated });
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Delete the risky parts and rewrite the security flow broadly");
+    await user.type(screen.getByLabelText("Message task chat"), "Delete the risky parts and rewrite the security flow broadly");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const question = await screen.findByTestId("chat-question-response");
@@ -1388,7 +1730,7 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat({ projectId: "project-1", onTaskUpdated });
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Add empty steering");
+    await user.type(screen.getByLabelText("Message task chat"), "Add empty steering");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("I could not add that as steering.")).toBeInTheDocument();
@@ -1477,7 +1819,7 @@ describe("TaskPlannerChatTab", () => {
 
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
-    await user.type(screen.getByLabelText("Message planner chat"), "slow planner prompt");
+    await user.type(screen.getByLabelText("Message task chat"), "slow planner prompt");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("slow planner prompt")).toBeInTheDocument();
@@ -1545,7 +1887,7 @@ describe("TaskPlannerChatTab", () => {
 
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
-    await user.type(screen.getByLabelText("Message planner chat"), "hello after 429");
+    await user.type(screen.getByLabelText("Message task chat"), "hello after 429");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("hello after 429")).toBeInTheDocument();
@@ -1566,7 +1908,7 @@ describe("TaskPlannerChatTab", () => {
 
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
-    await user.type(screen.getByLabelText("Message planner chat"), "blocked before persist");
+    await user.type(screen.getByLabelText("Message task chat"), "blocked before persist");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("blocked before persist")).toBeInTheDocument();
@@ -1585,14 +1927,14 @@ describe("TaskPlannerChatTab", () => {
     });
     const { rerender } = renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
-    await user.type(screen.getByLabelText("Message planner chat"), "old task message");
+    await user.type(screen.getByLabelText("Message task chat"), "old task message");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     rerender(
       <TaskPlannerChatTab
         task={makeTask("FN-7312")}
         active
-        planningModel={{ provider: "anthropic", modelId: "claude-plan" }}
+        taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
         addToast={vi.fn()}
       />,
     );
@@ -1611,11 +1953,11 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat();
     await screen.findByTestId("task-planner-chat-empty");
 
-    await user.type(screen.getByLabelText("Message planner chat"), "Question");
+    await user.type(screen.getByLabelText("Message task chat"), "Question");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Planner unavailable");
-    await waitFor(() => expect(screen.getByLabelText("Message planner chat")).toBeEnabled());
+    await waitFor(() => expect(screen.getByLabelText("Message task chat")).toBeEnabled());
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
@@ -1623,7 +1965,7 @@ describe("TaskPlannerChatTab", () => {
    * FNXC:TaskDetailPlannerChat 2026-07-07-10:15:
    * Covers the FN-7639 edit-and-resend affordance across the enumerated surfaces: renders only
    * for persisted user rows, absent on assistant/optimistic/streaming rows and while sending,
-   * truncates-then-resends in order, reloads truthful history and toasts on PATCH failure without
+   * waits for replacement acceptance, reloads truthful history and toasts on pre-acceptance failure without
    * resending, preserves planner-question dedup across an edited answer, and refreshes task detail
    * with a discard notice (but no reversal) when the discarded range held a steering/refinement
    * confirmation.
@@ -1657,7 +1999,7 @@ describe("TaskPlannerChatTab", () => {
       renderPlannerChat();
       await screen.findByTestId("task-planner-chat-empty");
 
-      await user.type(screen.getByLabelText("Message planner chat"), "In flight");
+      await user.type(screen.getByLabelText("Message task chat"), "In flight");
       await user.click(screen.getByRole("button", { name: "Send" }));
 
       const optimisticMessage = await screen.findByText("In flight");
@@ -1668,16 +2010,18 @@ describe("TaskPlannerChatTab", () => {
       deferredStream.resolve();
     });
 
-    it("truncates locally, calls editChatMessage, then resends through the normal streaming send in order", async () => {
+    it("sends one replacement-aware stream and keeps the range until acceptance", async () => {
       mockFetchChatMessages.mockResolvedValue({
         messages: [
           { id: "m1", sessionId: "chat-planner", role: "user", content: "Hello", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" },
           { id: "m2", sessionId: "chat-planner", role: "assistant", content: "Hi there", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:02:00.000Z" },
         ],
       });
-      const deferredEdit = createDeferred<{ retained: unknown[] }>();
-      mockEditChatMessage.mockReturnValue(deferredEdit.promise);
-      mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
+      const deferredAccepted = createDeferred<void>();
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        void deferredAccepted.promise.then(() => handlers.onAccepted?.());
+        return { close: vi.fn(), isConnected: () => true };
+      });
 
       const user = userEvent.setup();
       renderPlannerChat();
@@ -1686,16 +2030,8 @@ describe("TaskPlannerChatTab", () => {
       await user.click(screen.getByTestId("chat-message-edit-m1"));
       const editor = screen.getByTestId("chat-message-edit-editor-m1");
       const textarea = editor.querySelector("textarea") as HTMLTextAreaElement;
-      fireEvent.change(textarea, { target: { value: "Hello, edited" } });
+      fireEvent.change(textarea, { target: { value: "  Hello, edited  " } });
       fireEvent.click(screen.getByText("Save"));
-
-      await waitFor(() => expect(mockEditChatMessage).toHaveBeenCalledWith("chat-planner", "m1", "Hello, edited", undefined));
-      // The edited row stays mounted until PATCH success so a rejected save can retain its correction.
-      expect(screen.getByTestId("chat-message-edit-editor-m1")).toBeInTheDocument();
-      expect(screen.getByText("Hi there")).toBeInTheDocument();
-      expect(mockStreamChatResponse).not.toHaveBeenCalled();
-
-      deferredEdit.resolve({ retained: [] });
 
       await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledWith(
         "chat-planner",
@@ -1703,14 +2039,18 @@ describe("TaskPlannerChatTab", () => {
         expect.any(Object),
         undefined,
         undefined,
-        { taskId: "FN-7310" },
+        { taskId: "FN-7310", replacementMessageId: "m1" },
       ));
-      const editCallOrder = mockEditChatMessage.mock.invocationCallOrder[0];
-      const sendCallOrder = mockStreamChatResponse.mock.invocationCallOrder[mockStreamChatResponse.mock.calls.length - 1];
-      expect(editCallOrder).toBeLessThan(sendCallOrder);
+      expect(screen.getByText("Hi there")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-message-edit-editor-m1")).toBeInTheDocument();
+
+      deferredAccepted.resolve();
+      await waitFor(() => expect(screen.queryByTestId("chat-message-edit-editor-m1")).toBeNull());
+      expect(screen.queryByText("Hi there")).toBeNull();
+      expect(screen.getByText("Hello, edited")).toBeInTheDocument();
     });
 
-    it("reloads truthful history and toasts on PATCH failure without resending", async () => {
+    it("reloads truthful history and toasts on pre-acceptance failure without resending", async () => {
       mockFetchChatMessages.mockResolvedValueOnce({
         messages: [
           { id: "m1", sessionId: "chat-planner", role: "user", content: "Hello", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" },
@@ -1721,7 +2061,10 @@ describe("TaskPlannerChatTab", () => {
           { id: "m1", sessionId: "chat-planner", role: "user", content: "Hello", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" },
         ],
       });
-      mockEditChatMessage.mockRejectedValueOnce(new Error("edit failed"));
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        handlers.onError?.("edit failed", { requestAccepted: false, receivedStreamEvent: false });
+        return { close: vi.fn(), isConnected: () => true };
+      });
       const addToast = vi.fn();
 
       renderPlannerChat({ addToast });
@@ -1734,8 +2077,15 @@ describe("TaskPlannerChatTab", () => {
 
       await waitFor(() => expect(addToast).toHaveBeenCalledWith("edit failed", "error"));
       await waitFor(() => expect(mockFetchChatMessages).toHaveBeenCalledTimes(2));
-      expect(mockStreamChatResponse).not.toHaveBeenCalled();
-      // A rejected PATCH must leave the inline correction available for retry instead of closing it.
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "chat-planner",
+        "Hello, edited",
+        expect.any(Object),
+        undefined,
+        undefined,
+        { taskId: "FN-7310", replacementMessageId: "m1" },
+      );
+      // A rejected replacement must leave the inline correction available for retry instead of closing it.
       expect(screen.getByTestId("chat-message-edit-editor-m1")).toBeInTheDocument();
       expect(textarea).toHaveValue("Hello, edited");
     });
@@ -1756,11 +2106,12 @@ describe("TaskPlannerChatTab", () => {
       renderPlannerChat();
       await screen.findByTestId("chat-message-edit-m1");
 
-      await user.type(screen.getByLabelText("Message planner chat"), "another message");
+      await user.type(screen.getByLabelText("Message task chat"), "another message");
       await user.click(screen.getByRole("button", { name: "Send" }));
 
       await waitFor(() => expect(screen.queryByTestId("chat-message-edit-m1")).toBeNull());
-      expect(mockEditChatMessage).not.toHaveBeenCalled();
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      expect(mockStreamChatResponse.mock.calls[0]?.[5]).toEqual({ taskId: "FN-7310" });
 
       deferredStream.resolve();
     });
@@ -1772,8 +2123,10 @@ describe("TaskPlannerChatTab", () => {
           { id: "answer-1", sessionId: "chat-planner", role: "user", content: "> Q: Pick a path\nConservative", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:02:00.000Z" },
         ],
       });
-      mockEditChatMessage.mockResolvedValue({ retained: [] });
-      mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        handlers.onAccepted?.();
+        return { close: vi.fn(), isConnected: () => true };
+      });
 
       renderPlannerChat();
       await screen.findByTestId("chat-question-response");
@@ -1785,7 +2138,14 @@ describe("TaskPlannerChatTab", () => {
       fireEvent.change(textarea, { target: { value: "> Q: Pick a path\nAggressive" } });
       fireEvent.click(screen.getByText("Save"));
 
-      await waitFor(() => expect(mockEditChatMessage).toHaveBeenCalledWith("chat-planner", "answer-1", "> Q: Pick a path\nAggressive", undefined));
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "chat-planner",
+        "> Q: Pick a path\nAggressive",
+        expect.any(Object),
+        undefined,
+        undefined,
+        { taskId: "FN-7310", replacementMessageId: "answer-1" },
+      ));
       // The prior answer is discarded and the edited content is resent as the new answer: the
       // question card stays a single card (no duplicate/corrupted dedup state) and reflects the
       // resent answer as the current answered state.
@@ -1817,8 +2177,10 @@ describe("TaskPlannerChatTab", () => {
           },
         ],
       });
-      mockEditChatMessage.mockResolvedValue({ retained: [] });
-      mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        handlers.onAccepted?.();
+        return { close: vi.fn(), isConnected: () => true };
+      });
       const onTaskUpdated = vi.fn();
       const addToast = vi.fn();
 
@@ -1845,7 +2207,7 @@ describe("TaskPlannerChatTab", () => {
   describe("slash-command /steer", () => {
     it("shows /steer in the '/' menu, disabled with a hint, when the task's agent is not running", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "todo" }) });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/" } });
 
@@ -1856,7 +2218,7 @@ describe("TaskPlannerChatTab", () => {
 
     it("enables /steer in the menu when the task's agent is running (column === in-progress)", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/" } });
 
@@ -1866,7 +2228,7 @@ describe("TaskPlannerChatTab", () => {
 
     it("submitting '/steer do X' on a running task calls addSteeringComment and does not start a planner-chat send", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }), projectId: "proj-1" });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/steer do X" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1878,7 +2240,7 @@ describe("TaskPlannerChatTab", () => {
 
     it("submitting a normal message still starts a planner-chat send when the task's agent is running", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "What is the status?" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1890,7 +2252,7 @@ describe("TaskPlannerChatTab", () => {
     it("submitting '/steer ...' with no running agent shows a hint and does not dispatch or send a message", async () => {
       const addToast = vi.fn();
       renderPlannerChat({ task: makeTask("FN-7310", { column: "todo" }), addToast });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/steer do X" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1903,7 +2265,7 @@ describe("TaskPlannerChatTab", () => {
 
     it("does not dispatch when the trigger appears mid-message", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "please /steer this" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1921,7 +2283,7 @@ describe("TaskPlannerChatTab", () => {
       mockAddSteeringComment.mockReturnValueOnce(runPromise as unknown as ReturnType<typeof mockAddSteeringComment>);
 
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }), projectId: "proj-1" });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/steer do X" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1941,13 +2303,229 @@ describe("TaskPlannerChatTab", () => {
     // accessible copy must say "command", not the reused skill-menu copy.
     it("labels the command menu with command-specific copy, not skill copy", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
-      const textarea = await screen.findByLabelText("Message planner chat");
+      const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/" } });
 
       const menu = await screen.findByRole("listbox", { name: /command suggestions/i });
       expect(menu).toBeInTheDocument();
       expect(screen.queryByRole("listbox", { name: /skill suggestions/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("queued planner messages", () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it("queues follow-ups during a live reply and releases exactly one FIFO entry per completion", async () => {
+      const user = userEvent.setup();
+      const streamHandlers: any[] = [];
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+      const input = screen.getByLabelText("Message task chat");
+      for (const message of ["Follow-up A", "Follow-up B", "Follow-up B"]) {
+        await user.type(input, message);
+        await user.keyboard("{Enter}");
+      }
+
+      await waitFor(() => expect(screen.getAllByTestId(/task-planner-chat-pending-message-/)).toHaveLength(3));
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["Follow-up A", "Follow-up B", "Follow-up B"]);
+
+      act(() => streamHandlers[0].onDone({
+        messageId: "assistant-1",
+        message: { id: "assistant-1", sessionId: "chat-planner", role: "assistant", content: "First answer", thinkingOutput: null, metadata: null, createdAt: "2026-08-18T22:00:00.000Z" },
+      }));
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(2));
+      expect(mockStreamChatResponse.mock.calls[1][1]).toBe("Follow-up A");
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["Follow-up B", "Follow-up B"]);
+
+      act(() => streamHandlers[1].onDone({
+        messageId: "assistant-2",
+        message: { id: "assistant-2", sessionId: "chat-planner", role: "assistant", content: "Second answer", thinkingOutput: null, metadata: null, createdAt: "2026-08-18T22:01:00.000Z" },
+      }));
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(3));
+      expect(mockStreamChatResponse.mock.calls[2][1]).toBe("Follow-up B");
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["Follow-up B"]);
+
+      act(() => streamHandlers[2].onDone({
+        messageId: "assistant-3",
+        message: { id: "assistant-3", sessionId: "chat-planner", role: "assistant", content: "Third answer", thinkingOutput: null, metadata: null, createdAt: "2026-08-18T22:02:00.000Z" },
+      }));
+      await waitFor(() => expect(localStorage.getItem("fusion:chat-pending:chat-planner")).toBeNull());
+      expect(screen.queryByTestId("task-planner-chat-pending-list")).not.toBeInTheDocument();
+    });
+
+    it("hydrates a session queue without dispatching until an attached generation completes, then fences a task switch", async () => {
+      const attachedHandlers: any[] = [];
+      localStorage.setItem("fusion:chat-pending:chat-planner", JSON.stringify(["Restored follow-up"]));
+      mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: makePlannerSession({ inFlightGeneration: { generationId: "generation-1", streamingText: "Partial", streamingThinking: "", toolCalls: [] }, isGenerating: true }) });
+      mockFetchChatSession.mockResolvedValueOnce({ session: makePlannerSession({ inFlightGeneration: { generationId: "generation-1", streamingText: "Partial", streamingThinking: "", toolCalls: [] }, isGenerating: true }) });
+      mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
+        attachedHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { rerender } = renderPlannerChat();
+      expect(await screen.findByText("Restored follow-up")).toBeInTheDocument();
+      expect(mockStreamChatResponse).not.toHaveBeenCalled();
+      expect(attachedHandlers).toHaveLength(1);
+
+      mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: makePlannerSession({ id: "chat-other" }) });
+      mockFetchChatSession.mockResolvedValueOnce({ session: makePlannerSession({ id: "chat-other" }) });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      rerender(
+        <TaskPlannerChatTab
+          task={makeTask("FN-7311")}
+          active
+          taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
+          addToast={vi.fn()}
+        />,
+      );
+      await screen.findByTestId("task-planner-chat-empty");
+      act(() => attachedHandlers[0].onDone({ messageId: "stale-attached" }));
+      expect(mockStreamChatResponse).not.toHaveBeenCalled();
+      expect(screen.queryByText("Restored follow-up")).not.toBeInTheDocument();
+    });
+
+    it("normalizes malformed persisted entries and never sends a blank request", async () => {
+      localStorage.setItem("fusion:chat-pending:chat-planner", JSON.stringify(["  ", 42, "  Valid restored text  "]));
+      renderPlannerChat();
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(1));
+      expect(mockStreamChatResponse.mock.calls[0][1]).toBe("Valid restored text");
+      expect(mockStreamChatResponse.mock.calls[0][1]).not.toBe(" ");
+    });
+
+    it("edits, reorders, deletes, and force-sends the selected duplicate occurrence", async () => {
+      const user = userEvent.setup();
+      const streamHandlers: any[] = [];
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+      const input = screen.getByLabelText("Message task chat");
+      for (const message of ["First", "Duplicate", "Duplicate"]) {
+        await user.type(input, message);
+        await user.keyboard("{Enter}");
+      }
+      await waitFor(() => expect(screen.getAllByTestId(/task-planner-chat-pending-message-\d$/)).toHaveLength(3));
+
+      await user.click(screen.getByTestId("task-planner-chat-pending-edit-1"));
+      const editInput = screen.getByTestId("task-planner-chat-pending-message-1").querySelector("input");
+      expect(editInput).not.toBeNull();
+      await user.clear(editInput!);
+      await user.type(editInput!, "Edited duplicate");
+      await user.click(screen.getByTestId("task-planner-chat-pending-save-1"));
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["First", "Edited duplicate", "Duplicate"]);
+
+      expect(screen.getByTestId("task-planner-chat-pending-up-0")).toBeDisabled();
+      expect(screen.getByTestId("task-planner-chat-pending-down-2")).toBeDisabled();
+      await user.click(screen.getByTestId("task-planner-chat-pending-up-2"));
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["First", "Duplicate", "Edited duplicate"]);
+
+      await user.click(screen.getByTestId("task-planner-chat-pending-delete-1"));
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["First", "Edited duplicate"]);
+      expect(screen.getByTestId("task-planner-chat-pending-force-1")).toHaveAccessibleName(/Force send queued message 2/);
+      void streamHandlers;
+    });
+
+    it("waits for durable cancellation and history reconciliation before force dispatching a non-front entry", async () => {
+      const user = userEvent.setup();
+      const streamHandlers: any[] = [];
+      const cancelDeferred = createDeferred<{ success: boolean; interrupted: boolean }>();
+      const historyDeferred = createDeferred<{ messages: any[] }>();
+      const firstStream = { close: vi.fn(), isConnected: () => true };
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers.push(handlers);
+        return streamHandlers.length === 1 ? firstStream : { close: vi.fn(), isConnected: () => true };
+      });
+      mockCancelChatResponse.mockReturnValueOnce(cancelDeferred.promise);
+      mockFetchChatMessages
+        .mockImplementationOnce(async () => ({ messages: [] }))
+        .mockImplementationOnce(() => historyDeferred.promise);
+
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+      const input = screen.getByLabelText("Message task chat");
+      for (const message of ["Keep this first", "Force this second"]) {
+        await user.type(input, message);
+        await user.keyboard("{Enter}");
+      }
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+      await user.click(screen.getByTestId("task-planner-chat-pending-force-1"));
+      expect(firstStream.close).toHaveBeenCalledTimes(1);
+      expect(mockCancelChatResponse).toHaveBeenCalledWith("chat-planner", undefined);
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("task-planner-chat-pending-force-1")).toBeDisabled();
+
+      act(() => streamHandlers[0].onText(" stale callback"));
+      expect(screen.queryByText("stale callback")).not.toBeInTheDocument();
+      cancelDeferred.resolve({ success: true, interrupted: true });
+      await waitFor(() => expect(mockFetchChatMessages).toHaveBeenCalledTimes(2));
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      historyDeferred.resolve({ messages: [] });
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(2));
+      expect(mockStreamChatResponse.mock.calls[1][1]).toBe("Force this second");
+      expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["Keep this first"]);
+    });
+
+    it("releases the queued FIFO front only after ordinary Stop reconciliation", async () => {
+      const user = userEvent.setup();
+      const streamHandlers: any[] = [];
+      const cancelDeferred = createDeferred<{ success: boolean; interrupted: boolean }>();
+      mockCancelChatResponse.mockReturnValueOnce(cancelDeferred.promise);
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+      const input = screen.getByLabelText("Message task chat");
+      await user.type(input, "Queued after stop");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+      await user.click(screen.getByTestId("chat-stop-btn"));
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      cancelDeferred.resolve({ success: true, interrupted: true });
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(2));
+      expect(mockStreamChatResponse.mock.calls[1][1]).toBe("Queued after stop");
+    });
+
+    it("retains the selected entry when cancellation fails", async () => {
+      const user = userEvent.setup();
+      const cancelDeferred = createDeferred<{ success: boolean; interrupted: boolean }>();
+      mockCancelChatResponse.mockReturnValueOnce(cancelDeferred.promise);
+      mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
+
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+      const input = screen.getByLabelText("Message task chat");
+      await user.type(input, "Retain me");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(screen.getByTestId("task-planner-chat-pending-force-0")).toBeInTheDocument());
+      await user.click(screen.getByTestId("task-planner-chat-pending-force-0"));
+      cancelDeferred.resolve({ success: false, interrupted: false });
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Failed to save the interrupted planner response"));
+      expect(screen.getByText("Retain me")).toBeInTheDocument();
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
     });
   });
 });

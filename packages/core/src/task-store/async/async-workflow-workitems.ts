@@ -365,6 +365,27 @@ export async function replaceActiveTaskWorkflowContinuation(
  * transaction as the successor insert (see the block comment below). A bailed
  * seed still mutates nothing — the checks run before the retirement.
  */
+/*
+FNXC:WorkspaceReviewReroute 2026-08-21-19:52:
+Workspace merge evidence can become stale after a completed review. The recovery owner must claim
+an idle graph atomically, rather than replacing a live continuation or relying on a later sweep.
+*/
+export async function seedWorkspaceCodeReviewContinuationIfIdle(
+  layer: AsyncDataLayer,
+  input: WorkflowWorkItemUpsertInput & { kind: "task" },
+): Promise<{ seeded: boolean; reason?: "active-continuation"; workItemId?: string }> {
+  return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
+    const active = await tx.select({ id: schema.project.workflowWorkItems.id }).from(schema.project.workflowWorkItems).where(and(
+      projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      eq(schema.project.workflowWorkItems.taskId, input.taskId),
+      inArray(schema.project.workflowWorkItems.state, [...ACTIVE_WORKFLOW_WORK_ITEM_STATES]),
+    ));
+    if (active.length > 0) return { seeded: false, reason: "active-continuation" as const };
+    const item = await upsertWorkflowWorkItem(layer, input, tx);
+    return { seeded: true, workItemId: item.id };
+  }));
+}
+
 export async function seedStrandedPlanReviewContinuation(
   layer: AsyncDataLayer,
   input: WorkflowWorkItemUpsertInput & { kind: "task" },

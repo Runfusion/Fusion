@@ -601,7 +601,7 @@ describe("refineTask", () => {
   const FAKE_REFINED_TASK: Task = {
     id: "FN-002",
     description: "Refinement of FN-001",
-    column: "triage",
+    column: "todo",
     dependencies: ["FN-001"],
     steps: [],
     currentStep: 0,
@@ -616,7 +616,8 @@ describe("refineTask", () => {
     const result = await refineTask("FN-001", "Need to add more tests and improve error handling");
 
     expect(result.id).toBe("FN-002");
-    expect(result.column).toBe("triage");
+    expect(result.column).toBe("todo");
+    expect(result.column).not.toBe("triage");
     expect(result.dependencies).toContain("FN-001");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/refine", {
       headers: API_JSON_HEADERS,

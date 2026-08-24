@@ -22,6 +22,7 @@ import { superviseSpawn, type SupervisedChild } from "@fusion/core";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { Type, type Static } from "@earendil-works/pi-ai";
+import type { SandboxBackend, SandboxPolicy, SandboxStreamingResult } from "../sandbox/types.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { executorLog } from "../logger.js";
 import { withVerificationSlot } from "../concurrency/verification-concurrency.js";
@@ -349,6 +350,11 @@ export const runVerificationParams = Type.Object({
     description:
       "The shell command to run, e.g. \"pnpm --filter @fusion/droid-cli test\", \"pnpm lint\", \"pnpm build\"",
   }),
+  repo: Type.Optional(
+    Type.String({
+      description: "Workspace repository relative path. Selects that repository's worktree.",
+    }),
+  ),
   cwd: Type.Optional(
     Type.String({
       description:
@@ -628,6 +634,9 @@ export interface RunVerificationOptions {
   bypassVerificationSlot?: boolean;
   /** Optional abort signal — cancels while queued for a verification slot and during the command. */
   signal?: AbortSignal;
+  /** Explicit task-lane backend; native preserves the supervisor path. */
+  sandboxBackend?: SandboxBackend;
+  sandboxPolicy?: SandboxPolicy;
 }
 
 /**
@@ -656,7 +665,11 @@ export async function runVerificationCommand(
 async function runVerificationCommandUnlocked(
   opts: RunVerificationOptions,
 ): Promise<VerificationResult> {
-  const { command, cwd, timeoutMs, expectFailure = false, onHeartbeat, onLine } = opts;
+  const { command, cwd, timeoutMs, expectFailure = false, onHeartbeat, onLine, sandboxBackend, sandboxPolicy } = opts;
+  if (sandboxBackend) {
+    await sandboxBackend.prepare(sandboxPolicy ?? { allowNetwork: true });
+    return runSandboxedVerificationCommand({ command, cwd, timeoutMs, expectFailure, onHeartbeat, sandboxBackend, signal: opts.signal });
+  }
   const startMs = Date.now();
   const warnings: string[] = [];
 
@@ -820,6 +833,43 @@ async function runVerificationCommandUnlocked(
   });
 }
 
+function sandboxOutcomeToResult(
+  command: string,
+  cwd: string,
+  startedAt: number,
+  expectFailure: boolean,
+  result: SandboxStreamingResult,
+): VerificationResult {
+  const durationMs = Date.now() - startedAt;
+  if (result.outcome === "success") {
+    return { success: !expectFailure, exitCode: 0, durationMs, stdout: result.stdout, stderr: result.stderr, timedOut: false, killed: false, command, cwd, warnings: [] };
+  }
+  if (result.outcome === "non-zero-exit") {
+    return { success: expectFailure, exitCode: result.exitCode, durationMs, stdout: result.stdout, stderr: result.stderr, timedOut: false, killed: false, command, cwd, warnings: [] };
+  }
+  if (result.outcome === "timeout") {
+    return { success: false, exitCode: null, durationMs, stdout: result.stdout, stderr: result.stderr, timedOut: true, killed: true, command, cwd, warnings: [] };
+  }
+  if (result.outcome === "aborted") {
+    return { success: false, exitCode: null, durationMs, stdout: result.stdout, stderr: result.stderr, timedOut: false, killed: true, command, cwd, warnings: ["verification aborted"] };
+  }
+  return { success: false, exitCode: null, durationMs, stdout: result.stdout, stderr: result.stderr, timedOut: false, killed: false, command, cwd, warnings: [result.error.message] };
+}
+
+/** Keep task-tool verification on the selected backend's streaming process path. */
+async function runSandboxedVerificationCommand(opts: Pick<RunVerificationOptions, "command" | "cwd" | "timeoutMs" | "expectFailure" | "onHeartbeat" | "signal"> & { sandboxBackend: SandboxBackend }): Promise<VerificationResult> {
+  const startedAt = Date.now();
+  opts.onHeartbeat();
+  const result = await opts.sandboxBackend.runStreaming(opts.command, {
+    cwd: opts.cwd,
+    timeout: opts.timeoutMs,
+    maxBuffer: MAX_OUTPUT_BYTES,
+    signal: opts.signal,
+    env: { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+  });
+  return sandboxOutcomeToResult(opts.command, opts.cwd, startedAt, opts.expectFailure === true, result);
+}
+
 // ---------------------------------------------------------------------------
 // Tool factory
 // ---------------------------------------------------------------------------
@@ -829,6 +879,13 @@ export interface CreateRunVerificationToolOpts {
   worktreePath: string;
   /** Repo root — used to check node_modules/.modules.yaml for bootstrap detection. */
   rootDir: string;
+  /** Acquired workspace repositories; omitted for a normal single-repository task. */
+  workspaceRepos?: ReadonlyArray<{ repo: string; worktreePath: string; modified?: boolean }>;
+  /** Re-captures workspace diffs at invocation time, after the agent may have edited child worktrees. */
+  resolveWorkspaceRepos?: () => Promise<ReadonlyArray<{ repo: string; worktreePath: string; modified: boolean }>>;
+  /** Task session sandbox, prepared for each command before streaming. */
+  sandboxBackend?: SandboxBackend;
+  sandboxPolicy?: SandboxPolicy;
   taskId: string;
   /** Called on every output line AND on synthetic quiet-interval heartbeats. */
   recordActivity: () => void;
@@ -865,6 +922,10 @@ export function createRunVerificationTool(
   const {
     worktreePath,
     rootDir,
+    workspaceRepos,
+    resolveWorkspaceRepos,
+    sandboxBackend,
+    sandboxPolicy,
     taskId,
     recordActivity,
     verificationCommandTimeoutMs,
@@ -884,10 +945,36 @@ export function createRunVerificationTool(
       "are soft-capped unless allowFullSuite=true is explicitly provided. Use this instead of bash for any " +
       "pnpm/npm test/lint/build commands.",
     parameters: runVerificationParams,
-    execute: async (
+    execute: async function execute(
       _toolCallId: string,
       params: Static<typeof runVerificationParams>,
-    ) => {
+    ): ReturnType<NonNullable<ToolDefinition["execute"]>> {
+      /*
+      FNXC:WorkspaceVerification 2026-08-22-22:49:
+      A workspace command without an explicit target verifies every repository with a fresh
+      child-worktree diff. task.modifiedFiles is captured after the session, so using its
+      pre-session snapshot here would incorrectly classify an agent's current edits as clean.
+      Each recursive call preserves the normal per-command budget, lifecycle bracketing, log
+      entry, and repository-labelled result.
+      */
+      const currentWorkspaceRepos = resolveWorkspaceRepos
+        ? await resolveWorkspaceRepos()
+        : workspaceRepos;
+      if (currentWorkspaceRepos?.length && !params.repo && !params.cwd) {
+        const modifiedRepos = currentWorkspaceRepos.filter((entry) => entry.modified === true).sort((a, b) => a.repo.localeCompare(b.repo));
+        if (modifiedRepos.length === 0) {
+          return { content: [{ type: "text" as const, text: "No modified workspace repositories require verification." }], details: { success: true, repositories: [] } };
+        }
+        const results = [];
+        for (const repo of modifiedRepos) results.push(await execute(_toolCallId, { ...params, repo: repo.repo }));
+        const repositoryResults = results as Array<{ content: Array<{ type: "text"; text: string }>; details: { success?: boolean } }>;
+        const success = repositoryResults.every((result) => result.details.success === true);
+        return {
+          content: repositoryResults.flatMap((result) => result.content),
+          details: { success, repositories: repositoryResults.map((result) => result.details) },
+        };
+      }
+
       const { command, scope, allowFullSuite = false, expectFailure = false } = params;
       const warnings: string[] = [];
 
@@ -901,14 +988,21 @@ export function createRunVerificationTool(
       }
 
       // ── Resolve cwd ───────────────────────────────────────────────────────
+      const selectedRepo = params.repo
+        ? currentWorkspaceRepos?.find((entry) => entry.repo === params.repo)
+        : undefined;
+      if (params.repo && !selectedRepo) {
+        throw new Error(`Unknown workspace repository: ${params.repo}`);
+      }
       let resolvedCwd: string;
       if (params.cwd && isAbsolute(params.cwd)) {
         resolvedCwd = params.cwd;
       } else if (params.cwd) {
-        resolvedCwd = join(worktreePath, params.cwd);
+        resolvedCwd = join(selectedRepo?.worktreePath ?? worktreePath, params.cwd);
       } else {
-        resolvedCwd = worktreePath;
+        resolvedCwd = selectedRepo?.worktreePath ?? worktreePath;
       }
+      const verificationRootDir = selectedRepo?.worktreePath ?? rootDir;
 
       // ── Resolve timeout ───────────────────────────────────────────────────
       /*
@@ -950,14 +1044,14 @@ export function createRunVerificationTool(
       // If the command is package-scoped and the workspace has no .modules.yaml,
       // prepend a pnpm install so the agent doesn't stall on missing node_modules.
       let effectiveCommand = command;
-      const normalized = normalizeVerificationCommand(effectiveCommand, rootDir);
+      const normalized = normalizeVerificationCommand(effectiveCommand, verificationRootDir);
       if (normalized.command !== effectiveCommand) {
         effectiveCommand = normalized.command;
         warnings.push(...normalized.warnings);
       }
 
       if (effectiveCommand.trimStart().startsWith("pnpm --filter")) {
-        const modulesYaml = join(rootDir, "node_modules", ".modules.yaml");
+        const modulesYaml = join(verificationRootDir, "node_modules", ".modules.yaml");
         if (!existsSync(modulesYaml)) {
           const installCmd = "pnpm install --prefer-offline";
           const msg =
@@ -974,7 +1068,7 @@ export function createRunVerificationTool(
       Every agent verification tool call logged start + done at info and filled the TUI during normal green runs. Route success-path bookkeeping to debug; timeouts/warnings stay on warn.
       */
       (log.debug ?? log.info)(
-        `[fn_run_verification] ${taskId}: scope=${scope} timeout=${timeoutSec}s cwd=${resolvedCwd} cmd=${effectiveCommand}`,
+        `[fn_run_verification] ${taskId}: repo=${selectedRepo?.repo ?? "default"} scope=${scope} timeout=${timeoutSec}s cwd=${resolvedCwd} cmd=${effectiveCommand}`,
       );
 
       // ── Run ───────────────────────────────────────────────────────────────
@@ -987,6 +1081,8 @@ export function createRunVerificationTool(
             timeoutMs,
             expectFailure,
             onHeartbeat: recordActivity,
+            sandboxBackend,
+            sandboxPolicy,
           });
         } finally {
           onVerificationEnd?.();
@@ -1009,6 +1105,7 @@ export function createRunVerificationTool(
         );
       }
 
+      if (selectedRepo) lines.push(`Repository: ${selectedRepo.repo}`);
       lines.push(`Exit code: ${result.exitCode ?? "null (signal)"}`);
       lines.push(`Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
       lines.push(`Success: ${result.success}`);
@@ -1056,6 +1153,7 @@ export function createRunVerificationTool(
           killed: result.killed,
           command: result.command,
           cwd: result.cwd,
+          ...(selectedRepo ? { repo: selectedRepo.repo } : {}),
         },
       };
     },

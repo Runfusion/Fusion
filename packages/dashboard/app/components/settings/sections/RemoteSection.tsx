@@ -122,22 +122,31 @@ export function RemoteSection({ form, setForm, remote }: RemoteSectionProps) {
         </div>)}
       {tunnelState === "running" && (remoteStatus?.url || tunnelShareLink) && (() => {
             let accessCode: string | null = null;
-            let tailnetUrl: string | null = remoteStatus?.url ?? null;
+            let shareUrl: string | null = remoteStatus?.url ?? null;
             if (tunnelShareLink?.url) {
                 try {
                     const parsed = new URL(tunnelShareLink.url);
                     accessCode = parsed.searchParams.get("rt");
-                    if (!tailnetUrl)
-                        tailnetUrl = `${parsed.origin}/`;
+                    if (!shareUrl)
+                        shareUrl = `${parsed.origin}/`;
                 }
                 catch {
                     // fall through
                 }
             }
+            /*
+            FNXC:RemoteAccess 2026-08-18-07:10:
+            The share-block URL label must name the provider that is actually running (`remoteStatus.provider`), not the radio selection in `form` — the radio can hold an unsaved provider while a tunnel from the other provider is still up. A Cloudflare tunnel URL was previously labelled "Tailnet URL:", applying Tailscale vocabulary to a trycloudflare.com address. Unknown/null provider falls back to neutral "Tunnel URL:" so the row never asserts a provider it cannot prove.
+            */
+            const shareUrlLabel = remoteStatus?.provider === "cloudflare"
+                ? t("settings.remote.cloudflareTunnelURL", "Cloudflare tunnel URL:")
+                : remoteStatus?.provider === "tailscale"
+                    ? t("settings.remote.tailnetURL", "Tailnet URL:")
+                    : t("settings.remote.tunnelURL", "Tunnel URL:");
             return (<div className="remote-share-block">
-            {tailnetUrl && (<div className="remote-share-row">
-                <small>{t("settings.remote.tailnetURL", "Tailnet URL:")}</small>
-                <code className="settings-url-output">{tailnetUrl}</code>
+            {shareUrl && (<div className="remote-share-row">
+                <small>{shareUrlLabel}</small>
+                <code className="settings-url-output">{shareUrl}</code>
               </div>)}
             {accessCode && (<div className="remote-share-row">
                 <small>{t("settings.remote.remoteAccessCode", "Remote access code:")}</small>

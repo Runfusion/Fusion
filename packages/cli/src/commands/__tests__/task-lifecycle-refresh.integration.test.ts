@@ -222,7 +222,14 @@ describe("refreshAutomatedPrHead local git fixture", () => {
     expect(git(remote, "show", `refs/heads/${head}:concurrent.txt`)).toBe("concurrent head update");
   });
 
-  it("refreshes each production PR creator before its recording GitHub fake sees the head", async () => {
+  /*
+  FNXC:PullRequestFreshness 2026-08-23-23:20:
+  Every production PR-create boundary must refresh the head before its GitHub
+  call observes it. The three adapters below were one case that built three
+  real-git fixtures (~4s) and flaked against vitest's 5s default; each adapter
+  owns its own case so a boundary's coverage is sized like its siblings.
+  */
+  it("refreshes the shared-group PR-create callback before GitHub sees the head", async () => {
     const groupFixture = makeFixture("fusion/group-refresh-fixture");
     const groupGithub = {
       findPrForBranch: vi.fn(async () => null),
@@ -238,7 +245,10 @@ describe("refreshAutomatedPrHead local git fixture", () => {
       headBranch: groupFixture.head,
       baseBranch: "main",
     });
+    expect(groupGithub.createPr).toHaveBeenCalledTimes(1);
+  });
 
+  it("refreshes the workflow PR node create and merge boundaries before GitHub sees the head", async () => {
     const workflowFixture = makeFixture("fusion/fn-8838-workflow");
     const workflowGithub = {
       createPr: vi.fn(async () => {
@@ -269,7 +279,9 @@ describe("refreshAutomatedPrHead local git fixture", () => {
     await workflowOps.mergePr({ task, entity, persistRefreshedHead: async (oid) => { persisted.push(oid); } } as never);
     expect(workflowGithub.getPrStatus).toHaveBeenCalledTimes(1);
     expect(persisted).toHaveLength(1);
+  });
 
+  it("refreshes the PR-merge lifecycle create and merge boundaries before GitHub sees the head", async () => {
     const lifecycleFixture = makeFixture("fusion/fn-8838-lifecycle");
     const lifecycleTask = {
       id: "FN-8838-LIFECYCLE",
@@ -385,12 +397,17 @@ describe("refreshAutomatedPrHead local git fixture", () => {
     expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ expectedHeadOid: expect.any(String) }));
   });
 
-  it("fails closed at every PR-create adapter when rebase conflicts", async () => {
-    /*
-    FNXC:PullRequestFreshness 2026-08-09-04:26:
-    A rebase conflict is a hard stop at all automated create boundaries. GitHub
-    must never receive a normal-looking PR whose stale head omits base changes.
-    */
+  /*
+  FNXC:PullRequestFreshness 2026-08-09-04:26:
+  A rebase conflict is a hard stop at all automated create boundaries. GitHub
+  must never receive a normal-looking PR whose stale head omits base changes.
+
+  FNXC:PullRequestFreshness 2026-08-23-23:20:
+  Split per adapter: the four conflicting real-git fixtures ran as one ~4s case
+  and flaked against vitest's 5s default. Every adapter's fail-closed assertion
+  is preserved; only the per-case wall clock changed.
+  */
+  it("fails closed at the shared-group promotion PR-create adapter when rebase conflicts", async () => {
     const promotionFixture = makeConflictingFixture("fusion/groups/fn-8838-conflict-promotion");
     const promotionGithub = { findPrForBranch: vi.fn(async () => null), createPr: vi.fn() };
     await expect(createGroupPrCallback(promotionGithub as never)({
@@ -401,7 +418,9 @@ describe("refreshAutomatedPrHead local git fixture", () => {
       baseBranch: "main",
     })).rejects.toThrow(/rebase/);
     expect(promotionGithub.createPr).not.toHaveBeenCalled();
+  });
 
+  it("fails closed at the workflow PR node create adapter when rebase conflicts", async () => {
     const workflowFixture = makeConflictingFixture("fusion/fn-8838-conflict-workflow");
     const workflowGithub = {
       createPr: vi.fn(), getPrStatus: vi.fn(), mergePr: vi.fn(), replyToReviewThread: vi.fn(),
@@ -412,7 +431,9 @@ describe("refreshAutomatedPrHead local git fixture", () => {
       entity: { id: "pr-conflict", sourceId: "FN-8838-CONFLICT-WORKFLOW", repo: "fixture-owner/fixture-repo", headBranch: workflowFixture.head, baseBranch: "main" },
     } as never)).rejects.toThrow(/rebase/);
     expect(workflowGithub.createPr).not.toHaveBeenCalled();
+  });
 
+  it("fails closed at the workflow PR node merge adapter when rebase conflicts", async () => {
     const workflowMergeFixture = makeConflictingFixture("fusion/fn-8838-conflict-workflow-merge");
     const workflowMergeGithub = {
       createPr: vi.fn(), getPrStatus: vi.fn(), mergePr: vi.fn(), replyToReviewThread: vi.fn(),
@@ -424,7 +445,9 @@ describe("refreshAutomatedPrHead local git fixture", () => {
     } as never)).rejects.toThrow(/rebase/);
     expect(workflowMergeGithub.getPrStatus).not.toHaveBeenCalled();
     expect(workflowMergeGithub.mergePr).not.toHaveBeenCalled();
+  });
 
+  it("fails closed at the PR-merge lifecycle create adapter when rebase conflicts", async () => {
     const lifecycleFixture = makeConflictingFixture("fusion/fn-8838-conflict-lifecycle");
     const lifecycleGithub = {
       findPrForBranch: vi.fn(async () => null), createPr: vi.fn(), getPrMergeStatus: vi.fn(), mergePr: vi.fn(),

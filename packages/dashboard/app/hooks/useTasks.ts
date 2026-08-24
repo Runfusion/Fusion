@@ -4,7 +4,7 @@ import {
   releaseGateEvidenceFingerprint,
 } from "../utils/releaseGate";
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
+import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry, TaskColumnSortMode } from "@fusion/core";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
 import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
@@ -584,6 +584,14 @@ export function useTasks(options?: UseTasksOptions) {
   */
   const releaseGateProvenanceRef = useRef(new Map<string, import("../utils/releaseGate").ReleaseGateProvenance>());
   const fetchVersionRef = useRef(0);
+  /*
+  FNXC:TaskColumnSorting 2026-08-18-21:24:
+  Archive pages have their own generation fence because a page response is ordered by the
+  requested mode. Project changes and mode replacements invalidate every older first/next page
+  before it can append rows from a different snapshot.
+  */
+  const archivedRequestGenerationRef = useRef(0);
+  const archivedSortModeRef = useRef<TaskColumnSortMode>("completion-date-desc");
   const mergeIncomingTask = (current: Task, incoming: Task, mergeOptions?: TaskSnapshotMergeOptions): Task =>
     mergeTaskSnapshot(current, incoming, { ...mergeOptions, releaseGateProvenance: releaseGateProvenanceRef.current });
 
@@ -737,6 +745,7 @@ export function useTasks(options?: UseTasksOptions) {
     // A request begun by the prior render still closes over its old project id. Invalidate it
     // synchronously, before effects install this context's fetch, so it cannot paint old cards.
     fetchVersionRef.current++;
+    archivedRequestGenerationRef.current++;
     projectContextVersionRef.current++;
     projectChangeRefreshPendingRef.current = true;
   }
@@ -959,22 +968,12 @@ export function useTasks(options?: UseTasksOptions) {
   }, [sseEnabled]);
 
   /*
-  FNXC:ArchivePagination 2026-07-08-00:00:
-  FN-7659 — the Archived column must load newest-first (`archivedAt DESC`) in
-  server-backed pages of 100 with an explicit "Show more" affordance, and the
-  full archive must never load into memory in one pass. The prior
-  implementation flipped `includeArchived` and re-ran the merged `refreshTasks`
-  (backed by `listTasks({includeArchived:true})`), which (a) sorted archived
-  rows oldest-first alongside active rows and (b) fetched the ENTIRE archive
-  on every subsequent refresh (SSE reconnect, tab-visibility recovery,
-  search) once the column had ever been expanded. `loadArchivedTasks`/
-  `loadMoreArchivedTasks` now call the dedicated `GET /tasks/archived` page
-  read and merge only the fetched page into `tasks` (de-duplicated by id,
-  active SQLite rows authoritative — mirrors the existing collapse-by-id
-  invariant). `includeArchived` is intentionally left untouched here so it
-  keeps its narrow legacy meaning (an explicit search override) instead of
-  being repurposed to gate a full-archive refetch.
+  FNXC:TaskColumnSorting 2026-08-18-21:24:
+  The physical Archived lane keeps its selected order in the hook because SQL must apply that
+  order before each bounded page. Non-archived lane choices stay in Board, while this one is
+  committed only after page zero succeeds so a failed replacement cannot lie about loaded rows.
   */
+  const [archivedSortMode, setArchivedSortModeState] = useState<TaskColumnSortMode>("completion-date-desc");
   const [archivedHasMore, setArchivedHasMore] = useState(false);
   const [archivedLoadingMore, setArchivedLoadingMore] = useState(false);
   const archivedOffsetRef = useRef(0);
@@ -996,10 +995,19 @@ export function useTasks(options?: UseTasksOptions) {
   */
   const archivedTasksRef = useRef<Task[]>([]);
 
+  const archiveRequestIsCurrent = useCallback((generation: number, requestProjectId: string | undefined, _requestSortMode: TaskColumnSortMode) => (
+    archivedRequestGenerationRef.current === generation && projectId === requestProjectId
+  ), [projectId]);
+
   const mergeArchivedPage = useCallback((page: Task[]) => {
     const normalizedPage = page.map(normalizeNonBoardTask);
     const knownArchivedIds = new Set(archivedTasksRef.current.map((task) => task.id));
-    const newArchived = normalizedPage.filter((task) => !knownArchivedIds.has(task.id));
+    const pageIds = new Set<string>();
+    const newArchived = normalizedPage.filter((task) => {
+      if (knownArchivedIds.has(task.id) || pageIds.has(task.id)) return false;
+      pageIds.add(task.id);
+      return true;
+    });
     if (newArchived.length > 0) {
       archivedTasksRef.current = [...archivedTasksRef.current, ...newArchived];
     }
@@ -1007,7 +1015,20 @@ export function useTasks(options?: UseTasksOptions) {
       const existingIds = new Set(prev.map((task) => task.id));
       const additions = normalizedPage.filter((task) => !existingIds.has(task.id));
       if (additions.length === 0) return prev;
-      return [...prev, ...additions];
+      return [...prev, ...additions.filter((task, index, rows) => rows.findIndex((candidate) => candidate.id === task.id) === index)];
+    });
+  }, []);
+
+  const replaceArchivedPage = useCallback((page: Task[]) => {
+    const normalizedPage = page.map(normalizeNonBoardTask);
+    const pageById = new Map(normalizedPage.map((task) => [task.id, task]));
+    const nextArchived = [...pageById.values()];
+    const previousArchivedIds = new Set(archivedTasksRef.current.map((task) => task.id));
+    archivedTasksRef.current = nextArchived;
+    setTasks((prev) => {
+      const withoutPreviousArchive = prev.filter((task) => !previousArchivedIds.has(task.id));
+      const existingIds = new Set(withoutPreviousArchive.map((task) => task.id));
+      return [...withoutPreviousArchive, ...nextArchived.filter((task) => !existingIds.has(task.id))];
     });
   }, []);
 
@@ -1015,16 +1036,22 @@ export function useTasks(options?: UseTasksOptions) {
   const loadArchivedTasks = useCallback(async () => {
     if (archivedLoadedRef.current) return;
     archivedLoadedRef.current = true;
+    const requestGeneration = archivedRequestGenerationRef.current;
+    const requestProjectId = projectId;
+    const requestSortMode = archivedSortModeRef.current;
     try {
-      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, 0);
+      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, 0, requestSortMode);
+      if (!archiveRequestIsCurrent(requestGeneration, requestProjectId, requestSortMode)) return;
       mergeArchivedPage(page);
       archivedOffsetRef.current = page.length;
       setArchivedHasMore(hasMore);
     } catch {
-      // Allow a future expand attempt to retry the first page.
-      archivedLoadedRef.current = false;
+      // Allow a future expand attempt to retry the first page, unless this request is stale.
+      if (archiveRequestIsCurrent(requestGeneration, requestProjectId, requestSortMode)) {
+        archivedLoadedRef.current = false;
+      }
     }
-  }, [projectId, mergeArchivedPage]);
+  }, [archiveRequestIsCurrent, projectId, mergeArchivedPage]);
 
   /** Fetch the next 100-item page of archived tasks. No-op when there is no further page or a fetch is already in flight. */
   const loadMoreArchivedTasks = useCallback(async () => {
@@ -1032,16 +1059,48 @@ export function useTasks(options?: UseTasksOptions) {
     if (!archivedHasMore) return;
     archivedLoadingMoreRef.current = true;
     setArchivedLoadingMore(true);
+    const requestGeneration = archivedRequestGenerationRef.current;
+    const requestProjectId = projectId;
+    const requestSortMode = archivedSortModeRef.current;
     try {
-      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, archivedOffsetRef.current);
+      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, archivedOffsetRef.current, requestSortMode);
+      if (!archiveRequestIsCurrent(requestGeneration, requestProjectId, requestSortMode)) return;
       mergeArchivedPage(page);
       archivedOffsetRef.current += page.length;
       setArchivedHasMore(hasMore);
     } finally {
-      archivedLoadingMoreRef.current = false;
-      setArchivedLoadingMore(false);
+      if (archiveRequestIsCurrent(requestGeneration, requestProjectId, requestSortMode)) {
+        archivedLoadingMoreRef.current = false;
+        setArchivedLoadingMore(false);
+      }
     }
-  }, [projectId, archivedHasMore, mergeArchivedPage]);
+  }, [projectId, archivedHasMore, archiveRequestIsCurrent, mergeArchivedPage]);
+
+  /** Replace the archive accumulator only after the requested mode's first page is current. */
+  const changeArchivedSortMode = useCallback(async (nextSortMode: TaskColumnSortMode) => {
+    if (nextSortMode === archivedSortModeRef.current) return;
+    const requestGeneration = ++archivedRequestGenerationRef.current;
+    const requestProjectId = projectId;
+    archivedLoadingMoreRef.current = false;
+    setArchivedLoadingMore(true);
+    try {
+      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, 0, nextSortMode);
+      if (!archiveRequestIsCurrent(requestGeneration, requestProjectId, nextSortMode)) return;
+      replaceArchivedPage(page);
+      /* FNXC:ArchivePagination 2026-08-18-22:22: Keep subsequent archive pages on the committed order after a successful sort replacement. */
+      archivedSortModeRef.current = nextSortMode;
+      setArchivedSortModeState(nextSortMode);
+      archivedOffsetRef.current = page.length;
+      setArchivedHasMore(hasMore);
+      archivedLoadedRef.current = true;
+    } catch {
+      // Keep the committed mode and accumulated rows unchanged after a failed replacement.
+    } finally {
+      if (archiveRequestIsCurrent(requestGeneration, requestProjectId, nextSortMode)) {
+        setArchivedLoadingMore(false);
+      }
+    }
+  }, [archiveRequestIsCurrent, projectId, replaceArchivedPage]);
 
   // Debounced search effect - separate from refreshTasks to avoid dependency cycle
   const prevSearchQueryRef = useRef<string | undefined>(searchQuery);
@@ -1101,10 +1160,13 @@ export function useTasks(options?: UseTasksOptions) {
     // project switch so a new project's Archived column starts collapsed
     // and re-fetches its own page 1 rather than reusing the previous
     // project's offset/hasMore.
+    archivedRequestGenerationRef.current++;
     archivedLoadedRef.current = false;
     archivedOffsetRef.current = 0;
     archivedLoadingMoreRef.current = false;
+    archivedSortModeRef.current = "completion-date-desc";
     archivedTasksRef.current = [];
+    setArchivedSortModeState("completion-date-desc");
     setArchivedHasMore(false);
     setArchivedLoadingMore(false);
 
@@ -1747,5 +1809,5 @@ export function useTasks(options?: UseTasksOptions) {
     advanceFreshnessClockForLiveUpdate();
   }, [advanceFreshnessClockForLiveUpdate]);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, changeArchivedSortMode, archivedSortMode, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

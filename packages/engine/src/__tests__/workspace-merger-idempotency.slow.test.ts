@@ -81,6 +81,10 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
       Object.assign(store.task, patch);
       return undefined;
     }),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (live: Task) => Partial<Task>) => {
+      Object.assign(store.task, updater(store.task));
+      return store.task;
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn(async () => store.task),
@@ -164,6 +168,11 @@ const approveReviewAgent = async (): Promise<string> => "REVIEW_VERDICT: approve
 
 function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
   return {
+    /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture, not a review-gating one.
+       The door refuses a card whose enabled optional pre-merge groups produced no result, and the
+       built-in workflow enables Plan and Code Review by default, so an unspecified list failed the
+       door before the behaviour under test ran. An explicit empty list states the intent. */
+    enabledWorkflowSteps: [],
     id: TASK_ID,
     title: "Workspace merge task",
     description: "",
@@ -174,6 +183,10 @@ function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
     currentStep: 0,
     log: [],
     workspaceWorktrees,
+    repositoryScope: {
+      state: "confirmed",
+      repositories: Object.keys(workspaceWorktrees).sort(),
+    },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as Task;
@@ -422,12 +435,23 @@ describeIfGit("landWorkspaceTask — DB-failure resilience (Phase C review A1/A4
     });
     const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
     const store = createStore(task);
-    const result = await landWorkspaceTask(store, store.task, fx.rootDir, {}, {
+    const tipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    /*
+    FNXC:WorkspaceFinalization 2026-08-23-22:10:
+    The refusal moved from evidence CAPTURE to landing READINESS, so assert the refusal, not the old
+    message. `captureWorkspaceReviewEvidence` no longer throws on an unresolvable branch — per its
+    2026-08-21-19:25 rule it falls back to the readable checkout's HEAD — and the gone branch then
+    yields no modified/net-zero/landed repository, which FN-106's readiness (c91e5ce42d) reports as
+    having no evidenced landing obligations. The invariant under test is unchanged and still pinned:
+    the ancient recycled trailer must NOT read as already landed, so the run refuses and the
+    integration ref is untouched.
+    */
+    await expect(landWorkspaceTask(store, store.task, fx.rootDir, {}, {
       mergeAgent: squashMergeAgent(BRANCH), reviewAgent: approveReviewAgent,
-    });
-    const repo = result.repos[0]!;
-    expect(repo.alreadyLanded).toBeFalsy();
-    expect(repo.status).toBe("empty");
+    })).rejects.toThrow(/no evidenced landing obligations/);
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).toBe(tipBefore);
+    expect(store.task.column).not.toBe("done");
+    expect(store.task.workspaceWorktrees?.["repo-a"]?.landedSha).toBeUndefined();
   });
 
   it("A4: WorkspacePartialLandError is a real class (instanceof + retryable + payload)", () => {

@@ -3180,7 +3180,14 @@ describe("StepSessionExecutor tool availability", () => {
     return captured;
   }
 
-  it("includes fn_list_agents, fn_delegate_task, and fn_task_assign when agentStore is available", async () => {
+  /*
+  FNXC:EphemeralAgentTaskCreation 2026-08-23-22:05:
+  FN-125 (0b4dbd219b) structurally withholds board CREATION from this lane: a workflow model-node
+  step session receives neither `fn_task_create` nor `fn_delegate_task` (delegation creates a task
+  through the same primitive), rather than being handed a tool that only refuses when called. The
+  read/assign half of the agent surface is unchanged, so assert both halves.
+  */
+  it("includes fn_list_agents and fn_task_assign — but never fn_delegate_task — when agentStore is available", async () => {
     const mockAgentStore = {
       listAgents: vi.fn().mockResolvedValue([]),
       getAgent: vi.fn().mockResolvedValue(null),
@@ -3192,8 +3199,8 @@ describe("StepSessionExecutor tool availability", () => {
 
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("fn_list_agents");
-    expect(toolNames).toContain("fn_delegate_task");
     expect(toolNames).toContain("fn_task_assign");
+    expect(toolNames).not.toContain("fn_delegate_task");
   });
 
   it("excludes delegation tools when agentStore is not provided", async () => {
@@ -3246,12 +3253,13 @@ describe("StepSessionExecutor tool availability", () => {
     expect(toolNames).not.toContain("fn_read_messages");
   });
 
-  it("includes fn_task_log and fn_task_create when store is available", async () => {
+  /* FN-125 (0b4dbd219b) withheld `fn_task_create` from this lane; the task-log surface is unchanged. */
+  it("includes fn_task_log — but never fn_task_create — when store is available", async () => {
     const tools = await captureCustomTools({});
 
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("fn_task_log");
-    expect(toolNames).toContain("fn_task_create");
+    expect(toolNames).not.toContain("fn_task_create");
   });
 });
 

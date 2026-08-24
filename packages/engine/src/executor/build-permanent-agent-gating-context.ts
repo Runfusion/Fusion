@@ -16,12 +16,13 @@
  * in lanes WITHOUT an actionGateContext, where no executor in-flight
  * session surface exists to abort.
  */
-import type { Agent, PermanentAgentGatingContext, TaskStore } from "@fusion/core";
+import type { Agent, MessageStore, PermanentAgentGatingContext, TaskStore } from "@fusion/core";
 import {
   AWAITING_APPROVAL_PAUSE_REASON,
   ApprovalRequestStore,
   resolveEffectiveAgentPermissionPolicy,
 } from "@fusion/core";
+import { emitApprovalMail } from "../agents/approval-mail.js";
 import { buildAgentGatedActionSummary } from "../agents/permanent-agent-gating.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 
@@ -31,6 +32,13 @@ export type BuildPermanentAgentGatingContextDeps = {
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   approvalSuspended: Set<string>;
   approvalRequestStore: ApprovalRequestStore;
+  /*
+  FNXC:StructuralMail 2026-08-23-18:52:
+  FN-8870 requires this gate closure to write the operator's approval mailbox row. The wave-18 peel
+  (1cf86baa1c) dropped the emission when the closure left executor.ts; the message store travels with
+  the peeled deps bag so the mailbox write is restored at its original position.
+  */
+  messageStore?: Pick<MessageStore, "sendMessageOnce"> | null;
 };
 
 export function buildPermanentAgentGatingContext(
@@ -99,6 +107,7 @@ export function buildPermanentAgentGatingContext(
         deps.approvalSuspended.delete(taskId);
         throw error;
       }
+      void emitApprovalMail({ messageStore: deps.messageStore ?? undefined, approvalRequestId, toolName, taskId, agentId: actorId, agentName: actorName });
     },
   };
 }

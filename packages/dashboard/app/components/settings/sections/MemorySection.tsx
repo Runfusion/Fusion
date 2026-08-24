@@ -5,6 +5,7 @@ import { FileEditor } from "../../FileEditor";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
@@ -86,6 +87,43 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         onChange={(v) => setForm((f) => ({ ...f, memoryEnabled: v === true }))}
       />
 
+      {/*
+      FNXC:StashSessionCapture 2026-08-19-04:37:
+      (RUFU-122) Task-terminal transcript upload controls, shown only when the
+      backend is Stash (same condition as the other stash rows — the feature is
+      inert for every other backend) and disabled (not hidden) when memory is
+      off. The toggle gates the transcript upload only (the RUFU-068 terminal
+      anchor still fires when off) and defaults ON; the number row caps
+      transcript events per task (min 100 / max 100000 / step 1000, default
+      20000, most recent events kept). executorSessionCaptureIncludeStatus is
+      schema-only by design and deliberately has NO row here.
+      */}
+      {form.memoryBackendType === "stash" && (<SettingsToggleRow
+          descriptor={{
+            key: "executorSessionCaptureEnabled",
+            label: t("settings.memory.executorSessionCapture", "Executor session capture"),
+            help: t("settings.memory.uploadTaskAgentLogTranscriptToStash", "Upload each task's agent-log transcript (agent-log.jsonl) to Stash when the task terminalizes (done or failed). Off: only the completion/failure anchor event is captured. Default: enabled."),
+            scope: "project",
+            disabled: !isMemoryEnabled,
+          }}
+          value={form.executorSessionCaptureEnabled ?? true}
+          onChange={(v) => setForm((f) => ({ ...f, executorSessionCaptureEnabled: v === true }))}
+        />)}
+      {form.memoryBackendType === "stash" && (<SettingsNumberRow
+          descriptor={{
+            key: "executorSessionCaptureMaxEvents",
+            label: t("settings.memory.maxTranscriptEventsPerTask", "Max transcript events per task"),
+            help: t("settings.memory.capOnTranscriptEventsUploadedPerTask", "Cap on transcript events uploaded per task (default 20000). The most recent events are kept."),
+            scope: "project",
+            min: 100,
+            max: 100000,
+            step: 1000,
+            disabled: !isMemoryEnabled,
+          }}
+          value={typeof form.executorSessionCaptureMaxEvents === "number" ? form.executorSessionCaptureMaxEvents : 20000}
+          onChange={(v) => setForm((f) => ({ ...f, executorSessionCaptureMaxEvents: v === null ? 20000 : v }))}
+        />)}
+
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
         </div>) : backendError ? (<div className="form-group">
@@ -99,6 +137,49 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
             {qmdInstallLoading ? t("settings.memory.installing", "Installing…") : t("settings.memory.installQmd", "Install qmd")}
           </button>
         </div>)}
+
+      {/*
+      FNXC:MemoryBackendSelector 2026-08-13-16:35:
+      Per-project memory backend selector (RUFU-068). memoryBackendType is a
+      ProjectSettings key, so each project resolves its own backend independently
+      (qmd default / file / readonly / stash). Selecting persists on save via the
+      form. TencentDB is intentionally absent (operator decision 2026-08-12).
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "memoryBackendType",
+          label: t("settings.memory.backendLabel", "Memory backend"),
+          help: t("settings.memory.backendHelp", "Which store agent memory reads/writes. Per project: qmd (indexed, default), local files, a read-only backend, or Stash (personal knowledge-base). Switching backends retro-actively is not supported."),
+          scope: "project",
+          options: [
+            { value: "qmd", label: t("settings.memory.backendQmd", "qmd (indexed retrieval — default)") },
+            { value: "file", label: t("settings.memory.backendFile", "Local files (.fusion/memory)") },
+            { value: "readonly", label: t("settings.memory.backendReadonly", "Read-only (external management)") },
+            { value: "stash", label: t("settings.memory.backendStash", "Stash (personal knowledge-base)") },
+          ],
+        }}
+        value={form.memoryBackendType ?? "qmd"}
+        onChange={(v) => setForm((f) => ({ ...f, memoryBackendType: v ?? "qmd" }))}
+      />
+      {/*
+      FNXC:StashConfig 2026-08-13-16:35:
+      Per-project Stash server URL, used only when the backend above is "stash".
+      The stash API key is NOT entered here — it lives in the global secrets
+      store ("stash-api-key") and is resolved by the engine; a per-project
+      override key is handled through the secrets path for hard isolation.
+      TencentDB's memoryBackendUrl row is intentionally NOT ported.
+      */}
+      {form.memoryBackendType === "stash" && (<SettingsTextRow
+          descriptor={{
+            key: "stashUrl",
+            label: t("settings.memory.stashUrlLabel", "Stash server URL"),
+            help: t("settings.memory.stashUrlHelp", "Base URL of the Stash server (e.g. http://127.0.0.1:3457). Used only when the backend above is Stash. The API key lives in the global secrets store, never in settings."),
+            scope: "project",
+            placeholder: t("settings.memory.stashUrlPlaceholder", "http://127.0.0.1:3457"),
+          }}
+          value={form.stashUrl ?? ""}
+          onChange={(v) => setForm((f) => ({ ...f, stashUrl: v || undefined }))}
+        />)}
 
       <SettingsToggleRow
         descriptor={{
@@ -264,7 +345,7 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
                   {formatMemoryFileOptionLabel(file)}
                 </option>))}
             </select>
-            {memoryDirty && (<small>Save or discard the current edits before switching files.</small>)}
+            {memoryDirty && (<small>{t("settings.memory.saveBeforeSwitching", "Save or discard the current edits before switching files.")}</small>)}
           </div>
           {selectedMemoryFile && (<div className="memory-file-summary">
               <span>{memoryLayerNames[selectedMemoryFile.layer]}</span>
@@ -305,7 +386,7 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
           The descriptive branch moved behind the shared "?" beside the action button — operator requirement: no inline description paragraphs in Settings. The dirty-state line stays inline: it is the live reason the button is DISABLED, not help.
           */}
           <SettingsHelpTip settingKey="memory-compact-file">{`Compacts ${selectedMemoryPath} and writes the result back to the same file.`}</SettingsHelpTip>
-          {memoryDirty && (<small>Save or discard edits before compacting this file.</small>)}
+          {memoryDirty && (<small>{t("settings.memory.saveBeforeCompacting", "Save or discard edits before compacting this file.")}</small>)}
         </div>)}
 
       {memoryDirty && isEditingAllowed && (<div className="form-group">

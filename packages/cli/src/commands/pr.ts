@@ -6,6 +6,7 @@ import {
   isPrEntityActive,
   isPrEntityActionable,
   autoMergeGateReason,
+  resolveTaskPrHeadBranch,
   type PrEntity,
   type PrThreadState,
 } from "@fusion/core";
@@ -300,8 +301,13 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
       process.exit(1);
     }
 
-    // Build branch name using the established project convention
-    const branchName = `fusion/${id.toLowerCase()}`;
+    /*
+    FNXC:WorkspacePrHead 2026-08-20-03:38:
+    FN-9161's CLI PR command must target the task's real persisted branch.
+    Workspace tasks can reuse one operator-supplied branch across repositories;
+    falling back to fusion/<task-id> would create or report the wrong PR.
+    */
+    const branchName = resolveTaskPrHeadBranch(task);
 
     // Build deterministic fallback PR title
     const fallbackTitle = options.title

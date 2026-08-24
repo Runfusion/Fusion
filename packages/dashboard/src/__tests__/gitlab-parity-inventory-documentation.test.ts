@@ -35,7 +35,6 @@ describe("gitlab parity inventory documentation contract", () => {
       "project issues",
       "group issues",
       "merge requests",
-      "Split-close deletion posts one parent/child-task handoff note",
       "## Close-on-delete semantics",
       "Merge requests are never auto-closed on delete",
       "GitLab issue deletion is not supported; close the issue instead",

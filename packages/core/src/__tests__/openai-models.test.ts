@@ -206,6 +206,7 @@ describe("mergeSupplementalOpenAiCodexModels", () => {
         maxTokens: 128_000,
       });
       expect(row?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max", minimal: "low" });
+      expect(Object.keys(row?.thinkingLevelMap ?? {})).toContain("max");
     }
   });
 });

@@ -213,10 +213,19 @@ describe("remote access provider/lifecycle contracts", () => {
     const firstStop = await REQUEST(app, "POST", "/api/remote/tunnel/stop", {});
     const secondStop = await REQUEST(app, "POST", "/api/remote/tunnel/stop", {});
 
+    /*
+    FNXC:RemoteAuth 2026-08-19-01:10:
+    Still idempotent and still 200 — a dashboard legitimately runs without an engine — but the state
+    must be the TRUTH. This asserted `state: "starting"` when nothing could possibly start, so an
+    operator saw a tunnel "coming up" that settled to stopped with `lastError: null` forever, with no
+    way to distinguish it from a broken tunnel. The reason is now carried in lastError/lastErrorCode.
+    */
     for (const response of [firstStart, secondStart]) {
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ state: "starting", provider: "cloudflare" });
-      expect(response.body).toEqual(expect.objectContaining({ state: expect.any(String), provider: expect.any(String) }));
+      expect(response.body.state).toBe("stopped");
+      expect(response.body.provider).toBe("cloudflare");
+      expect(response.body.lastErrorCode).toBe("REMOTE_TUNNEL_ENGINE_UNAVAILABLE");
+      expect(response.body.lastError).toMatch(/projectId/);
     }
 
     for (const response of [firstStop, secondStop]) {

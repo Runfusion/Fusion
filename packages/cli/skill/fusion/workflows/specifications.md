@@ -58,8 +58,8 @@ fn_task_plan({ description: "Build a notification system for the app" })
 The planning mode will:
 1. Ask clarifying questions about scope, channels (email, push, in-app), users
 2. Identify technical constraints and dependencies
-3. Suggest breaking the work into multiple tasks if needed
-4. Create a well-specified task (or multiple subtasks)
+3. Develop one complete plan with concrete, defined steps
+4. Create one well-specified task that retains the original request
 
 **Organizing with Missions:**
 

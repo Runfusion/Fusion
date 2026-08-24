@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getDefaultCentralDbPath, GlobalSettingsStore } from "@fusion/core";
 
 import { isTTYAvailable } from "./dashboard-tui/index.js";
@@ -132,7 +132,14 @@ export async function maybeAutoLaunchOnboarding(deps: MaybeAutoLaunchDeps): Prom
     const cwd = deps.cwd ?? process.cwd();
     const projectMarkerPath = join(cwd, ".fusion", "project.json");
     const legacyProjectDbPath = join(cwd, ".fusion", "fusion.db");
-    centralDbExists = pathExists(centralDbPath);
+    /*
+    FNXC:Onboarding 2026-08-19-03:38:
+    The install is initialized if EITHER the legacy SQLite central file exists or the embedded
+    Postgres data directory does. Probing only the SQLite path made this permanently false on every
+    Postgres install — SQLite central was removed — so onboarding auto-launched on each interactive
+    start of a fully working Fusion until something happened to stamp the completion marker.
+    */
+    centralDbExists = pathExists(centralDbPath) || pathExists(join(dirname(centralDbPath), "embedded-postgres"));
     // FNXC:ProjectIdentityMarker 2026-07-14-17:20: Onboarding probes the new
     // marker first and recognizes fusion.db only as a pre-cutover project signal.
     projectInitialized = deps.projectInitialized
@@ -171,7 +178,9 @@ export async function maybeAutoLaunchOnboarding(deps: MaybeAutoLaunchDeps): Prom
 
   try {
     const runOnboard = deps.runOnboard ?? (await import("./onboard.js")).runOnboard;
-    await runOnboard();
+    // FNXC:Onboarding 2026-08-19-03:38: auto-launch never interrogates the operator; see
+    // OnboardOptions.interactive.
+    await runOnboard({ interactive: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[onboard-autolaunch] non-fatal onboard launch failure: ${message}`);

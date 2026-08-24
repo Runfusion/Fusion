@@ -153,11 +153,15 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     // execute → browser-verification (optional-group) → review. When the group is
     // disabled it passes through with outcome=success and routes straight to review.
     { from: "execute", to: "browser-verification", condition: "success" },
-    // browser-verification → code-review → review. Each optional-group passes through with
-    // outcome=success when disabled, so a task with both off routes straight to review.
-    { from: "browser-verification", to: "code-review", condition: "success" },
-    { from: "code-review", to: "completion-summary", condition: "success" },
-    { from: "completion-summary", to: "review", condition: "success" },
+    /*
+    FNXC:WorkspaceReviewSeal 2026-08-21-19:36:
+    Completion summary runs before Code Review because its agent may acquire and write the task
+    worktree. The approving review is the final write-capable pre-merge stage, so landing consumes
+    evidence for the branch it will publish rather than evidence invalidated by a later summary.
+    */
+    { from: "browser-verification", to: "completion-summary", condition: "success" },
+    { from: "completion-summary", to: "code-review", condition: "success" },
+    { from: "code-review", to: "review", condition: "success" },
     { from: "review", to: "merge-gate", condition: "success" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },
@@ -170,6 +174,12 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
     { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
+    /*
+    FNXC:WorkspaceReviewReroute 2026-08-21-20:11:
+    Evidence rejected during an active graph merge is a fresh Code Review obligation, never a
+    merge retry. Route the typed result to the final review gate before another landing attempt.
+    */
+    { from: "merge-attempt", to: "code-review", condition: "outcome:workspace-review-required", kind: "rework" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },
     { from: "planning", to: "end", condition: "failure" },

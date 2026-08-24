@@ -21,15 +21,26 @@ export function isPlanReviewSatisfied(result: WorkflowStepResult): boolean {
   if (result.workflowStepId !== PLAN_REVIEW_GROUP_ID) return false;
   if (result.supersededAt != null) return false;
   if (result.status === "passed") return true;
-  return result.status === "skipped"
-    && (result.bypassedFromStatus === "failed" || result.bypassedFromStatus === "advisory_failure")
+  if (result.status !== "skipped") return false;
+  const operatorBypass = (result.bypassedFromStatus === "failed" || result.bypassedFromStatus === "advisory_failure")
     && result.bypassedFromVerdict === "REVISE"
-    && typeof result.bypassedBy === "string"
-    && result.bypassedBy.trim().length > 0
-    && typeof result.bypassedAt === "string"
-    && result.bypassedAt.trim().length > 0
-    && typeof result.bypassReason === "string"
-    && result.bypassReason.trim().length > 0;
+    && typeof result.bypassedBy === "string" && result.bypassedBy.trim().length > 0
+    && typeof result.bypassedAt === "string" && result.bypassedAt.trim().length > 0
+    && typeof result.bypassReason === "string" && result.bypassReason.trim().length > 0;
+  /*
+  FNXC:ReviewConvergence 2026-08-22-17:29:
+  FN-149 arbitration may satisfy Plan Review only after every binding obligation was removed.
+  The archive helper already refuses a nonzero count, but this gate is the final fail-closed
+  boundary for persisted carriers and must not trust a malformed UPHOLD_IMPLEMENTER record.
+  */
+  const arbitratedRelease = (result.remediationArchivedFromStatus === "failed" || result.remediationArchivedFromStatus === "advisory_failure")
+    && result.arbitrationBindingFindingCount === 0
+    && (result.arbitrationDecision === "UPHOLD_IMPLEMENTER"
+      || result.arbitrationDecision === "SPLIT")
+    && typeof result.arbitratedAttemptAt === "string" && result.arbitratedAttemptAt.trim().length > 0
+    && typeof result.arbitratedAt === "string" && result.arbitratedAt.trim().length > 0
+    && typeof result.arbitrationNotes === "string" && result.arbitrationNotes.trim().length > 0;
+  return operatorBypass || arbitratedRelease;
 }
 
 /*

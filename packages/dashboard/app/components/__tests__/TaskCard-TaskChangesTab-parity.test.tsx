@@ -129,4 +129,46 @@ describe("TaskCard/TaskChangesTab files-changed parity", () => {
     });
     expect(container.textContent).toContain("3 files changed");
   });
+
+  it("keeps the card and Changes tab on the filtered rebase result", async () => {
+    const stats = { filesChanged: 1, additions: 2, deletions: 0 };
+    useTaskDiffStatsMock.mockReturnValue({ stats, loading: false });
+    fetchTaskDiffMock.mockResolvedValue({
+      files: [{ path: "task.ts", status: "modified", additions: 2, deletions: 0, patch: "@@ task" }],
+      stats,
+    });
+
+    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip" } });
+    const { container } = render(
+      <>
+        <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
+        <TaskChangesTab taskId={task.id} column="done" mergeDetails={task.mergeDetails} />
+      </>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".card-session-files")?.textContent).toMatch(/1 file changed/);
+      expect(screen.getByText("Files Changed (1)")).toBeTruthy();
+    });
+    expect(container.textContent).toContain("task.ts");
+    expect(container.textContent).not.toContain("foreign.ts");
+    expect(container.querySelectorAll(".card-session-files")).toHaveLength(1);
+  });
+
+  it("does not render a card files button for an empty scoped result", async () => {
+    const stats = { filesChanged: 0, additions: 0, deletions: 0 };
+    useTaskDiffStatsMock.mockReturnValue({ stats, loading: false });
+    fetchTaskDiffMock.mockResolvedValue({ files: [], stats });
+
+    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip" } });
+    const { container } = render(
+      <>
+        <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
+        <TaskChangesTab taskId={task.id} column="done" mergeDetails={task.mergeDetails} />
+      </>,
+    );
+
+    await waitFor(() => expect(screen.getByText("Files Changed (0)")).toBeTruthy());
+    expect(container.querySelector(".card-session-files")).toBeNull();
+  });
 });

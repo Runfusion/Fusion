@@ -42,6 +42,11 @@ function deps(agents: any[]) {
       },
       activeWorkflowAuthorities: new Map(),
       activeWorkflowPrincipals: new Map(),
+      // FNXC:WorkflowAgentRouting 2026-08-23-18:32: FN-8864 made gate-activity attribution a REQUIRED dep of
+      // admitWorkflowPrincipalBeforeNode (it stamps `${taskId}\0${nodeId}` -> routed principal so a later gate
+      // attributes to the exact principal that ran the node). A fixture omitting it throws before any routing
+      // assertion, so the map must be present here even though this file asserts fence/re-route behavior only.
+      workflowGateActivityPrincipals: new Map<string, string>(),
       workflowCapacityAttemptIds: new Set<string>(),
       directWorkflowPrincipalWorkItemIds: new Set<string>(),
       directWorkflowPrincipalHeldWorkItemIds: new Set<string>(),

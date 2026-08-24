@@ -32,6 +32,12 @@ describe("worktree-hooks", () => {
     expect(hook).toContain(`EXPECTED_BRANCH=\"${expectedBranch}\"`);
   });
 
+  it("uses an operator-selected working branch when supplied", () => {
+    const hook = buildIdentityGuardHook("FN-9161", undefined, "feature/PRD-1234-my-slug");
+
+    expect(hook).toContain('EXPECTED_BRANCH="feature/PRD-1234-my-slug"');
+  });
+
   it("honors the merger bypass marker on detached HEAD before computing EXPECTED_BRANCH", () => {
     const hook = buildIdentityGuardHook("FN-5483");
     const bypassIndex = hook.indexOf('FUSION_MERGER_BYPASS_IDENTITY_GUARD:-');

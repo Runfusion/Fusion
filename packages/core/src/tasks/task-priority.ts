@@ -234,37 +234,55 @@ function isMergeActiveStatus(status: string | null | undefined): boolean {
   return isActiveMergeStatus(status);
 }
 
-export type DoneColumnSortMode = "completion-date-desc" | "task-id-desc";
+export type TaskColumnSortMode = "completion-date-desc" | "task-id-desc";
+/** Generic alias for callers that do not need the Task-prefixed name. */
+export type ColumnSortMode = TaskColumnSortMode;
+/** Kept as the public compatibility name for existing Done-column callers. */
+export type DoneColumnSortMode = TaskColumnSortMode;
 
 /** Resolved display policy for one workflow column. */
 export interface DisplayColumnSortOptions {
   /** Resolved column traits; omitted only while retaining legacy-id compatibility. */
   columnFlags?: ColumnRoleTraitFlags;
-  /** Complete-column ordering selected by the board operator. */
+  /** Generic Board-local ordering for any visible non-archived column. */
+  sortMode?: TaskColumnSortMode;
+  /** Compatibility alias used by existing Done-column callers. */
   doneSortMode?: DoneColumnSortMode;
 }
 
 /*
-FNXC:TaskDisplaySorting 2026-08-03-22:53:
-Core owns the sole task-display sorter so Board, Lane, and ListView cannot drift behind
-same-named dashboard comparators. Resolved role flags select archived pass-through, hold FIFO,
-complete, and review behavior; omitted flags deliberately retain legacy-id defaults during
-workflow metadata gaps. Complete columns support both completion-date and descending task-id modes.
+FNXC:TaskColumnSorting 2026-08-18-21:24:
+Core owns the sole task-display sorter so every Board lane shares one comparator. An explicitly
+selected mode deliberately wins over lifecycle priority, merge, and hold FIFO semantics; when no
+mode is selected those role-specific defaults remain unchanged. Arrival is the durable column move
+timestamp with legacy updatedAt/createdAt fallbacks, and archived rows keep server/page order.
 */
 /**
  * Return a sorted display copy for a workflow column without mutating its input.
- * Archived columns preserve the server/page order; hold columns use priority then FIFO;
- * complete columns use the selected Done mode; review columns float active merges first.
+ * Archived columns preserve the server/page order. Explicit arrival or task-ID mode applies to
+ * every other role; omitted mode retains hold priority/FIFO and review active-merge ordering.
  */
 export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
   tasks: readonly T[],
   column: string,
   displayColumnOptions: DisplayColumnSortOptions = {},
 ): T[] {
-  const { columnFlags, doneSortMode = "completion-date-desc" } = displayColumnOptions;
+  const { columnFlags, sortMode, doneSortMode } = displayColumnOptions;
+  const selectedSortMode = sortMode ?? doneSortMode;
 
   if (isArchivedColumnRole(columnFlags, column)) {
     return [...tasks];
+  }
+
+  if (selectedSortMode !== undefined) {
+    return [...tasks].sort((a, b) => {
+      if (selectedSortMode === "task-id-desc") {
+        return compareTaskIdNumericDesc(a.id, b.id);
+      }
+      const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
+      if (timestampCmp !== 0) return timestampCmp;
+      return compareTaskIdNumeric(a.id, b.id);
+    });
   }
 
   if (isHoldColumnRole(columnFlags, column)) {
@@ -273,9 +291,6 @@ export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
 
   return [...tasks].sort((a, b) => {
     if (isCompleteColumnRole(columnFlags, column)) {
-      if (doneSortMode === "task-id-desc") {
-        return compareTaskIdNumericDesc(a.id, b.id);
-      }
       const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
       if (timestampCmp !== 0) return timestampCmp;
       return compareTaskIdNumeric(a.id, b.id);

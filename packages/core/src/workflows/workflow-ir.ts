@@ -16,6 +16,7 @@ import type {
   WorkflowSettingType,
 } from "./workflow-ir-types.js";
 import { classifyWorkflowAgentNode } from "./workflow-ir-types.js";
+import { MERGE_REGION_ENTRY_NODE_KINDS } from "./workflow-merge-region.js";
 import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
 import { THINKING_LEVELS } from "../types.js";
@@ -317,18 +318,9 @@ function reachableFrom(
   return seen;
 }
 
-const INTERPRETER_ENTRY_NODE_KINDS: ReadonlySet<WorkflowIrNodeKind> = new Set([
-  "merge-gate",
-  "merge-attempt",
-  "manual-merge-hold",
-  "retry-backoff",
-  "recovery-router",
-  "branch-group-member-integration",
-  "branch-group-promotion",
-  "pr-create",
-  "pr-respond",
-  "pr-merge",
-]);
+/* FNXC:MergeAuthority 2026-08-23-18:05: same membership as the canonical merge-region set — one
+   spelling, so interpreter entry and merge-sweep admission can never drift apart. */
+const INTERPRETER_ENTRY_NODE_KINDS: ReadonlySet<WorkflowIrNodeKind> = MERGE_REGION_ENTRY_NODE_KINDS;
 
 /*
 FNXC:WorkflowValidation 2026-07-18-22:10:

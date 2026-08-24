@@ -76,14 +76,13 @@ describe("run-audit worktrunk lifecycle events", () => {
     expect(recordRunAuditEvent.mock.calls[0]?.[0]?.metadata?.stderrPreview).toHaveLength(5000);
   });
 
-  it("propagates store write failures", async () => {
-    const store = {
-      recordRunAuditEvent: vi.fn(async () => {
-        throw new Error("boom");
-      }),
-    } as unknown as TaskStore;
-    const auditor = createRunAuditor(store, { runId: "run-1", agentId: "agent-1", taskId: "FN-1" });
-
-    await expect(auditor.git({ type: "worktree:worktrunk-create", target: "/repo/.worktrees/fn-1" })).rejects.toThrow("boom");
-  });
+  /*
+  FNXC:RunAudit 2026-08-23-18:55:
+  "propagates store write failures" was deleted here. FN-9175 (07be287e32) routed every engine
+  run-audit emitter through `emitBoundedRunAudit`, which deliberately ABSORBS absent, throwing,
+  rejecting, hanging, and late-settling sinks so best-effort telemetry can never alter or wedge the
+  owning branch. A test demanding the auditor rethrow the sink's error asserts the exact contract
+  that change removed; the surviving contract (a hostile sink is swallowed) is covered by
+  `emit-bounded-run-audit`'s own sink-health tests.
+  */
 });

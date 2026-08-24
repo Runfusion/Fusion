@@ -777,6 +777,16 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(result.visitedNodeIds).not.toContain("code-review::code-review-step");
   });
 
+  /*
+  FNXC:WorkflowMerge 2026-08-23-19:10:
+  FN-9157 (7b55a02e51) moved the block for this exact shape one gate earlier. A fast builtin:coding
+  task with no parsed steps and no pre-merge node result now fails the merge BOUNDARY, which is
+  terminal (`merge-boundary-unproven`) rather than the resumable `implementation-incomplete`. The
+  invariant this test owns — a coding merge with no implementation evidence never reaches the merge
+  requester — is unchanged; only the gate that enforces it moved. On builtin:coding the parsed-steps
+  `implementation-incomplete` route is now unreachable, because its IR always carries a foreach
+  step-execute template and the boundary check subsumes it.
+  */
   it("blocks fast builtin:coding merge when parsed implementation proof is missing", async () => {
     const liveTask = task({
       id: "FN-7271",
@@ -805,13 +815,12 @@ describe("fast mode workflow/runtime invariants", () => {
 
     expect(result).toMatchObject({
       outcome: "failure",
-      value: "implementation-incomplete",
-      data: { reason: "implementation-incomplete" },
+      value: "merge-boundary-unproven",
     });
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7271",
-      expect.stringContaining("Workflow merge blocked before requester: implementation did not run"),
+      expect.stringContaining("Workflow merge boundary blocked: no pre-merge node result recorded"),
       undefined,
       ANY_MUTATION_CONTEXT,
     );
@@ -828,6 +837,22 @@ describe("fast mode workflow/runtime invariants", () => {
       noCommitsExpected: true,
       branch: null,
       worktree: null,
+      /*
+      FNXC:WorkflowMerge 2026-08-23-19:10:
+      FN-9157 (7b55a02e51) requires terminal pre-merge evidence before ANY merge attempt reaches the
+      requester — `noCommitsExpected` exempts a task from the implementation-proof guard one gate
+      later, never from the boundary itself. The fixture carries the passing node result so the
+      observed contract stays the no-op merge, not boundary admission. `workflow-merge-cancellation`
+      records the same fixture repair for the same reason.
+      */
+      workflowStepResults: [{
+        workflowStepId: "execute",
+        workflowStepName: "Execute",
+        source: "node",
+        phase: "pre-merge",
+        status: "passed",
+        completedAt: new Date().toISOString(),
+      }],
       prompt: "# Task\n\n## Steps\n\n### Step 1: Decide\n- [ ] Record no-code decision",
     });
     const inReviewTask = { ...liveTask, column: "in-review" } as typeof liveTask;

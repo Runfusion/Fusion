@@ -545,11 +545,15 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
 /*
 FNXC:TaskDetailChat 2026-07-21-23:42:
 FN-8473 requires the Activity Live steering input to share the transcript panel's --radius-lg so the composer does not look sharper than the panel above it.
+
+FNXC:ChatComposer 2026-08-20-19:25:
+FN-076 requires Activity Chat to grow automatically through five rendered lines, internally scroll excess content, and shrink after deletion. Native mouse resizing is disabled so the shared controller remains the only height authority.
 */
 .task-chat-input {
   min-height: calc(var(--space-2xl) + var(--space-sm));
-  max-height: var(--task-chat-composer-max-height, 40vh);
+  max-height: none;
   resize: none;
+  overflow-y: hidden;
   flex: 1 1 auto;
   border-radius: var(--radius-lg);
 }
@@ -689,6 +693,7 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
 
   .task-chat-input {
     min-height: calc(var(--space-2xl) + var(--space-lg));
+    resize: none;
   }
 
   .task-chat-send {
@@ -697,5 +702,47 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
     min-inline-size: calc(var(--space-2xl) + var(--space-lg));
     block-size: calc(var(--space-2xl) + var(--space-lg));
     min-block-size: calc(var(--space-2xl) + var(--space-lg));
+  }
+}
+
+/*
+FNXC:ChatMessageLayout 2026-08-18-20:27:
+Activity Live has an agent-header grid column and a right-aligned user group in its default transcript. Full-width mode deliberately stacks the header above one stretched transcript column, including user, status/gap, tool, and thinking blocks, while the context-free/default path keeps the existing task-chat bubbles.
+*/
+.task-chat-tab--full-width .task-chat-group {
+  grid-template-columns: 1fr;
+}
+
+.task-chat-tab--full-width .task-chat-group-header {
+  min-width: 0;
+}
+
+.task-chat-tab--full-width .task-chat-group-bubbles,
+.task-chat-tab--full-width .task-chat-user-group {
+  align-items: stretch;
+}
+
+.task-chat-tab--full-width .task-chat-user-header {
+  align-self: flex-start;
+  justify-content: flex-start;
+  padding-inline: 0;
+}
+
+.task-chat-tab--full-width .task-chat-entry,
+.task-chat-tab--full-width .task-chat-tool-group,
+.task-chat-tab--full-width .task-chat-thinking,
+.task-chat-tab--full-width .task-chat-tool-entry {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .task-chat-tab--full-width .task-chat-group,
+  .task-chat-tab--full-width .task-chat-entry,
+  .task-chat-tab--full-width .task-chat-tool-group,
+  .task-chat-tab--full-width .task-chat-thinking,
+  .task-chat-tab--full-width .task-chat-tool-entry {
+    width: 100%;
+    max-width: 100%;
   }
 }

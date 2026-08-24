@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
-import { CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
+import { resolveEffectiveConcurrency, CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
 import { createFusionAuthStorage, createFusionModelRegistry } from "@fusion/engine";
 import { resolveProject } from "../project-context.js";
 import { promptOutputStream } from "../output.js";
@@ -12,6 +12,15 @@ import { getModelRegistryModelsPath } from "./auth-paths.js";
 export interface OnboardOptions {
   force?: boolean;
   input?: NodeJS.ReadableStream;
+  /*
+  FNXC:Onboarding 2026-08-19-03:38:
+  False for the AUTO-LAUNCHED path (see onboard-autolaunch): prepare the install and stamp the
+  marker, but ask nothing. Auto-launch fires while the operator is starting something else — a
+  dashboard, a `pnpm dev --tunnel` — so its questions (AI provider setup, project setup, core
+  settings) interrupt work nobody asked to interrupt, and a dev server stopped on a prompt never
+  listens at all. `fn onboard` is the command for the interactive flow and keeps every step.
+  */
+  interactive?: boolean;
 }
 
 const PROMPT_CANCELLED_ERROR = "Interactive prompt cancelled";
@@ -257,6 +266,70 @@ async function runSkippableStep(
   return true;
 }
 
+/*
+FNXC:GithubStarAsk 2026-08-19-03:59:
+Canonical repository for the star ask. Kept next to the ask itself rather than read from package.json
+so the printed link cannot silently become a workspace-local path in a bundled CLI.
+*/
+export const GITHUB_REPO_URL = "https://github.com/Runfusion/Fusion";
+
+/**
+ * FNXC:GithubStarAsk 2026-08-19-03:59:
+ * The star ask is one-shot for the lifetime of the install: once the operator has answered it —
+ * dismissed it, or been handed the link — `githubStarPromptDismissedAt` is stamped and no surface
+ * asks again. That includes `fn onboard --force`, which replays every other step.
+ */
+export function shouldAskGithubStar(settings: { githubStarPromptDismissedAt?: string }): boolean {
+  return !(
+    typeof settings.githubStarPromptDismissedAt === "string" &&
+    settings.githubStarPromptDismissedAt.trim().length > 0
+  );
+}
+
+/*
+FNXC:GithubStarAsk 2026-08-19-03:59:
+Asked only AFTER onboarding is complete and stamped, so a declined star — or a Ctrl-C on this
+prompt — can never cost the operator the setup work they just did. The ask never opens a browser on
+the operator's behalf; it prints the URL and they choose. A cancel is treated as a dismissal because
+walking away from the question is an answer, and re-asking it would be exactly the nag we promised
+not to be.
+*/
+async function askToStarOnGithub(
+  prompts: PromptSession,
+  globalSettingsStore: GlobalSettingsStore,
+  settings: { githubStarPromptDismissedAt?: string },
+): Promise<void> {
+  if (!shouldAskGithubStar(settings)) return;
+
+  console.log("\nOne last thing:");
+  let starred = false;
+  try {
+    starred = await prompts.promptYesNo("Fusion is open source. Star it on GitHub?", true);
+  } catch (error) {
+    if (!(error instanceof Error && error.message === PROMPT_CANCELLED_ERROR)) throw error;
+  }
+
+  console.log(
+    starred
+      ? `★ Thank you! Star it here: ${GITHUB_REPO_URL}`
+      : "No problem — we won't ask again.",
+  );
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:20:
+  Recording the answer is best-effort and must never fail the command. Onboarding is already complete
+  and stamped by this point, so letting a rejected settings write propagate would exit a successful
+  `fn onboard` non-zero over a cosmetic ask. The cost of the failed write is that this one ask can
+  return on a later run — strictly better than reporting a working install as a failed one.
+  */
+  try {
+    await globalSettingsStore.updateSettings({
+      githubStarPromptDismissedAt: new Date().toISOString(),
+    });
+  } catch {
+    // Ignore: onboarding succeeded, and the ask returning once beats failing the command.
+  }
+}
+
 export function isCliOnboardingComplete(settings: { cliOnboardingCompletedAt?: string }): boolean {
   return (
     typeof settings.cliOnboardingCompletedAt === "string" &&
@@ -274,6 +347,7 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
     return;
   }
 
+  const interactive = options.interactive !== false;
   const prompts = createPromptSession(options.input);
 
   try {
@@ -281,16 +355,28 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
     if (existsSync(centralDbPath)) {
       console.log(`✓ Central DB already exists: ${centralDbPath}`);
     } else {
-      const ranCentralDb = await runSkippableStep(prompts, "Central DB", async () => {
-        console.log(`Creating central DB: ${centralDbPath}`);
-        const central = new CentralCore();
-        await central.init();
-        await central.close();
-        console.log("✓ Central DB initialized");
+      /*
+      FNXC:Onboarding 2026-08-19-03:38:
+      The central DB is created unconditionally — no prompt. Fusion cannot run without it, so
+      declining produced an install that was broken in a way the message ("database was not created
+      or initialized") described but did not fix. It also blocked non-interactive startups: a
+      `pnpm dev --tunnel` sat on "Run central db now? (Y/n)" and never listened, so nothing was
+      served and the tunnel had no dev server to point at.
+      */
+      console.log("\nCentral DB:");
+      console.log(`Creating central DB: ${centralDbPath}`);
+      const central = new CentralCore();
+      await central.init();
+      await central.close();
+      console.log("✓ Central DB initialized");
+    }
+
+    if (!interactive) {
+      await globalSettingsStore.updateSettings({
+        cliOnboardingCompletedAt: new Date().toISOString(),
       });
-      if (!ranCentralDb) {
-        console.log("Central DB setup skipped; database was not created or initialized.");
-      }
+      console.log("\nConnect a provider and finish setup in the dashboard, or run `fn onboard` anytime.");
+      return;
     }
 
     const authStorage = createFusionAuthStorage();
@@ -383,7 +469,7 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
       if (projectContext) {
         const rawMaxConcurrent = await prompts.prompt(
           "Set maxConcurrent for this project",
-          String((await projectContext.store.getSettings()).maxConcurrent ?? 2),
+          String(resolveEffectiveConcurrency(await projectContext.store.getSettings()).maxConcurrent),
         );
         const maxConcurrent = validateMaxConcurrent(rawMaxConcurrent);
         await projectContext.store.updateSettings({ maxConcurrent });
@@ -402,6 +488,7 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
       cliOnboardingCompletedAt: new Date().toISOString(),
     });
     console.log("\n✓ Onboarding complete");
+    await askToStarOnGithub(prompts, globalSettingsStore, settings);
   } catch (error) {
     if (error instanceof Error && error.message === PROMPT_CANCELLED_ERROR) {
       throw new Error("Onboarding cancelled.");
@@ -421,5 +508,7 @@ export const __testUtils = {
   persistLocalProviderRegistry,
   runSkippableStep,
   isCliOnboardingComplete,
+  shouldAskGithubStar,
+  askToStarOnGithub,
   PROMPT_CANCELLED_ERROR,
 };

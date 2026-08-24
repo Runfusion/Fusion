@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
+import { __test_resetSystemRestartRecovery, systemRestartRecovery } from "../../hooks/useSystemRestartRecovery";
+import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import {
   mockFetchSettings,
@@ -133,6 +135,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
     fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
     checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
+    checkForUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: null, updateAvailable: false })),
     installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
     fetchSystemInfo: (...args: unknown[]) => mockFetchSystemInfo(...args),
     requestSystemRestart: (...args: unknown[]) => mockRequestSystemRestart(...args),
@@ -221,6 +224,77 @@ vi.mock("../FileBrowser", () => ({
 }));
 
 describe("SettingsModal", () => {
+  it("renders and persists the project-scoped conversation layout without a global write", async () => {
+    const onChatMessageLayoutChange = vi.fn();
+    mockFetchSettingsByScope.mockResolvedValueOnce({
+      global: defaultSettings,
+      project: {
+        ...defaultSettings,
+        allowAbsoluteFileBrowserPaths: false,
+        directMergeCommitStrategy: "auto",
+        maxAutoMergeRetries: 3,
+        executorToolFailureRetryCount: 2,
+        executorToolFailureRetryBackoffMs: 2000,
+        executorToolFailureThreshold: 1,
+        executorModelEscalationEnabled: false,
+        executorEscalationProvider: undefined,
+        executorEscalationModelId: undefined,
+        executorEscalationNodeId: undefined,
+        chatMessageLayout: "bubbles",
+        gitlabAuthTokenType: "personal",
+        mergeAdvanceAutoSync: "stash-and-ff",
+        pushRemote: undefined,
+        showCostBadgeOnCards: false,
+        taskDetailChatFirst: false,
+        worktreeInitCommand: undefined,
+        worktreesDir: undefined,
+        worktrunk: { enabled: false, binaryPath: undefined, onFailure: "fail" },
+      },
+    } as never);
+    renderModal({ initialSection: "appearance", onChatMessageLayoutChange });
+    await waitForSettingsModalReady();
+
+    const selector = screen.getByLabelText("Conversation layout") as HTMLSelectElement;
+    expect(selector.value).toBe("bubbles");
+    vi.useFakeTimers();
+    fireEvent.change(selector, { target: { value: "full-width" } });
+    expect(onChatMessageLayoutChange).toHaveBeenCalledWith("full-width");
+    await flushSettingsAutoSave();
+    vi.useRealTimers();
+
+    expect(mockUpdateSettings).toHaveBeenCalledWith({ chatMessageLayout: "full-width" }, undefined);
+    expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it("mirrors mounted Appearance controls through the modal while keeping one persistence path", async () => {
+    const callbacks = {
+      onOpenTasksInRightSidebarChange: vi.fn(),
+      onOpenMobileTasksInPopupChange: vi.fn(),
+      onTaskPopupsBoardListOnlyChange: vi.fn(),
+      onShowCostBadgeOnCardsChange: vi.fn(),
+      onTaskDetailChatFirstChange: vi.fn(),
+    };
+    renderModal({ initialSection: "appearance", ...callbacks });
+    await waitForSettingsModalReady();
+
+    fireEvent.click(screen.getByLabelText("Open tasks in the right sidebar"));
+    fireEvent.click(screen.getByLabelText("Open tasks as popups"));
+    fireEvent.click(screen.getByLabelText("Keep task popups on the view where they were opened"));
+    fireEvent.click(screen.getByLabelText("Show cost badges on task cards"));
+    fireEvent.click(screen.getByLabelText("Open task details with Chat first"));
+
+    expect(callbacks.onOpenTasksInRightSidebarChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onOpenMobileTasksInPopupChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onTaskPopupsBoardListOnlyChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onShowCostBadgeOnCardsChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onTaskDetailChatFirstChange).toHaveBeenCalledWith(true);
+
+    vi.useFakeTimers();
+    await flushSettingsAutoSave();
+    vi.useRealTimers();
+    expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+  });
+
   it("renders recommendation mailbox notices enabled by default and persists disabling it", async () => {
     renderModal({ initialSection: "general" });
     await waitForSettingsModalReady();
@@ -233,6 +307,41 @@ describe("SettingsModal", () => {
     vi.useRealTimers();
     expect(mockUpdateSettings).toHaveBeenCalled();
     expect(mockUpdateSettings.mock.calls.at(-1)?.[0]).toMatchObject({ recommendationMailboxNoticeEnabled: false });
+  });
+
+  it.each(["mobile", "desktop"] as const)("shows exactly one default-off required recommendation toggle on %s", async (mode) => {
+    viewportMode = mode;
+    renderModal({ initialSection: "general" });
+    await waitForSettingsModalReady();
+
+    const toggle = screen.getByRole("checkbox", { name: "Require automatic task recommendations" });
+    expect(screen.getAllByRole("checkbox", { name: "Require automatic task recommendations" })).toHaveLength(1);
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/cap 0 disables capture regardless/i)).toBeInTheDocument();
+
+    vi.useFakeTimers();
+    fireEvent.click(toggle);
+    await flushSettingsAutoSave();
+    vi.useRealTimers();
+    expect(mockUpdateSettings.mock.calls.at(-1)?.[0]).toMatchObject({ requireTaskRecommendations: true });
+  });
+
+  it("renders enabled required recommendations and preserves one usable control when capture is disabled", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      ...defaultSettings,
+      requireTaskRecommendations: true,
+      maxRecommendationsPerTask: 0,
+    });
+    mockFetchSettingsByScope.mockResolvedValueOnce({
+      global: defaultSettings,
+      project: { requireTaskRecommendations: true, maxRecommendationsPerTask: 0 },
+    });
+    renderModal({ initialSection: "general" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("checkbox", { name: "Require automatic task recommendations" })).toBeChecked();
+    expect(screen.getAllByRole("checkbox", { name: "Require automatic task recommendations" })).toHaveLength(1);
+    expect(screen.getByText(/cap 0 disables capture regardless/i)).toBeInTheDocument();
   });
   // Keep Advanced off by default so disclosure default/persist tests stay truthful.
   installSettingsModalEnv({ advancedSettings: false });
@@ -296,6 +405,26 @@ describe("SettingsModal", () => {
     updateAvailable: true,
   };
 
+  it("renders externally managed guidance without an update-now control on desktop", async () => {
+    viewportMode = "desktop";
+    mockCheckForUpdates.mockResolvedValue({
+      currentVersion: "1.2.3",
+      latestVersion: null,
+      updateAvailable: false,
+      disabled: true,
+      externallyManaged: true,
+      message: "Managed deployment updates must be installed through its release pipeline.",
+    });
+    renderModal();
+    await waitForSettingsModalReady();
+
+    await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    expect(await screen.findByText(/Managed deployment updates/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
+    expect(document.querySelector(".settings-update-now-btn")).toBeNull();
+  });
+
   async function renderUpdatedSettings() {
     mockCheckForUpdates.mockResolvedValue(availableUpdate);
     renderModal();
@@ -307,6 +436,9 @@ describe("SettingsModal", () => {
   }
 
   describe("update restart affordance", () => {
+    beforeEach(() => {
+      __test_resetPendingUpdateInstall();
+    });
     it("renders an enabled restart button after a successful update on desktop", async () => {
       viewportMode = "desktop";
 
@@ -323,6 +455,44 @@ describe("SettingsModal", () => {
       expect(restartButton).toHaveAccessibleName("Restart Fusion");
       expect(restartButton.closest(".settings-update-install-succeeded")).toBeInTheDocument();
       expect(settingsModalCss).toMatch(/\.settings-modal \.settings-update-check\s*\{[^}]*flex-wrap: wrap;/s);
+    });
+
+    it("ignores old, unavailable, and holding hosts before Settings recovery reloads the installed beta", async () => {
+      __test_resetSystemRestartRecovery();
+      const reload = vi.fn();
+      vi.stubGlobal("location", { reload });
+      mockCheckForUpdates.mockResolvedValue({ currentVersion: "0.77.0-beta.2", latestVersion: "0.77.0-beta.4", updateAvailable: true });
+      mockInstallUpdate.mockResolvedValue({ currentVersion: "0.77.0-beta.2", latestVersion: "0.77.0-beta.4", updated: true, outcome: "installed" });
+      mockFetchSystemInfo
+        .mockResolvedValueOnce({ supervised: true, restartSupported: true, pid: 10 })
+        .mockResolvedValueOnce({ pid: 10 })
+        .mockResolvedValueOnce({ pid: 11 })
+        .mockResolvedValueOnce({ pid: 12 })
+        .mockResolvedValueOnce({ pid: 13 });
+      mockFetchDashboardHealth
+        .mockResolvedValueOnce({ version: "0.77.0-beta.2", status: "ok" })
+        .mockRejectedValueOnce(new Error("host is restarting"))
+        .mockResolvedValueOnce({ version: "0.77.0-beta.4", status: "migrating", holding: true })
+        .mockResolvedValueOnce({ version: "0.77.0-beta.4", status: "degraded", holding: false });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: "Update now" }));
+      await screen.findByRole("button", { name: "Restart Fusion" });
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+      await act(async () => { await Promise.resolve(); });
+
+      expect(screen.getByText("Restarting… Your connection will close shortly.")).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+
+      expect(screen.getByText("Fusion v0.77.0-beta.4 is back online — reloading…")).toBeInTheDocument();
+      expect(reload).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
     });
 
     it("requests the supervised restart with the Settings update reason", async () => {
@@ -625,6 +795,27 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("checkbox", { name: "Advanced settings" })).toBeChecked();
   });
 
+  it("keeps Remote Access reachable in Basic-mode desktop navigation, search, and initial routing", async () => {
+    viewportMode = "desktop";
+    localStorage.removeItem("fusion:settings:show-advanced");
+    renderModal({ initialSection: "remote" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("checkbox", { name: "Advanced settings" })).not.toBeChecked();
+    expect(localStorage.getItem("fusion:settings:show-advanced")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Remote Access$/ })).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Remote Access" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Node Sync$/ })).not.toBeInTheDocument();
+
+    await settingsModalUser.click(screen.getByRole("button", { name: /^Remote Access$/ }));
+    expect(screen.getByRole("heading", { name: "Remote Access" })).toBeInTheDocument();
+
+    await settingsModalUser.type(screen.getByTestId("settings-search-input"), "cloudflared");
+    expect(screen.getAllByRole("button", { name: /^Remote Access$/ })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Node Sync$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Remote Access" })).toBeInTheDocument();
+  });
+
   it("honors an explicit initialSection override", async () => {
     renderModal({ initialSection: "authentication" });
     await waitForSettingsModalReady();
@@ -670,6 +861,57 @@ describe("SettingsModal", () => {
     expect(screen.queryByRole("button", { name: /^Research · Global$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Research$/ })).not.toBeInTheDocument();
     expect(screen.getAllByText(/No settings sections match/).length).toBeGreaterThan(0);
+  });
+
+  /*
+   * FNXC:SettingsSearch 2026-08-19-14:19:
+   * The migrated index must make the existing conversation-layout row discoverable
+   * through every Settings presentation: desktop search is open, mobile search is
+   * expanded explicitly, and embedded Settings uses the same production modal.
+   * Clicking each result verifies the real row anchor rather than a test-only stub.
+   */
+  it.each([
+    {
+      name: "desktop modal by label",
+      viewport: "desktop" as const,
+      presentation: undefined,
+      query: "conversation layout",
+      expandSearch: false,
+    },
+    {
+      name: "mobile modal by help text",
+      viewport: "mobile" as const,
+      presentation: undefined,
+      query: "full width",
+      expandSearch: true,
+    },
+    {
+      name: "embedded Settings by field key",
+      viewport: "mobile" as const,
+      presentation: "embedded" as const,
+      query: "chatMessageLayout",
+      expandSearch: true,
+    },
+  ])("discovers chat message layout in the $name", async ({ viewport, presentation, query, expandSearch }) => {
+    viewportMode = viewport;
+    renderModal({ presentation });
+    await waitForSettingsModalReady();
+
+    if (expandSearch) {
+      await settingsModalUser.click(screen.getByLabelText("Show search"));
+    }
+    const search = screen.getByTestId("settings-search-input");
+    await settingsModalUser.type(search, query);
+
+    expect(screen.getAllByTestId("settings-search-hit-chatMessageLayout")).toHaveLength(1);
+    // FNXC:SettingsSearch 2026-08-19-14:19: jsdom lacks the browser scroll API used by the production row-jump effect.
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    await settingsModalUser.click(screen.getByTestId("settings-search-hit-chatMessageLayout"));
+    expect(screen.getAllByTestId("settings-search-hit-chatMessageLayout")).toHaveLength(1);
+    expect(document.querySelectorAll('[data-settings-key="chatMessageLayout"]')).toHaveLength(1);
   });
 
   it("keeps duplicate global and project labels searchable while preserving no-results clearing", async () => {
@@ -1046,6 +1288,7 @@ describe("SettingsModal", () => {
 
   describe("Global General", () => {
     beforeEach(() => {
+      __test_resetPendingUpdateInstall();
       localStorage.setItem("fusion:settings:show-advanced", "true");
     });
 
@@ -1758,6 +2001,7 @@ describe("SettingsModal", () => {
       expect(payload.autoMerge).toBeNull();
       expect(payload.maxConcurrent).toBeNull();
       expect(payload.maxRecommendationsPerTask).toBeNull();
+      expect(payload.requireTaskRecommendations).toBeNull();
       expect(payload.recommendationMailboxNoticeEnabled).toBeNull();
       // Global-only key must never appear in a project-scope reset payload.
       expect(payload).not.toHaveProperty("themeMode");

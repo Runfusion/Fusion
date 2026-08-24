@@ -36,8 +36,6 @@ import {
   setAiSessionStore,
 } from "../planning.js";
 import * as planningModule from "../planning.js";
-import { __resetSubtaskBreakdownState, subtaskStreamManager } from "../subtask-breakdown.js";
-import * as subtaskBreakdownModule from "../subtask-breakdown.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionRow } from "../ai-session-store.js";
 import * as usageModule from "../usage.js";
 import * as claudeCliProbeModule from "../claude-cli-probe.js";
@@ -1547,6 +1545,31 @@ describe("Planning Mode Routes", () => {
         }
       });
 
+      it("captures the output language in a draft before later settings can change it", async () => {
+        const sessionStore = new MockAiSessionStore();
+        setAiSessionStore(sessionStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        store = createMockStore({
+          getSettings: vi.fn().mockResolvedValue({ taskOutputLanguage: "interface", language: "fr" }),
+        });
+
+        const draftRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-draft",
+          JSON.stringify({ initialPlan: "Plan en español" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(draftRes.status).toBe(201);
+        await vi.waitFor(() => {
+          const row = sessionStore.rows.get(draftRes.body.sessionId);
+          expect(JSON.parse(row?.inputPayload ?? "{}").taskOutputLanguage).toMatchObject({
+            mode: "interface",
+            locale: "fr",
+          });
+        });
+      });
+
       it("starts the deferred first turn exactly once even with concurrent subscribers", async () => {
         vi.useFakeTimers();
         try {
@@ -2469,106 +2492,6 @@ describe("Planning Mode Routes", () => {
       });
     });
 
-    describe("POST /planning/start-breakdown", () => {
-      it("uses summary override when generating subtasks", async () => {
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Build a user auth system" }),
-          { "Content-Type": "application/json" }
-        );
-        const sessionId = startRes.body.sessionId;
-
-        await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
-          { "Content-Type": "application/json" }
-        );
-        await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
-          { "Content-Type": "application/json" }
-        );
-        await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/respond",
-          JSON.stringify({ sessionId, responses: { confirm: true } }),
-          { "Content-Type": "application/json" }
-        );
-        // Planning Mode requires explicit operator validation before breakdown or task creation.
-        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({
-            sessionId,
-            summary: {
-              title: "Edited auth implementation",
-              description: "Use OAuth providers and secure refresh tokens",
-              suggestedSize: "L",
-              suggestedDependencies: ["FN-321"],
-              keyDeliverables: ["OAuth integration"],
-            },
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(200);
-        expect(res.body.sessionId).toBe(sessionId);
-        expect(res.body.subtasks).toHaveLength(2);
-        expect(res.body.subtasks[0]).toEqual(
-          expect.objectContaining({
-            title: "OAuth integration",
-          }),
-        );
-        expect(res.body.subtasks[0].description).toContain("Use OAuth providers and secure refresh tokens");
-        expect(res.body.subtasks[1]).toEqual(
-          expect.objectContaining({
-            id: "subtask-2",
-            title: "Verify end-to-end",
-            dependsOn: ["subtask-1"],
-            suggestedSize: "S",
-          }),
-        );
-      });
-
-      it("FN-6977 returns fallback subtasks when summary override omits deliverables", async () => {
-        const sessionId = await createCompletedPlanningSession("Break down malformed planning summary");
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({
-            sessionId,
-            summary: {
-              title: "Malformed breakdown summary",
-              description: "Deliverables were omitted by the AI or persisted session",
-              suggestedSize: "M",
-            },
-          }),
-          { "Content-Type": "application/json" },
-        );
-
-        expect(res.status).toBe(200);
-        expect(res.body.subtasks).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ id: "subtask-1", title: "Define implementation approach", dependsOn: [] }),
-            expect.objectContaining({ id: "subtask-2", title: "Implement core changes", dependsOn: ["subtask-1"] }),
-            expect.objectContaining({ id: "subtask-3", title: "Verify and polish", dependsOn: ["subtask-2"] }),
-          ]),
-        );
-      });
-    });
-
     describe("POST /planning/create-task", () => {
       it("creates a task from completed planning session", async () => {
         // Setup mock store for task creation
@@ -3340,171 +3263,6 @@ describe("Planning Mode Routes", () => {
         }
       });
 
-      it("still returns 201 when planning create-tasks post-create updates fail", async () => {
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-260",
-            description: "First",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-261",
-            description: "Second",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        (store.updateTask as ReturnType<typeof vi.fn>)
-          .mockRejectedValueOnce(new Error("size update failed"))
-          .mockResolvedValueOnce({
-            id: "FN-261",
-            description: "Second",
-            column: "triage",
-            dependencies: ["FN-260"],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-        const planningSessionId = await createCompletedPlanningSession();
-        const planningSession = await planningModule.getSession(planningSessionId);
-        planningSession!.history = [{
-          question: {
-            id: "retention",
-            type: "single_select",
-            question: "Which retention policy?",
-            options: [{ id: "full", label: "Keep full interview context" }],
-          },
-          response: { retention: "full", _other: "Preserve every custom answer", _comment: "No truncation" },
-        }];
-        const breakdownRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({ sessionId: planningSessionId }),
-          { "Content-Type": "application/json" }
-        );
-
-        const generatedSubtasks = breakdownRes.body.subtasks as Array<{
-          id: string;
-          title: string;
-          description: string;
-          suggestedSize: "S" | "M" | "L";
-          dependsOn: string[];
-        }>;
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          JSON.stringify({
-            planningSessionId,
-            subtasks: [
-              {
-                id: generatedSubtasks[0]!.id,
-                title: "Auth backend",
-                description: "Implement backend",
-                suggestedSize: "L",
-                dependsOn: [],
-              },
-              {
-                id: generatedSubtasks[1]!.id,
-                title: "Auth frontend",
-                description: "Implement frontend",
-                dependsOn: [generatedSubtasks[0]!.id],
-              },
-            ],
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(res.body.tasks).toHaveLength(2);
-        for (const [input] of (store.createTask as ReturnType<typeof vi.fn>).mock.calls) {
-          expect(input.description).toContain("## Planning Interview Context");
-          expect(input.description).toContain("Keep full interview context");
-          expect(input.description).toContain("Preserve every custom answer");
-          expect(input.description).toContain("No truncation");
-          expect(input.description.match(/## Planning Interview Context/g)).toHaveLength(1);
-        }
-      });
-
-      it("keeps the completed planning session in history after multi-task creation",  async () => {
-        // Bug C: /planning/create-tasks used cleanupSession() which deleted the
-        // persisted ai_sessions row, so a session that ran to completion AND
-        // created tasks vanished from the saved-sessions history. It must instead
-        // release only the in-memory runtime (like single-task create-task) and
-        // keep the persisted completed row.
-        const mockStore = new MockAiSessionStore();
-        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
-
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-270",
-            description: "First",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-271",
-            description: "Second",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
-        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-        const planningSessionId = await createCompletedPlanningSession();
-
-        // Precondition: the completed planning session is persisted as history.
-        // FNXC:PostgresPlanningPersistence 2026-07-14-19:56: Session-store reads are asynchronous after the PostgreSQL cutover; await the history precondition instead of asserting against the Promise wrapper.
-        const persistedBefore = await mockStore.get(planningSessionId);
-        expect(persistedBefore).not.toBeNull();
-        expect(persistedBefore?.type).toBe("planning");
-        expect(persistedBefore?.status).toBe("complete");
-
-        const breakdownRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({ sessionId: planningSessionId }),
-          { "Content-Type": "application/json" }
-        );
-        const generatedSubtasks = breakdownRes.body.subtasks as Array<{ id: string }>;
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          JSON.stringify({
-            planningSessionId,
-            subtasks: [
-              { id: generatedSubtasks[0]!.id, title: "Auth backend", description: "Implement backend", suggestedSize: "L", dependsOn: [] },
-              { id: generatedSubtasks[1]!.id, title: "Auth frontend", description: "Implement frontend", dependsOn: [generatedSubtasks[0]!.id] },
-            ],
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(res.body.tasks).toHaveLength(2);
-
-        // Regression assertion: the completed planning session row must survive
-        // task creation so it remains listable/restorable in history.
-        const persistedAfter = await mockStore.get(planningSessionId);
-        expect(persistedAfter).not.toBeNull();
-        expect(persistedAfter?.type).toBe("planning");
-        expect(persistedAfter?.status).toBe("complete");
-      });
-
       it("creates task with explicit summary priority", async () => {
         (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
           id: "FN-100",
@@ -3561,336 +3319,6 @@ describe("Planning Mode Routes", () => {
           }),
           undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
-      });
-
-      it("creates multiple planning tasks from compact subtask drafts while preserving edited fields", async () => {
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-201",
-            description: "First",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-202",
-            description: "Second",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-203",
-            description: "Third",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
-        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Build a user auth system" }),
-          { "Content-Type": "application/json" }
-        );
-        const planningSessionId = startRes.body.sessionId;
-
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
-          sessionId: planningSessionId,
-          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-        }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
-
-        const breakdownRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({ sessionId: planningSessionId }),
-          { "Content-Type": "application/json" }
-        );
-        expect(breakdownRes.status).toBe(200);
-
-        const generatedSubtasks = breakdownRes.body.subtasks as Array<{
-          id: string;
-          title: string;
-          description: string;
-          suggestedSize: "S" | "M" | "L";
-          priority?: string;
-          dependsOn: string[];
-        }>;
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          JSON.stringify({
-            planningSessionId,
-            subtasks: [
-              {
-                id: generatedSubtasks[0]!.id,
-                title: "Auth backend",
-                description: "Implement backend",
-                suggestedSize: "L",
-                priority: "urgent",
-                dependsOn: [],
-              },
-              {
-                id: generatedSubtasks[1]!.id,
-              },
-              {
-                id: generatedSubtasks[2]!.id,
-                dependsOn: [generatedSubtasks[0]!.id, generatedSubtasks[1]!.id],
-              },
-            ],
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          1,
-          expect.objectContaining({ title: "Auth backend", description: expect.stringContaining("## Key deliverables"), priority: "urgent" }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          2,
-          expect.objectContaining({
-            title: generatedSubtasks[1]!.title,
-            description: expect.stringContaining("## Key deliverables"),
-            priority: "normal",
-          }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          3,
-          expect.objectContaining({
-            title: generatedSubtasks[2]!.title,
-            description: expect.stringContaining("## Key deliverables"),
-            priority: "normal",
-          }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-201", expect.objectContaining({ key: "plan", content: expect.stringContaining("# Auth backend") }));
-        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-201", expect.objectContaining({ key: "original-description", content: "Build a user auth system" }));
-        expect(store.updateTask).toHaveBeenCalledWith("FN-201", { size: "L" }, UNATTRIBUTED_CONTEXT_MATCHER);
-        expect(store.updateTask).toHaveBeenCalledWith("FN-203", { dependencies: ["FN-201", "FN-202"] }, UNATTRIBUTED_CONTEXT_MATCHER);
-      });
-
-      it("supports client-added subtasks and omitted generated subtasks in compact breakdown payloads", async () => {
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-210",
-            description: "Generated task",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-211",
-            description: "Client-added task",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
-        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Build a user auth system" }),
-          { "Content-Type": "application/json" }
-        );
-        const planningSessionId = startRes.body.sessionId;
-
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
-          sessionId: planningSessionId,
-          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-        }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
-
-        const breakdownRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({ sessionId: planningSessionId }),
-          { "Content-Type": "application/json" }
-        );
-        expect(breakdownRes.status).toBe(200);
-        const generatedSubtasks = breakdownRes.body.subtasks as Array<{
-          id: string;
-          title: string;
-          description: string;
-          suggestedSize: "S" | "M" | "L";
-          priority?: string;
-          dependsOn: string[];
-        }>;
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          JSON.stringify({
-            planningSessionId,
-            subtasks: [
-              { id: generatedSubtasks[0]!.id },
-              {
-                id: "subtask-99",
-                title: "Rollout follow-up",
-                description: "Prepare rollout notes",
-                suggestedSize: "S",
-                priority: "high",
-                dependsOn: [generatedSubtasks[0]!.id],
-              },
-            ],
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(store.createTask).toHaveBeenCalledTimes(2);
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          1,
-          expect.objectContaining({
-            title: generatedSubtasks[0]!.title,
-            description: expect.stringContaining("## Key deliverables"),
-          }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          2,
-          expect.objectContaining({
-            title: "Rollout follow-up",
-            description: expect.stringContaining("## Key deliverables"),
-            priority: "high",
-          }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.updateTask).toHaveBeenCalledWith("FN-211", { size: "S" }, UNATTRIBUTED_CONTEXT_MATCHER);
-        expect(store.updateTask).toHaveBeenCalledWith("FN-211", { dependencies: ["FN-210"] }, UNATTRIBUTED_CONTEXT_MATCHER);
-      });
-
-      it("accepts compact breakdown payloads that avoid oversized planning create-tasks requests", async () => {
-        const createdTaskBase = {
-          column: "triage",
-          dependencies: [],
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        };
-        for (let index = 0; index < 16; index += 1) {
-          (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-            ...createdTaskBase,
-            id: `FN-${300 + index}`,
-            description: `Task ${index + 1}`,
-          });
-        }
-        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
-        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Break a large platform plan into many tasks" }),
-          { "Content-Type": "application/json" }
-        );
-        const planningSessionId = startRes.body.sessionId;
-
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "large" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must support auth, settings, dashboards, workflows, imports, sync, audits, search, mobile, docs, QA, releases, telemetry, reliability, and security." } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
-          sessionId: planningSessionId,
-          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-        }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
-
-        const summaryOverride = {
-          title: "Large planning summary",
-          description: `${"Large planning context. ".repeat(400)}${"Detailed implementation note. ".repeat(400)}`,
-          suggestedSize: "L",
-          suggestedDependencies: [],
-          keyDeliverables: Array.from({ length: 15 }, (_, index) => `Deliverable ${index + 1}`),
-        };
-
-        const breakdownRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start-breakdown",
-          JSON.stringify({ sessionId: planningSessionId, summary: summaryOverride }),
-          { "Content-Type": "application/json" }
-        );
-        expect(breakdownRes.status).toBe(200);
-
-        const generatedSubtasks = breakdownRes.body.subtasks as Array<{
-          id: string;
-          title: string;
-          description: string;
-          suggestedSize: "S" | "M" | "L";
-          priority?: string;
-          dependsOn: string[];
-        }>;
-        expect(generatedSubtasks).toHaveLength(16);
-        expect(generatedSubtasks[15]).toEqual(
-          expect.objectContaining({
-            id: "subtask-16",
-            title: "Verify end-to-end",
-            dependsOn: ["subtask-15"],
-            suggestedSize: "S",
-          }),
-        );
-
-        const oversizedLegacyPayload = JSON.stringify({ planningSessionId, subtasks: generatedSubtasks });
-        const compactPayload = JSON.stringify({
-          planningSessionId,
-          subtasks: generatedSubtasks.map((subtask) => ({ id: subtask.id })),
-        });
-        expect(Buffer.byteLength(oversizedLegacyPayload)).toBeGreaterThan(100 * 1024);
-        expect(Buffer.byteLength(compactPayload)).toBeLessThan(8 * 1024);
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          compactPayload,
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(store.createTask).toHaveBeenCalledTimes(16);
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          1,
-          expect.objectContaining({
-            title: generatedSubtasks[0]!.title,
-            description: expect.stringContaining("## Key deliverables"),
-          }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.createTask).toHaveBeenNthCalledWith(
-          16,
-          expect.objectContaining({
-            title: generatedSubtasks[15]!.title,
-            description: expect.stringContaining("## Key deliverables"),
-          }),
-          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-        expect(store.logEntry).toHaveBeenCalledTimes(16);
       });
 
       it("applies branchSelection when creating a planning task", async () => {
@@ -3994,249 +3422,6 @@ describe("Planning Mode Routes", () => {
             baseBranch: undefined,
           }),
           undefined, UNATTRIBUTED_CONTEXT_MATCHER,
-        );
-      });
-
-      it("applies shared branchSelection to all planning subtasks", async () => {
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-201",
-            description: "First",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-202",
-            description: "Second",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
-        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Build a user auth system" }),
-          { "Content-Type": "application/json" }
-        );
-        const planningSessionId = startRes.body.sessionId;
-
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
-          sessionId: planningSessionId,
-          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-        }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          JSON.stringify({
-            planningSessionId,
-            branchSelection: { mode: "custom-new", branchName: "feature/auth-slice", baseBranch: "main" },
-            branchAssignment: { mode: "shared" },
-            subtasks: [
-              {
-                id: "subtask-1",
-                title: "Auth backend",
-                description: "Implement backend",
-                suggestedSize: "M",
-                priority: "urgent",
-                dependsOn: [],
-              },
-              {
-                id: "subtask-2",
-                title: "Auth UI",
-                description: "Implement UI",
-                suggestedSize: "S",
-                dependsOn: ["subtask-1"],
-              },
-            ],
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(store.ensureBranchGroupForSource).toHaveBeenCalledWith(
-          "planning",
-          planningSessionId,
-          expect.objectContaining({ branchName: "feature/auth-slice", autoMerge: false }),
-        );
-        expect(store.getBranchGroupBySource).toHaveBeenCalledWith("planning", planningSessionId);
-        const firstCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-        const secondCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[1]?.[0];
-
-        // U1: branchContext.groupId carries the real BranchGroup id, not the synthetic `planning:<id>` string.
-        expect(firstCreateCall).toMatchObject({
-          branch: "feature/auth-slice/auth-backend",
-          baseBranch: "main",
-          branchContext: {
-            groupId: `BG-planning-${planningSessionId}`,
-            source: "planning",
-            assignmentMode: "shared",
-            inheritedBaseBranch: "main",
-          },
-        });
-        expect(secondCreateCall).toMatchObject({
-          branch: "feature/auth-slice/auth-ui",
-          baseBranch: "main",
-          branchContext: {
-            groupId: `BG-planning-${planningSessionId}`,
-            source: "planning",
-            assignmentMode: "shared",
-            inheritedBaseBranch: "main",
-          },
-        });
-        expect(firstCreateCall?.branch).not.toBe("feature/auth-slice");
-        expect(secondCreateCall?.branch).not.toBe("feature/auth-slice");
-        expect(firstCreateCall?.branch).not.toBe(secondCreateCall?.branch);
-      });
-
-      it("ensures shared branch groups when creating subtask breakdown tasks", async () => {
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-281",
-            description: "First",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-282",
-            description: "Second",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-
-        const subtaskRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/subtasks/start-streaming",
-          JSON.stringify({ description: "Break down auth scope" }),
-          { "Content-Type": "application/json" },
-        );
-        expect(subtaskRes.status).toBe(201);
-
-        const sessionId = subtaskRes.body.sessionId as string;
-        const createRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/subtasks/create-tasks",
-          JSON.stringify({
-            sessionId,
-            branchSelection: { mode: "custom-new", branchName: "feature/auth-breakdown", baseBranch: "main" },
-            branchAssignment: { mode: "shared" },
-            subtasks: [
-              { tempId: "temp-1", title: "Auth backend", description: "Implement backend" },
-              { tempId: "temp-2", title: "Auth UI", description: "Implement UI", dependsOn: ["temp-1"] },
-            ],
-          }),
-          { "Content-Type": "application/json" },
-        );
-
-        expect(createRes.status).toBe(201);
-        expect(store.ensureBranchGroupForSource).toHaveBeenCalledWith(
-          "planning",
-          sessionId,
-          expect.objectContaining({ branchName: "feature/auth-breakdown", autoMerge: false }),
-        );
-        expect(store.getBranchGroupBySource).toHaveBeenCalledWith("planning", sessionId);
-        const firstCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-        const secondCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[1]?.[0];
-        expect(firstCreateCall?.branch).toBe("feature/auth-breakdown/auth-backend");
-        expect(secondCreateCall?.branch).toBe("feature/auth-breakdown/auth-ui");
-        expect(firstCreateCall?.branch).not.toBe("feature/auth-breakdown");
-        expect(secondCreateCall?.branch).not.toBe("feature/auth-breakdown");
-        expect(firstCreateCall?.branch).not.toBe(secondCreateCall?.branch);
-        // U1: branchContext.groupId carries the real BranchGroup id, not the synthetic `planning:<id>` string.
-        expect(firstCreateCall?.branchContext).toMatchObject({
-          groupId: `BG-planning-${sessionId}`,
-          source: "planning",
-          assignmentMode: "shared",
-        });
-        expect(secondCreateCall?.branchContext).toMatchObject({
-          groupId: `BG-planning-${sessionId}`,
-          source: "planning",
-          assignmentMode: "shared",
-        });
-      });
-
-      it("prefers session autoMerge override when creating shared planning subtasks", async () => {
-        (store.createTask as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({
-            id: "FN-301",
-            description: "First",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          })
-          .mockResolvedValueOnce({
-            id: "FN-302",
-            description: "Second",
-            column: "triage",
-            dependencies: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-
-        const startRes = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/start",
-          JSON.stringify({ initialPlan: "Build a user auth system" }),
-          { "Content-Type": "application/json" }
-        );
-        const planningSessionId = startRes.body.sessionId;
-
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
-          sessionId: planningSessionId,
-          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
-        }), { "Content-Type": "application/json" });
-        await REQUEST(buildApp(), "POST", `/api/planning/${planningSessionId}/validate`, undefined, { "Content-Type": "application/json" });
-
-        const session = await planningModule.getSession(planningSessionId);
-        if (!session) {
-          throw new Error("Expected planning session to exist");
-        }
-        session.autoMerge = true;
-
-        const res = await REQUEST(
-          buildApp(),
-          "POST",
-          "/api/planning/create-tasks",
-          JSON.stringify({
-            planningSessionId,
-            branchSelection: { mode: "custom-new", branchName: "feature/auth-slice", baseBranch: "main" },
-            branchAssignment: { mode: "shared" },
-            subtasks: [
-              { id: "subtask-1", title: "Auth backend", description: "Implement backend", dependsOn: [] },
-              { id: "subtask-2", title: "Auth UI", description: "Implement UI", dependsOn: [] },
-            ],
-          }),
-          { "Content-Type": "application/json" }
-        );
-
-        expect(res.status).toBe(201);
-        expect(store.ensureBranchGroupForSource).toHaveBeenCalledWith(
-          "planning",
-          planningSessionId,
-          expect.objectContaining({ branchName: "feature/auth-slice", autoMerge: true }),
         );
       });
 
@@ -4580,68 +3765,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
     });
   });
 
-  describe("POST /api/subtasks/start-streaming — utility lane independence", () => {
-    it("executes successfully when task-lane is saturated (maxConcurrent=0)", async () => {
-      // Mock the subtask breakdown module to return proper format
-      const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "subtask-sat-session" });
-      vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
 
-      try {
-        const { app } = buildSaturatedApp();
-
-        const res = await REQUEST(
-          app,
-          "POST",
-          "/api/subtasks/start-streaming",
-          JSON.stringify({ description: "Break into subtasks under saturation" }),
-          { "Content-Type": "application/json" },
-        );
-
-        // UTILITY PATH: Subtask start must NOT be gated on maxConcurrent
-        expect(res.status).toBe(201);
-        expect(res.body.sessionId).toBeDefined();
-        expect(mockCreateSubtaskSession).toHaveBeenCalled();
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
-  });
-
-  describe("POST /api/subtasks/:sessionId/retry — utility lane independence", () => {
-    it("executes successfully when task-lane is saturated (maxConcurrent=0)", async () => {
-      const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
-      const { app } = buildSaturatedApp();
-
-      const res = await REQUEST(app, "POST", "/api/subtasks/session-sat-retry/retry");
-
-      // UTILITY PATH: Subtask retry must NOT be gated on maxConcurrent
-      expect(res.status).toBe(200);
-      expect(retrySpy).toHaveBeenCalled();
-    });
-
-    // FNXC:PlanningMultiTab 2026-07-14-00:00: subtask retry is lock-free; another tab's lock never 409s.
-    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
-      const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
-      const mockAiSessionStore = {
-        acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-locked" }),
-        releaseLock: vi.fn(),
-      };
-
-      const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
-
-      const res = await REQUEST(
-        app,
-        "POST",
-        "/api/subtasks/subtask-locked-retry/retry",
-        JSON.stringify({ tabId: "tab-conflict" }),
-        { "Content-Type": "application/json" },
-      );
-
-      expect(res.status).toBe(200);
-      expect(retrySpy).toHaveBeenCalled();
-      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
-    });
-  });
 });
 
 /**
@@ -5291,19 +4415,37 @@ describe("POST /api/ai/summarize-title", () => {
     expect(res.body.error).toContain("description");
   });
 
-  it("validates description length (minimum 200 characters)", async () => {
+  it("rejects empty descriptions without a length threshold", async () => {
     const res = await REQUEST(
       buildApp(),
       "POST",
       "/api/ai/summarize-title",
-      JSON.stringify({
-        description: "Short description",
-      }),
+      JSON.stringify({ description: "   " }),
       { "Content-Type": "application/json" },
     );
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("at least 201 characters");
+    expect(res.body.error).toContain("description must not be empty");
+  });
+
+  it("accepts a short non-empty description", async () => {
+    const fusionCore = await import("@fusion/core");
+    fusionCore.__resetSummarizeState();
+    const summarizeTitleSpy = vi
+      .spyOn(fusionCore, "summarizeTitle")
+      .mockResolvedValueOnce("Generated short title");
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description: "Short description" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ title: "Generated short title" });
+    expect(summarizeTitleSpy).toHaveBeenCalledWith("Short description", "/test/project", undefined, undefined, expect.objectContaining({ mode: "english", locale: "en" }));
   });
 
   it("accepts optional provider and modelId parameters", async () => {
@@ -5332,6 +4474,7 @@ describe("POST /api/ai/summarize-title", () => {
       "/test/project",
       "google",
       "gemini-2.5-pro",
+      expect.objectContaining({ mode: "english", locale: "en" }),
     );
   });
 
@@ -5357,6 +4500,7 @@ describe("POST /api/ai/summarize-title", () => {
       "/test/project",
       undefined,
       undefined,
+      expect.objectContaining({ mode: "english", locale: "en" }),
     );
   });
 
@@ -5472,6 +4616,7 @@ describe("POST /api/ai/summarize-title", () => {
       "/test/project",
       "openai",
       "gpt-4o",
+      expect.objectContaining({ mode: "english", locale: "en" }),
     );
   });
 });
@@ -5549,7 +4694,7 @@ describe("POST /planning/start-streaming with projectId scoping", () => {
     await vi.waitFor(() => {
       expect(createFnAgentSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          systemPrompt: customPlanningPrompt,
+          systemPrompt: expect.stringContaining(customPlanningPrompt),
           defaultProvider: "scoped-provider",
           defaultModelId: "scoped-model",
         }),
@@ -5698,162 +4843,6 @@ describe("POST /planning/start-streaming with projectId scoping", () => {
         }),
       );
     });
-  });
-});
-
-describe("POST /subtasks/start-streaming with projectId scoping", () => {
-  const projectId = "proj-subtask-scoped";
-
-  let defaultStore: TaskStore;
-  let scopedStore: TaskStore;
-
-  beforeEach(() => {
-    defaultStore = createMockStore();
-    scopedStore = createMockStore({
-      getRootDir: vi.fn().mockReturnValue("/scoped/subtask/project"),
-    });
-
-    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
-    __resetSubtaskBreakdownState();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  function buildApp() {
-    const app = express();
-    app.use(express.json());
-    app.use("/api", createApiRoutes(defaultStore));
-    return app;
-  }
-
-  it("uses scoped store settings for prompt resolution when projectId is provided", async () => {
-    const customSubtaskPrompt = "CUSTOM SCOPED SUBTASK BREAKDOWN PROMPT";
-    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      promptOverrides: {
-        "subtask-breakdown-system": customSubtaskPrompt,
-      },
-    });
-
-    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "scoped-subtask-session" });
-    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
-
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      `/api/subtasks/start-streaming?projectId=${projectId}`,
-      JSON.stringify({ description: "Break into subtasks" }),
-      { "Content-Type": "application/json" },
-    );
-
-    expect(res.status).toBe(201);
-    expect(res.body.sessionId).toBe("scoped-subtask-session");
-    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
-    expect(scopedStore.getSettings).toHaveBeenCalled();
-    expect(scopedStore.getRootDir()).toBe("/scoped/subtask/project");
-    // Verify scoped settings were passed for prompt resolution
-    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
-      "Break into subtasks",
-      scopedStore,
-      "/scoped/subtask/project",
-      expect.objectContaining({
-        "subtask-breakdown-system": customSubtaskPrompt,
-      }),
-      projectId,
-    );
-  });
-
-  it("uses scoped rootDir for subtask generation", async () => {
-    const scopedRootDir = "/different/scoped/root";
-    scopedStore = createMockStore({
-      getRootDir: vi.fn().mockReturnValue(scopedRootDir),
-    });
-    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
-
-    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      promptOverrides: {},
-    });
-
-    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "session-2" });
-    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
-
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      `/api/subtasks/start-streaming?projectId=${projectId}`,
-      JSON.stringify({ description: "Break into subtasks" }),
-      { "Content-Type": "application/json" },
-    );
-
-    expect(res.status).toBe(201);
-    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
-      "Break into subtasks",
-      scopedStore,
-      scopedRootDir,
-      expect.any(Object),
-      projectId,
-    );
-  });
-
-  it("uses default store when projectId is omitted", async () => {
-    // When projectId is omitted, default store should be used
-    const defaultRootDir = "/fake/root";
-    (defaultStore.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(defaultRootDir);
-    (defaultStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      promptOverrides: {
-        "subtask-breakdown-system": "Default subtask prompt",
-      },
-    });
-
-    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "default-session" });
-    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
-
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      "/api/subtasks/start-streaming",
-      JSON.stringify({ description: "Break into subtasks" }),
-      { "Content-Type": "application/json" },
-    );
-
-    expect(res.status).toBe(201);
-    // Default store should be used (getOrCreateProjectStore should not be called)
-    expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
-    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
-      "Break into subtasks",
-      defaultStore,
-      defaultRootDir,
-      expect.any(Object),
-      undefined,
-    );
-  });
-
-  it("passes projectId to subtask session for multi-project scoping", async () => {
-    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      promptOverrides: {},
-    });
-
-    const mockCreateSubtaskSession = vi.fn().mockResolvedValue({ sessionId: "session-with-projectid" });
-    vi.spyOn(subtaskBreakdownModule, "createSubtaskSession").mockImplementation(mockCreateSubtaskSession);
-
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      `/api/subtasks/start-streaming?projectId=${projectId}`,
-      JSON.stringify({ description: "Scoped subtask" }),
-      { "Content-Type": "application/json" },
-    );
-
-    expect(res.status).toBe(201);
-    // Ensure projectId is passed through for multi-project scoping
-    expect(mockCreateSubtaskSession).toHaveBeenCalledWith(
-      "Scoped subtask",
-      scopedStore,
-      "/scoped/subtask/project",
-      expect.any(Object),
-      projectId,
-    );
   });
 });
 

@@ -2344,6 +2344,31 @@ export async function getLiveTaskById(handle: QueryHandle, taskId: string): Prom
   return row ? { id: row.id, column: row.column as string } : undefined;
 }
 
+/**
+ * Lock a live (non-deleted) task row for the duration of the caller's transaction and return
+ * its id + column, or undefined when the task is not on the active board.
+ *
+ * FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+ * The claim paths (link, re-point, terminal reconcile, bootstrap-duplicate archive) previously
+ * ran their conflicting-feature check against an UNLOCKED target-task read, so two transactions
+ * could both observe the task as unclaimed and both commit, breaking the single-valued
+ * feature→task invariant. Every path that assigns task ownership takes this lock BEFORE its
+ * conflict check. All of those paths take the feature-row lock first, so the global order
+ * feature→task is cycle-free (the bootstrap-duplicate path takes no feature lock, only this
+ * one task lock, before its archive write). Soft-deleted rows are excluded: link/re-point
+ * refuse them outright, so no concurrent claimant can race on a tombstone — the terminal
+ * reconcile's archived-tombstone arm therefore needs no lock.
+ */
+export async function lockLiveTaskForClaim(handle: QueryHandle, taskId: string): Promise<{ id: string; column: string } | undefined> {
+  const rows = await handle
+    .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
+    .from(schema.project.tasks)
+    .where(and(missionProjectScope(schema.project.tasks.projectId), eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`))
+    .for("update");
+  const row = rows[0];
+  return row ? { id: row.id, column: row.column as string } : undefined;
+}
+
 /** Set a live task's mission/slice linkage (bidirectional link). */
 export async function setTaskMissionLinkage(handle: QueryHandle, taskId: string, missionId: string, sliceId: string): Promise<void> {
   await handle

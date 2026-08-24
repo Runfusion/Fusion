@@ -332,6 +332,16 @@ function countInertGuards(sf, locals, sources) {
     }
     return undefined;
   };
+  const consumptionWithin = (expr) => {
+    let found;
+    const walk = (candidate) => {
+      if (found) return;
+      found = consumesLocal(candidate);
+      if (!found) ts.forEachChild(candidate, walk);
+    };
+    walk(expr);
+    return found;
+  };
   const visit = (node) => {
     /* `to === parked.review` — one lane id, compared. */
     if (ts.isBinaryExpression(node)) {
@@ -348,7 +358,8 @@ function countInertGuards(sf, locals, sources) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const method = node.expression.name.getText(sf);
       if (method === "has" || method === "includes") {
-        const hit = consumesLocal(node.expression.expression);
+        /* FNXC:LifecycleColumnCensus 2026-08-22-00:13: membership receivers can be array/filter expressions; inspect their contained role read and count this membership site once. */
+        const hit = consumptionWithin(node.expression.expression);
         if (hit) {
           hits.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, expr: `${hit}.${method}(...)` });
         }
@@ -369,6 +380,12 @@ for (const file of files) {
   if (!text.includes(SYNC_IR_READER)) continue;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   for (const name of syncLaneSources(sf)) sources.add(name);
+}
+
+/* A zero baseline is only meaningful while the scanner still sees a source to police. */
+if (sources.size === 0) {
+  console.error(`inert-sync-lane: no ${SYNC_IR_READER} source found under ${join(REPO, "packages")}`);
+  process.exit(1);
 }
 
 /* PASS 2 — guards consuming any of them, anywhere. */

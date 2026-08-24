@@ -76,11 +76,9 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
   */
   const AUDITED_BOUNDS: Array<{ file: string; expr: string; reason: string }> = [
     {
-      file: "packages/engine/src/scheduler.ts",
-      expr: "settings.maxWorktrees ?? this.options.maxWorktrees ?? 4",
-      reason:
-        "THE admission gate's limit read, and the ONLY one: it feeds resolveWorktreeCapacityLimit, whose "
-        + "gate snapshot is optional so OFF mode constructs no gate at all.",
+      file: "packages/core/src/workflows/workflow-capacity.ts",
+      expr: "return typeof limit === \"number\" && Number.isFinite(limit) && limit > 0",
+      reason: "The canonical resolver rejects zero and invalid persisted worktree values before any admission reader can observe them.",
     },
     {
       file: "packages/engine/src/scheduler.ts",
@@ -169,10 +167,9 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
       logic, new home.
       */
       file: "packages/engine/src/concurrency/concurrency.ts",
-      expr: "worktreeLimit !== null && worktreeLimit <= params.maxConcurrent",
+      expr: "return resolveEffectiveConcurrency(params).effectiveLimit;",
       reason:
-        "Binding-gate discriminator after resolveWorktreeCapacityLimit: null means worktrees are not a "
-        + "capacity dimension, so this arm cannot bind in OFF mode.",
+        "The shared engine admission entry delegates to the canonical core resolver, preserving structural absence in OFF mode.",
     },
     {
       file: "packages/engine/src/triage.ts",
@@ -317,6 +314,37 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     }
   });
 
+  it("rejects private numeric fallbacks for shared concurrency settings", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { resolve } = await import("node:path");
+    const root = resolve(__dirname, "../../../..");
+    const allowlisted = new Set([
+      "packages/core/src/central/central-core.ts", // mesh node capacity, not project admission
+      "packages/dashboard/src/routes/register-docker-provisioning-routes.ts", // provisioned node capacity
+      "packages/engine/src/self-healing.ts", // disk-hygiene retention cap
+    ]);
+    const files = execFileSync("git", ["ls-files", "--", "packages", "plugins"], { cwd: root, encoding: "utf-8" })
+      .split("\n")
+      .filter((file) => /\/src\//.test(file) && /\.tsx?$/.test(file) && !file.includes("__tests__"));
+    const { readFileSync } = await import("node:fs");
+    const offenders = files.flatMap((file) => {
+      if (allowlisted.has(file)) return [];
+      return readFileSync(resolve(root, file), "utf-8").split("\n").flatMap((line, index) =>
+        /\b(maxConcurrent|maxWorktrees)\s*\?\?\s*\d/.test(line) ? [`${file}:${index + 1}: ${line.trim()}`] : [],
+      );
+    });
+    expect(offenders, "capacity defaults must resolve through resolveEffectiveConcurrency").toEqual([]);
+  });
+
+  it("rejects reporting routes that emit a bare maxConcurrent literal", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const root = resolve(__dirname, "../../../..");
+    const projectRoutes = readFileSync(resolve(root, "packages/dashboard/src/routes/register-project-routes.ts"), "utf-8");
+    expect(projectRoutes).toContain("getSettingsFast()");
+    expect(projectRoutes).not.toMatch(/maxConcurrent\s*:\s*\d/);
+  });
+
   it("admission has exactly the known worktree-limit readers", async () => {
     /*
     FNXC:WorktreeCapacity 2026-08-03-02:01:
@@ -326,15 +354,14 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     const { execFileSync } = await import("node:child_process");
     const { resolve } = await import("node:path");
     const root = resolve(__dirname, "../../../..");
-    // Call sites only (exclude the definition, the barrel re-exports, and prose).
+    // Admissions now delegate to the core effective-concurrency resolver rather than
+    // constructing partial worktree setting objects at each lane.
     const hits = execFileSync(
       "git",
-      ["grep", "-n", "resolveWorktreeCapacityLimit({", "--", "packages"],
+      ["grep", "-n", "resolveActiveTaskCapacityLimit(settings)", "--", "packages/engine/src"],
       { cwd: root, encoding: "utf-8" },
     ).split("\n").filter((l) => l && !l.includes("__tests__"));
 
-    expect(hits.length, `expected two admission readers, got:\n${hits.join("\n")}`).toBe(2);
-    expect(hits.some((h) => h.includes("packages/engine/src/scheduler.ts"))).toBe(true);
     expect(hits.some((h) => h.includes("packages/engine/src/triage.ts"))).toBe(true);
   });
 });

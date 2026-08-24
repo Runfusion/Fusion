@@ -34,6 +34,7 @@
 import type { PrEntity, PrConflictState, PrChecksRollup, PrReviewDecision } from "@fusion/core";
 import { isPrEntityActive } from "@fusion/core";
 import { prReconcileLog } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { releaseHeldTaskByEvent } from "../execution/hold-release.js";
 
 // ── Injected GitHub ops (node-agnostic; engine never imports the dashboard) ────
@@ -505,7 +506,7 @@ export class PrReconciler {
 
   private recordAudit(entity: PrEntity, mutationType: string, metadata: Record<string, unknown>): void {
     try {
-      void this.store.recordRunAuditEvent?.({
+      void emitBoundedRunAudit(this.store, {
         taskId: entity.sourceType === "task" ? entity.sourceId : undefined,
         agentId: "pr-reconcile",
         runId: `pr-reconcile:${entity.id}`,
@@ -513,7 +514,7 @@ export class PrReconciler {
         mutationType,
         target: entity.id,
         metadata: { repo: entity.repo, entityId: entity.id, ...metadata },
-      });
+      }, { log: prReconcileLog });
     } catch {
       // Audit is best-effort, but a thrown audit must never break the poller.
     }

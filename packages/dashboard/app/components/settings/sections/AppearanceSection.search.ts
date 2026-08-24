@@ -8,6 +8,21 @@
 import type { SettingsSearchEntry } from "../search/types";
 
 export const appearanceSearchEntries: SettingsSearchEntry[] = [
+  /*
+   * FNXC:SettingsSearch 2026-08-19-14:19:
+   * Every rendered descriptor must have one co-located searchable entry. Keep
+   * the project-scoped conversation layout metadata identical to AppearanceSection
+   * so label, help, and field-key queries all reach the existing control.
+   */
+  {
+    sectionId: "appearance",
+    key: "chatMessageLayout",
+    labelKey: "settings.appearance.chatMessageLayout",
+    labelFallback: "Conversation layout",
+    helpKey: "settings.appearance.chatMessageLayoutHelp",
+    helpFallback:
+      "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
+  },
   {
     sectionId: "appearance",
     key: "openTasksInRightSidebar",

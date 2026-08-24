@@ -19,6 +19,8 @@ export const MANUAL_RETRY_RESET_COUNTER_KEYS = [
   "branchConflictRecoveryCount",
   "reviewerContextRetryCount",
   "reviewerFallbackRetryCount",
+  "reviewConvergenceStage",
+  "reviewConvergenceEscalationCount",
   "completionHandoffLimboRecoveryCount",
   "mergeAuditBounceCount",
 ] as const satisfies ReadonlyArray<keyof Task>;

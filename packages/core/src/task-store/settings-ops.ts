@@ -13,6 +13,7 @@ import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../config/moved-settings.js";
 import "../builtin-traits.js";
 import {validateLocale, assertWorktreeNamingRecycleExclusive} from "../config/settings-validation.js";
+import { isTaskOutputLanguage } from "../ai/ai-output-language.js";
 import {hasSyncPassphraseConfigured} from "../secrets/secrets-sync-passphrase.js";
 import {ensureMemoryFileWithBackend} from "../memory/project-memory.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -21,6 +22,10 @@ import {readProjectConfig as readProjectConfigAsync, writeProjectConfig as write
 import {appendConfigurationRevision, createConfigurationRevision} from "../async-stores/async-configuration-revision-store.js";
 import {isValidProviderInstanceId} from "../provider-instance.js";
 import {applyWorkspaceModeToggle, withWorkspaceModeLock, type WorkspaceModeToggleOps} from "../git/git-repository.js";
+import {
+  getRequiredPluginIdForBuiltinWorkflow,
+  validateEnabledBuiltinWorkflowIds,
+} from "../workflows/builtin-workflows.js";
 
 /*
  * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
@@ -29,15 +34,19 @@ import {applyWorkspaceModeToggle, withWorkspaceModeLock, type WorkspaceModeToggl
  */
 /**
  * FNXC:TaskRecommendations 2026-08-08-05:02:
- * Reject an invalid project cap atomically rather than coercing an executor's
- * completion policy. Zero deliberately disables recommendations; 1..20 bounds
- * retained operator-visible suggestions.
+ * Reject invalid recommendation policy atomically rather than coercing an
+ * executor's completion contract. Zero deliberately disables recommendations;
+ * 1..20 bounds retained operator-visible suggestions, and the requirement is a
+ * project-only boolean that never permits irrelevant filler.
  */
 function assertValidRecommendationSettingsPatch(patch: Record<string, unknown>): void {
   const value = patch.maxRecommendationsPerTask;
-  if (value === undefined || value === null) return;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 20) {
+  if (value !== undefined && value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 20)) {
     throw new Error("maxRecommendationsPerTask must be an integer between 0 and 20");
+  }
+  const requireRecommendations = patch.requireTaskRecommendations;
+  if (requireRecommendations !== undefined && requireRecommendations !== null && typeof requireRecommendations !== "boolean") {
+    throw new Error("requireTaskRecommendations must be a boolean");
   }
 }
 
@@ -52,6 +61,17 @@ let workspaceModeOpsForTesting: Partial<WorkspaceModeToggleOps> | undefined;
 /** @internal Test-only workspace filesystem override for production-shaped settings writers. */
 export function __setWorkspaceModeOpsForTesting(ops: Partial<WorkspaceModeToggleOps> | undefined): void {
   workspaceModeOpsForTesting = ops;
+}
+
+async function assertValidEnabledBuiltinWorkflowIds(store: TaskStore, value: unknown): Promise<void> {
+  validateEnabledBuiltinWorkflowIds(value);
+  if (!Array.isArray(value)) return;
+  for (const rawId of value) {
+    const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(rawId);
+    if (requiredPluginId && !(await store.isPluginInstalled(requiredPluginId))) {
+      throw new Error(`enabledBuiltinWorkflowIds contains unavailable plugin-gated workflow id: ${rawId}`);
+    }
+  }
 }
 
 function assertValidCredentialInstanceSettingsPatch(patch: Record<string, unknown>): void {
@@ -156,6 +176,10 @@ export async function publishSettingsUpdated(
 
 export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Settings> {
     assertValidRecommendationSettingsPatch(patch as Record<string, unknown>);
+    /* FNXC:TaskOutputLanguage 2026-08-19-14:56: Reject malformed mode patches before the configuration transaction so neither config nor revision changes. */
+    if ("taskOutputLanguage" in patch && patch.taskOutputLanguage !== null && patch.taskOutputLanguage !== undefined && !isTaskOutputLanguage(patch.taskOutputLanguage)) {
+      throw new Error("taskOutputLanguage must be english, input, or interface");
+    }
     assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     /*
     FNXC:ConfigVersioning 2026-07-18-12:15:
@@ -199,6 +223,8 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
         (projectPatch as Record<string, unknown>)[key] = value;
       }
     }
+    /* FNXC:TaskOutputLanguage 2026-08-19-14:56: An explicit new mode wins permanently over the compatibility flag in the same revision transaction. */
+    if (isTaskOutputLanguage(projectPatch.taskOutputLanguage)) projectPatch.taskDefinitionInInputLanguage = false;
 
     return store.withConfigLock(async () => {
       /*
@@ -259,6 +285,13 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
         const globalSettings = await store.globalSettingsStore.getSettings();
         const previousMerged = canonicalizeSettings({ ...DEFAULT_SETTINGS, ...globalSettings, ...config.settings } as Settings);
         const updatedProjectSettings = canonicalizeSettings({ ...config.settings, ...projectPatch } as Settings);
+        /*
+        FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+        Validate the resolved project snapshot while the configuration lock is held,
+        before either the settings row or its immutable revision can be written. This
+        keeps malformed enablement lists atomic across dashboard, CLI, and import writers.
+        */
+        await assertValidEnabledBuiltinWorkflowIds(store, updatedProjectSettings.enabledBuiltinWorkflowIds);
         // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: reject recycleWorktrees + worktreeNaming:"task-id"
         // (mutually exclusive) against the resolved next state BEFORE persisting the invalid combination.
         assertWorktreeNamingRecycleExclusive({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
@@ -327,6 +360,8 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
     boundary instead of allowing one project's completion cap to leak into every project.
     */
     delete (globalPatch as Record<string, unknown>).maxRecommendationsPerTask;
+    // FNXC:TaskRecommendations 2026-08-19-13:05: The completion requirement is project policy; discard untyped global patches so it cannot leak across projects.
+    delete (globalPatch as Record<string, unknown>).requireTaskRecommendations;
 
     // Handle deep merge + targeted null clear semantics for remoteAccess
     const incomingRemoteAccess = (globalPatch as Record<string, unknown>)["remoteAccess"];

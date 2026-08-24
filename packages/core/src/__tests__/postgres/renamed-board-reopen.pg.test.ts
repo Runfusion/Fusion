@@ -138,6 +138,10 @@ pgDescribe("a renamed board gets the same reopen effects as the default lineage"
       status: "failed",
       error: "review rejected",
       branch: "fusion/renamed",
+      // FNXC:BranchWriteProvenance 2026-08-23-15:55: a branch write requires an explicit origin
+      // (normalizeCreateBranchProvenance / updateTaskUnlockedImpl). This fixture stands in for the
+      // engine's own execution-time branch assignment, so it declares "engine".
+      branchWriteOrigin: "engine",
       summary: "a summary from the failed attempt",
       workflowStepResults: [
         { workflowStepId: "code-review", status: "passed", completedAt: "2026-07-30T00:00:00.000Z" },

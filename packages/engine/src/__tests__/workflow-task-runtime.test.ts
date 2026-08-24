@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Settings, TaskDetail, WorkflowIr, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 
 import { WorkflowTaskRuntime, type WorkflowTaskRuntimeDeps } from "../workflows/workflow-task-runtime.js";
+import { buildWorkflowCompletionSummary } from "../workflows/workflow-completion-summary.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import type { PreparedWorktree, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 
@@ -225,6 +226,28 @@ describe("WorkflowTaskRuntime", () => {
     ]);
   });
 
+  it("localizes every deterministic fallback clause from the input snapshot", () => {
+    const summary = buildWorkflowCompletionSummary({
+      id: task.id,
+      title: "Titre généré",
+      description: "Necesito resumir este flujo.",
+      steps: [{ title: "Étape", status: "done" }],
+      workflowStepResults: [{ status: "passed" }],
+      modifiedFiles: ["src/flux.ts"],
+    } as TaskDetail, {
+      reason: "workflow-runtime-completed",
+      settings: { taskOutputLanguage: "interface", language: "fr" },
+      originalInput: "Necesito resumir este flujo.",
+    });
+
+    expect(summary).toContain("Flux de travail terminé");
+    expect(summary).toContain("Étapes de tâche terminées : 1/1.");
+    expect(summary).toContain("Contrôles du flux de travail réussis ou ignorés : 1/1.");
+    expect(summary).toContain("Fichiers modifiés : src/flux.ts.");
+    expect(summary).toContain("Source de fin : workflow-runtime-completed.");
+    expect(summary).not.toContain("Completion source");
+  });
+
   it("preserves an existing workflow completion summary", async () => {
     const updateTask = vi.fn();
     const summarizedTask = { ...task, summary: "Agent-authored completion summary." } as TaskDetail;
@@ -318,8 +341,8 @@ describe("WorkflowTaskRuntime", () => {
 
     expect(result.disposition).toBe("completed");
     // Default Coding is stepwise: planning writes PROMPT.md, parse projects steps,
-    // then foreach runs `runTaskStep` before merge. No legacy execute/review seam.
-    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:code-review-step", "custom:completion-summary", "merge"]);
+    // then foreach runs `runTaskStep`; completion summary precedes the sealing Code Review.
+    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:completion-summary", "custom:code-review-step", "merge"]);
     expect(observed.executedTasks).toHaveLength(1);
     expect(observed.executedTasks[0]?.attachments).toEqual(attachments);
   });
@@ -388,7 +411,7 @@ describe("WorkflowTaskRuntime", () => {
     const result = await runtime.run(defaultTask, flagOff);
 
     expect(result.disposition).toBe("completed");
-    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:code-review-step", "custom:completion-summary", "merge"]);
+    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:completion-summary", "custom:code-review-step", "merge"]);
     expect(result.visitedNodeIds).toContain("plan");
     expect(result.visitedNodeIds).toContain("plan-review");
     expect(result.visitedNodeIds).toContain("parse");
@@ -427,8 +450,10 @@ describe("WorkflowTaskRuntime", () => {
       "custom:plan-review-step",
       "step:0",
       "custom:browser-verification-step",
-      "custom:code-review-step",
+      // FNXC:WorkspaceReviewSeal 2026-08-21-19:39: write-capable finalization completes
+      // before Code Review seals the branch consumed by merge.
       "custom:completion-summary",
+      "custom:code-review-step",
       "merge",
     ]);
     expect(result.visitedNodeIds).toContain("plan-review::plan-review-step");

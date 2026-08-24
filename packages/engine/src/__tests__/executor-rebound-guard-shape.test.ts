@@ -22,30 +22,48 @@ imports them cannot read source off disk — a detail worth writing down, since 
 like a broken path rather than a mocked module.
 */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-23-18:35:
+The rebound moves this guard covers no longer live in `executor.ts`. The package code-organization
+waves (1cf86baa1c "executor pure peels", and the later per-concern peels) moved every one of them
+into `src/executor/*.ts`, which left this static check scanning a file with zero matches — a guard
+reporting success on an empty set. The scan now covers the whole executor family (`executor.ts` plus
+every module under `executor/`), so the invariant follows the code instead of the filename.
+*/
 describe("no rebound move is guarded by a column literal", () => {
-  const source = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "..", "executor.ts"),
-    "utf8",
-  );
+  const engineSrc = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const executorDir = join(engineSrc, "executor");
+  const sourceFiles = [
+    join(engineSrc, "executor.ts"),
+    ...readdirSync(executorDir)
+      .filter((entry) => entry.endsWith(".ts") && !entry.endsWith(".test.ts"))
+      .map((entry) => join(executorDir, entry)),
+  ];
   /** Comments blanked in place so prose about the old shape is not read as code. */
-  const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
-    .replace(/\/\/.*$/gm, "");
-  const lines = code.split("\n");
+  const lines = sourceFiles.flatMap((file) =>
+    readFileSync(file, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
+      .replace(/\/\/.*$/gm, "")
+      .split("\n")
+      .map((line) => ({ file, line })),
+  );
 
   it("resolves the rebound column before every guarded rebound move", () => {
     const offenders: string[] = [];
 
-    lines.forEach((line, index) => {
+    lines.forEach(({ file, line: rawLine }, index) => {
+      const line = rawLine;
       if (!/moveTask\([^)]*reboundColumn/.test(line) && !/reboundColumn,/.test(line)) return;
-      // Walk back a few lines to the guard that admits this move.
+      // Walk back a few lines to the guard that admits this move, never crossing a file boundary.
       for (let i = Math.max(0, index - 6); i <= index; i += 1) {
-        if (/column\s*(?:===|!==)\s*["'](?:todo|triage|in-progress|in-review|done|archived)["']/.test(lines[i] ?? "")) {
-          offenders.push(`${i + 1}: ${(lines[i] ?? "").trim()}`);
+        const candidate = lines[i];
+        if (!candidate || candidate.file !== file) continue;
+        if (/column\s*(?:===|!==)\s*["'](?:todo|triage|in-progress|in-review|done|archived)["']/.test(candidate.line)) {
+          offenders.push(`${candidate.file}:${i + 1}: ${candidate.line.trim()}`);
         }
       }
     });
@@ -77,7 +95,7 @@ describe("no rebound move is guarded by a column literal", () => {
 
   it("still sees the eight rebound moves it is meant to cover", () => {
     // A guard that reports success on zero matches is worse than no guard.
-    const reboundMoves = lines.filter((line) => /moveTask\([^)]*(?:rebound|Rebound)Column/.test(line));
+    const reboundMoves = lines.filter(({ line }) => /moveTask\([^)]*(?:rebound|Rebound)Column/.test(line));
 
     expect(reboundMoves.length).toBeGreaterThanOrEqual(8);
   });

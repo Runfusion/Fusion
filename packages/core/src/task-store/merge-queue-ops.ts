@@ -11,11 +11,13 @@ import {existsSync} from "node:fs";
 import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from "../types.js";
 import {assertNotWorkspaceTaskMerge} from "../types.js";
 import "../builtin-traits.js";
-import {getTaskMergeBlocker, resolveTaskMergeTarget} from "../merge/task-merge.js";
+import {getTaskMergeBlocker, isPreMergeStepsNotRunBlocker, PreMergeStepsNotRunError, resolveTaskMergeTarget} from "../merge/task-merge.js";
+import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
+import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
@@ -382,13 +384,15 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
           }
         }
 
-        const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
-        if (deleteBranch.exitCode === 0) {
-          result.branchDeleted = true;
-        } else {
-          const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
-          if (forceDeleteBranch.exitCode === 0) {
+        if (isFusionDeletableBranch(task, branch)) {
+          const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
+          if (deleteBranch.exitCode === 0) {
             result.branchDeleted = true;
+          } else {
+            const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
+            if (forceDeleteBranch.exitCode === 0) {
+              result.branchDeleted = true;
+            }
           }
         }
 
@@ -427,13 +431,17 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
       */
       let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
+      let requiredPreMergeStepIds: ReadonlySet<string> | undefined;
       try {
         const ir = await resolveWorkflowIrForTask(store, id);
         const resolved = ir ? resolveReviewColumns(ir) : [];
         if (resolved.length > 0) reviewColumns = new Set(resolved);
+        if (ir) requiredPreMergeStepIds = resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps);
       } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
-      const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
+      const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds });
       if (mergeBlocker) {
+        /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure. */
+        if (isPreMergeStepsNotRunBlocker(mergeBlocker)) throw new PreMergeStepsNotRunError(id);
         throw new Error(`Cannot merge ${id}: ${mergeBlocker}`);
       }
 
@@ -539,14 +547,16 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       }
 
       // 4. Delete the branch
-      const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
-      if (deleteBranch.exitCode === 0) {
-        result.branchDeleted = true;
-      } else {
-        // Branch might not be fully merged in some edge cases; try force
-        const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
-        if (forceDeleteBranch.exitCode === 0) {
+      if (isFusionDeletableBranch(task, branch)) {
+        const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
+        if (deleteBranch.exitCode === 0) {
           result.branchDeleted = true;
+        } else {
+          // Branch might not be fully merged in some edge cases; try force.
+          const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
+          if (forceDeleteBranch.exitCode === 0) {
+            result.branchDeleted = true;
+          }
         }
       }
 

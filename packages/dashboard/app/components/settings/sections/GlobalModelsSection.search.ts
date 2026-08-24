@@ -35,6 +35,16 @@ export const globalModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-models",
+    key: "orcarouterModelSync",
+    labelKey: "settings.globalModels.syncOrcaRouterModelListAtStartup",
+    labelFallback: " Sync OrcaRouter model list at startup ",
+    helpKey: "settings.globalModels.whenEnabledStartupFetchesTheLatestOrcaRouterModels",
+    helpFallback:
+      " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. ",
+    keywords: ["refresh", "boot"],
+  },
+  {
+    sectionId: "global-models",
     key: "openrouterAppAttribution.referer",
     labelKey: "settings.globalModels.openRouterHTTPReferer",
     labelFallback: "OpenRouter HTTP-Referer",

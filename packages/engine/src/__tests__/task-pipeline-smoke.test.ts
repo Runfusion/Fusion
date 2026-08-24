@@ -151,13 +151,11 @@ describe("task pipeline smoke", () => {
       "steps#0:step-execute",
       "steps#0:step-done",
       "browser-verification",
+      /* FNXC:WorkspaceReviewSeal 2026-08-21-19:39: completion summary must finish before
+       * Code Review seals the task branch consumed by merge. */
+      "completion-summary",
       "code-review",
       "code-review::code-review-step",
-      /*
-       * FNXC:WorkflowSmoke 2026-06-29-14:20:
-       * The stepwise built-in smoke tracks the full graph route, including the graph-native completion summary and bypassed post-merge verification group, so merge-gate coverage stays active without quarantining this suite.
-       */
-      "completion-summary",
       "merge",
       "post-merge-verification",
     ]);
@@ -166,8 +164,8 @@ describe("task pipeline smoke", () => {
       "custom:plan-review-step",
       "parse",
       "step-execute:0",
-      "custom:code-review-step",
       "custom:completion-summary",
+      "custom:code-review-step",
       "merge",
     ]);
     expect(mergeContexts).toEqual([

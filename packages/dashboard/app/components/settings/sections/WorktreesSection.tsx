@@ -219,7 +219,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="worktreesDir">
             {form.worktrunk?.enabled === true
               ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
-              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
+              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Absolute paths are allowed. Workspace projects group configured roots by workspace and repository. Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
           </SettingsHelpTip>
         </div>
         <div className="settings-overlap-ignore-path-controls">
@@ -241,7 +241,8 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
       {form.worktreeRebaseBeforeMerge !== false && (<div className="form-group">
           <div className="settings-field-label-row">
             <label htmlFor="worktreeRebaseRemote">{t("settings.worktrees.rebaseRemote", "Rebase Remote")}</label>
-            <SettingsHelpTip settingKey="worktreeRebaseRemote">{t("settings.worktrees.whichRemoteToFetchForThePreMerge", " Which remote to fetch for the pre-merge rebase. \"Use git default\" falls back to the remote configured for the default branch (typically ")}<code>origin</code>{t("settings.worktrees.closeParenPeriod", ").")}</SettingsHelpTip>
+            {/* FNXC:WorkspaceIntegration 2026-08-21-21:46: this remote policy also selects remote workspace integration; no configured repository remote remains a supported local-only landing mode. */}
+            <SettingsHelpTip settingKey="worktreeRebaseRemote">{t("settings.worktrees.whichRemoteToFetchForThePreMerge", " Which remote to fetch for the pre-merge rebase and remote workspace integration. \"Use git default\" resolves the actual integration-branch, sole, or existing origin remote; repositories with no remote land locally.")}</SettingsHelpTip>
           </div>
           <select id="worktreeRebaseRemote" value={form.worktreeRebaseRemote ?? ""} onChange={(e) => setForm((f) => ({ ...f, worktreeRebaseRemote: e.target.value || undefined }))}>
             <option value="">{t("settings.worktrees.useGitDefault", "Use git default")}</option>

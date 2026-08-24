@@ -415,18 +415,6 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
 
 export const BUILTIN_TRIAGE_POLICY_SETTINGS: WorkflowSettingDefinition[] = [
   {
-    id: "triageProactiveSubtaskSplittingEnabled",
-    name: "Triage proactive subtask splitting",
-    type: "boolean",
-    default: true,
-    /*
-     * FNXC:TriagePolicy 2026-07-04-00:00:
-     * Operators need a workflow/project policy switch that disables automatic large-task splitting without weakening explicit `breakIntoSubtasks: true` requests. Keep the default enabled to preserve existing triage behavior for workflows that have no stored override.
-     */
-    description:
-      "Enable automatic large-task splitting guidance during triage. Turn off to split only when breakIntoSubtasks is explicitly requested.",
-  },
-  {
     id: "triageSizeSmallMaxHours",
     name: "Triage size S max hours",
     type: "number",
@@ -446,48 +434,6 @@ export const BUILTIN_TRIAGE_POLICY_SETTINGS: WorkflowSettingDefinition[] = [
     type: "number",
     default: 8,
     description: "Upper hour boundary for Size L triage guidance; larger work should split as XL.",
-  },
-  {
-    id: "triageSubtaskStepThreshold",
-    name: "Triage subtask step threshold",
-    type: "number",
-    default: 7,
-    description: "Implementation-step count above which triage should consider splitting an M/L task.",
-  },
-  {
-    id: "triageSubtaskLargeStepSignal",
-    name: "Triage large-step signal",
-    type: "number",
-    default: 9,
-    description: "Planned step count that is a broad-scope decomposition signal for Size L tasks.",
-  },
-  {
-    id: "triageSubtaskAdditiveStepSignal",
-    name: "Triage additive step signal",
-    type: "number",
-    default: 12,
-    description: "Implementation-step count that independently signals possible partitioning.",
-  },
-  {
-    id: "triageSubtaskPackageThreshold",
-    name: "Triage package/module threshold",
-    type: "number",
-    default: 3,
-    description: "Distinct package/module count above which triage should consider splitting coherent M/L work.",
-  },
-  {
-    id: "triageSubtaskFileScopeThreshold",
-    name: "Triage file-scope threshold",
-    type: "number",
-    default: 20,
-    description: "File Scope entry count that signals broad work likely needing partitioning.",
-  },
-  {
-    id: "triageSubtaskRemediationBatchThreshold",
-    name: "Triage remediation batch threshold",
-    type: "number",
-    default: 30,
-    description: "Quantified remediation batch size that strongly signals subsystem partitioning.",
   },
   {
     id: "triageNoCommitsDecisionVerbs",
@@ -629,6 +575,49 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     default: DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
     description:
       "Minimum finding severity that lets Code Review block merge. A REVISE carrying no finding at or above this level is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer. Choose \"any\" to block on every REVISE.",
+  },
+  /*
+   * FNXC:ReviewConvergence 2026-08-22-05:42:
+   * FN-149 keeps recovery targets workflow-native so operators choose the cost and
+   * capability of automatic review convergence without widening project policy.
+   */
+  {
+    id: "reviewConvergenceEscalationEnabled",
+    name: "Review convergence escalation",
+    type: "boolean",
+    default: true,
+    description: "Run one bounded alternate-model or replan recovery when a review repeats unchanged input.",
+  },
+  {
+    id: "reviewConvergenceEscalationProvider",
+    name: "Review convergence escalation provider",
+    type: "string",
+    description: "Provider for the optional alternate-model review remediation target.",
+  },
+  {
+    id: "reviewConvergenceEscalationModelId",
+    name: "Review convergence escalation model",
+    type: "string",
+    description: "Model for the optional alternate-model review remediation target.",
+  },
+  {
+    id: "reviewArbitrationEnabled",
+    name: "Review arbitration",
+    type: "boolean",
+    default: true,
+    description: "Enable bounded third-model arbitration after a review disagreement persists.",
+  },
+  {
+    id: "reviewArbitrationProvider",
+    name: "Review arbitration provider",
+    type: "string",
+    description: "Provider for the optional review arbitration target.",
+  },
+  {
+    id: "reviewArbitrationModelId",
+    name: "Review arbitration model",
+    type: "string",
+    description: "Model for the optional review arbitration target.",
   },
   {
     id: "planReviewReplanCap",
@@ -810,38 +799,6 @@ function formatTriagePolicyValue(id: string, value: unknown, settings: Partial<S
   if (id === "triageNoCommitsDecisionVerbs") {
     const verbs = Array.isArray(value) ? value : TRIAGE_POLICY_DEFAULTS.get(id);
     return (Array.isArray(verbs) ? verbs : []).map((verb) => String(verb)).join(", ");
-  }
-  if (id === "triageProactiveSubtaskSplittingEnabled") {
-    const enabled = value !== false;
-    if (!enabled) {
-      return `Proactive oversized-task splitting is DISABLED for this workflow/project.
-
-- Do NOT split solely because the task is Size M/L, has many planned implementation steps, touches many files/packages, or otherwise looks oversized.
-- Only create child tasks when \`breakIntoSubtasks: true\` is explicitly present; in that case, follow the mandatory \`## Triage subtask breakdown\` flow above exactly.
-- When proactive splitting is disabled and \`breakIntoSubtasks: true\` is absent, write a normal PROMPT.md for the original task even if it is large; document realistic scope, risks, and quality gates instead of replacing it with child tasks.`;
-    }
-    return `For tasks you assess as Size M or L, consider whether splitting into 2-5 child tasks would improve execution quality. Default to keeping the task whole; only split when the work is genuinely large or has clearly independent deliverables.
-
-**Consider splitting when ANY of these apply:**
-- The task will require MORE THAN {{triageSubtaskStepThreshold}} implementation steps
-- The task affects MORE THAN {{triageSubtaskPackageThreshold}} different packages/modules with distinct concerns (a typed field change that naturally touches core types + store + UI + tests is NOT 4 distinct concerns — it's one coherent change)
-- Any single step would take more than 1-2 hours to complete
-- The task has multiple clearly independent deliverables that could be developed and shipped in parallel by different people
-
-**Splitting guidance:**
-- Even when \`breakIntoSubtasks\` is not set to \`true\`, apply these thresholds proactively
-- Keep explicit user intent first: when \`breakIntoSubtasks: true\`, follow the mandatory breakdown flow above
-- Size S tasks should NOT be split — the overhead outweighs the benefit
-- A task with 7-10 focused steps within a coherent scope is fine as one unit; do not split it
-- Coordination overhead (worktrees, dependency wiring, merge sequencing) is real — only split when the parallelism or scope-clarity benefit clearly outweighs it
-- If you decide not to split an M/L task, proceed with a normal PROMPT.md specification
-
-**Broad-scope decomposition signals:**
-- Size L tasks, especially when the planned step count would reach {{triageSubtaskLargeStepSignal}} or more.
-- Plans whose implementation-step count would reach {{triageSubtaskAdditiveStepSignal}} or more (additive signal — counts even when the surrounding step-count threshold above has not yet fired).
-- Tasks whose declared \`## File Scope\` would list {{triageSubtaskFileScopeThreshold}} or more entries.
-- Descriptions that quantify large remediation batches (for example "47 failing tests", "30+ broken files") at or above {{triageSubtaskRemediationBatchThreshold}} items — treat as a strong signal that the work should be partitioned by subsystem or file group before specifying.
-- When two or more of the signals above fire together, default to splitting via \`fn_task_create\`. If you still choose to keep the task as a single unit, justify the decision explicitly in the PROMPT.md \`## Mission\` paragraph.`;
   }
   return String(value ?? TRIAGE_POLICY_DEFAULTS.get(id) ?? "");
 }

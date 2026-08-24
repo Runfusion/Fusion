@@ -322,7 +322,15 @@ describe("FN-4114 worktree liveness assertion", () => {
     vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({ ok: true });
     const store = createMockStore();
     store.getTask.mockResolvedValue(task({ sessionFile: null }));
-    const executor = new TaskExecutor(store as any, "/repo", {});
+    /*
+    FNXC:WorkflowPrincipalRouting 2026-08-23-22:05:
+    `agentStore: undefined` EXPLICITLY, not `{}`. `executor-test-helpers.ts` wraps `TaskExecutor` and
+    back-fills a routing agent store for any options bag that does not MENTION the key, so `{}` built
+    a fully routed executor and this suspension guard silently asserted the opposite of its name: the
+    composition-fault gate in `workflow-principal-before-node.ts` never fired and an implementation
+    session carrying `fn_task_done` was opened. Naming the key is the helper's documented opt-out.
+    */
+    const executor = new TaskExecutor(store as any, "/repo", { agentStore: undefined });
 
     await executor.execute(task({ sessionFile: null }) as any);
 

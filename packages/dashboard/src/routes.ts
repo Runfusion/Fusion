@@ -25,11 +25,11 @@ import {
   writeAgentMemoryFile,
   resolveWorkflowIrForTask,
   columnsWithFlag,
+  resolveEffectiveConcurrency,
 } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionType } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession, normalizePlanningSummaryPayload } from "./planning.js";
-import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
 import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
 import { getTargetInterviewSession, cleanupTargetInterviewSession } from "./milestone-slice-interview.js";
 import { writeSSEEvent } from "./sse-buffer.js";
@@ -54,6 +54,7 @@ import { registerSecretsRoutes } from "./routes/register-secrets-routes.js";
 import { registerMessagingScriptRoutes } from "./routes/register-messaging-scripts.js";
 import { registerGitGitHubRoutes } from "./routes/register-git-github.js";
 import { registerGitLabRoutes } from "./routes/register-gitlab.js";
+import { registerJiraRoutes } from "./routes/register-jira.js";
 import { registerFilesTerminalWorkspaceRoutes } from "./routes/register-files-terminal-workspaces.js";
 import { registerAgentsProjectsNodesRoutes } from "./routes/register-agents-projects-nodes.js";
 import { registerProjectRoutes } from "./routes/register-project-routes.js";
@@ -116,6 +117,16 @@ export { __resetModelRegistryRefreshCacheForTests } from "./model-registry-refre
  * Minimal interface matching pi 0.80.8+ ModelRuntime's ModelRegistry
  * compatibility facade. Avoids a direct dependency on the pi-coding-agent package.
  */
+export interface ModelRegistryModelLike {
+  id: string;
+  name: string;
+  provider: string;
+  reasoning: boolean;
+  contextWindow: number;
+  /** Pi model-level tristate map; omitted means capability metadata is unavailable to Fusion's picker. */
+  thinkingLevelMap?: Partial<Record<string, string | null>>;
+}
+
 export interface ModelRegistryLike {
   /**
    * FNXC:ModelCatalog 2026-07-16-17:55:
@@ -132,9 +143,9 @@ export interface ModelRegistryLike {
     refresh: (options?: { allowNetwork?: boolean; signal?: AbortSignal; force?: boolean }) => Promise<unknown>;
   };
   /** Get models that have auth configured. */
-  getAvailable(): Array<{ id: string; name: string; provider: string; reasoning: boolean; contextWindow: number }>;
+  getAvailable(): ModelRegistryModelLike[];
   /** Optional pi ModelRegistry surface used for supplemental model registration. */
-  getAll?: () => Array<{ id: string; name?: string; provider: string; reasoning?: boolean; input?: string[]; cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }; contextWindow?: number; maxTokens?: number; compat?: unknown }>;
+  getAll?: () => Array<ModelRegistryModelLike & { name?: string; reasoning?: boolean; input?: string[]; cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }; contextWindow?: number; maxTokens?: number; compat?: unknown }>;
   /** Optional pi ModelRegistry surface used for supplemental model registration. */
   registerProvider?: (providerName: string, config: AnthropicProviderRegistration) => void;
 }
@@ -997,11 +1008,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     replayBufferedSSE,
     validateOptionalModelField,
     upload,
+    // FNXC:ChatMemoryCaptureWiring 2026-08-18-14:37: forward engineManager so
+    // resolveProjectChatContext can resolve the engine's ChatStore instance —
+    // the one the RUFU-068 Stash chat-capture subscription is attached to.
+    // Without this every chat request used a dashboard-local ChatStore and
+    // per-message Stash capture silently never fired.
+    engineManager: options?.engineManager,
   }));
   registrarMounter.mount("registerChatRoomRoutes", () => registerChatRoomRoutes(routeContext, { upload }));
   registrarMounter.mount("registerMessagingScriptRoutes", () => registerMessagingScriptRoutes(routeContext));
   registrarMounter.mount("registerGitGitHubRoutes", () => registerGitGitHubRoutes(routeContext));
   registrarMounter.mount("registerGitLabRoutes", () => registerGitLabRoutes(routeContext));
+  registrarMounter.mount("registerJiraRoutes", () => registerJiraRoutes(routeContext));
   registrarMounter.mount("registerFilesTerminalWorkspaceRoutes", () => registerFilesTerminalWorkspaceRoutes(routeContext));
   registrarMounter.mount("registerAgentsProjectsNodesRoutes", () => registerAgentsProjectsNodesRoutes(routeContext));
   registrarMounter.mount("registerPluginsAutomationRoutes", () => registerPluginsAutomationRoutes(routeContext, { parseLastEventId, replayBufferedSSE, getCreateFnAgent: () => createFnAgentForRefine }));
@@ -1200,10 +1218,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         // If we can't get activity log, that's OK - just leave lastActivityAt undefined
       }
 
+      const capacity = resolveEffectiveConcurrency(settings);
       res.json({
         globalPause: settings.globalPause ?? false,
         enginePaused: settings.enginePaused ?? false,
-        maxConcurrent: settings.maxConcurrent ?? 2,
+        maxConcurrent: capacity.maxConcurrent,
+        effectiveMaxConcurrent: capacity.effectiveLimit,
+        concurrencyBindingKnob: capacity.bindingKnob,
         lastActivityAt,
       });
     } catch (err: unknown) {
@@ -1750,11 +1771,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await aiSessionStore.delete(id);
     }
 
-    try {
-      if (await getSubtaskSession(id)) cleanupSubtaskSession(id);
-    } catch {
-      // Session may not belong to subtask breakdown or may already be cleaned up.
-    }
 
     try {
       if (await getMissionInterviewSession(id)) cleanupMissionInterviewSession(id);

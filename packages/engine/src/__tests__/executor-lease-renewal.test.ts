@@ -29,7 +29,13 @@ describe("TaskExecutor lease renewal fallback", () => {
 
   it("uses renewCheckoutLease instead of updateTask when agentStore is unavailable", async () => {
     const store = createStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    /*
+     * FNXC:EngineTests 2026-08-23-18:30:
+     * `executor-test-helpers` fills a routing agentStore into any options bag that does not MENTION
+     * `agentStore`, so a bare construction silently gains one and this test's "agentStore is
+     * unavailable" premise disappears. The documented opt-out is an explicit `agentStore: undefined`.
+     */
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore: undefined });
 
     await (executor as any).renewTaskLease("FN-5945", "agent-1", 3, "node-1", "run-1");
 

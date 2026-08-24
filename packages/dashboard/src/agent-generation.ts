@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { TaskStore } from "@fusion/core";
+import { THINKING_LEVELS, type TaskStore, type ThinkingLevel } from "@fusion/core";
 import { createSessionDiagnostics, nonfatal } from "./ai-session-diagnostics.js";
 import { registerBeforeExitCleanup } from "./process-lifecycle.js";
 import { laneModelOptions, resolveLaneSessionModel } from "./lane-session-model.js";
@@ -74,7 +74,7 @@ You MUST respond with ONLY valid JSON (no markdown, no explanation):
   "role": "The most appropriate capability: triage | executor | reviewer | merger | scheduler | engineer | custom",
   "description": "A brief 1-2 sentence description of the agent's purpose and expertise",
   "systemPrompt": "A detailed markdown system prompt for the agent. This should be comprehensive and include:\\n- Role definition\\n- Core responsibilities\\n- Specific areas of expertise\\n- Behavioral guidelines\\n- Output format expectations\\n- Edge case handling instructions",
-  "thinkingLevel": "off | minimal | low | medium | high",
+  "thinkingLevel": "off | minimal | low | medium | high | xhigh | max",
   "maxTurns": 1000
 }
 
@@ -92,6 +92,7 @@ You MUST respond with ONLY valid JSON (no markdown, no explanation):
 - "low": For moderate complexity tasks
 - "medium": For complex analysis, code review, architecture decisions
 - "high": For critical decisions, security analysis, complex debugging
+- "xhigh" or "max": For the hardest problems when the selected model advertises that level
 
 ## Max Turns Guidelines
 - 5-10: Simple, focused tasks (quick reviews, status checks)
@@ -134,7 +135,7 @@ export interface AgentGenerationSpec {
   /** Detailed system prompt in markdown */
   systemPrompt: string;
   /** Suggested thinking level */
-  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinkingLevel: ThinkingLevel;
   /** Suggested max turns (1-500) */
   maxTurns: number;
 }
@@ -402,7 +403,7 @@ export function parseGenerationResponse(text: string): AgentGenerationSpec {
     role: typeof obj.role === "string" ? obj.role : "custom",
     description: typeof obj.description === "string" ? obj.description : "",
     systemPrompt: typeof obj.systemPrompt === "string" ? obj.systemPrompt : "",
-    thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(obj.thinkingLevel as string)
+    thinkingLevel: THINKING_LEVELS.includes(obj.thinkingLevel as ThinkingLevel)
       ? (obj.thinkingLevel as AgentGenerationSpec["thinkingLevel"])
       : "off",
     maxTurns: typeof obj.maxTurns === "number"

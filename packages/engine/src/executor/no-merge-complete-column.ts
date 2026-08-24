@@ -34,6 +34,7 @@ import {
 } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 
 export async function advanceNoMergeWorkflowToCompleteColumn(
   store: TaskStore,
@@ -80,7 +81,7 @@ export async function advanceNoMergeWorkflowToCompleteColumn(
   }
 
   // ids/outcomes-only metadata — no prose, no node/run internals.
-  await store.recordRunAuditEvent?.({
+  await emitBoundedRunAudit(store, {
     taskId: task.id,
     agentId: "executor",
     runId: generateSyntheticRunId("workflow-no-merge-completion", task.id),

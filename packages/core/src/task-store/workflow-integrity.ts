@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 import { createLogger } from "../process/logger.js";
 import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
 
@@ -53,7 +55,7 @@ export async function markLegacyAutoMergeStampsOnceImpl(store: TaskStore): Promi
       store.emitTaskLifecycleEventSafely("task:updated", [current]);
       markedTaskIds.push(current.id);
 
-      void store.recordRunAuditEvent({
+      void emitBoundedRunAudit(store, {
         taskId: current.id,
         agentId: "system",
         runId: `legacy-auto-merge-stamp-mark-${current.id}-${Date.now()}`,

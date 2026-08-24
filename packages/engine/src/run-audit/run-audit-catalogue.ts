@@ -43,12 +43,21 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "task:no-commits-finalize-blocked-incomplete-steps",
   "task:empty-merge-finalize-blocked-no-landed-proof",
   "task:finalize-unproven-blocked",
+  "task:merge-boundary-unproven-parked",
   "task:finalize-lost-work-blocked",
   "task:auto-recover-stale-merger-status",
 
   /* ── 2. Self-healing reconciliation events ─────────────────────────────── */
   "task:auto-recover-paused-abort-park",
   "task:auto-rebound-paused-scope-decay",
+  "task:auto-archive-failure-budget-exhausted",
+  /*
+  FNXC:RunAudit 2026-08-23-18:58:
+  FN-9186's bounded zero-progress requeue pair. docs/run-audit.md carried both rows while the catalogue
+  did not, and the lock-step guard is the only thing that reports that direction of drift.
+  */
+  "task:no-progress-no-task-done-requeue",
+  "task:no-progress-no-task-done-requeue-exhausted",
   "task:reclaim-phantom-executor-binding",
   "task:reconcile-orphaned-pending-step-results",
   "task:reconcile-stale-duplicate-decision",
@@ -69,7 +78,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
 ] as const;
 
 /**
- * The 32-event literal union of the curated catalogue. `as const` preserves the literal element
+ * The 31-event literal union of the curated catalogue. `as const` preserves the literal element
  * tuples so the notes map can be keyed by exactly the catalogued events (rather than widening to the
  * full `DatabaseMutationType` union). The exported array below is still typed as
  * `Readonly<DatabaseMutationType[]>`, so member-validity remains compile-time-enforced: assigning
@@ -109,6 +118,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "The AI empty-merge lane vetoes a zero-diff no-op finalize with no landed proof (FN-8141).",
   "task:finalize-unproven-blocked":
     "Finalize is blocked because finalization has not been proven against the landing truth.",
+  "task:merge-boundary-unproven-parked":
+    "A terminal merge-boundary proof failure is parked with bounded best-effort audit telemetry.",
   "task:finalize-lost-work-blocked":
     "Finalize is blocked because it would discard work (lost-work guard).",
   "task:auto-recover-stale-merger-status":
@@ -119,6 +130,12 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Self-healing clears a benign pause-abort operator park and requeues the task.",
   "task:auto-rebound-paused-scope-decay":
     "Self-healing rebounds a task whose paused scope decayed past its floor, unblocking followers.",
+  "task:auto-archive-failure-budget-exhausted":
+    "Self-healing abandons a repeatedly failing stale-task archive and surfaces it for operator action.",
+  "task:no-progress-no-task-done-requeue":
+    "A zero-progress no-task-done failure consumes one bounded self-healing retry and records its backoff.",
+  "task:no-progress-no-task-done-requeue-exhausted":
+    "The bounded no-progress requeue budget parks a task once, without gating the park on the emission.",
   "task:reclaim-phantom-executor-binding":
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
   "task:reconcile-orphaned-pending-step-results":

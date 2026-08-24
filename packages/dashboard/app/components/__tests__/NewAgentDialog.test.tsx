@@ -38,6 +38,7 @@ vi.mock("../CustomModelDropdown", () => ({
         <option value="medium">Medium</option>
         <option value="high">High</option>
         <option value="xhigh">Very High</option>
+        <option value="max">Max</option>
       </select>
     </div>
   ),
@@ -85,6 +86,7 @@ describe("NewAgentDialog thinking level", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(thinkingSelect.value).toBe("off");
     expect(screen.queryByText(/Default/)).toBeNull();

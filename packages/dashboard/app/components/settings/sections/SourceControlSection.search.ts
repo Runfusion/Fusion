@@ -93,4 +93,13 @@ export const sourceControlSearchEntries: SettingsSearchEntry[] = [
       "Read-only GitLab operations need read_api or api. Future write actions such as comments and auto-close need api. Project and group tokens are limited to their associated resource and role membership. No default — unset.",
     keywords: ["glpat", "private-token", "credentials", "secret", "read_api"],
   },
+  ...[
+    ["jiraBaseUrl", "JIRA site URL", "JIRA site URL. Default: unset."],
+    ["jiraApiBaseUrl", "JIRA API base URL (optional)", "Default: <site>/rest/api/3."],
+    ["jiraAuthEmail", "JIRA account email (optional)", "Email selects Basic authentication. Default: unset."],
+    ["jiraAuthTokenSecretKey", "JIRA token secret key", "Secret-store key only. Default: JIRA_API_TOKEN."],
+    ["jiraAuthTokenSecretScope", "JIRA token secret scope", "Default: project."],
+    ["jiraBranchNameTemplate", "JIRA branch-name template", "Default: feature/{key}-{summary}."],
+  ].map(([key, labelFallback, helpFallback]) => ({ sectionId: "source-control", key, labelKey: `settings.jira.${key}`, labelFallback, helpKey: `settings.jira.${key}Help`, helpFallback, keywords: ["jira", "branch", "tracker"] })),
+
 ];

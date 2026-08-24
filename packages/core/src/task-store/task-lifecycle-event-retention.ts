@@ -1,6 +1,7 @@
 import { and, asc, eq, lt, lte } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { recordRunAuditEvent, type AsyncDataLayer } from "../postgres/data-layer.js";
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 
 export const TASK_LIFECYCLE_RETENTION_DAYS = 30;
 export const TASK_LIFECYCLE_RETENTION_MAX_DELETES = 5_000;
@@ -84,7 +85,12 @@ export async function pruneTaskLifecycleEvents(
     staleConsumerCount,
     budgetExhausted: candidates.length === maxDeletes,
   };
-  await recordRunAuditEvent(layer, {
+  /*
+  FNXC:RunAudit 2026-08-20-06:50:
+  FN-9178 classifies retention-pruned as best-effort class-A telemetry. Await the bounded seam after
+  the committed bounded DELETE so a hostile sink cannot fail or indefinitely delay the sweep.
+  */
+  await emitBoundedRunAudit({ recordRunAuditEvent: (input) => recordRunAuditEvent(layer, input) }, {
     agentId: "system",
     runId: "task-deleted-outbox:retention",
     domain: "task-lifecycle",

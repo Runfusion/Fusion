@@ -20,6 +20,7 @@ import {
   DEFAULT_TASK_PRIORITY,
   resolveEffectiveSettingsDetailedById,
   resolvePlanningSettingsModel,
+  resolveTaskOutputLanguage,
   TASK_PRIORITIES,
   THINKING_LEVELS,
   type PlanningSummary,
@@ -27,8 +28,6 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
-import { BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
-import { createAgentTask } from "@fusion/engine";
 import { normalizePlanningSummaryPayload } from "../planning.js";
 import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
 import { PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../issue-image-markup.js";
@@ -36,7 +35,7 @@ import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-er
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
-import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
+import { resolveBranchSelection } from "./branch-selection.js";
 import { randomUUID } from "node:crypto";
 
 type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
@@ -93,7 +92,7 @@ function rethrowPlanningWorkflowCreateError(
 }
 
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
-  const { router, getProjectContext, planningLogger, runtimeLogger, rethrowAsApiError } = ctx;
+  const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
   const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
   const planningRuntime = (settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
     clarificationEnabled: settings.agentClarificationEnabled === true,
@@ -101,456 +100,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
   });
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
-  // UTILITY PATH: Planning and subtask session routes are on a separate control-plane lane.
+  // UTILITY PATH: Planning sessions are on a separate control-plane lane.
   // They must NOT be gated on task-lane saturation (maxConcurrent, semaphore, queue depth).
-  // These routes create/manage AI planning and subtask breakdown sessions.
 
-  router.post("/subtasks/start-streaming", async (req, res) => {
-    try {
-      const { description } = req.body;
-
-      if (!description || typeof description !== "string") {
-        throw badRequest("description is required and must be a string");
-      }
-
-      if (description.length > 1000) {
-        throw badRequest("description must be 1000 characters or less");
-      }
-
-      const { store: scopedStore, projectId } = await getProjectContext(req);
-      const settings = await scopedStore.getSettings();
-      const { createSubtaskSession } = await import("../subtask-breakdown.js");
-      const session = await createSubtaskSession(
-        description,
-        scopedStore,
-        scopedStore.getRootDir(),
-        settings.promptOverrides,
-        projectId,
-      );
-      res.status(201).json({ sessionId: session.sessionId });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err, "Failed to start subtask breakdown");
-    }
-  });
-
-  router.get("/subtasks/:sessionId/stream", async (req, res) => {
-    const { sessionId } = req.params;
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-    res.write(": connected\n\n");
-
-    try {
-      const { subtaskStreamManager, getSubtaskSession } = await import("../subtask-breakdown.js");
-      const session = await getSubtaskSession(sessionId);
-      if (!session) {
-        writeSSEEvent(res, "error", JSON.stringify("Session not found or expired"));
-        res.end();
-        return;
-      }
-
-      const lastEventId = parseLastEventId(req);
-      if (lastEventId !== undefined) {
-        const buffered = subtaskStreamManager.getBufferedEvents(sessionId, lastEventId);
-        if (!replayBufferedSSE(res, buffered)) {
-          res.end();
-          return;
-        }
-      }
-
-      if (session.status === "complete") {
-        const existing = subtaskStreamManager.getBufferedEvents(sessionId, 0);
-
-        const lastSubtasksEvent = [...existing].reverse().find((event) => event.event === "subtasks");
-        const subtasksEventId = lastSubtasksEvent?.id
-          ?? subtaskStreamManager.broadcast(sessionId, {
-            type: "subtasks",
-            data: session.subtasks,
-          });
-
-        if (lastEventId === undefined || subtasksEventId > lastEventId) {
-          if (!writeSSEEvent(res, "subtasks", JSON.stringify(session.subtasks), subtasksEventId)) {
-            res.end();
-            return;
-          }
-        }
-
-        const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
-        const completeEventId = lastCompleteEvent?.id
-          ?? subtaskStreamManager.broadcast(sessionId, { type: "complete" });
-
-        if (lastEventId === undefined || completeEventId > lastEventId) {
-          writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
-        }
-
-        res.end();
-        return;
-      }
-
-      if (session.status === "error") {
-        const errorMessage = String(session.error || "Unknown error");
-        const existing = subtaskStreamManager.getBufferedEvents(sessionId, 0);
-        const lastErrorEvent = [...existing].reverse().find((event) => event.event === "error");
-        const errorEventId = lastErrorEvent?.id
-          ?? subtaskStreamManager.broadcast(sessionId, {
-            type: "error",
-            data: errorMessage,
-          });
-
-        if (lastEventId === undefined || errorEventId > lastEventId) {
-          writeSSEEvent(res, "error", JSON.stringify(errorMessage), errorEventId);
-        }
-
-        res.end();
-        return;
-      }
-
-      const unsubscribe = subtaskStreamManager.subscribe(sessionId, (event, eventId) => {
-        const data = (event as { data?: unknown }).data;
-        if (!writeSSEEvent(res, event.type, JSON.stringify(data ?? {}), eventId)) {
-          unsubscribe();
-          return;
-        }
-
-        if (event.type === "complete" || event.type === "error") {
-          unsubscribe();
-          res.end();
-        }
-      });
-
-      const heartbeat = setInterval(() => {
-        if (res.writableEnded) {
-          clearInterval(heartbeat);
-          return;
-        }
-        res.write(": heartbeat\n\n");
-      }, 30_000);
-
-      req.on("close", () => {
-        clearInterval(heartbeat);
-        unsubscribe();
-      });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      writeSSEEvent(res, "error", JSON.stringify(err instanceof Error ? err.message : String(err)));
-      res.end();
-    }
-  });
-
-  router.post("/subtasks/create-tasks", async (req, res) => {
-    try {
-      const { sessionId, subtasks, parentTaskId, branch, baseBranch, branchSelection, branchAssignment, workflowId } = req.body as {
-        sessionId?: string;
-        /*
-        FNXC:SubtaskPriority 2026-07-19-12:30:
-        Accept optional priority from SubtaskItem so breakdown create-tasks preserves
-        stream-assigned prioritization (client maps subtask.priority onto this field).
-        */
-        subtasks?: Array<{ tempId: string; title: string; description: string; size?: "S" | "M" | "L"; priority?: string; dependsOn?: string[] }>;
-        parentTaskId?: string;
-        branch?: unknown;
-        baseBranch?: unknown;
-        branchSelection?: unknown;
-        branchAssignment?: unknown;
-        workflowId?: unknown;
-      };
-
-      if (!sessionId || typeof sessionId !== "string") {
-        throw badRequest("sessionId is required");
-      }
-
-      if (!Array.isArray(subtasks) || subtasks.length === 0) {
-        throw badRequest("subtasks must be a non-empty array");
-      }
-
-      if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
-        throw badRequest("workflowId must be a string or null");
-      }
-
-      const { store: scopedStore } = await getProjectContext(req);
-      const { getSubtaskSession, cleanupSubtaskSession } = await import("../subtask-breakdown.js");
-      const session = await getSubtaskSession(sessionId);
-      if (!session) {
-        throw notFound(`Subtask session ${sessionId} not found or expired`);
-      }
-
-      // Fetch parent task to inherit model settings if parentTaskId is provided
-      let parentTask: Awaited<ReturnType<TaskStore["getTask"]>> | undefined;
-      if (typeof parentTaskId === "string" && parentTaskId.trim()) {
-        try {
-          parentTask = await scopedStore.getTask(parentTaskId);
-        } catch {
-          // Parent task not found or error - proceed without inheritance
-          parentTask = undefined;
-        }
-      }
-
-      const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
-        resolveBranchSelection(branchSelection, branch, baseBranch);
-      // Planning subtasks have no strategy fallback; keep the historical shared default.
-      const { mode: branchMode = "shared" } = resolveBranchAssignmentContext(branchAssignment);
-      // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
-      // resolves members. The group is only ensured (and the id set) in shared
-      // mode below. Non-shared members get NO groupId — stamping a synthetic
-      // `planning:<id>` would let the legacy membership fallback sweep them into
-      // a shared group later created for the same planning session.
-      let planningGroupId: string | undefined;
-
-      if (branchMode === "shared") {
-        const settings = await scopedStore.getSettings();
-        const settingsDefaultBranch =
-          typeof settings.defaultBranch === "string" && settings.defaultBranch.trim().length > 0
-            ? settings.defaultBranch
-            : "main";
-        const settingsAutoMerge = typeof settings.autoMerge === "boolean" ? settings.autoMerge : false;
-        const branchGroupStore = scopedStore as { ensureBranchGroupForSource?: TaskStore["ensureBranchGroupForSource"] };
-        const group = await branchGroupStore.ensureBranchGroupForSource?.("planning", sessionId, {
-          branchName: resolvedBranch ?? resolvedBaseBranch ?? settingsDefaultBranch,
-          autoMerge: session.autoMerge ?? settingsAutoMerge,
-        });
-        if (group) {
-          planningGroupId = group.id;
-        }
-      }
-
-      const planningBranchContext = {
-        ...(planningGroupId ? { groupId: planningGroupId } : {}),
-        source: "planning" as const,
-        assignmentMode: branchMode,
-        inheritedBaseBranch: resolvedBaseBranch,
-      };
-
-      const normalizedParentId = typeof parentTaskId === "string" ? parentTaskId.trim().toUpperCase() : "";
-      const createdTasks = [] as Awaited<ReturnType<TaskStore["createTask"]>>[];
-      const wasDuplicateByIndex: boolean[] = [];
-      const tempIdToTaskId = new Map<string, string>();
-
-      for (const item of subtasks) {
-        if (!item || typeof item.tempId !== "string" || typeof item.title !== "string" || !item.title.trim()) {
-          throw badRequest("Each subtask must include tempId and title");
-        }
-
-        const { workingBranch: taskBranch } = resolveEntryPointBranchAssignment({
-          assignmentMode: branchMode,
-          resolvedBranch,
-          taskSegment: item.title || item.tempId,
-        });
-
-        /*
-        FNXC:Workflows 2026-07-05-00:00:
-        FN-7611: do not hardcode column here. This route accepts an explicit workflowId
-        (below), so a hardcoded "triage" would defeat that custom workflow's own intake
-        column resolution. Omitting `column` lets the store resolve intake for the
-        selected-or-default workflow (byte-identical "triage" for builtin:coding).
-        */
-        const priority = typeof item.priority === "string" && (TASK_PRIORITIES as readonly string[]).includes(item.priority)
-          ? (item.priority as TaskPriority)
-          : undefined;
-        const { task, wasDuplicate } = await createAgentTask(scopedStore, {
-          title: item.title.trim(),
-          description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
-          dependencies: undefined,
-          ...(priority !== undefined ? { priority } : {}),
-          // Inherit parent's model settings if available
-          modelProvider: parentTask?.modelProvider,
-          modelId: parentTask?.modelId,
-          validatorModelProvider: parentTask?.validatorModelProvider,
-          validatorModelId: parentTask?.validatorModelId,
-          source: { sourceType: "api", sourceParentTaskId: normalizedParentId || undefined },
-          branch: taskBranch,
-          baseBranch: resolvedBaseBranch,
-          branchContext: planningBranchContext,
-          /*
-          FNXC:WorkflowSelection 2026-06-20-16:48:
-          Tasks created from a workflow lane via subtask breakdown must stay on that active workflow instead of falling back to the project default board.
-          */
-          ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
-        }, {
-          rootDir: scopedStore.getRootDir(),
-          sourceTaskId: normalizedParentId || undefined,
-        });
-
-        tempIdToTaskId.set(item.tempId, task.id);
-        createdTasks.push(task);
-        wasDuplicateByIndex.push(wasDuplicate);
-
-        if (!wasDuplicate && (item.size === "S" || item.size === "M" || item.size === "L")) {
-          await scopedStore.updateTask(task.id, { size: item.size }, UNATTRIBUTED_MUTATION_CONTEXT);
-        }
-      }
-
-      // Resolve each subtask's dependsOn list:
-      //   - map tempIds to the newly-created sibling task ids
-      //   - drop any reference to the parent being split (would be a dangling id after delete)
-      //   - record dropped ids so the caller can surface them instead of silently losing them
-      const droppedDependencies: Array<{ taskId: string; dropped: string[] }> = [];
-      for (let index = 0; index < subtasks.length; index++) {
-        const item = subtasks[index]!;
-        const created = createdTasks[index]!;
-        if (wasDuplicateByIndex[index]) continue;
-        const rawDeps = Array.isArray(item.dependsOn) ? item.dependsOn : [];
-        const resolvedDependencies: string[] = [];
-        const dropped: string[] = [];
-
-        for (const dep of rawDeps) {
-          if (typeof dep !== "string" || !dep) continue;
-          if (normalizedParentId && dep.trim().toUpperCase() === normalizedParentId) {
-            // Parent is about to be deleted — depending on it would permanently
-            // block the dependent.
-            dropped.push(dep);
-            continue;
-          }
-          const siblingId = tempIdToTaskId.get(dep);
-          if (siblingId) {
-            if (siblingId !== created.id) resolvedDependencies.push(siblingId);
-            continue;
-          }
-          // Not a sibling tempId and not the parent — it could be an existing
-          // task id. Keep it only if it resolves to a live task; otherwise drop.
-          try {
-            await scopedStore.getTask(dep);
-            resolvedDependencies.push(dep);
-          } catch {
-            dropped.push(dep);
-          }
-        }
-
-        if (resolvedDependencies.length > 0) {
-          const updated = await scopedStore.updateTask(created.id, { dependencies: resolvedDependencies }, UNATTRIBUTED_MUTATION_CONTEXT);
-          createdTasks[index] = updated;
-        }
-        if (dropped.length > 0) {
-          droppedDependencies.push({ taskId: created.id, dropped });
-          await scopedStore.logEntry(
-            created.id,
-            `Subtask breakdown: dropped invalid dependencies [${dropped.join(", ")}] (parent-id or unknown task id)`,
-            undefined, UNATTRIBUTED_MUTATION_CONTEXT,
-          );
-        }
-
-        await scopedStore.logEntry(created.id, "Created via subtask breakdown", `Source: ${session.initialDescription.slice(0, 200)}`, UNATTRIBUTED_MUTATION_CONTEXT);
-      }
-
-      let parentTaskClosed = false;
-      let parentTaskCloseError: string | undefined;
-      if (normalizedParentId) {
-        try {
-          await scopedStore.deleteTask(normalizedParentId, {
-            auditContext: {
-              // FNXC:TaskDeleteAttribution 2026-07-26-14:30: subtask-breakdown parent close is
-              // automation running behind the planning session, not the operator's Delete click.
-              agentId: "system",
-              runId: `synthetic-planning-delete-${normalizedParentId}-${Date.now()}`,
-              sessionId,
-              callerKind: "engine",
-              // FNXC:Identity 2026-08-09-03:04: no authenticated HTTP actor until the identity middleware lands; the bootstrap actor is the honest, audit-visible pre-enablement value (never derived from `callerKind` — R21).
-              actor: BOOTSTRAP_ACTOR_CONTEXT,
-            },
-          }, UNATTRIBUTED_MUTATION_CONTEXT);
-          parentTaskClosed = true;
-        } catch (err: unknown) {
-          // deleteTask refuses when live tasks still reference the parent id.
-          // Keep the parent alive and surface the reason; silently failing here
-          // is what left FN-2164 blocked by the ghost of FN-2163.
-          parentTaskClosed = false;
-          parentTaskCloseError = err instanceof Error ? err.message : String(err);
-          /*
-          FNXC:TaskDeleteAttribution 2026-07-26-16:25:
-          A parent-close failure must be operator-visible in server diagnostics, not only
-          in the (easily ignored) response field — the FN-2164 incident was a parent
-          delete failing silently and leaving children permanently blocked on a ghost id.
-          */
-          runtimeLogger.warn("Subtask breakdown: failed to close parent task after creating subtasks", {
-            parentTaskId: normalizedParentId,
-            sessionId,
-            error: parentTaskCloseError,
-          });
-        }
-      }
-
-      cleanupSubtaskSession(sessionId);
-      res.status(201).json({
-        tasks: createdTasks,
-        parentTaskClosed,
-        parentTaskCloseError,
-        droppedDependencies,
-      });
-    } catch (err: unknown) {
-      rethrowPlanningWorkflowCreateError(err, "Failed to create tasks from breakdown", rethrowAsApiError);
-    }
-  });
-
-  router.post("/subtasks/cancel", async (req, res) => {
-    try {
-      const { sessionId } = req.body;
-      if (!sessionId || typeof sessionId !== "string") {
-        throw badRequest("sessionId is required");
-      }
-
-      const { cancelSubtaskSession } = await import("../subtask-breakdown.js");
-      await cancelSubtaskSession(sessionId);
-      res.json({ success: true });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof Error && err.name === "SessionNotFoundError") {
-        throw notFound(err instanceof Error ? err.message : String(err));
-      } else {
-        rethrowAsApiError(err, "Failed to cancel subtask session");
-      }
-    }
-  });
-
-  /**
-   * POST /api/subtasks/:sessionId/retry
-   * Retry a failed subtask breakdown session.
-   *
-   * UTILITY PATH: This route is independent of task-lane saturation.
-   * Lock-free (see FNXC:PlanningMultiTab on /planning/respond).
-   */
-  router.post("/subtasks/:sessionId/retry", async (req, res) => {
-    try {
-      const { sessionId } = req.params;
-      if (!sessionId || typeof sessionId !== "string") {
-        throw badRequest("sessionId is required");
-      }
-
-      const { store: scopedStore } = await getProjectContext(req);
-      const settings = await scopedStore.getSettings();
-      const { retrySubtaskSession } = await import("../subtask-breakdown.js");
-      await retrySubtaskSession(sessionId, scopedStore.getRootDir(), settings.promptOverrides, scopedStore);
-      res.json({ success: true, sessionId });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof Error && err.name === "SessionNotFoundError") {
-        throw notFound(err instanceof Error ? err.message : String(err));
-      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
-        throw badRequest(err instanceof Error ? err.message : String(err));
-      } else {
-        rethrowAsApiError(err, "Failed to retry subtask session");
-      }
-    }
-  });
-
-  /**
-   * POST /api/planning/start
-   * Start a new planning session.
-   * Body: { initialPlan: string }
-   * Returns: { sessionId: string, firstQuestion: PlanningQuestion }
-   *
-   * UTILITY PATH: This route is independent of task-lane saturation.
-   */
   router.post("/planning/start", async (req, res) => {
     try {
       const { initialPlan, workflowId } = req.body;
@@ -646,7 +198,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             resolvedPlanningModelId,
             validatedThinkingLevel,
             settings.promptOverrides,
-            { projectId },
+            { projectId, taskOutputLanguage: resolveTaskOutputLanguage(settings, initialPlan) },
           )
         : await createDraftSession(
             ip,
@@ -655,7 +207,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             resolvedPlanningProvider,
             resolvedPlanningModelId,
             settings.promptOverrides,
-            { projectId },
+            { projectId, taskOutputLanguage: resolveTaskOutputLanguage(settings, initialPlan) },
           );
       res.status(201).json(draft);
     } catch (err: unknown) {
@@ -939,6 +491,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         rootDir,
         resolvedPlanningSettings.provider,
         resolvedPlanningSettings.modelId,
+        settings,
       );
 
       res.json({ title });
@@ -1536,6 +1089,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
         ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: "api" as const } }),
         branch: resolvedBranch,
+        ...(resolvedBranch !== undefined ? { branchWriteOrigin: "operator" as const } : {}),
         baseBranch: resolvedBaseBranch,
         /*
         FNXC:WorkflowSelection 2026-06-20-16:48:
@@ -1621,326 +1175,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     }
   });
 
-  /**
-   * POST /api/planning/start-breakdown
-   * Start subtask breakdown from a completed planning session.
-   * Body: { sessionId: string }
-   * Returns: { sessionId: string } — ID of the generated subtask breakdown
-   */
-  router.post("/planning/start-breakdown", async (req, res) => {
-    try {
-      const { sessionId, summary: summaryInput } = req.body as {
-        sessionId?: unknown;
-        summary?: unknown;
-      };
-
-      if (!sessionId || typeof sessionId !== "string") {
-        throw badRequest("sessionId is required");
-      }
-
-      const summaryOverride = parsePlanningSummaryOverride(summaryInput);
-
-      const { getSession, generateSubtasksFromPlanning } = await import("../planning.js");
-
-      const session = await getSession(sessionId);
-      if (!session) {
-        throw notFound(`Planning session ${sessionId} not found or expired`);
-      }
-      if (!session.validated) throw badRequest("Planning session must be validated before creating tasks");
-
-      if (summaryOverride) {
-        session.summary = summaryOverride;
-      }
-
-      if (!session.summary) {
-        throw badRequest("Planning session is not complete");
-      }
-
-      const subtasks = generateSubtasksFromPlanning(sessionId);
-      if (subtasks.length === 0) {
-        throw badRequest("Could not generate subtasks from planning session");
-      }
-
-      // Return a synthetic session ID (based on the planning session) and the generated subtasks
-      // We use the planning session ID directly as the breakdown session ID
-      res.json({ sessionId, subtasks });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err, "Failed to start planning breakdown");
-    }
-  });
-
-  /**
-   * POST /api/planning/create-tasks
-   * Create multiple tasks from a completed planning session (after optional editing).
-   * Body: { planningSessionId: string, subtasks: Array<{ id, title?, description?, suggestedSize?, priority?, dependsOn? }> }
-   * Returns: { tasks: Task[] }
-   */
-  router.post("/planning/create-tasks", async (req, res) => {
-    try {
-      const { planningSessionId, subtasks, branch, baseBranch, branchSelection, branchAssignment, workflowId } = req.body as {
-        planningSessionId?: string;
-        subtasks?: Array<{
-          id: string;
-          title?: string;
-          description?: string;
-          suggestedSize?: "S" | "M" | "L";
-          priority?: TaskPriority;
-          dependsOn?: string[];
-        }>;
-        branch?: unknown;
-        baseBranch?: unknown;
-        branchSelection?: unknown;
-        branchAssignment?: unknown;
-        workflowId?: unknown;
-      };
-
-      if (!planningSessionId || typeof planningSessionId !== "string") {
-        throw badRequest("planningSessionId is required");
-      }
-
-      if (!Array.isArray(subtasks) || subtasks.length === 0) {
-        throw badRequest("subtasks must be a non-empty array");
-      }
-
-      if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
-        throw badRequest("workflowId must be a string or null");
-      }
-
-      const { store: scopedStore } = await getProjectContext(req);
-      const { getSession, releaseSession, formatInterviewQA, formatPlanningTaskHandoff, mergePlanningSubtaskDrafts } = await import("../planning.js");
-      const planningSourceModule = await import("../planning.js");
-      const resolvePlanningSourceIssue = "resolvePlanningSourceIssue" in planningSourceModule
-        ? planningSourceModule.resolvePlanningSourceIssue
-        : undefined;
-      const { appendSourceIssueBlock } = await import("../github.js");
-
-      const session = await getSession(planningSessionId);
-      if (!session) {
-        throw notFound(`Planning session ${planningSessionId} not found or expired`);
-      }
-      if (!session.validated) throw badRequest("Planning session must be validated before creating tasks");
-
-      if (!session.summary) {
-        throw badRequest("Planning session is not complete");
-      }
-
-      /*
-      FNXC:GitHubPlanningSourceIssue 2026-08-09-05:36:
-      A planning breakdown preserves the source text on every child but must not create N source
-      links or tracking streams for one GitHub issue.
-      */
-      const sourceContext = typeof resolvePlanningSourceIssue === "function" ? resolvePlanningSourceIssue(session) : undefined;
-      const qaSection = formatInterviewQA(session.history);
-      const logDetails = qaSection
-        ? `Source: ${session.initialPlan.slice(0, 200)}\n\n${qaSection}`
-        : `Source: ${session.initialPlan.slice(0, 200)}`;
-
-      for (const item of subtasks) {
-        if (!item || typeof item.id !== "string" || !item.id.trim()) {
-          throw badRequest("Each subtask must include id");
-        }
-        if (item.title !== undefined && (typeof item.title !== "string" || !item.title.trim())) {
-          throw badRequest("Each edited subtask title must be a non-empty string");
-        }
-        if (item.description !== undefined && typeof item.description !== "string") {
-          throw badRequest("Each edited subtask description must be a string");
-        }
-        if (
-          item.suggestedSize !== undefined
-          && item.suggestedSize !== "S"
-          && item.suggestedSize !== "M"
-          && item.suggestedSize !== "L"
-        ) {
-          throw badRequest("Each edited subtask suggestedSize must be S, M, or L");
-        }
-        if (item.priority !== undefined && !isTaskPriority(item.priority)) {
-          throw badRequest("Each subtask priority must be one of low, normal, high, urgent");
-        }
-        if (
-          item.dependsOn !== undefined
-          && (!Array.isArray(item.dependsOn) || item.dependsOn.some((dependency) => typeof dependency !== "string"))
-        ) {
-          throw badRequest("Each edited subtask dependsOn value must be an array of ids");
-        }
-      }
-
-      let mergedSubtasks;
-      try {
-        mergedSubtasks = mergePlanningSubtaskDrafts(planningSessionId, subtasks);
-      } catch (error) {
-        throw badRequest(error instanceof Error ? error.message : "Invalid planning subtask edits");
-      }
-
-      if (mergedSubtasks.length !== subtasks.length) {
-        throw badRequest("Could not resolve planning subtasks for task creation");
-      }
-
-      const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
-        resolveBranchSelection(branchSelection, branch, baseBranch);
-      // Planning subtasks have no strategy fallback; keep the historical shared default.
-      const { mode: branchMode = "shared" } = resolveBranchAssignmentContext(branchAssignment);
-      // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
-      // resolves members. The group is only ensured (and the id set) in shared
-      // mode below. Non-shared members get NO groupId — stamping a synthetic
-      // `planning:<id>` would let the legacy membership fallback sweep them into
-      // a shared group later created for the same planning session.
-      let planningGroupId: string | undefined;
-
-      if (branchMode === "shared") {
-        const settings = await scopedStore.getSettings();
-        const settingsDefaultBranch =
-          typeof settings.defaultBranch === "string" && settings.defaultBranch.trim().length > 0
-            ? settings.defaultBranch
-            : "main";
-        const settingsAutoMerge = typeof settings.autoMerge === "boolean" ? settings.autoMerge : false;
-        const branchGroupStore = scopedStore as { ensureBranchGroupForSource?: TaskStore["ensureBranchGroupForSource"] };
-        const group = await branchGroupStore.ensureBranchGroupForSource?.("planning", planningSessionId, {
-          branchName: resolvedBranch ?? resolvedBaseBranch ?? settingsDefaultBranch,
-          autoMerge: session.autoMerge ?? settingsAutoMerge,
-        });
-        if (group) {
-          planningGroupId = group.id;
-        }
-      }
-
-      const planningBranchContext = {
-        ...(planningGroupId ? { groupId: planningGroupId } : {}),
-        source: "planning" as const,
-        assignmentMode: branchMode,
-        inheritedBaseBranch: resolvedBaseBranch,
-      };
-
-      const createdTasks = [] as Awaited<ReturnType<TaskStore["createTask"]>>[];
-      const tempIdToTaskId = new Map<string, string>();
-
-      for (const item of mergedSubtasks) {
-        const itemDescription = typeof item.description === "string" ? item.description.trim() : item.title.trim();
-        const planMd = formatPlanningTaskHandoff({
-          title: item.title.trim(),
-          description: itemDescription,
-          suggestedSize: item.suggestedSize ?? session.summary.suggestedSize,
-          suggestedDependencies: item.dependsOn ?? [],
-          keyDeliverables: [itemDescription],
-        }, session.history);
-        const { workingBranch: taskBranch } = resolveEntryPointBranchAssignment({
-          assignmentMode: branchMode,
-          resolvedBranch,
-          taskSegment: item.title || item.id,
-        });
-
-        /*
-        FNXC:Workflows 2026-07-05-00:00:
-        FN-7611: do not hardcode column here. This route accepts an explicit workflowId
-        (below), so a hardcoded "triage" would defeat that custom workflow's own intake
-        column resolution. Omitting `column` lets the store resolve intake for the
-        selected-or-default workflow (byte-identical "triage" for builtin:coding).
-        */
-        const task = await scopedStore.createTask({
-          title: item.title.trim(),
-          description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
-          dependencies: undefined,
-          priority: isTaskPriority(item.priority) ? item.priority : DEFAULT_TASK_PRIORITY,
-          source: { sourceType: "api", sourceMetadata: { planningSessionId } },
-          branch: taskBranch,
-          baseBranch: resolvedBaseBranch,
-          branchContext: planningBranchContext,
-          /*
-          FNXC:WorkflowSelection 2026-06-20-16:48:
-          Multi-task Planning Mode creation must apply the selected workflow to every generated child so saved tasks do not jump to the main board first.
-          */
-          ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
-        }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-
-        tempIdToTaskId.set(item.id, task.id);
-        createdTasks.push(task);
-
-        await runPlanningCreateSideEffect(
-          "Planning create-tasks plan document write failed",
-          () => scopedStore.upsertTaskDocument(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId, source: "planning-mode" } }),
-          { taskId: task.id, planningSessionId },
-        );
-        /*
-        FNXC:PlanningMode 2026-07-20-16:00:
-        Every breakdown child needs an original-description document. When a legacy
-        planning session lacks initialPlan, use that child’s pre-serialization brief
-        rather than silently omitting the request or substituting a session title.
-        */
-        const originalRequest = session.initialPlan.trim() || itemDescription;
-        if (originalRequest) {
-          await runPlanningCreateSideEffect(
-            "Planning create-tasks original description document write failed",
-            () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId, source: "planning-mode-initial-plan" } }),
-            { taskId: task.id, planningSessionId },
-          );
-        }
-
-        if (item.suggestedSize === "S" || item.suggestedSize === "M" || item.suggestedSize === "L") {
-          await runPlanningCreateSideEffect(
-            "Planning create-tasks size update failed",
-            () => scopedStore.updateTask(task.id, { size: item.suggestedSize }, UNATTRIBUTED_MUTATION_CONTEXT),
-            { taskId: task.id, planningSessionId },
-          );
-        }
-      }
-
-      for (let index = 0; index < mergedSubtasks.length; index++) {
-        const item = mergedSubtasks[index]!;
-        const created = createdTasks[index]!;
-        const resolvedDependencies = Array.isArray(item.dependsOn)
-          ? item.dependsOn.map((dep) => tempIdToTaskId.get(dep)).filter((dep): dep is string => Boolean(dep))
-          : [];
-
-        if (resolvedDependencies.length > 0) {
-          await runPlanningCreateSideEffect(
-            "Planning create-tasks dependency update failed",
-            async () => {
-              const updated = await scopedStore.updateTask(created.id, { dependencies: resolvedDependencies }, UNATTRIBUTED_MUTATION_CONTEXT);
-              createdTasks[index] = updated;
-            },
-            { taskId: created.id, planningSessionId },
-          );
-        }
-
-        await runPlanningCreateSideEffect(
-          "Planning create-tasks log entry failed",
-          () => scopedStore.logEntry(created.id, "Created via Planning Mode (multi-task)", logDetails, UNATTRIBUTED_MUTATION_CONTEXT),
-          { taskId: created.id, planningSessionId },
-        );
-      }
-
-      // FNXC:PlanningMode 2026-07-13-00:00: release the live in-memory planning
-      // runtime but KEEP the persisted completed row so the multi-task path
-      // matches single-task create-task — completed planning sessions must remain
-      // listable/restorable in the saved-sessions history. Using cleanupSession
-      // here deleted the ai_sessions row, so a session that ran to completion and
-      // created tasks vanished from history (GET /ai-sessions returned it no more).
-      await runPlanningCreateSideEffect(
-        "Planning create-tasks session release failed",
-        () => releaseSession(planningSessionId),
-        { planningSessionId },
-      );
-
-      res.status(201).json({ tasks: createdTasks });
-    } catch (err: unknown) {
-      rethrowPlanningWorkflowCreateError(err, "Failed to create tasks from planning", rethrowAsApiError);
-    }
-  });
-
-  /**
-   * GET /api/planning/:sessionId/stream
-   * SSE endpoint for real-time planning session updates.
-   * Streams thinking output, questions, summaries, and errors.
-   * 
-   * Event types:
-   * - thinking: AI thinking output chunks
-   * - question: New question to display
-   * - summary: Planning summary when complete
-   * - error: Error message
-   * - complete: Stream completed
-   */
   router.get("/planning/:sessionId/stream", async (req, res) => {
     const { sessionId } = req.params;
 
@@ -2137,8 +1371,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       "POST /planning/:sessionId/stop",
       "POST /planning/cancel",
       "POST /planning/create-task",
-      "POST /planning/start-breakdown",
-      "POST /planning/create-tasks",
       "GET /planning/:sessionId/stream",
     ];
     planningLogger.info("routes registered", { planningRoutes });

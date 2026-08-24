@@ -3,6 +3,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { Task, TaskDetail } from "@fusion/core";
 import { useModalManager } from "../useModalManager";
 import { scopedKey } from "../../utils/projectStorage";
+import {
+  ALL_WORKFLOWS_BOARD_VIEW_ID,
+  BOARD_WORKFLOW_SELECTION_STORAGE_KEY,
+} from "../../utils/boardWorkflowSelection";
 
 function createTaskDetail(id: string): TaskDetail {
   return {
@@ -92,7 +96,6 @@ describe("useModalManager", () => {
       result.current.openDetailTask(createTaskDetail("FN-1"));
       result.current.openGroupModal("group-1");
       result.current.openNewTaskWithDescription("draft");
-      result.current.openSubtaskBreakdown("subtask work");
       result.current.openPlanningWithSession("plan-1");
       result.current.openGitHubImport();
       result.current.openFiles("project", "/README.md");
@@ -112,8 +115,6 @@ describe("useModalManager", () => {
     expect(result.current.groupModalGroupId).toBeNull();
     expect(result.current.newTaskModalOpen).toBe(false);
     expect(result.current.newTaskInitialDescription).toBeNull();
-    expect(result.current.isSubtaskOpen).toBe(false);
-    expect(result.current.subtaskInitialDescription).toBeNull();
     expect(result.current.isPlanningOpen).toBe(false);
     expect(result.current.planningResumeSessionId).toBeUndefined();
     expect(result.current.planningInitialPlan).toBeNull();
@@ -127,6 +128,57 @@ describe("useModalManager", () => {
     expect(result.current.terminalOpen).toBe(false);
     // Cross-project surfaces survive the swap.
     expect(result.current.settingsOpen).toBe(true);
+  });
+
+  it("inherits the selected board workflow for new task opens while preserving explicit choices", () => {
+    const projectId = "proj_1";
+    const selectionKey = scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId);
+    const { result } = renderHook(() =>
+      useModalManager({ projectId, planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openNewTask();
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBeUndefined();
+
+    localStorage.setItem(selectionKey, "coding");
+    act(() => {
+      result.current.openNewTask();
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBe("coding");
+
+    act(() => {
+      result.current.openNewTask("explicit");
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBe("explicit");
+
+    act(() => {
+      result.current.openNewTask(null);
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBeNull();
+
+    act(() => {
+      result.current.openNewTask({ type: "click" } as never);
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBe("coding");
+
+    localStorage.setItem(selectionKey, ALL_WORKFLOWS_BOARD_VIEW_ID);
+    act(() => {
+      result.current.openNewTask();
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBeUndefined();
+
+    localStorage.setItem(selectionKey, "coding");
+    act(() => {
+      result.current.openNewTaskWithDescription("draft");
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBe("coding");
+
+    act(() => {
+      result.current.closeNewTask();
+    });
+    expect(result.current.newTaskInitialWorkflowId).toBeUndefined();
   });
 
   it("opens the new task modal with a seeded description and resets it on close", () => {

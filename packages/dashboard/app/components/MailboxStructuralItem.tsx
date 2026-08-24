@@ -18,6 +18,7 @@ export function MailboxKindBadge({ metadata }: { metadata?: MessageMetadata }) {
 }
 
 function MailboxApprovalDecision({ approvalRequestId, projectId, addToast, onDecided }: { approvalRequestId?: string; projectId?: string; addToast?: (message: string, type?: "success" | "error") => void; onDecided?: () => void }) {
+  const { t } = useTranslation("app");
   const [detail, setDetail] = useState<ApprovalRequestDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [unresolvable, setUnresolvable] = useState(false);
@@ -67,15 +68,15 @@ function MailboxApprovalDecision({ approvalRequestId, projectId, addToast, onDec
     }
   };
 
-  if (loading) return <span className="mailbox-approval-loading">Loading approval…</span>;
-  if (unresolvable || !detail) return <span className="mailbox-approval-unresolvable" data-testid="mailbox-approval-unresolvable">This approval request is no longer available.</span>;
+  if (loading) return <span className="mailbox-approval-loading">{t("mailbox.loadingApproval", "Loading approval…")}</span>;
+  if (unresolvable || !detail) return <span className="mailbox-approval-unresolvable" data-testid="mailbox-approval-unresolvable">{t("mailbox.approvalUnavailable", "This approval request is no longer available.")}</span>;
   const status: ApprovalRequestStatus = detail.status;
-  if (status !== "pending") return <span className="mailbox-inline-approval-status" data-testid="mailbox-inline-approval-status">Approval {status}</span>;
+  if (status !== "pending") return <span className="mailbox-inline-approval-status" data-testid="mailbox-inline-approval-status">{t("mailbox.approvalStatus", "Approval {{status}}", { status })}</span>;
   return <div className="mailbox-inline-approval">
-    <textarea className="input" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Optional comment" data-testid="mailbox-inline-approval-comment" />
+    <textarea className="input" value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("mailbox.optionalComment", "Optional comment")} data-testid="mailbox-inline-approval-comment" />
     <div className="mailbox-inline-approval-actions">
-      <button type="button" className="btn btn-sm btn-primary" disabled={deciding} onClick={() => void decide("approve")} data-testid="mailbox-inline-approval-approve">Approve</button>
-      <button type="button" className="btn btn-sm btn-secondary" disabled={deciding} onClick={() => void decide("deny")} data-testid="mailbox-inline-approval-deny">Deny</button>
+      <button type="button" className="btn btn-sm btn-primary" disabled={deciding} onClick={() => void decide("approve")} data-testid="mailbox-inline-approval-approve">{t("mailbox.approve", "Approve")}</button>
+      <button type="button" className="btn btn-sm btn-secondary" disabled={deciding} onClick={() => void decide("deny")} data-testid="mailbox-inline-approval-deny">{t("mailbox.deny", "Deny")}</button>
     </div>
   </div>;
 }

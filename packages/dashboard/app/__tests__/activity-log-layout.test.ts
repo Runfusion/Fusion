@@ -122,6 +122,11 @@ describe("activity-log-layout.css", () => {
     expect(mobileCss).toMatch(/\.activity-log-clear-filters\s*\{[^}]*margin-left:\s*0/);
   });
 
+  it("lets the task-ID search wrap and shrink in mobile and embedded docks", () => {
+    expect(mobileCss).toMatch(/\.activity-log-task-search\s*\{[^}]*flex-basis:\s*100%/);
+    expect(cssContent).toMatch(/\.activity-log-modal--embedded \.activity-log-task-search\s*\{[^}]*min-width:\s*0/);
+  });
+
   // ── Entry layout ────────────────────────────────────────────────────
 
   it("has mobile rule for entry details to wrap with word-break", () => {

@@ -116,9 +116,38 @@ describe("useAuthOnboarding", () => {
     expect(openSettings).not.toHaveBeenCalled();
   });
 
+  it("does not open authentication settings when a custom provider is configured", async () => {
+    mockFetchAuthStatus.mockResolvedValue({
+      providers: [{ id: "anthropic", name: "Anthropic", authenticated: false }],
+      customProvidersConfigured: true,
+    });
+    mockFetchGlobalSettings.mockResolvedValue({
+      modelOnboardingComplete: true,
+      defaultProvider: "custom-provider",
+      defaultModelId: "custom-model",
+    } as never);
+
+    renderHook(() =>
+      useAuthOnboarding({
+        projectId: "proj_123",
+        setupWizardOpen: false,
+        openModelOnboarding,
+        openSettings,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockFetchAuthStatus).toHaveBeenCalledTimes(1);
+    });
+
+    expect(openSettings).not.toHaveBeenCalled();
+    expect(openModelOnboarding).not.toHaveBeenCalled();
+  });
+
   it("opens authentication settings when onboarding is complete but no providers are authenticated", async () => {
     mockFetchAuthStatus.mockResolvedValue({
       providers: [{ id: "anthropic", name: "Anthropic", authenticated: false }],
+      customProvidersConfigured: false,
     });
     mockFetchGlobalSettings.mockResolvedValue({
       modelOnboardingComplete: true,

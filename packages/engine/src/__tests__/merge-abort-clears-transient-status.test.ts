@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { getTaskMergeBlocker } from "@fusion/core";
@@ -52,8 +53,29 @@ describe("runAiMerge transient status write authority", () => {
   make both the initial stamp and that finally clear no-ops after the merge race loses.
   */
   it("suppresses the real workspace path's finally clear after its generation aborts", async () => {
+    /*
+    FNXC:WorkspaceMergeBoundary 2026-08-23-20:35:
+    The land path now captures fresh merge-boundary evidence from real git BEFORE it stamps the
+    transient status, so a fabricated worktree path fails the run before the fence under test is
+    ever reached. Give the case a real sub-repository and branch.
+    */
+    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "fusion-merge-abort-workspace-"));
+    const subRepo = path.join(workspaceRoot, "repo");
+    execSync(`git init -b main ${subRepo}`, { stdio: "pipe" });
+    execSync('git config user.email "test@example.com" && git config user.name "Test"', { cwd: subRepo, stdio: "pipe" });
+    writeFileSync(path.join(subRepo, "README.md"), "test\n");
+    execSync("git add README.md && git commit -m init", { cwd: subRepo, stdio: "pipe" });
+    execSync("git checkout -b fusion/fn-8912-workspace-fence", { cwd: subRepo, stdio: "pipe" });
+    writeFileSync(path.join(subRepo, "feature.txt"), "workspace fence\n");
+    execSync('git add feature.txt && git commit -m "workspace fence"', { cwd: subRepo, stdio: "pipe" });
+    execSync("git checkout main", { cwd: subRepo, stdio: "pipe" });
+    const fenceDiff = execSync("git diff --binary main..fusion/fn-8912-workspace-fence", { cwd: subRepo, encoding: "utf8" });
     const controller = new AbortController();
-    const store = {
+    /* FNXC:WorkspaceMergeBoundary 2026-08-23-20:20: the workspace land path re-reads the live task
+       through `store.getTask` before it stamps status; a fake store without it throws TypeError
+       synchronously (the production `.catch` cannot absorb a missing method). */
+    const store: any = {
+      getTask: vi.fn(async () => workspaceTask),
       getSettings: vi.fn().mockResolvedValue({ autoMerge: true }),
       // Abort after the real closure writes its initial stamp, so its production finally executes.
       updateTask: vi.fn(async (_id: string, patch: { status: string | null }) => {
@@ -65,16 +87,42 @@ describe("runAiMerge transient status write authority", () => {
     const workspaceTask = {
       id: "FN-8912-workspace-fence",
       column: "in-review",
+      /* FNXC:RequiredPreMergeSteps 2026-08-23-20:20: abort-mechanics fixture, not a review-gating
+         one — the merge door refuses a card whose enabled pre-merge groups produced no result. */
+      enabledWorkflowSteps: [],
+      /* The boundary also refuses a card whose repository scope is unconfirmed, unreviewed, or has
+         no landable repository, so the fixture carries a real branch commit and its approved
+         review fingerprint. */
+      repositoryScope: {
+        repositories: ["repo"],
+        state: "confirmed",
+        revision: 1,
+        reviewEvidence: { repo: { fingerprint: createHash("sha256").update(fenceDiff).digest("hex"), approvedAt: new Date().toISOString() } },
+      },
       branch: "fusion/fn-8912-workspace-fence",
-      workspaceWorktrees: { repo: { worktreePath: "/tmp/repo", branch: "fusion/fn-8912-workspace-fence" } },
+      workspaceWorktrees: { repo: { worktreePath: subRepo, branch: "fusion/fn-8912-workspace-fence" } },
+      /* The reviewed file snapshot must cover the boundary's changed files or the door reports
+         post-approval drift (`content-changed`). */
+      modifiedFiles: ["repo/feature.txt"],
       steps: [],
       log: [],
     };
 
-    await expect(landWorkspaceTask(store as any, workspaceTask as any, "/tmp", { signal: controller.signal }))
-      .rejects.toMatchObject({ name: "MergeAbortedError" });
+    try {
+      await expect(landWorkspaceTask(store as any, workspaceTask as any, workspaceRoot, { signal: controller.signal }))
+        .rejects.toMatchObject({ name: "MergeAbortedError" });
 
-    expect(store.updateTask).toHaveBeenCalledExactlyOnceWith(workspaceTask.id, { status: "merging" });
+      /*
+      FNXC:MergeReliability 2026-08-23-20:55:
+      The boundary now persists its evidence (`modifiedFiles`) through the same `updateTask` seam, so
+      assert on the TRANSIENT STATUS writes specifically: the initial stamp is the only one, i.e. the
+      aborted generation's `finally` clear never lands.
+      */
+      const statusWrites = store.updateTask.mock.calls.filter(([, patch]: [string, Record<string, unknown>]) => "status" in patch);
+      expect(statusWrites).toEqual([[workspaceTask.id, { status: "merging" }]]);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   it("suppresses the real single-repo closure's post-abort work after its initial stamp", async () => {
@@ -86,7 +134,9 @@ describe("runAiMerge transient status write authority", () => {
       execSync("git add README.md && git commit -m init && git checkout -b fusion/fn-8912-single && git checkout main", { cwd: rootDir, stdio: "pipe" });
 
       const controller = new AbortController();
-      const task = { id: "FN-8912-single", column: "in-review", branch: "fusion/fn-8912-single", comments: [], steeringComments: [], steps: [], log: [] };
+      /* FNXC:RequiredPreMergeSteps 2026-08-23-20:20: see above — an explicit empty list states this
+         abort-mechanics fixture's intent instead of inheriting the built-in review defaults. */
+      const task = { id: "FN-8912-single", column: "in-review", branch: "fusion/fn-8912-single", enabledWorkflowSteps: [], comments: [], steeringComments: [], steps: [], log: [] };
       const store = {
         getTask: vi.fn(async () => task),
         getSettings: vi.fn(async () => ({ autoMerge: true })),

@@ -11,7 +11,7 @@
  * heavy git/FS dependencies mocked.
  */
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
@@ -35,14 +35,29 @@ describe("self-healing idle-worktree sweeps skip resume-eligible CLI session wor
   let reservedPath: string;
   let freePath: string;
 
+  /*
+   * FNXC:WorktreeReclaim 2026-08-23-18:30:
+   * FN-9162 (3b0a6b795f) made `enforceWorktreeCap` count only directories it can PROVE are linked
+   * worktrees of this checkout (`isReclaimableWorktreeCandidate`: a `.git` gitdir pointer under the
+   * root admin dir, else a `git rev-parse --git-common-dir` match, else fail closed). A bare temp
+   * directory is therefore not cap pressure at all. These fixtures always meant "a linked worktree
+   * of rootDir", so they now say so with the gitdir pointer file instead of relying on the old
+   * name-only scan.
+   */
+  function makeLinkedWorktree(name: string): string {
+    const path = join(worktreesDir, name);
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, ".git"), `gitdir: ${join(rootDir, ".git", "worktrees", name)}\n`, "utf8");
+    return path;
+  }
+
   beforeEach(() => {
     rootDir = mkdtempSync(join(tmpdir(), "kb-selfheal-cli-"));
     worktreesDir = join(rootDir, ".worktrees");
+    mkdirSync(join(rootDir, ".git", "worktrees"), { recursive: true });
     mkdirSync(worktreesDir, { recursive: true });
-    reservedPath = join(worktreesDir, "wt-reserved");
-    freePath = join(worktreesDir, "wt-free");
-    mkdirSync(reservedPath);
-    mkdirSync(freePath);
+    reservedPath = makeLinkedWorktree("wt-reserved");
+    freePath = makeLinkedWorktree("wt-free");
   });
 
   afterEach(() => {
@@ -53,7 +68,7 @@ describe("self-healing idle-worktree sweeps skip resume-eligible CLI session wor
 
   it("enforceWorktreeCap skips the reserved worktree, reaps the free one", async () => {
     // cap = maxWorktrees(1) * 2 = 2; we have 2 dirs → need 3 to exceed. Add one more.
-    mkdirSync(join(worktreesDir, "wt-extra"));
+    makeLinkedWorktree("wt-extra");
     const store = createStore({ maxWorktrees: 1, recycleWorktrees: false });
     vi.spyOn(worktreePool, "scanIdleWorktrees").mockResolvedValue([reservedPath, freePath, join(worktreesDir, "wt-extra")]);
     const removeSpy = vi.spyOn(worktreePool, "removeWorktree").mockResolvedValue(undefined as never);
@@ -108,7 +123,7 @@ describe("self-healing idle-worktree sweeps skip resume-eligible CLI session wor
   });
 
   it("enforceWorktreeCap skips a worktree backing a live (active-session) executor session", async () => {
-    mkdirSync(join(worktreesDir, "wt-extra"));
+    makeLinkedWorktree("wt-extra");
     const store = createStore({ maxWorktrees: 1, recycleWorktrees: false });
     vi.spyOn(worktreePool, "scanIdleWorktrees").mockResolvedValue([reservedPath, freePath, join(worktreesDir, "wt-extra")]);
     const removeSpy = vi.spyOn(worktreePool, "removeWorktree").mockResolvedValue(undefined as never);

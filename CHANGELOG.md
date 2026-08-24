@@ -2,6 +2,291 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.77.0-beta.8
+
+### Highlights
+
+- Auto-merge no longer merges a task before its workflow code review finishes
+- Tasks whose branch already merged no longer stick as failed with unfinished steps
+- Full Chat gains a resizable docked conversation sidebar and thread-title switching
+- Chat and the mobile nav bar stay usable with the on-screen keyboard open
+- New Iceberg theme, plus chat filter, back arrow, and mailbox task ID fixes
+
+### New
+
+- Full Chat has a resizable docked conversation sidebar; its width and open state persist across sessions.
+- Switch Direct chats straight from the thread title without going back to the conversation list.
+- Added the Iceberg color theme: navy-slate in dark mode, pale blue-gray in light.
+
+### Fixed
+
+- Auto-merge is fenced on satisfied pre-merge gates: the in-review sweep, the column-entry handoff, the unpause re-enqueue, and the pre-dispatch check all service recoveries instead of starting merges. A card merges only when it is merge-confirmed, parked at a merge-region node, recovering an interrupted attempt, or long-quiescent, and a foreign live session always defers. Workspace and shared-branch-group cards follow the same rules.
+- A task whose branch already landed can no longer get stuck as failed with unfinished steps; once landing is proven, incomplete steps are logged rather than blocking finalization. A no-op merge that landed no content still blocks.
+- Restored title-based duplicate redirects in triage, and planning-stall diagnostics now survive a failed audit write instead of being silently marked as throttled.
+- The Chat message box stays visible above the software keyboard on tablets and landscape phones.
+- The mobile navigation bar no longer rises with the on-screen keyboard.
+- The chat conversation switcher dropdown is now visible on narrow chat surfaces.
+- The chat sidebar shows a compact Archived toggle on the tag filter line, and the tag filter has proper inner padding so "All tags" is not cramped.
+- Chat's back button uses a real back arrow icon instead of a text character.
+- Mailbox task links show the real task ID instead of a raw placeholder.
+
+### Performance
+
+- Merge sweep reads are batched, so admission costs a fixed number of queries per poll rather than scaling with the number of cards on the board.
+
+## 0.77.0-beta.7
+
+### Highlights
+
+- Executing agents can no longer create tasks; out-of-scope findings become recommendations
+- Startup crash fixed: Fusion no longer rejects the database it just migrated
+- Auto-merge that runs before a Code Review gate now defers instead of failing the task
+- Board cards open task detail on click again, and empty card areas pan the board
+- OrcaRouter joins the provider list with a startup model-catalog sync
+
+### Breaking
+
+- Agents running a task can no longer create or delegate new tasks. Out-of-scope findings now come back as completion recommendations instead of self-spawned work.
+
+### New
+
+- OrcaRouter is available as a named model provider, with its model catalog synced at startup and surfaced in the auth catalog, onboarding quick start, provider icons, and settings.
+- Quick Chat pop-outs let you keep several conversations open in independent windows, each with its own session preferences.
+- Chat has contextual Find: Ctrl/Cmd+F searches the active conversation list or transcript.
+- Titled AI thinking traces expand and collapse independently across dashboard transcripts.
+- Automated review revisions now converge on a verdict while preserving the full review history, including disputed findings and arbitration.
+- Managed deployments can suppress in-app updates via FUSION_UPDATES_EXTERNALLY_MANAGED, and the updater explains when an npm install path is unsupported.
+
+### Fixed
+
+- Fusion no longer crashes on startup by rejecting a database it had just migrated itself.
+- A task no longer fails permanently when auto-merge runs before its Code Review gate; the merge defers and in-review cards stay out of the merge queue until every enabled pre-merge gate has a result.
+- Clicking a Board task card opens task detail again; panning starts only once horizontal intent is clear, and card bodies pan the Board on desktop and tablet while moves stay in the Move to menu.
+- Workflow steps run by ACP agents (Hermes, Prime, Grok) no longer crash before producing a verdict; ACP sessions now stream events to subscribers as well as callbacks.
+- Planning no longer loops on missed plan-save confirmations; the prompt write is verified with a read-back.
+- Renamed board columns are respected: task moves land on their real workflow lanes, and late workspace repository acquisition is refused based on the task's selected workflow.
+- Workspace auto-merge works for linked task worktrees, stale workspace changes get re-reviewed before landing, and repositories without a remote can land locally.
+- Workspace tasks now run inside one scoped directory with sandbox delegation and clearer merge-door gates.
+- AI merge no longer blocks on its own review protocol markers.
+- Direct chat headers show provider-reported session context usage.
+- Task reset safely fences active planning sessions, releasing held locks while keeping operator input.
+- Task concurrency settings and the capacity actually enforced now agree.
+- Self-healing stops retrying no-progress tasks forever; retries use a persisted budget with backoff before parking for an operator.
+- Impossible auto-archives stop retrying and surface the abandoned archive on the task.
+- Tailscale remote access in the Docker image no longer dies with "process exited 1": the daemon starts in userspace mode when opted in with --tailscale or FUSION_TAILSCALE=1, login state persists across container recreates, and an unreachable or logged-out backend reports an actionable reason.
+
+### Internal
+
+- The bundled dependency-graph plugin tracks the current dashboard task card and scoped-storage APIs.
+
+## 0.77.0-beta.6
+
+### Highlights
+
+- Chat logs and supported file-editor saves up to 2 MiB save without payload errors
+- Workspace merges stop retry-looping once repositories have already landed
+- Single-repository worktree acquisition works again, with no destructive validation retries
+- Settings keeps the installed-update restart prompt when you reopen it
+
+### Fixed
+
+- Larger chat logs and supported file-editor saves now go through instead of failing with a payload error; the chat and escaped-file routes accept up to 2 MiB while every other route keeps the default limit.
+- Workspace merge retries no longer loop after their repositories have landed. Durable landing obligations are preserved, and workspace merge failures are reported truthfully instead of being retried away.
+- Single-repository worktree acquisition is restored, and deterministic acquisition validation failures now stop instead of retrying destructively. Branch-write provenance is enforced across production callers.
+- Reopening Settings after an update installs no longer loses the restart prompt; the outgoing dashboard process keeps reporting its pending install until it is replaced.
+
+## 0.77.0-beta.5
+
+### Highlights
+
+- Complex requests stay one planned task — automatic task splitting is removed
+- Workspace tasks can share one custom branch across every sub-repo, or derive it from JIRA
+- Docker image ships git-lfs, so LFS-tracked files check out as real content, not stubs
+- Mobile task creation and Board/List navigation now reachable from every project view
+- Approved AI merge reviews land instead of dropping into corrective merge loops
+
+### Breaking
+
+- Complex requests are kept as a single planned task. Task splitting, split-driven parent deletion, and the dashboard subtask and planning fan-out routes are removed.
+
+### New
+
+- Workspace tasks can use one custom branch name across every sub-repository, including reusing an existing branch, with task-aware PR heads and collision attach.
+- Workspace branch names can be derived from configured JIRA issues.
+- Mobile task creation and Board/List navigation are available from every project view, with Planning quick entry preserved.
+- The Activity Log supports exact task-ID search, composable with project and event-type filters.
+- Update installation and restart are now independent controls, and dashboard update restarts wait for the installed version before reloading.
+- Start a new chat directly from the header of an active conversation.
+
+### Fixed
+
+- The Docker image installs git-lfs, so LFS-tracked files check out as real content instead of ~130-byte pointer stubs on an apparently clean tree.
+- Desktop Board dragging works again from safe empty-column surfaces; mobile Board scrolling and column snapping are unchanged.
+- Approved AI merge reviews no longer enter corrective merge loops — findings are stored with the task and the same candidate is confirmed before landing.
+- Multi-repository merges stay live through long AI land operations by renewing repository land leases.
+- Multi-repository tasks no longer review or recover clean unrelated repositories.
+- Clearing a Task Detail description deletes the task through your configured confirmation preference.
+- Soft-deleting a task can explicitly remove incoming dependency references.
+- Dashboard chat textareas autosize through five lines and shrink again when content is removed; no mouse resizing.
+- Task Chat's model selector is as wide as Direct Chat's, so model names stay readable.
+- Starting a new idle chat no longer raises a false interrupted-response save warning.
+- Failing or stalled audit telemetry no longer delays task lifecycle operations, engine recovery, merge work, deleted-task outbox delivery, workflow recovery, reservation cleanup, or detached memory captures.
+
+### Internal
+
+- Remaining engine audit telemetry (hold-release, goals, overseer, mesh lease, runtime rotation, column boundaries) routes through the shared bounded emit seam.
+
+## 0.77.0-beta.4
+
+### Highlights
+
+- Workspace tasks get per-repo verified base branches and can add repositories after setup
+- Move tasks from a Move to menu on Board and List; native drag-and-drop is gone
+- Stop now keeps the partial chat reply, and message edits rewind and resend atomically
+- Two new dashboard themes: Velvet and Medieval, plus bubble or full-width chat layout
+- Merge fixes: foreach tasks no longer stall in review, stuck merging cards clear on interrupt
+
+### New
+
+- Move Board and List tasks from a contextual Move to menu that groups every legal destination in one accessible submenu.
+- Workspace tasks can pick and display a verified base branch per repository, with a safe fallback and durable pinning for landing and revert.
+- Add workspace repositories after a project is registered, and group workspace worktrees beneath configurable workspace roots.
+- Two new themes: Velvet (plum and burgundy dark, blush-white light) and Medieval (parchment surfaces, wood-framed modals, bundled pixel font with no CDN request).
+- Project Appearance preference for bubble or full-width chat messages, applied across normal, Quick, dock, Activity, and Planner Chat.
+- Sort every Board column and the paged Archive by arrival or task ID; Board lanes keep their local sort choice.
+- Task-detail Chat now uses the Direct Chat default model with task-aware context, plus model and thinking controls.
+- Model selectors expose the thinking levels a model actually supports, including Max; custom-provider models offer Off through Max and send the selected effort.
+- Copy the displayed task Activity Feed logs with one localized action.
+- Choose English, the input language, or the interface language for AI-authored task text.
+- New project setting requires a quality-first recommendation evaluation when a task completes.
+- Mission features gain done-credit via reverse lineage, re-point and unlink agent tools, and live unlink updates over SSE.
+- Desktop Board background drag panning across workflow columns, safe against text, cards, and controls.
+- Project and workflow model overrides are organized into one Settings group.
+- `pnpm dev --isolated` runs the dev server against its own database, settings, and project directory, so it no longer adopts a live instance's tasks.
+- Merge-boundary proof parks are now recorded in run-audit history with closed reason codes.
+
+### Fixed
+
+- Freshly generated Remote Access links authenticate immediately, and a Cloudflare tunnel URL is labeled correctly instead of as a Tailnet URL.
+- Completed foreach workflow tasks no longer stall indefinitely in merge review.
+- Interrupted manual merges clear their merging status instead of leaving cards stuck, including on SIGINT, SIGTERM, and SIGHUP.
+- Blocked AI merge reviews no longer retry as git conflicts, and unavailable merge diagnostics survive every merge dispatch path.
+- Windows-locked AI merge clean-room worktrees are reliably reclaimed, and a blocked bundled PostgreSQL library now recovers automatically when antivirus interferes.
+- Multi-repository tasks can no longer use a workspace-root worktree; stale routing metadata is repaired without losing sub-repository progress.
+- Files Changed stays scoped to task-owned files after a rebase, omitting unproven remote changes.
+- Chat composers cap at five lines and scroll long drafts, resize from the top edge, and restore their height after a draft is cleared.
+- Direct and room chat transcripts stay visible during background refresh; Chat navigation is now a conversation list plus a full-pane detail.
+- Chat source links stay complete and readable and open in a new tab with `noopener noreferrer`.
+- Task Chat context stays bound to the selected project even when its engine is unavailable.
+- Saved custom providers are recognized, and built-in model catalogs refresh live.
+- New Task keeps workflow choices and adds a guarded Start action for manual-intake workflows; disabled built-in workflows no longer appear in selectors.
+- Refinement follow-ups route straight into the workflow's planning lane; short untitled tasks get a deterministic title, and automatic title summarization is project-controlled.
+- Project onboarding now produces task-ready Git repositories or fails closed.
+- Oversized task drafts can no longer exhaust browser storage: free text is capped at 64,000 bytes and stale entries are reclaimed.
+- The duplicate "Move to Planning" entry is gone from review-lane task cards, and duplicate Task Failed activity entries no longer appear.
+- Mounted Appearance settings apply immediately from either Settings view, and the conversation layout setting is findable in Settings search.
+- Mobile Board column releases settle smoothly into the valid column.
+- Audit telemetry failures can no longer stall or abort task execution.
+
+### Internal
+
+- Restored the production i18n catalog lint guardrail and kept all supported app catalogs structurally synchronized.
+- Removed retired Board compatibility styling with no change to live scrolling behavior.
+
+## 0.77.0-beta.3
+
+### Highlights
+
+- Remote login links mint an expiring session cookie instead of handing over the dashboard token
+- Idle and paused projects drop from ~98% CPU toward under 50% via 60s outbox polling
+- Terminal sessions are shared across browsers, with Reopen and close-here vs end-session
+- Starting Fusion no longer stalls on onboarding prompts on a working Postgres install
+- New Prometheus /metrics endpoint on the dashboard port for runtime and project metrics
+
+### Security
+
+- Remote login links no longer redirect with the dashboard's non-expiring token in the URL. Opening `/remote-login` now sets an opaque, expiring, revocable HttpOnly session cookie, so revoking a remote token actually logs the recipient out. Persistent links get a 30-day in-memory session; short-lived links can never outlive the token that authorised them.
+- Starting a remote tunnel with no engine running now reports `stopped` with a clear reason instead of claiming it is starting.
+
+### New
+
+- `pnpm dev --tunnel` publishes a dev server through a Cloudflare quick tunnel and prints the public URL. Accepts `--tunnel=PORT` plus `FUSION_DEV_TUNNEL`/`FUSION_DEV_TUNNEL_PORT`; tunnel failure is non-fatal and watch-mode restarts keep the same shared link alive.
+- Terminal sessions are now shared across browsers. A browser with no stored tabs adopts the server's running sessions instead of spawning its own PTY, closing a tab asks whether to close here or end the session, and a footer Reopen control reattaches to detached sessions.
+- A `GET /metrics` endpoint on the dashboard exposes runtime metrics (CPU time, heap/RSS, request count and latency, child-process and git spawns) and domain metrics (active/idle projects, board tasks, running agents, Postgres queries per second) in Prometheus text format. The body is unauthenticated on the existing dashboard port — bind to a trusted network if that matters.
+
+### Performance
+
+- Idle task-lifecycle outbox consumers back off from a fixed 5s poll toward a 60s cadence with jitter, so paused and idle projects stop the poll storm that pinned CPU near 98%. A new event mid-backoff snaps the cadence back to 5s, and delivery ordering and at-least-once guarantees are unchanged.
+
+### Fixed
+
+- Starting Fusion on a working install no longer auto-launches onboarding and no longer stops dead on "Run ai provider setup now?" — the initialized-install check now recognises an embedded Postgres data directory, and auto-launched onboarding runs non-interactively. Explicit `fn onboard` keeps every step.
+- Onboarding always creates the central database instead of asking, since declining produced an install Fusion cannot run on and blocked non-interactive startups.
+- Remote tunnels target the dashboard's actual bound port instead of hardcoding 4040, so a `--port` override or an ephemeral rebind no longer publishes a tunnel to whatever else owns 4040.
+- `pnpm dev --tunnel` now tunnels the dev server's real port, prints its real bearer token and a ready-to-open `?token=` link, and waits for the server to come up rather than publishing a URL to another instance.
+- The tunnel URL is now readable in the dashboard TUI as its own Tunnel row — including operator-started remote tunnels — instead of being painted over by the TUI, and the row is measured so a long trycloudflare hostname cannot squeeze itself out of the panel.
+- Pressing Enter on the TUI System panel no longer kills the TUI when no URL opener is installed.
+- Stopping `pnpm dev` with a signal now tears down the dev server and its tunnel instead of orphaning a live public URL.
+- A persistent remote link no longer expires after 15 minutes.
+- Reconnecting to a terminal no longer duplicates its history, and two browsers sharing a session now size the PTY to the smallest attached viewer instead of last-writer-wins. Attaching a new viewer also no longer eats queued output from everyone already watching.
+
+### Internal
+
+- The agent session terminal clears before replaying scrollback, matching its protocol; unused central-DB path plumbing was dropped from the backup manager.
+- Repaired four red workspace-merge tests caused by a stale module mock.
+
+## 0.77.0-beta.2
+
+### Highlights
+
+- Docker images now clone over HTTPS, build without OOM, and ship gh, ripgrep, and cloudflared
+- A provider's first-ever login no longer fails silently with "Login did not complete"
+- Fusion sets its own git identity, so auto-merge no longer stalls on hosts with no git config
+- Paused projects stop the periodic git churn behind 61-70% engine CPU
+- ACP agents such as Hermes ACP and Prime can now call Fusion's fn_* custom tools
+
+### New
+
+- ACP runtimes can expose Fusion custom tools (fn_*) to external agents such as Hermes ACP and Prime, over a per-session authenticated bridge.
+- The Docker image ships the GitHub CLI, tailscale, and cloudflared alongside git and ripgrep, so gh-cli auth and dashboard remote access work in a container. Running tailscaled still needs `--cap-add NET_ADMIN --device /dev/net/tun`.
+- Grok 4.6 is available in the built-in Grok catalog across every model picker.
+- Mailbox messages and chat conversations now have archive and restore views.
+- Managers can review and coach evaluation results for agents in their reporting tree.
+
+### Fixed
+
+- A provider's first login on a fresh install (new container, new machine, wiped ~/.fusion) completed OAuth but wrote nothing and reported a generic failure. Login failures now surface the server's own reason, so an OAuth state mismatch reads as a stale-tab instruction.
+- OpenAI Codex login never opened a browser: its first prompt asks Browser vs Device code, and that choice was answered with the paste-code wait until the 30s timeout.
+- Provider sign-in now uses a persistent dialog that keeps the paste field, status, and Submit button visible, in both first-run onboarding and Settings. A second account keeps its own inline field.
+- Onboarding offers a default model as soon as a provider connects, instead of staying on "No models available yet", and marks itself complete even if the settings write fails.
+- Browser first-run no longer shows the "Connect remote Fusion server" card, which only applies to the native shell.
+- HTTPS git clones in Docker failed with "server certificate verification failed" because the image carried no CA certificates, making project setup impossible in a container.
+- The Docker image build no longer runs out of memory on a stock 8GB Docker Desktop VM, and a fresh named volume now starts up with correct permissions for embedded Postgres. Bind mounts still need a host-side `chown -R 1000:1000`.
+- Merge commits, merger amends, and experiment git operations now carry an explicit identity: your commitAuthor settings, else the acting agent, else Fusion. Set `commitAuthorEnabled: false` to keep ambient git config.
+- Typing in the Quick Add model dropdown filter box narrows the model list again, and the collapse/expand toggle in model dropdowns works.
+- The Quick Add model menu labels the merger row "Merger" with spacing matching the other roles.
+- New Task inherits the workflow selected in Board or List.
+- Task detail shows the Recommendations tab only when that completed task actually has recommendations.
+- Floating windows have even space on the right and bottom edges, with resize handles on the east, north-east, and south-east edges of every desktop floating window.
+- Gridlock alerts no longer repeat when detection briefly clears.
+- Mission reconciliation no longer fails every cycle with an internal scheduler error, and one bad slice no longer takes down the pass.
+- Approval audit timelines stay in lifecycle order when events share a timestamp.
+- Recovery rebounds and in-review branch rebinds keep the task's checkout instead of losing it to the idle sweep.
+
+### Breaking
+
+- Stuck-task tagging is gone from the dashboard: no Stuck badges, no stuck card styling, no footer stuck count. The timeout setting remains and engine recovery sweeps still use it.
+
+### Performance
+
+- Self-healing no longer runs its periodic git sweeps on paused projects, and git-heavy repair steps drop to at most hourly on active ones, with done-task merge recovery capped at 25 candidates per cycle. Database and filesystem housekeeping keeps its normal cadence.
+- The scheduler reads each task's workflow selection once per poll tick instead of about six times, cutting CPU and health-API latency.
+
+### Internal
+
+- Bundled Pi runtime upgraded from 0.82.1 to 0.84.1 for updated provider and model support.
+- Removed stale taskStuck exports, aliases, and TypeScript path mappings left behind by the dashboard helper deletion.
+
 ## 0.77.0-beta.1
 
 ### Highlights

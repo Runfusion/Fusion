@@ -55,12 +55,72 @@ export function getRequiredPluginIdForBuiltinWorkflow(id: string): string | unde
   return PLUGIN_GATED_BUILTIN_WORKFLOWS.get(id);
 }
 
+/*
+ * FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+ * Project workflow toggles use the catalog's normal-workflow membership rather than a
+ * client-maintained list. Fragments and deprecated definitions remain resolvable for
+ * compatibility, but cannot be enabled for new work; plugin-gated definitions are
+ * eligible only when the settings boundary confirms their plugin is installed.
+ */
+export function isBuiltinWorkflowToggleEligible(id: string): boolean {
+  const workflow = BUILTIN_WORKFLOWS.find((candidate) => candidate.id === id);
+  return Boolean(workflow && workflow.kind !== "fragment" && !isBuiltinWorkflowDeprecated(id));
+}
+
+export function toggleEligibleBuiltinWorkflowIds(): string[] {
+  return BUILTIN_WORKFLOWS
+    .filter((workflow) => isBuiltinWorkflowToggleEligible(workflow.id))
+    .map((workflow) => workflow.id);
+}
+
 export function defaultEnabledBuiltinWorkflowIds(): string[] {
-  return BUILTIN_WORKFLOWS.filter(
-    (workflow) => workflow.kind !== "fragment"
-      && !isBuiltinWorkflowPluginGated(workflow.id)
-      && !isBuiltinWorkflowDeprecated(workflow.id),
-  ).map((workflow) => workflow.id);
+  return toggleEligibleBuiltinWorkflowIds().filter((id) => !isBuiltinWorkflowPluginGated(id));
+}
+
+/** Validate the shape and catalog membership of a persisted enablement list. */
+export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value is string[] | null | undefined {
+  if (value === undefined || value === null) return;
+  if (!Array.isArray(value)) {
+    throw new Error("enabledBuiltinWorkflowIds must be an array or null");
+  }
+  if (value.length === 0) {
+    throw new Error("enabledBuiltinWorkflowIds must keep at least one built-in workflow enabled");
+  }
+  const seen = new Set<string>();
+  for (const rawId of value) {
+    if (typeof rawId !== "string" || !isBuiltinWorkflowToggleEligible(rawId)) {
+      throw new Error(`enabledBuiltinWorkflowIds contains an unknown, deprecated, fragment, or invalid workflow id: ${String(rawId)}`);
+    }
+    if (seen.has(rawId)) {
+      throw new Error(`enabledBuiltinWorkflowIds contains duplicate workflow id: ${rawId}`);
+    }
+    seen.add(rawId);
+  }
+}
+
+/** Resolve the effective enabled set in catalog order. */
+export function effectiveEnabledBuiltinWorkflowIds(enabledIds?: readonly string[]): string[] {
+  const configured = enabledIds === undefined
+    ? new Set(defaultEnabledBuiltinWorkflowIds())
+    : new Set(enabledIds);
+  return toggleEligibleBuiltinWorkflowIds().filter((id) => configured.has(id));
+}
+
+/*
+ * FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+ * `DEFAULT_WORKFLOW_ID` remains the catalog identity of Coding. Routing a new or
+ * unselected task instead uses the first enabled catalog workflow when a configured
+ * built-in default is disabled; custom defaults remain explicit and untouched.
+ */
+export function resolveEffectiveDefaultWorkflowId(
+  configuredWorkflowId?: string | null,
+  enabledIds?: readonly string[],
+): string {
+  const enabled = effectiveEnabledBuiltinWorkflowIds(enabledIds);
+  const configured = configuredWorkflowId?.trim();
+  if (configured && !isBuiltinWorkflowId(configured)) return configured;
+  if (configured && enabled.includes(configured)) return configured;
+  return enabled[0] ?? defaultEnabledBuiltinWorkflowIds()[0] ?? DEFAULT_WORKFLOW_ID;
 }
 
 function ceCodeReviewOptionalGroupNode(column: string): WorkflowIrNode {
@@ -297,10 +357,20 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
         ...(hasCodeReview ? [codeReviewRemediationNode("in-progress")] : []),
       ]
     : [];
+  /*
+   * FNXC:PlanReviewNoOp 2026-08-22-03:37:
+   * Optional Plan Review is available on linear built-ins too. CLOSE_NO_OP needs an explicit
+   * terminal action rather than falling through the ordinary success path, or duplicate plans
+   * hold indefinitely despite a valid reviewer verdict.
+   */
+  const noOpTerminalNode: WorkflowIrNode | undefined = hasPlanReview
+    ? { id: "plan-review-no-op", kind: "gate", column: "todo", config: { workflowAction: "plan-review-no-op" } }
+    : undefined;
   const nodes: WorkflowIr["nodes"] = [
     { id: "start", kind: "start" },
     ...workflowNodes,
     ...remediationNodes,
+    ...(noOpTerminalNode ? [noOpTerminalNode] : []),
     { id: "end", kind: "end" },
   ];
   const edges: WorkflowIr["edges"] = [];
@@ -328,6 +398,8 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
    */
   if (hasPlanReview) {
     edges.push({ from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" });
+    edges.push({ from: "plan-review", to: "plan-review-no-op", condition: "outcome:close-no-op" });
+    edges.push({ from: "plan-review-no-op", to: "end", condition: "success" });
   }
   if (hasBrowserVerification) {
     edges.push({

@@ -236,6 +236,88 @@ describe("acquireTaskWorktree", () => {
     expect(ungrouped.branch).toBe("fusion/fn-103");
   });
 
+  it("adopts a registered pre-fix task checkout before attempting fresh creation", async () => {
+    const rootDir = makeRepo();
+    const orphanedPath = join(rootDir, ".worktrees", "pre-fix-fn-1");
+    mkdirSync(dirname(orphanedPath), { recursive: true });
+    git(rootDir, `git worktree add -b fusion/fn-1 ${JSON.stringify(orphanedPath)} main`);
+    writeFileSync(join(orphanedPath, "preserved.txt"), "keep this checkout\n", "utf-8");
+    git(orphanedPath, "git add preserved.txt");
+    git(orphanedPath, 'git commit -m "FN-1: preserved pre-fix work"');
+    const canonicalOrphanedPath = realpathSync(orphanedPath);
+    const preservedTip = git(orphanedPath, "git rev-parse HEAD");
+    const createWorktree = vi.fn();
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: null, branch: null },
+      rootDir,
+      store,
+      settings: {},
+      createWorktree,
+    });
+
+    expect(result).toMatchObject({ worktreePath: canonicalOrphanedPath, branch: "fusion/fn-1", source: "existing" });
+    expect(git(orphanedPath, "git rev-parse HEAD")).toBe(preservedTip);
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
+      worktree: canonicalOrphanedPath,
+      branch: "fusion/fn-1",
+      branchWriteOrigin: "engine",
+    });
+  });
+
+  it("persists a fresh canonical assignment through strict provenance validation", async () => {
+    const rootDir = makeRepo();
+    const strictStore = {
+      ...store,
+      updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => {
+        if (patch.branch !== undefined && patch.branchWriteOrigin === undefined) {
+          throw new Error("branchWriteOrigin is required when branch is provided");
+        }
+      }),
+    };
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: null, branch: null },
+      rootDir,
+      store: strictStore,
+      settings: {},
+    });
+
+    expect(result.source).toBe("fresh");
+    expect(strictStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({
+      worktree: result.worktreePath,
+      branch: "fusion/fn-1",
+      branchWriteOrigin: "engine",
+    }));
+  });
+
+  it("compensates a post-create assignment failure without deleting the task branch", async () => {
+    const rootDir = makeRepo();
+    let createdPath: string | undefined;
+    const rejectingStore = {
+      ...store,
+      updateTask: vi.fn().mockRejectedValue(new Error("simulated assignment persistence failure")),
+    };
+    const createWorktree = vi.fn(async (branchName: string, path: string, _taskId: string, startPoint?: string) => {
+      createdPath = path;
+      git(rootDir, `git worktree add -b ${branchName} ${JSON.stringify(path)} ${startPoint ?? "main"}`);
+      return { path, branch: branchName };
+    });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: null, branch: null },
+      rootDir,
+      store: rejectingStore,
+      settings: {},
+      createWorktree,
+    })).rejects.toThrow("simulated assignment persistence failure");
+
+    expect(createdPath).toBeDefined();
+    expect(existsSync(createdPath!)).toBe(false);
+    expect(git(rootDir, "git show-ref --verify --quiet refs/heads/fusion/fn-1; echo $?")) .toBe("0");
+  });
+
   it("creates fresh worktrees from the integration branch instead of ambient root HEAD", async () => {
     const rootDir = makeRepo();
     writeFileSync(join(rootDir, "foreign.txt"), "foreign\n", "utf-8");
@@ -286,7 +368,7 @@ describe("acquireTaskWorktree", () => {
       "main",
       expect.objectContaining({ requestingTaskId: "FN-1" }),
     );
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled", branch: "fusion/fn-1" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled", branch: "fusion/fn-1", branchWriteOrigin: "engine" });
     expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/pooled", undefined);
   });
 
@@ -362,7 +444,7 @@ describe("acquireTaskWorktree", () => {
       type: "worktree:incomplete-detected",
       metadata: expect.objectContaining({ classification: "unregistered", source: "resume" }),
     }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
   });
 
   it.each([
@@ -958,7 +1040,7 @@ describe("acquireTaskWorktree", () => {
       refreshStaleBase: true,
     })).rejects.toThrow(WorktreeBaseRefreshError);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4", { worktree: null, branch: null, sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
     expect(store.updateTask.mock.invocationCallOrder.at(-1)).toBeLessThan(pool.release.mock.invocationCallOrder[0]);
   });
 
@@ -992,8 +1074,8 @@ describe("acquireTaskWorktree", () => {
       target: rootDir,
       metadata: expect.objectContaining({ classification: "repo-root", source: "resume" }),
     }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
   });
 
   it("FN-6922 rejects a canonical-equal resumed repo root before returning", async () => {
@@ -1014,8 +1096,8 @@ describe("acquireTaskWorktree", () => {
     expect(result.worktreePath).toBe(freshPath);
     expect(result.worktreePath).not.toBe(rootDir);
     expect(result.isResume).toBe(false);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
   });
 
   it("FN-6922 self-heals when the return guard catches a mocked repo-root resume", async () => {
@@ -1041,8 +1123,8 @@ describe("acquireTaskWorktree", () => {
       target: rootDir,
       metadata: expect.objectContaining({ classification: "repo-root", source: "acquire-return-guard", returnSource: "existing" }),
     }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
   });
 
   it("FN-6922 throws a typed error when fresh creation returns the repo root", async () => {
@@ -1063,7 +1145,7 @@ describe("acquireTaskWorktree", () => {
       target: rootDir,
       metadata: expect.objectContaining({ classification: "repo-root", source: "acquire-return-guard", returnSource: "fresh" }),
     }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
   });
 
   it("falls through to fresh creation when pool acquire throws PoolDoubleLeaseError", async () => {
@@ -1100,7 +1182,7 @@ describe("acquireTaskWorktree", () => {
     });
     expect(result.source).toBe("fresh");
     expect(createWorktree).toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/new", branch: "fusion/fn-1" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/new", branch: "fusion/fn-1", branchWriteOrigin: "engine" });
   });
 
   it("skips init command when runInitCommand false", async () => {

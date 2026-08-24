@@ -3,7 +3,6 @@ import type {
   PlannerInterventionOutcome,
   PlannerInterventionSourceLink,
   PlannerOversightStage,
-  RunAuditEvent,
 } from "../types.js";
 import { type PlannerInterventionStore, recordPlannerIntervention } from "./planner-intervention.js";
 
@@ -64,7 +63,7 @@ function normalizeAndRecord(
   input: OverseerEventInput,
   action: PlannerInterventionAction,
   defaultOutcome: PlannerInterventionOutcome,
-): RunAuditEvent | Promise<RunAuditEvent> {
+): Promise<void> {
   return recordPlannerIntervention(input.store, {
     taskId: input.taskId,
     runId: input.runId,
@@ -88,7 +87,7 @@ function normalizeAndRecord(
  * action taken). Default outcome: `"succeeded"` (the observation itself always
  * "succeeds"; attempt fields are typically omitted for this category).
  */
-export function emitOverseerObservation(input: OverseerEventInput): RunAuditEvent | Promise<RunAuditEvent> {
+export function emitOverseerObservation(input: OverseerEventInput): Promise<void> {
   return normalizeAndRecord(input, "observe", "succeeded");
 }
 
@@ -97,7 +96,7 @@ export function emitOverseerObservation(input: OverseerEventInput): RunAuditEven
  * Default outcome: `"pending"` (guidance has been injected; whether it lands
  * successfully is determined by a later observation/retry).
  */
-export function emitOverseerSteering(input: OverseerEventInput): RunAuditEvent | Promise<RunAuditEvent> {
+export function emitOverseerSteering(input: OverseerEventInput): Promise<void> {
   return normalizeAndRecord(input, "inject-guidance", "pending");
 }
 
@@ -106,7 +105,7 @@ export function emitOverseerSteering(input: OverseerEventInput): RunAuditEvent |
  * Default outcome: `"pending"`. Callers should supply `attemptCount`/`attemptLimit`
  * so the timeline can render bounded-recovery progress.
  */
-export function emitOverseerRecoveryAttempt(input: OverseerEventInput): RunAuditEvent | Promise<RunAuditEvent> {
+export function emitOverseerRecoveryAttempt(input: OverseerEventInput): Promise<void> {
   return normalizeAndRecord(input, "request-fix", "pending");
 }
 
@@ -115,7 +114,7 @@ export function emitOverseerRecoveryAttempt(input: OverseerEventInput): RunAudit
  * Callers should supply `attemptCount`/`attemptLimit` so the timeline can
  * render bounded-retry progress.
  */
-export function emitOverseerRetry(input: OverseerEventInput): RunAuditEvent | Promise<RunAuditEvent> {
+export function emitOverseerRetry(input: OverseerEventInput): Promise<void> {
   return normalizeAndRecord(input, "retry", "pending");
 }
 
@@ -123,7 +122,7 @@ export function emitOverseerRetry(input: OverseerEventInput): RunAuditEvent | Pr
  * Records a merge/PR confirmation request raised to a human. Default outcome:
  * `"awaiting-confirmation"`.
  */
-export function emitOverseerConfirmation(input: OverseerEventInput): RunAuditEvent | Promise<RunAuditEvent> {
+export function emitOverseerConfirmation(input: OverseerEventInput): Promise<void> {
   return normalizeAndRecord(input, "request-confirmation", "awaiting-confirmation");
 }
 
@@ -133,6 +132,6 @@ export function emitOverseerConfirmation(input: OverseerEventInput): RunAuditEve
  * example a caller may escalate with outcome `"skipped"` when escalation is
  * itself bypassed by a human-control guard.
  */
-export function emitOverseerEscalation(input: OverseerEventInput): RunAuditEvent | Promise<RunAuditEvent> {
+export function emitOverseerEscalation(input: OverseerEventInput): Promise<void> {
   return normalizeAndRecord(input, "escalate", "failed");
 }
