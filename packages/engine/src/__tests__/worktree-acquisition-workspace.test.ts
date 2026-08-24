@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WORKSPACE_GROUP_MARKER_FILENAME,
+  WORKSPACE_RESERVED_TASK_DIR_SEGMENTS,
   workspaceRepoSegment,
   workspaceWorktreeGroupSegment,
   type Settings,
@@ -28,6 +29,7 @@ import {
 } from "../worktree/worktree-acquisition.js";
 import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
 import { cleanupOrphanedWorktrees } from "../worktree/worktree-pool.js";
+import { AI_MERGE_DIRNAME, WORKTREE_RECOVERY_DIRNAME } from "../worktree/worktree-paths.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -987,6 +989,19 @@ describeIfGit("ticket-derived workspace worktree directory names (R14/R16)", { t
     (task as Task).branch = branch;
     return task;
   }
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  Core cannot import engine, so core's reserved-segment list is a forced duplicate of the engine
+  container-directory constants. This drift guard lives on the engine side, where both are
+  importable: a rename on either side that desyncs them stops the fallback ladder from refusing a
+  name that would collide with a real container directory.
+  */
+  it("keeps the reserved-segment list in sync with the engine container-directory constants", () => {
+    expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(AI_MERGE_DIRNAME);
+    expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(WORKTREE_RECOVERY_DIRNAME);
+    expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(WORKSPACE_GROUP_MARKER_FILENAME);
+  });
 
   it("names the checkout after the ticket in the configured grouped layout", async () => {
     fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
