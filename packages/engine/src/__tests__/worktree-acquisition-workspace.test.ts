@@ -1125,9 +1125,10 @@ describeIfGit("ticket-derived workspace worktree directory names (R14/R16)", { t
 
   it("gives a second task with an identical slug its own directory", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
+    // A done sibling counts too: its checkout survives until archive cleanup removes it.
     const sibling = makeTask("FN-9215");
     (sibling as Task).workspaceWorktreeDirSegment = "prd-1234-my-slug";
-    (sibling as Task).column = "in-progress";
+    (sibling as Task).column = "done";
     const { store, current, logs } = makeFakeStore(branchTask("FN-9216", "feature/PRD-1234-MY-SLUG"));
     (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [sibling, current()];
 

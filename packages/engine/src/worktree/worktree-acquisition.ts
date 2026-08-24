@@ -2052,13 +2052,18 @@ function resolveWorkspaceNamingBranch(task: Task): string {
   return recorded ?? resolveTaskWorkingBranch(task);
 }
 
-/** Live pinned segments of other tasks, so a derived name cannot collide with a sibling's directory. */
+/*
+Pinned segments of every non-archived sibling, so a derived name cannot collide with a directory
+another task owns. A `done` task is deliberately INCLUDED: its checkout survives until archive
+cleanup removes it, so reusing its segment would put two tasks in one directory. Archived rows are
+already excluded by the read, and the collision penalty is only a fallback to the task id.
+*/
 async function collectLiveSiblingTaskDirSegments(store: TaskStore, taskId: string): Promise<string[]> {
   try {
     if (typeof store.listTasks !== "function") return [];
     const tasks = await store.listTasks({ slim: true, includeArchived: false });
     return tasks
-      .filter((sibling) => sibling.id !== taskId && sibling.column !== "done")
+      .filter((sibling) => sibling.id !== taskId)
       .map((sibling) => sibling.workspaceWorktreeDirSegment)
       .filter((segment): segment is string => typeof segment === "string" && segment.length > 0);
   } catch {
