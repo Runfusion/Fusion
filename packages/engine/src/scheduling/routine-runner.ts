@@ -9,16 +9,17 @@
 
 import { CronExpressionParser } from "cron-parser";
 import { isInProcessBackupCommand, isInProcessMemoryBackupCommand } from "./cron-runner.js";
-import type {
-  RoutineStore,
-  Routine,
-  RoutineExecutionResult,
-  AutomationRunResult,
-  AutomationStep,
-  AutomationStepResult,
-  Column,
-  TaskCreateInput,
-  TaskStore,
+import {
+  toRunMutationContext,
+  type RoutineStore,
+  type Routine,
+  type RoutineExecutionResult,
+  type AutomationRunResult,
+  type AutomationStep,
+  type AutomationStepResult,
+  type Column,
+  type TaskCreateInput,
+  type TaskStore,
 } from "@fusion/core";
 import type { HeartbeatMonitor } from "../agent-heartbeat.js";
 import type { AiPromptExecutor, AiPromptLiveCallbacks } from "./cron-runner.js";
@@ -305,12 +306,12 @@ export class RoutineRunner {
     }
 
     // FN-4689: close FN-4640 follow-up by wiring routine command sandbox execution through RunAuditor.
-    const engineRunContext: EngineRunContext = {
+    const engineRunContext: EngineRunContext = toRunMutationContext({
       runId: generateSyntheticRunId("routine", routine.id),
       agentId: routine.agentId ?? "routine-runner",
       phase: "routine-execute",
       source: "routine",
-    };
+    });
 
     return createRunAuditor(this.options.taskStore, engineRunContext);
   }

@@ -3669,8 +3669,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async readPreArchiveColumnFromTaskFile(dir: string): Promise<Column | undefined> {
     return readPreArchiveColumnFromTaskFileImpl(this, dir);
   }
-  async unarchiveTask(id: string): Promise<Task> {
-    return unarchiveTaskImpl(this, id);
+  unarchiveTask(id: string, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; unarchive log rows otherwise persist unattributed. */
+  unarchiveTask(id: string, runContext?: RunMutationContext): Promise<Task>;
+  async unarchiveTask(id: string, runContext?: RunMutationContext): Promise<Task> {
+    return unarchiveTaskImpl(this, id, runContext);
   }
   public async moveToDone(task: Task, dir: string): Promise<void> {
     return moveToDoneImpl(this, task, dir);

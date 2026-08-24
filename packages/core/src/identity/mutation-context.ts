@@ -6,16 +6,19 @@ who-did-it belongs in the same row as which-run-did-it. So U18's call-site conve
 constructors at the carrier level, and this module is where they live rather than `actor.ts`, which
 must not depend on the task types.
 
-Both are deliberately narrow, and the difference between them is the point of this unit:
+Three constructors, and the difference between them is the point of this unit:
 
 - `mutationContextForAgent` produces a REAL actor. The agent id is genuine, only the run is unknown,
   so nothing here is a placeholder except `runId`.
+- `toRunMutationContext` converts a pre-identity `{ runId, agentId, ... }` carrier (engine lanes,
+  delete audit contexts) into a `RunMutationContext` by deriving `actor` from `agentId`. Extra
+  fields are preserved. An already-present `actor` wins.
 - `UNATTRIBUTED_MUTATION_CONTEXT` produces NO actor. It is the greppable marker for a call site U18
   converted but could not attribute, and it is what U9 / U11 / U13 must delete as they land.
 */
 
 import type { RunMutationContext } from "../types/task/task-log.js";
-import { UNATTRIBUTED_ACTOR_CONTEXT, actorContextForAgent } from "./actor.js";
+import { UNATTRIBUTED_ACTOR_CONTEXT, actorContextForAgent, type ActorContext } from "./actor.js";
 
 /*
 FNXC:Identity 2026-08-09-03:04:
@@ -66,5 +69,29 @@ export function mutationContextForAgent(agentId: string, runId?: string): RunMut
     runId: runId ?? UNATTRIBUTED_RUN_ID,
     agentId,
     actor: actorContextForAgent(agentId),
+  };
+}
+
+/**
+ * FNXC:Identity 2026-08-24-02:20:
+ * Convert a pre-identity `{ runId, agentId, ... }` carrier into a `RunMutationContext`.
+ *
+ * 1/5 made `actor` required on the persisted carrier while main's engine still constructs the old
+ * two-field shape (heartbeat, executor `EngineRunContext`, triage, merger, delete `auditContext`).
+ * Stacks 2/5–5/5 replace those constructions with authenticated actors; until then a lane that
+ * already knows its agent id must derive a REAL actor (`actorContextForAgent`) rather than stamp
+ * the unattributed marker over a known principal.
+ *
+ * Extra fields (`taskId`, `phase`, `callerKind`, …) are preserved so engine run-audit carriers and
+ * `TaskDeleteAuditContext` can share this helper. An already-present `actor` wins — never overwrite
+ * an authenticated context with a derived one.
+ */
+export function toRunMutationContext<T extends { runId: string; agentId: string }>(
+  ctx: T,
+): T & RunMutationContext {
+  const existing = (ctx as T & { actor?: ActorContext }).actor;
+  return {
+    ...ctx,
+    actor: existing ?? actorContextForAgent(ctx.agentId),
   };
 }

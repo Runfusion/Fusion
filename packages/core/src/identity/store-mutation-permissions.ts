@@ -23,6 +23,7 @@ Two rules for extending it:
 import {
   PLUGIN_ALLOWED_WRITE_METHODS,
   PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS,
+  PLUGIN_READ_SHAPED_WRITE_METHODS,
 } from "../plugin-task-store-gate.js";
 import { isCatalogPermission, type CatalogPermission } from "./permissions.js";
 
@@ -62,6 +63,12 @@ export const TASK_STORE_MUTATION_PERMISSIONS: Readonly<Record<string, CatalogPer
     archiveTask: "tasks:archive",
     unarchiveTask: "tasks:archive",
     updateSettings: "settings:update",
+
+    // Read-prefix names that still mutate. Denied for plugins; mapped so authorization cannot skip them.
+    selectTaskWorkflow: "runtime:task-agent-mutation",
+    selectTaskWorkflowAndReconcile: "runtime:task-agent-mutation",
+    resolveWorkspaceLandIntent: "tasks:merge",
+    resolveOrphanedWorkspaceLandIntent: "tasks:merge",
   });
 
 /**
@@ -91,6 +98,7 @@ export function assertEveryGatedMutationIsMapped(): UnmappedMutationReport[] {
   const gated = new Set<string>([
     ...PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS,
     ...PLUGIN_ALLOWED_WRITE_METHODS,
+    ...PLUGIN_READ_SHAPED_WRITE_METHODS,
   ]);
   for (const member of NON_MUTATING_GATED_MEMBERS) gated.delete(member);
 

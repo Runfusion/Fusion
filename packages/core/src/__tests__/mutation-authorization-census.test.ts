@@ -20,6 +20,7 @@ import {
 import {
   PLUGIN_ALLOWED_WRITE_METHODS,
   PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS,
+  PLUGIN_READ_SHAPED_WRITE_METHODS,
 } from "../plugin-task-store-gate.js";
 import { isCatalogPermission } from "../identity/permissions.js";
 
@@ -37,6 +38,7 @@ describe("mutation-authorization census", () => {
     const scanned = new Set([
       ...PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS,
       ...PLUGIN_ALLOWED_WRITE_METHODS,
+      ...PLUGIN_READ_SHAPED_WRITE_METHODS,
     ]);
     for (const lifecycle of NON_MUTATING_GATED_MEMBERS) scanned.delete(lifecycle);
 

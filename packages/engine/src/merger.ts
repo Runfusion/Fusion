@@ -132,6 +132,8 @@ import {
   classifyTaskBranchOrigin,
   type WorkflowIr,
   type OverlapWaitLandedPath,
+  resolveReviewColumns,
+  toRunMutationContext,
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge/merge-trait.js";
@@ -7042,13 +7044,13 @@ export async function aiMergeTask(
   let branch = resolveTaskWorkingBranch(task);
 
   const mergeRunId = generateSyntheticRunId("merge", taskId);
-  const engineRunContext: EngineRunContext = {
+  const engineRunContext: EngineRunContext = toRunMutationContext({
     runId: mergeRunId,
     agentId: "merger",
     taskId,
     taskLineageId: task.lineageId,
     phase: "merge",
-  };
+  });
   const audit = createRunAuditor(store, engineRunContext);
   const emitReuseHandoffAuditEvent = async (
     type:
@@ -8981,7 +8983,7 @@ export async function aiMergeTask(
                 },
                 settings,
                 options,
-                { runId: mergeRunId, agentId: engineRunContext.agentId },
+                toRunMutationContext({ runId: mergeRunId, agentId: engineRunContext.agentId }),
                 fixAttempt,
                 effectiveTestCommand,
                 effectiveBuildCommand,
@@ -9135,7 +9137,7 @@ export async function aiMergeTask(
               },
               settings,
               options,
-              { runId: mergeRunId, agentId: engineRunContext.agentId },
+              toRunMutationContext({ runId: mergeRunId, agentId: engineRunContext.agentId }),
               fixAttempt,
               effectiveTestCommand,
               effectiveBuildCommand,

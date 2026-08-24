@@ -107,6 +107,20 @@ export const PLUGIN_ALLOWED_WRITE_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * FNXC:PluginTaskStoreGate 2026-08-24-02:20:
+ * Write methods whose names match the read-prefix rule. `select*` and `resolve*` are otherwise
+ * classified as reads, so a plugin could switch a task's workflow or settle a workspace land
+ * intent without declaring anything. Listed here, not in the destructive set: they are not
+ * bulk-delete, but they are not reads. Adding a name is a security decision.
+ */
+export const PLUGIN_READ_SHAPED_WRITE_METHODS: ReadonlySet<string> = new Set([
+  "selectTaskWorkflow",
+  "selectTaskWorkflowAndReconcile",
+  "resolveWorkspaceLandIntent",
+  "resolveOrphanedWorkspaceLandIntent",
+]);
+
+/**
  * FNXC:PluginTaskStoreGate 2026-08-09-03:04:
  * Read classification by verb prefix. A prefix rule is used instead of a 115-entry list because the
  * list would silently fall behind every new read method, and a plugin failing on a harmless getter
@@ -114,8 +128,10 @@ export const PLUGIN_ALLOWED_WRITE_METHODS: ReadonlySet<string> = new Set([
  *
  * The prefix is not trusted blindly: `getDatabase` is read-shaped and hands out a raw SQLite handle,
  * so it stays in the destructive set and is checked BEFORE this function ever runs.
+ * `PLUGIN_READ_SHAPED_WRITE_METHODS` are also excluded: they match the prefix but mutate.
  */
 export function isPluginReadableTaskStoreMember(prop: string): boolean {
+  if (PLUGIN_READ_SHAPED_WRITE_METHODS.has(prop)) return false;
   return /^(get|list|find|has|count|is|resolve|load|read|query|search|select|fetch|peek)[A-Z]?/.test(prop);
 }
 

@@ -336,7 +336,7 @@ function collectTsFiles(dir: string, out: string[] = []): string[] {
     if (entry === "node_modules" || entry === "dist" || entry === "__tests__") continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) collectTsFiles(full, out);
-    else if (entry.endsWith(".ts")) out.push(full);
+    else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) out.push(full);
   }
   return out;
 }
@@ -456,5 +456,18 @@ describe("unattributed actor census (U18 ratchet)", () => {
     expect(derived.actor.actor.id).toBe("agent-7");
     expect(derived.actor.actor.kind).toBe("agent");
     expect(derived.actor.actingFor).toBeUndefined();
+  });
+
+  it("toRunMutationContext derives actor from agentId and preserves extra fields", async () => {
+    const { toRunMutationContext } = await import("../identity/mutation-context.js");
+    const converted = toRunMutationContext({
+      runId: "run-9",
+      agentId: "agent-9",
+      callerKind: "engine" as const,
+    });
+    expect(converted.actor.actor.id).toBe("agent-9");
+    expect(converted.actor.actor.kind).toBe("agent");
+    expect(converted.callerKind).toBe("engine");
+    expect(converted.runId).toBe("run-9");
   });
 });

@@ -752,6 +752,16 @@ export async function findApiKeyByLookupId(
   projectId?: string,
 ): Promise<AgentApiKey | null> {
   if (!lookupId) return null;
+  /*
+  FNXC:Identity 2026-08-24-02:20 (review finding — verification must not run unscoped):
+  `projectScopeFor` returns undefined for a blank/missing projectId and `and(...)` drops that
+  predicate, so this query used to fall back to an unscoped `lookupId` match with `limit(1)` —
+  the exact cross-project token resolution the comment below forbids. Refuse here instead of
+  querying: `verifyApiKeyToken` can pass `this.workflowProjectId`, which is undefined on an
+  unbound store.
+  */
+  const scope = projectId?.trim();
+  if (!scope) return null;
   const rows = await handle
     .select({ data: schema.project.agentApiKeys.data })
     .from(schema.project.agentApiKeys)
@@ -769,7 +779,7 @@ export async function findApiKeyByLookupId(
     */
     .where(and(
       sql`${schema.project.agentApiKeys.data}->>'lookupId' = ${lookupId}`,
-      projectScopeFor(schema.project.agentApiKeys.projectId, projectId),
+      eq(schema.project.agentApiKeys.projectId, scope),
     ))
     .limit(1);
   return (rows[0]?.data as AgentApiKey | null) ?? null;
