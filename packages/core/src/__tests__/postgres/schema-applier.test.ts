@@ -116,6 +116,7 @@ import {
   TASK_PLANNING_FAILURE_VERSION,
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
+  WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -171,8 +172,10 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PATCHNODE_ENTRIES_VERSION).toBe("0071");
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0073");
+    expect(OVERLAP_WAIT_SYNC_VERSION).toBe("0084");
+    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION).toBe("0086");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0087");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {

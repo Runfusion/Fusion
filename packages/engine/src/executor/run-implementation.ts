@@ -63,6 +63,7 @@ import {
   resolveAgentActivityAttribution,
   serializeRetryStormError,
   isLegacyWorkspaceWorktreeLayout,
+  resolveWorkspaceTaskDirSegment,
   resolveWorkspaceTaskWorktreeDir,
   resolveSandboxBackend as resolveConfiguredSandboxBackend,
 } from "@fusion/core";
@@ -859,7 +860,7 @@ export async function runImplementation(
       worktreePath = acquisition.worktreePath;
       const sessionBoundary = hasWorkspaceRepos && deps.workspaceConfig
         ? (() => {
-            const taskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, task.id);
+            const taskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, resolveWorkspaceTaskDirSegment(task));
             const legacyLayout = isLegacyWorkspaceWorktreeLayout(task, taskDir);
             if (legacyLayout) {
               const repoRelPath = deps.workspaceConfig!.repos.find((repo) => task.workspaceWorktrees?.[repo]?.worktreePath === worktreePath);

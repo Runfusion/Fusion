@@ -9,7 +9,7 @@ root. The TaskStore is an in-memory fake (no DB / no network) per FN-5048 — re
 git only where the invariant needs it; everything else is a narrow seam.
 */
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -23,6 +23,7 @@ import {
 import {
   acquireTaskWorktree,
   acquireWorkspaceRepoWorktree,
+  acquireWorkspaceTaskWorktrees,
   WorkspaceRepoAcquireBusyError,
 } from "../worktree/worktree-acquisition.js";
 import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
@@ -829,5 +830,142 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
       branch: result.branch,
       branchWriteOrigin: "engine",
     });
+  });
+});
+
+/*
+FNXC:WorkspaceWorktree 2026-08-23-19:52:
+R15: the workspace task directory segment is minted once, at first acquisition, and every later
+resolution reads that pin. These tests drive the production task-level acquisition seam against the
+real two-repository fixture, because the failure this pin prevents is a path disagreement between
+what was recorded and what a later resolution derives.
+*/
+describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 }, () => {
+  let fixture: WorkspaceFixture | undefined;
+
+  afterEach(() => fixture?.cleanup());
+
+  it("mints the historic task-id segment at first acquisition and records it on the task", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current } = makeFakeStore(makeTask("FN-PIN-1"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-1");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-pin-1"));
+    expect(result.taskWorktreeDir.endsWith(join(".fusion", "worktrees", current().workspaceWorktreeDirSegment!))).toBe(true);
+    expect(existsSync(result.taskWorktreeDir)).toBe(true);
+  });
+
+  it("reuses an existing pin verbatim instead of re-deriving it from the task", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const pinned = makeTask("FN-PIN-2");
+    (pinned as Task).workspaceWorktreeDirSegment = "prd-1234-my-slug";
+    const { store, current, patches } = makeFakeStore(pinned);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(patches.some((patch) => "workspaceWorktreeDirSegment" in patch)).toBe(false);
+    for (const repoRelPath of fixture.repos) {
+      expect(current().workspaceWorktrees?.[repoRelPath]?.worktreePath).toBe(join(result.taskWorktreeDir, repoRelPath));
+    }
+  });
+
+  it("mints in the configured grouped layout as well as the unset layout", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const configuredRoot = join(fixture.rootDir, "trees-root");
+    const { store, current } = makeFakeStore(makeTask("FN-PIN-3"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreesDir: configuredRoot },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-3");
+    expect(result.taskWorktreeDir).toBe(join(configuredRoot, workspaceWorktreeGroupSegment(fixture.rootDir), "fn-pin-3"));
+    expect(existsSync(result.taskWorktreeDir)).toBe(true);
+  });
+
+  it("keeps a pre-pinning task on its recorded legacy paths", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const legacy = makeTask("FN-PIN-4");
+    const legacyPath = join(fixture.repoPath("repo-a"), ".worktrees", "fn-pin-4");
+    (legacy as Task).workspaceWorktrees = { "repo-a": { worktreePath: legacyPath, branch: "fusion/fn-pin-4" } } as Task["workspaceWorktrees"];
+    const { store, current } = makeFakeStore(legacy);
+    const acquired = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+    expect(acquired.worktreePath).toBe(legacyPath);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    // Legacy classification wins: the session root stays the recorded per-repository path.
+    expect(result.taskWorktreeDir).toBe(legacyPath);
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(legacyPath);
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-23-19:52:
+  Structural guard, not prose: a call site that passes a task id straight into
+  resolveWorkspaceTaskWorktreeDir re-derives its own segment and reintroduces the split-directory
+  failure the pin exists to prevent. Every production call site must route through
+  resolveWorkspaceTaskDirSegment.
+  */
+  it("resolves every production workspace task directory through the pin reader", () => {
+    const roots = [
+      join(import.meta.dirname, "..", "..", "..", "engine", "src"),
+      join(import.meta.dirname, "..", "..", "..", "core", "src"),
+      join(import.meta.dirname, "..", "..", "..", "cli", "src"),
+    ];
+    const offenders: string[] = [];
+    const visit = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "__tests__") continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { visit(full); continue; }
+        if (!entry.name.endsWith(".ts")) continue;
+        const source = readFileSync(full, "utf8");
+        for (const call of source.matchAll(/resolveWorkspaceTaskWorktreeDir\(([^;]*?)\)/gs)) {
+          const args = call[1];
+          if (/\bresolveWorkspaceTaskDirSegment\(/.test(args)) continue;
+          if (full.endsWith(join("tasks", "worktree-layout.ts"))) continue; // the definition itself
+          offenders.push(`${full}: ${args.replace(/\s+/g, " ").slice(0, 120)}`);
+        }
+      }
+    };
+    for (const root of roots) visit(root);
+    expect(offenders).toEqual([]);
   });
 });

@@ -3165,6 +3165,7 @@ export {
   resolveWorktreesDirCandidates,
   isStrictDescendantPath,
   resolveWorkspaceTaskWorktreeDir,
+  resolveWorkspaceTaskDirSegment,
   resolveWorkspaceRepoWorktreePath,
   isLegacyWorkspaceWorktreeLayout,
 } from "./tasks/worktree-layout.js";

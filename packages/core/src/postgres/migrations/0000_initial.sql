@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   source_issue_closed_at text,
   merge_details jsonb,
   workspace_worktrees jsonb,
+  workspace_worktree_dir_segment text,
   repository_scope jsonb,
   break_into_subtasks integer DEFAULT 0,
   no_commits_expected integer DEFAULT 0,
