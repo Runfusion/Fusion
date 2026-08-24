@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { join } from "node:path";
 import { canonicalStepInstanceBranchName, planTaskWorktreePath, resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
 
 describe("resolveTaskWorkingBranch", () => {
@@ -44,5 +45,59 @@ describe("planTaskWorktreePath", () => {
       { id: "FN-258", description: "unused", worktree: "/existing" },
       "/repo",
     )).toBe("/existing");
+  });
+});
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14: the `branch` naming mode has to work on the SINGLE-repository path too, or an operator who
+selects it for a normal project silently gets random names. This is the planner site (scheduler
+dispatch and the manual-move route); the acquisition-time site is covered in
+worktree-acquisition-workspace.test.ts. The fallback ladder is shared with the workspace path, so
+these cases pin the wiring and the degradation, not the slug algorithm.
+*/
+describe("planTaskWorktreePath branch naming", () => {
+  const rootDir = "/tmp/fn-branch-naming-root";
+  const task = (overrides: Record<string, unknown> = {}) => ({
+    id: "FN-9300",
+    title: "A title",
+    description: "a description",
+    branch: "feature/PRD-1234-my-slug",
+    ...overrides,
+  });
+
+  it("names the directory after the ticket the branch identifies", () => {
+    expect(planTaskWorktreePath(task(), rootDir, new Set(), { worktreeNaming: "branch" }))
+      .toBe(join(rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+  });
+
+  it("drops the namespace and lowercases", () => {
+    expect(planTaskWorktreePath(task({ branch: "PRD-1234-MY-SLUG" }), rootDir, new Set(), { worktreeNaming: "branch" }))
+      .toBe(join(rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+  });
+
+  it("falls back to the task id for a branch that slugs to empty", () => {
+    expect(planTaskWorktreePath(task({ branch: "feature/---" }), rootDir, new Set(), { worktreeNaming: "branch" }))
+      .toBe(join(rootDir, ".fusion", "worktrees", "fn-9300"));
+  });
+
+  it("falls back to the task id for a reserved container name in any case", () => {
+    expect(planTaskWorktreePath(task({ branch: "feature/.AI-Merge" }), rootDir, new Set(), { worktreeNaming: "branch" }))
+      .toBe(join(rootDir, ".fusion", "worktrees", "fn-9300"));
+  });
+
+  it("falls back to the task id when the slug is already reserved in this dispatch", () => {
+    expect(planTaskWorktreePath(task(), rootDir, new Set(["prd-1234-my-slug"]), { worktreeNaming: "branch" }))
+      .toBe(join(rootDir, ".fusion", "worktrees", "fn-9300"));
+  });
+
+  it("derives the canonical fusion branch when the task carries none", () => {
+    expect(planTaskWorktreePath(task({ branch: undefined }), rootDir, new Set(), { worktreeNaming: "branch" }))
+      .toBe(join(rootDir, ".fusion", "worktrees", "fn-9300"));
+  });
+
+  it("reuses an already-assigned worktree regardless of mode", () => {
+    expect(planTaskWorktreePath(task({ worktree: "/tmp/existing/dir" }), rootDir, new Set(), { worktreeNaming: "branch" }))
+      .toBe("/tmp/existing/dir");
   });
 });

@@ -6812,10 +6812,15 @@ async function classifyWorkspaceRepoLateAcquire(
   if (["merging", "merging-pr", "merging-fix", "workspace-review-required"].includes(currentTask.status ?? "")) {
     return { decision: "blocked", reason: "merging" };
   }
-  // Absent provider means "not merge-pending" — the same fail-open default self-healing takes.
-  if (await isMergePendingOrActive?.(currentTask.id) === true) {
-    return { decision: "blocked", reason: "merge-pending" };
-  }
+  /*
+  Absent provider means "not merge-pending" — the same fail-open default self-healing takes. A
+  THROWING provider takes that same default rather than crashing the tool call: this classifier also
+  runs inside the acquisition lock, where an uncaught throw would abort a half-created checkout.
+  */
+  const mergePending = await Promise.resolve()
+    .then(() => isMergePendingOrActive?.(currentTask.id))
+    .catch(() => false);
+  if (mergePending === true) return { decision: "blocked", reason: "merge-pending" };
   const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, currentTask.id);
   if (!isLateAcquireColumnBlocked(workflowIr, currentTask.column)) return { decision: "allowed" };
 
@@ -6878,10 +6883,21 @@ export function createAcquireRepoWorktreeTool(opts: {
   return {
     name: "fn_acquire_repo_worktree",
     label: "Acquire Repo Worktree",
+    /*
+    FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+    R12: the description is the only thing an executor reads BEFORE calling, so the tiered contract
+    and its price belong here rather than only in the result. Without it an agent cannot weigh
+    "acquire now" against filing a follow-up task, which is exactly the choice the tiers create.
+    */
     description:
       "Acquire an isolated git worktree for a sub-repo in this workspace. " +
       "The returned repository-relative path is inside this task's workspace directory. " +
       "Call this before editing files in a sub-repo; work in the returned path. " +
+      "While this task is still executing, acquisition is free. Once it has reached a review column, " +
+      "acquiring a NEW repository is permitted only if nothing has landed yet, and it forces the task " +
+      "back through Code Review, which re-reviews EVERY repository in scope — not just the new one. " +
+      "It is refused outright once any repository has landed or a merge is queued or running; " +
+      "create a follow-up task with fn_task_create for that repository instead. " +
       `Available repos: ${workspaceRepos.join(", ")}.`,
     parameters: acquireRepoWorktreeParams,
     execute: async (_id: string, params: Static<typeof acquireRepoWorktreeParams>) => {
@@ -6986,6 +7002,14 @@ export function createAcquireRepoWorktreeTool(opts: {
         };
       }
       /*
+      FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+      Register the acquired path FIRST. Everything below is bookkeeping — scope extension, audit,
+      review re-entry — and a throw in any of it used to skip this registration, leaving the
+      executor's in-memory worktree-liveness tracking blind to a checkout that exists on disk.
+      Set.add is idempotent, so the unconditional re-fire further down is a harmless no-op.
+      */
+      onAcquired?.(result.worktreePath);
+      /*
       FNXC:RepositoryScope 2026-08-20-23:40:
       A successful pre-land acquisition outside explicit intent is an extension request, not evidence
       that every acquired repository belongs to the task. Persist the accepted extension once so the
@@ -6997,12 +7021,19 @@ export function createAcquireRepoWorktreeTool(opts: {
         Acquisition extends intent as a durable delta after the checkout succeeds. A fresh
         planning-locked read preserves a concurrent plan confirmation or operator decision.
         */
-        await store.mutateTaskRepositoryScope(task.id, {
-          action: "add",
-          repositories: [repo],
-          reason: params.reason ?? "Executor acquired a repository required for implementation.",
-          actor: runContext?.agentId ?? "executor",
-        });
+        try {
+          await store.mutateTaskRepositoryScope(task.id, {
+            action: "add",
+            repositories: [repo],
+            reason: params.reason ?? "Executor acquired a repository required for implementation.",
+            actor: runContext?.agentId ?? "executor",
+          });
+        } catch (scopeError) {
+          // The checkout exists; a failed intent write is logged and retried by the next acquire
+          // (this block is skipped once the scope lists the repository) rather than aborting.
+          logger?.warn(`${task.id}: acquired ${repo} but recording the repository-scope extension failed: ${scopeError instanceof Error ? scopeError.message : String(scopeError)}`);
+          await store.logEntry(task.id, `fn_acquire_repo_worktree: acquired ${repo} but the repository-scope extension was not recorded; it will be retried on the next acquire`, undefined, runContext).catch(() => {});
+        }
       }
       /*
       FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
@@ -7018,7 +7049,7 @@ export function createAcquireRepoWorktreeTool(opts: {
       here and in docs/workspaces.md so the follow-up-task path stays a real alternative.
       */
       let reviewReentry: { rerouted: boolean; reason: string } | undefined;
-      if (requiresReviewReentry) {
+      if (requiresReviewReentry) try {
         const fresh = await store.getTask(task.id);
         await emitBoundedRunAudit(store, {
           domain: "database",
@@ -7045,6 +7076,15 @@ export function createAcquireRepoWorktreeTool(opts: {
           undefined,
           runContext,
         );
+      } catch (bookkeepingError) {
+        /*
+        The repository IS acquired here and a live session may already be using its checkout, so a
+        failed read/write must never unwind it or crash the tool call. Report the re-entry as
+        pending: the landing-time approval fence still refuses to land a repository with no review
+        evidence, so the honest partial outcome stays safe.
+        */
+        reviewReentry = { rerouted: false, reason: bookkeepingError instanceof Error ? bookkeepingError.message : "review-reentry-bookkeeping-failed" };
+        logger?.warn(`${task.id}: late acquisition of ${repo} succeeded but review re-entry bookkeeping failed: ${reviewReentry.reason}`);
       }
       // FNXC:Workspace 2026-06-21-22:30: F2 — register a freshly-acquired sub-repo worktree in the executor's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
       // FNXC:Workspace 2026-06-22-09:00: register UNCONDITIONALLY, including the

@@ -26,13 +26,26 @@ the reroute's own condition so the two cannot drift.
 */
 export async function isCodeReviewRouteReachable(store: TaskStore, task: Task, resolvedIr?: WorkflowIr): Promise<boolean> {
   const ir = resolvedIr ?? await resolveWorkflowIrForTask(store, task.id);
+  return await resolveReachableCodeReviewNode(store, task, ir) !== undefined;
+}
+
+/**
+ * The single "is a Code Review node reachable for this task" resolution: present AND either
+ * `defaultOn` or in the task's workflow selection. Both the pre-acquisition probe above and the
+ * reroute below read it, so the admission decision and the seeding decision cannot disagree.
+ */
+async function resolveReachableCodeReviewNode(
+  store: TaskStore,
+  task: Task,
+  ir: WorkflowIr,
+): Promise<WorkflowIrNode | undefined> {
   const node = ir.nodes.find(isCodeReviewNode);
-  if (!node) return false;
-  if (node.config?.defaultOn === true) return true;
+  if (!node) return undefined;
+  if (node.config?.defaultOn === true) return node;
   const selection = store.getTaskWorkflowSelectionAsync
     ? await store.getTaskWorkflowSelectionAsync(task.id)
     : store.getTaskWorkflowSelection?.(task.id);
-  return (selection?.stepIds ?? []).includes(node.id);
+  return (selection?.stepIds ?? []).includes(node.id) ? node : undefined;
 }
 
 /**
@@ -44,15 +57,8 @@ export async function rerouteWorkspaceReviewToCodeReview(
   task: Task,
 ): Promise<{ rerouted: boolean; reason: "seeded" | "active-continuation" | "no-code-review-route" }> {
   const ir = await resolveWorkflowIrForTask(store, task.id);
-  const node = ir.nodes.find(isCodeReviewNode);
+  const node = await resolveReachableCodeReviewNode(store, task, ir);
   if (!node) return { rerouted: false, reason: "no-code-review-route" };
-
-  const selection = store.getTaskWorkflowSelectionAsync
-    ? await store.getTaskWorkflowSelectionAsync(task.id)
-    : store.getTaskWorkflowSelection(task.id);
-  const selected = selection?.stepIds ?? [];
-  const defaultOn = node.config?.defaultOn === true;
-  if (!defaultOn && !selected.includes(node.id)) return { rerouted: false, reason: "no-code-review-route" };
 
   const items = await store.listWorkflowWorkItemsForTask(task.id);
   const result = await store.seedWorkspaceCodeReviewContinuationIfIdle({
