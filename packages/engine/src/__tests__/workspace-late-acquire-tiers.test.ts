@@ -9,6 +9,8 @@ so a `landedSha` appearing between the outer and inner check refuses without eve
 The TaskStore is a narrow in-memory fake (FN-5048): the gate's inputs are task state, workflow IR
 resolution, workflow selection, and the continuation seam, none of which need a database.
 */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invalidateSupersededRepositoryScopeReviews, type Task } from "@fusion/core";
 
@@ -191,6 +193,18 @@ describe("workspace late repository acquisition tiers", () => {
     InProcessRuntime.prototype.setActiveMergeTaskIdProvider.call(runtimeLike, activeProvider);
     expect(runtimeLike.executor.setMergePendingProvider).toHaveBeenCalledWith(provider);
     expect(runtimeLike.executor.setActiveMergeTaskIdProvider).toHaveBeenCalledWith(activeProvider);
+
+    /*
+    Structural half of the same seam (a code-construct guard, not a prose assertion): ProjectEngine
+    registers both providers BEFORE start() creates the executor, so the forwarding above only
+    covers the late-registration direction. Without the construction-time re-apply the production
+    executor would be built with no providers at all and tier 2 would degrade to a status-only check
+    forever — the "resolved seam nobody wired" failure this test exists to prevent.
+    */
+    const runtimeSource = readFileSync(join(import.meta.dirname, "..", "runtimes", "in-process-runtime.ts"), "utf8");
+    const constructionBlock = runtimeSource.slice(runtimeSource.indexOf("this.executor = new TaskExecutor("));
+    expect(constructionBlock.slice(0, 1200)).toContain("setMergePendingProvider(this.mergePendingProvider)");
+    expect(constructionBlock.slice(0, 1200)).toContain("setActiveMergeTaskIdProvider(this.activeMergeTaskIdProvider)");
   });
 
   it("refuses a complete or archived column even with nothing landed", async () => {
@@ -241,6 +255,54 @@ describe("workspace late repository acquisition tiers", () => {
     }));
 
     const result = await toolFor(fake).execute("call", { repo: "repo-b" } as never);
+
+    expect(result.isError).not.toBe(true);
+  });
+
+  it("refuses before acquiring when the workflow has no Code Review node at all", async () => {
+    const fake = makeFake(reviewEvidencedTask(), {
+      selection: { workflowId: "custom:no-code-review", stepIds: ["plan-review"] },
+      ir: {
+        version: "v2",
+        name: "no-code-review",
+        columns: [{ id: "in-review", name: "Review", traits: [{ trait: "human-review" }, { trait: "merge-blocker" }] }],
+        nodes: [{ id: "plan-review", kind: "optional-group", column: "in-review", config: { defaultOn: true, reviewKind: "plan" } }],
+      },
+    });
+
+    const refused = await toolFor(fake).execute("call", { repo: "repo-b" } as never);
+
+    expect(refused).toMatchObject({ isError: true });
+    expect((refused.details as any).lateAcquireRefusalReason).toBe("no-code-review-route");
+    expect(acquisition.acquire).not.toHaveBeenCalled();
+    expect(fake.store.mutateTaskRepositoryScope).not.toHaveBeenCalled();
+    expect(fake.seeds).toHaveLength(0);
+  });
+
+  it("keeps the acquisition when post-acquire bookkeeping throws, and reports the pending re-entry", async () => {
+    acquireSucceeds();
+    const fake = makeFake(reviewEvidencedTask());
+    let reads = 0;
+    const realGetTask = fake.store.getTask;
+    fake.store.getTask = vi.fn(async (id: string) => {
+      // The post-acquire re-read is the one that fails; the acquisition itself already succeeded.
+      if (++reads > 2) throw new Error("task read failed mid-bookkeeping");
+      return realGetTask(id);
+    });
+
+    const result = await toolFor(fake).execute("call", { repo: "repo-b" } as never);
+
+    expect(result.isError).not.toBe(true);
+    expect((result.details as any).worktreePath).toBe("/w/repo-b");
+    expect(result.content[0]?.text).toContain("pending");
+  });
+
+  it("treats a throwing merge-pending provider as not merge-pending rather than crashing", async () => {
+    acquireSucceeds();
+    const fake = makeFake(reviewEvidencedTask());
+
+    const result = await toolFor(fake, { isMergePendingOrActive: () => { throw new Error("provider exploded"); } })
+      .execute("call", { repo: "repo-b" } as never);
 
     expect(result.isError).not.toBe(true);
   });
