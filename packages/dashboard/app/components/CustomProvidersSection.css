@@ -90,7 +90,14 @@ custom-provider-form__model-row pattern; design tokens only, no hardcoded px/hex
   existing 4 inputs — 7 children need 7 tracks or the remove button wraps to a second row.
   The <768px rule below still collapses the whole row to a single column.
   */
-  grid-template-columns: repeat(4, minmax(0, 1fr)) auto auto auto;
+  /*
+  FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+  RUFU-145 follow-up surface fix: fifth flexible column for the per-model HTTP timeout input
+  (same change as CustomProviderForm.css); the thinking-format select, no-thinking checkbox
+  and delete action stay on the auto columns. The mobile override below already collapses to
+  a single column, so no breakpoint change is needed.
+  */
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto auto auto;
   gap: var(--space-sm);
   align-items: center;
 }

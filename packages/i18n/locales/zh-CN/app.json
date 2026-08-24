@@ -5202,7 +5202,8 @@
       "modelNameLabel": "",
       "models": "模型",
       "name": "显示名称",
-      "reasoning": "推理"
+      "reasoning": "推理",
+      "timeoutSeconds": "HTTP 超时（秒）"
     },
     "llamaCpp": {
       "disable": "禁用",

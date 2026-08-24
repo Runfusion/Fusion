@@ -5202,7 +5202,8 @@
       "modelNameLabel": "",
       "models": "Modelos",
       "name": "Nombre para mostrar",
-      "reasoning": "Razonamiento"
+      "reasoning": "Razonamiento",
+      "timeoutSeconds": "Timeout HTTP (s)"
     },
     "llamaCpp": {
       "disable": "Desactivar",

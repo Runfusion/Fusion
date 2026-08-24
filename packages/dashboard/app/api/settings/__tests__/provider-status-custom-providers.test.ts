@@ -116,3 +116,83 @@ describe("custom provider API mirror — per-model thinking flags (RUFU-143)", (
     expect(body.models[0]).not.toHaveProperty("reasoning");
   });
 });
+
+/*
+FNXC:CustomProviderHttpTimeout 2026-08-25-01:15:
+Per-model HTTP timeout (timeoutSeconds; 0 = disabled) must round-trip through the app API
+mirror exactly like the RUFU-123/143 fields. Without the carry-through the display path
+(fetchCustomProviders) strips it, the row editor renders an empty timeout field, and the next
+save silently deletes the stored value — the operator's "timeout is not saving" symptom. The
+0 sentinel is a valid stored value and must be carried too (unlike the positive-only windows).
+*/
+describe("custom provider API mirror — per-model HTTP timeout (timeoutSeconds)", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    clearAuthToken();
+  });
+
+  it("fetchCustomProviders carries per-model timeoutSeconds into the legacy config (including the 0 sentinel)", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse([
+      {
+        id: "cp-1",
+        name: "qwen-host",
+        apiType: "openai-compatible",
+        baseUrl: "http://192.168.12.40:8000/v1",
+        models: [
+          { id: "qwen", name: "qwen", contextWindow: 262144, timeoutSeconds: 3600 },
+          { id: "unset", name: "unset", timeoutSeconds: 0 },
+          { id: "plain", name: "plain" },
+        ],
+      },
+    ]));
+
+    const result = await fetchCustomProviders();
+    expect(result[0]?.models).toEqual([
+      { id: "qwen", name: "qwen", contextWindow: 262144, timeoutSeconds: 3600 },
+      { id: "unset", name: "unset", timeoutSeconds: 0 },
+      { id: "plain", name: "plain" },
+    ]);
+  });
+
+  it("addCustomProvider posts per-model timeoutSeconds", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse({
+      id: "cp-1",
+      name: "qwen-host",
+      apiType: "openai-compatible",
+      baseUrl: "http://192.168.12.40:8000/v1",
+      models: [{ id: "qwen", name: "qwen", timeoutSeconds: 3600 }],
+    }));
+
+    await addCustomProvider({
+      name: "qwen-host",
+      apiType: "openai-compatible",
+      baseUrl: "http://192.168.12.40:8000/v1",
+      models: [{ id: "qwen", name: "qwen", timeoutSeconds: 3600 }],
+    });
+
+    const body = JSON.parse(String((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body));
+    expect(body.models).toEqual([{ id: "qwen", name: "qwen", timeoutSeconds: 3600 }]);
+  });
+
+  it("updateCustomProvider carries per-model timeoutSeconds through the PUT body", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse({
+      id: "cp-1",
+      name: "qwen-host",
+      apiType: "openai-compatible",
+      baseUrl: "http://192.168.12.40:8000/v1",
+      models: [{ id: "qwen", name: "qwen", timeoutSeconds: 3600 }],
+    }));
+
+    await updateCustomProvider("cp-1", {
+      name: "qwen-host",
+      baseUrl: "http://192.168.12.40:8000/v1",
+      api: "openai-completions",
+      models: [{ id: "qwen", name: "qwen", timeoutSeconds: 3600 }],
+    });
+
+    const body = JSON.parse(String((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body));
+    expect(body.models).toEqual([{ id: "qwen", name: "qwen", timeoutSeconds: 3600 }]);
+  });
+});

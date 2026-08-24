@@ -24,8 +24,11 @@
   "No thinking params" checkbox, and the remove button — 7 children need 7 tracks or the
   remove button wraps to a second row (mirrors CustomProvidersSection's row grid);
   the <768px rule collapses to one column.
+  FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+  The per-model HTTP timeout input (next to contextWindow/maxTokens) is the 5th fr track —
+  the row now has 8 children, so the grid is 5fr + 3 auto tracks.
   */
-  grid-template-columns: repeat(4, minmax(0, 1fr)) auto auto auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto auto auto;
   gap: var(--space-sm);
   align-items: center;
 }

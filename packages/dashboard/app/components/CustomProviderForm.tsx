@@ -162,6 +162,11 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
         name: model.name?.trim() || undefined,
         contextWindow: model.contextWindow,
         maxTokens: model.maxTokens,
+        // FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+        // Per-model HTTP idle/first-byte timeout (seconds; 0 = off, omitted = default 300s).
+        // Passed through as-is (undefined keys are dropped by JSON.stringify), mirroring
+        // the contextWindow/maxTokens round-trip.
+        timeoutSeconds: model.timeoutSeconds,
         // FNXC:CustomProviderThinkingFormat 2026-08-21-06:30: RUFU-143 conditional spread —
         // keys appear only when set so default rows keep the byte-identical payload; the
         // opt-out wins, so a flagged model with reasoning: false sends only reasoning.
@@ -247,6 +252,23 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
                 type="number"
                 value={model.maxTokens ?? ""}
                 onChange={(e) => updateModel(index, { maxTokens: e.target.value ? Number(e.target.value) : undefined })}
+                disabled={saving}
+              />
+              {/*
+              FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+              Per-model HTTP idle/first-byte timeout in seconds, placed next to contextWindow/maxTokens.
+              `0` is a valid value (off), so the empty-string check (not the truthy check used for the
+              window fields) decides between omitted and 0; `min=0` keeps the browser from letting
+              negative values in.
+              */}
+              <input
+                className="input"
+                aria-label={`${t("providers.fields.timeoutSeconds", "HTTP timeout (s)")} ${index + 1}`}
+                placeholder={t("providers.fields.timeoutSeconds", "HTTP timeout (s)")}
+                type="number"
+                min={0}
+                value={model.timeoutSeconds ?? ""}
+                onChange={(e) => updateModel(index, { timeoutSeconds: e.target.value === "" ? undefined : Number(e.target.value) })}
                 disabled={saving}
               />
               <select

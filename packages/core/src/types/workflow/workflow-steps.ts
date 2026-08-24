@@ -305,8 +305,24 @@ export interface CustomProvider {
    * RUFU-143: per-model `thinkingFormat` / `reasoning` flags (see
    * CustomProviderThinkingFormat above). Both optional; absent keeps the
    * presumed-thinking-capable default so pre-existing settings are unchanged.
+   *
+   * FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+   * Per-model HTTP idle/first-byte timeout in SECONDS, next to contextWindow/maxTokens.
+   * Motivation: local slow models (10-20 t/s or less) were killed by the classic 300s
+   * default (OpenAI SDK TTFB timeout + undici default body/headers idle) with
+   * "Request timed out." (openai APIConnectionTimeoutError) when a slow prefill, a
+   * buffered response, or a silent body during generation exceeded it. Semantics: the
+   * MAXIMUM SILENCE allowed (request -> first byte, and between streamed chunks) —
+   * NOT a total generation-time cap; a model that streams continuously (even slowly)
+   * never trips it. Omitted/undefined -> default 300s (today's behavior, zero change).
+   * `0` -> OFF (disabled at both application seams). The registry builder
+   * (custom-provider-registry.ts) converts it to `timeoutMs` on the pi Model object;
+   * the engine then applies it at (1) the per-session OpenAI SDK TTFB timeout via the
+   * engine's per-session in-memory pi SettingsManager (pi.ts) and (2) the per-origin
+   * idle timeouts of the engine-installed global undici dispatcher
+   * (http-idle-timeouts.ts), where the most-permissive value wins on a shared origin.
    */
-  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }[];
+  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }[];
 }
 
 export interface WorkflowStepInput {

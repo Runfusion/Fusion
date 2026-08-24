@@ -5202,7 +5202,8 @@
       "modelNameLabel": "",
       "models": "Modèles",
       "name": "Nom d'affichage",
-      "reasoning": "Raisonnement"
+      "reasoning": "Raisonnement",
+      "timeoutSeconds": "Délai d'attente HTTP (s)"
     },
     "llamaCpp": {
       "disable": "Désactiver",

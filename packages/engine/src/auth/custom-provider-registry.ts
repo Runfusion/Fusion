@@ -92,9 +92,39 @@ export function resolveApiType(apiType: string): string {
  * else (omitted, 0, negative, NaN, or a corrupted persisted string) falls back to the
  * registry defaults 128000 (window) / 16384 (maxTokens) so an invalid stored value can
  * never break registration or collapse a compaction threshold.
+ *
+ * FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+ * Per-model `timeoutSeconds` (see CustomProvider.models) is converted to `timeoutMs` on the
+ * registered pi Model object: omitted/invalid -> field omitted (pi default 300s applies);
+ * `N > 0` -> `N * 1000` ms; `0` -> `MAX_SDK_HTTP_TIMEOUT_MS` (2147483647, "disabled").
+ * The `0` conversion is mandatory: the OpenAI SDK's fetchWithTimeout treats a LITERAL `0`
+ * as "abort immediately" (only pi's own httpIdleTimeoutMs path maps 0 -> 2147483647), so a
+ * disabled-by-user model would otherwise fail every request on its first byte wait.
+ * `timeoutMs` rides the pi Model object as a typed (currently pi-ignored) marker; the engine
+ * reads it in createPiAgentSessionRaw (pi.ts) and writes it into the per-session
+ * SettingsManager `retry.provider.timeoutMs`, which streamFn honors before its 300s default.
  */
 const DEFAULT_CUSTOM_PROVIDER_CONTEXT_WINDOW = 128000;
 const DEFAULT_CUSTOM_PROVIDER_MAX_TOKENS = 16384;
+/**
+ * FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+ * "Disabled" sentinel for the per-session OpenAI SDK timeout path — identical to pi's own
+ * 0 -> 2147483647 conversion in the httpIdleTimeoutMs branch of its streamFn timeout chain.
+ */
+const MAX_SDK_HTTP_TIMEOUT_MS = 2147483647;
+
+/**
+ * FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+ * RUFU-118-style per-model timeout guard — see the builder doc comment for the conversion
+ * contract (omitted/invalid -> undefined so pi's default applies; 0 -> disabled sentinel;
+ * N -> N seconds in ms). The semantics are IDLE / first-byte silence, never total time.
+ */
+function resolveModelTimeoutMs(value: number | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return value === 0 ? MAX_SDK_HTTP_TIMEOUT_MS : Math.floor(value * 1000);
+}
 
 /**
  * FNXC:CustomProviderModelWindows 2026-08-19-13:03:
@@ -158,6 +188,15 @@ export function buildCustomProviderModels(
       },
       contextWindow: resolveModelWindowValue(model.contextWindow, DEFAULT_CUSTOM_PROVIDER_CONTEXT_WINDOW),
       maxTokens: resolveModelWindowValue(model.maxTokens, DEFAULT_CUSTOM_PROVIDER_MAX_TOKENS),
+      // FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+      // Per-model HTTP idle/first-byte timeout on the pi Model object (see builder doc). The pi
+      // provider composer spreads the definition verbatim, so the field survives registry
+      // resolution; createPiAgentSessionRaw reads it and injects it into the per-session
+      // SettingsManager retry.provider.timeoutMs (OpenAI SDK TTFB layer).
+      ...(() => {
+        const timeoutMs = resolveModelTimeoutMs(model.timeoutSeconds);
+        return timeoutMs === undefined ? {} : { timeoutMs };
+      })(),
       ...(api === "openai-completions"
         ? {
             compat: {

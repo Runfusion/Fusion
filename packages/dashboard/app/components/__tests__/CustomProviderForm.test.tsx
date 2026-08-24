@@ -59,6 +59,46 @@ describe("CustomProviderForm", () => {
     });
   });
 
+  it("round-trips the per-model HTTP timeout input in seconds", async () => {
+    // FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+    // The timeout input sits next to contextWindow/maxTokens; a positive value
+    // persists as seconds (converted to ms at the engine boundary).
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CustomProviderForm onSave={onSave} />);
+
+    await user.type(screen.getByLabelText("Provider ID"), "my-proxy");
+    await user.type(screen.getByLabelText("Base URL"), "https://proxy.example.com/v1");
+    await user.type(screen.getByLabelText("Model ID 1"), "slow-local-model");
+    await user.type(screen.getByLabelText("HTTP timeout (s) 1"), "3600");
+
+    await user.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      models: [expect.objectContaining({ id: "slow-local-model", timeoutSeconds: 3600 })],
+    }));
+  });
+
+  it("round-trips HTTP timeout 0 as disabled, not omitted", async () => {
+    // FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+    // `0` must persist as 0 (timeout off) — the input's empty-string check is what keeps
+    // 0 distinct from an untouched field, unlike the truthy parse of the window inputs.
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CustomProviderForm onSave={onSave} />);
+
+    await user.type(screen.getByLabelText("Provider ID"), "my-proxy");
+    await user.type(screen.getByLabelText("Base URL"), "https://proxy.example.com/v1");
+    await user.type(screen.getByLabelText("Model ID 1"), "slow-local-model");
+    await user.type(screen.getByLabelText("HTTP timeout (s) 1"), "0");
+
+    await user.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      models: [expect.objectContaining({ id: "slow-local-model", timeoutSeconds: 0 })],
+    }));
+  });
+
   it("does not render the legacy reasoning capability toggle (only the RUFU-143 opt-out checkbox)", () => {
     render(<CustomProviderForm onSave={vi.fn()} />);
     // FN-043 removed the per-model "Reasoning" capability toggle; that control must stay

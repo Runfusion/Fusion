@@ -5202,7 +5202,8 @@
       "modelNameLabel": "",
       "models": "모델",
       "name": "표시 이름",
-      "reasoning": "추론"
+      "reasoning": "추론",
+      "timeoutSeconds": "HTTP 타임아웃 (초)"
     },
     "llamaCpp": {
       "disable": "비활성화",

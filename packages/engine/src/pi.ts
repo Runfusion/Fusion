@@ -1219,6 +1219,44 @@ function resolveConfiguredModel(
   );
 }
 
+/*
+FNXC:CustomProviderHttpTimeout 2026-08-24-15:10:
+The custom-provider registry builder attaches `timeoutMs` (ms) to the built model objects as
+an engine-owned marker. pi-ai's `Model<TApi>` interface does NOT declare that field (the
+`timeoutMs` in pi-ai's types belongs to stream/provider options, not the model), and upstream
+pi does not read it from the model either — it only survives composition because pi's
+`applyExtension` spreads the registered model definition into the composed object. Read it
+through this structural helper so pi.ts never has to name the pi-ai Model type or cast it
+in place; `undefined` means "no per-model timeout" (the 300s default applies).
+*/
+export function readCustomProviderModelTimeoutMs(model: unknown): number | undefined {
+  return (model as { timeoutMs?: number } | null | undefined)?.timeoutMs;
+}
+
+/*
+FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+Layer 1 of the per-model HTTP timeout — per-session retry settings for the in-memory pi
+SettingsManager. When the resolved model carries a per-model `timeoutMs` (custom-provider
+`timeoutSeconds`, already converted: 0 -> 2147483647 "disabled"), it becomes
+`retry.provider.timeoutMs`; pi's streamFn then resolves the OpenAI SDK per-request timeout as
+`options?.timeoutMs ?? settingsManager.getProviderRetrySettings().timeoutMs ?? getHttpIdleTimeoutMs()`
+(300s default), so the SDK's first-byte abort timer honors the per-model value. The SDK timer
+is cleared when response headers arrive — a first-byte/idle bound, not a total-generation cap.
+The undici body/headers idle layer is the process-global per-origin dispatcher (http-idle-timeouts.ts).
+A model without a timeout keeps the previous settings shape exactly (no `provider` key).
+*/
+export function buildSessionRetrySettings(modelTimeoutMs: number | undefined): {
+  enabled: boolean;
+  maxRetries: number;
+  provider?: { timeoutMs: number };
+} {
+  return {
+    enabled: true,
+    maxRetries: 3,
+    ...(modelTimeoutMs !== undefined ? { provider: { timeoutMs: modelTimeoutMs } } : {}),
+  };
+}
+
 export function isRetryableModelSelectionError(message: string): boolean {
   // Codex ChatGPT-account auth-tier model incompatibility: the model is valid
   // but not available for the current auth tier. This is a model-selection
@@ -2669,19 +2707,14 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   // resolvedProjectRoot was computed above (before registerExtensionProviders)
   // and is reused here for resource loader and skill discovery.
 
-  // Compaction is explicitly enabled to prevent context-window overflow during
-  // long-running agent conversations (triage, execution, review, merge).
-  // When the context fills up, pi auto-compacts the conversation history to
-  // keep the session alive without manual intervention. This must remain enabled
-  // as a reliability safeguard — disabling it would cause overflow failures.
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: true },
-    retry: { enabled: true, maxRetries: 3 },
-  });
-
   // Resolve explicit model selection if provider and model ID are specified.
   // If the primary configured model cannot be resolved but a fallback model is
   // configured, prefer the fallback as the initial model selection.
+  //
+  // FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+  // Resolved BEFORE the per-session SettingsManager below so the model's per-model HTTP
+  // idle/first-byte timeout (custom-provider `timeoutSeconds` -> pi Model.timeoutMs) can be
+  // injected into `retry.provider.timeoutMs` (layer 1 of the two-layer per-model timeout).
   let selectedModel;
   let fallbackModel;
   try {
@@ -2712,6 +2745,33 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       options.fallbackModelId,
     );
   }
+
+  // Compaction is explicitly enabled to prevent context-window overflow during
+  // long-running agent conversations (triage, execution, review, merge).
+  // When the context fills up, pi auto-compacts the conversation history to
+  // keep the session alive without manual intervention. This must remain enabled
+  // as a reliability safeguard — disabling it would cause overflow failures.
+  /*
+  FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+  Layer 1 of the per-model HTTP timeout: the OpenAI SDK per-request TTFB timer. pi's streamFn
+  resolves the SDK `timeout` as
+  `options?.timeoutMs ?? settingsManager.getProviderRetrySettings().timeoutMs ?? settingsManager.getHttpIdleTimeoutMs()`
+  (300s default). pi-ai's Model interface has no timeoutMs field and upstream pi never reads a
+  model-level timeout, so the engine writes the resolved model's engine-owned timeoutMs marker
+  (see readCustomProviderModelTimeoutMs) into this per-session in-memory SettingsManager: the
+  SDK's fetchWithTimeout abort timer (cleared when response headers arrive — a first-byte
+  bound, NOT a total-generation cap) now honors the per-model value. `0` (off) arrives as
+  2147483647 because the SDK aborts immediately on a literal 0. The undici body/headers idle
+  layer is applied per origin by the global dispatcher (http-idle-timeouts.ts). The primary
+  selected model's value is applied; a fallback-model swap on a retryable model-selection error
+  keeps the primary's timeout — an acceptable edge, since the fallback is a user-configured
+  backup for the same lane and its origin is typically the same.
+  */
+  const modelHttpTimeoutMs = readCustomProviderModelTimeoutMs(selectedModel);
+  const settingsManager = SettingsManager.inMemory({
+    compaction: { enabled: true },
+    retry: buildSessionRetrySettings(modelHttpTimeoutMs),
+  });
 
   // Resolve skill selection: explicit skillSelection wins over convenience `skills`
   let effectiveSkillSelection: SkillSelectionContext | undefined = options.skillSelection;

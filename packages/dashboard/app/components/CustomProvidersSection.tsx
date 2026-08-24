@@ -30,7 +30,11 @@ type LegacyProvider = {
   // per-model windows too; normalizeProviders carries them through so the edit form pre-fills.
   // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 same for the per-model
   // thinking flags (thinkingFormat/reasoning) — legacy records may carry them too.
-  models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: string; reasoning?: boolean }>;
+  // FNXC:CustomProviderHttpTimeout 2026-08-25-01:58: legacy records carry the per-model HTTP
+  // timeout too; normalizeProviders must carry it through as well. fetchCustomProviders always
+  // returns the legacy shape, so EVERY provider record flows through this conversion branch —
+  // dropping the field here silently emptied the row editor (and the next save wiped the value).
+  models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: string; reasoning?: boolean }>;
 };
 
 function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProviders>>): CustomProvider[] {
@@ -59,6 +63,14 @@ function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProvide
         // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 keep only valid positive windows.
         ...(isPositiveTokenValue(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
         ...(isPositiveTokenValue(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
+        // FNXC:CustomProviderHttpTimeout 2026-08-25-01:58: carry the per-model HTTP timeout
+        // through the legacy normalize so the edit form pre-fills it. Unlike the window fields,
+        // 0 is a valid persisted value ("timeout disabled"), so the guard is >= 0, not > 0 —
+        // a positive-only guard would collapse the disabled sentinel to blank and the next
+        // save would omit the key, wiping the stored value.
+        ...(typeof model.timeoutSeconds === "number" && Number.isFinite(model.timeoutSeconds) && model.timeoutSeconds >= 0
+          ? { timeoutSeconds: model.timeoutSeconds }
+          : {}),
         // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 carry the per-model
         // thinking flags through the legacy normalize so the edit form pre-fills them. The
         // legacy record type is string-typed; the route is the authority for the literal union.
@@ -93,6 +105,16 @@ type ModelRow = {
   name: string;
   contextWindow: string;
   maxTokens: string;
+  /**
+   * FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+   * RUFU-145 follow-up surface fix: the settings section's row editor (this component) is a
+   * SEPARATE surface from CustomProviderForm (onboarding modal) — the first fix only added
+   * the input to the modal, so the main Settings → Custom Providers editor had no timeout
+   * field and operators could not configure it where they actually edit providers. "" =
+   * default 300 s; "0" = disabled (both must round-trip, so this is a string like the other
+   * window fields and 0 is a VALID parsed value, unlike contextWindow/maxTokens).
+   */
+  timeoutSeconds: string;
   /** "" = pi-ai default; otherwise a value from CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS. */
   thinkingFormat: string;
   /** True = send reasoning: false (opt out of all thinking params; wins over thinkingFormat). */
@@ -100,7 +122,7 @@ type ModelRow = {
 };
 
 function emptyModelRow(): ModelRow {
-  return { id: "", name: "", contextWindow: "", maxTokens: "", thinkingFormat: "", noThinkingParams: false };
+  return { id: "", name: "", contextWindow: "", maxTokens: "", timeoutSeconds: "", thinkingFormat: "", noThinkingParams: false };
 }
 
 function isPositiveTokenValue(value: unknown): value is number {
@@ -115,12 +137,27 @@ function parsePositiveTokenValue(value: string): number | undefined {
   return isPositiveTokenValue(parsed) ? parsed : undefined;
 }
 
-function modelRowFromModel(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: string; reasoning?: boolean }): ModelRow {
+/**
+ * FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+ * Unlike the window fields, 0 is a meaningful persisted value ("timeout disabled") and
+ * must reach the save payload; only blank or non-finite/negative input stays absent.
+ */
+function parseNonNegativeTimeoutValue(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  const parsed = Number(trimmed);
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function modelRowFromModel(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: string; reasoning?: boolean }): ModelRow {
   return {
     id: model.id,
     name: model.name ?? model.id,
     contextWindow: model.contextWindow != null ? String(model.contextWindow) : "",
     maxTokens: model.maxTokens != null ? String(model.maxTokens) : "",
+    // FNXC:CustomProviderHttpTimeout 2026-08-24-19:52: 0 must pre-fill as "0" (disabled),
+    // never collapse to the blank default.
+    timeoutSeconds: model.timeoutSeconds != null ? String(model.timeoutSeconds) : "",
     // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 pre-fill the thinking flags;
     // only reasoning === false counts as opted out (true/absent = presumed thinking-capable).
     thinkingFormat: typeof model.thinkingFormat === "string" ? model.thinkingFormat : "",
@@ -130,6 +167,7 @@ function modelRowFromModel(model: { id: string; name?: string; contextWindow?: n
 
 function isEmptyModelRow(row: ModelRow): boolean {
   return row.id.trim() === "" && row.name.trim() === "" && row.contextWindow.trim() === "" && row.maxTokens.trim() === "" &&
+    row.timeoutSeconds.trim() === "" &&
     row.thinkingFormat.trim() === "" && !row.noThinkingParams;
 }
 
@@ -199,6 +237,25 @@ function ModelRowsEditor({ rows, onChange, onDetect, detecting, canDetect, canAd
             inputMode="numeric"
             value={row.maxTokens}
             onChange={(event) => updateRow(index, { maxTokens: event.target.value })}
+            disabled={disabled}
+          />
+          {/*
+          FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+          RUFU-145 follow-up surface fix: the per-model HTTP timeout input belongs on the SAME
+          surface operators edit providers (this section), not only in the onboarding modal.
+          min={0} unlike the window fields: 0 = "timeout disabled" is a valid value. The
+          route accepts non-negative finite numbers; the engine maps 0 to the disabled
+          sentinel (2147483647 ms for the SDK, no idle timer for undici).
+          */}
+          <input
+            className="input"
+            aria-label={`${t("providers.fields.timeoutSeconds", "HTTP timeout (s)")} ${index + 1}`}
+            placeholder={t("providers.fields.timeoutSeconds", "HTTP timeout (s)")}
+            type="number"
+            min={0}
+            inputMode="numeric"
+            value={row.timeoutSeconds}
+            onChange={(event) => updateRow(index, { timeoutSeconds: event.target.value })}
             disabled={disabled}
           />
           {/*
@@ -471,6 +528,9 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                 name: discovered.name ?? discoveredId,
                 contextWindow: discovered.contextWindow != null ? String(discovered.contextWindow) : "",
                 maxTokens: discovered.maxTokens != null ? String(discovered.maxTokens) : "",
+                // FNXC:CustomProviderHttpTimeout 2026-08-24-19:52: the probe cannot report a
+                // timeout; new rows start blank (300 s default) and the operator opts in.
+                timeoutSeconds: "",
                 thinkingFormat: "",
                 noThinkingParams: false,
               };
@@ -510,12 +570,16 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
       if (id === "") return [];
       const contextWindow = parsePositiveTokenValue(row.contextWindow);
       const maxTokens = parsePositiveTokenValue(row.maxTokens);
+      // FNXC:CustomProviderHttpTimeout 2026-08-24-19:52: 0 persists as 0 (disabled);
+      // blank/invalid persists as absent so the 300 s default applies at registration.
+      const timeoutSeconds = parseNonNegativeTimeoutValue(row.timeoutSeconds);
       const thinkingFormat = !row.noThinkingParams ? row.thinkingFormat.trim() : "";
       return [{
         id,
         name: row.name.trim() || id,
         ...(contextWindow !== undefined ? { contextWindow } : {}),
         ...(maxTokens !== undefined ? { maxTokens } : {}),
+        ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
         // The row keeps the raw string so values outside the UI-safe set (chat-template/
         // baseten via models.json or the raw API) round-trip unchanged; the route validator
         // is the authority on the full pi-ai union, so the cast is safe.
