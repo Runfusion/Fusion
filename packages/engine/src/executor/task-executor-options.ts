@@ -124,6 +124,24 @@ export interface CliAgentRuntime {
   hookEndpointUrl: string;
   /** Optional override for the hook scratch-dir root (tests). */
   hookDirRoot?: string;
+  /*
+  FNXC:CliChatRecall 2026-08-19-19:30:
+  RUFU-128: additive per-turn memory-recall handle for the
+  `/api/cli-agent/memory-recall` route. Structurally implements the dashboard
+  route's recall-handle surface: per-session token validation (delegates to
+  the hub), session existence (the store), and the recall service (session
+  key `cli:<sessionId>`, fresh settings per call). Absent → the route resolves
+  no handle (any token 401s) — the pre-RUFU-128 behavior; existing bundle
+  fields stay intact.
+  */
+  memoryRecall?: {
+    /** True iff the per-session token validates for exactly this session. */
+    validateToken(sessionId: string, token: string | null | undefined): boolean;
+    /** True iff the session record still exists in the store. */
+    hasSession(sessionId: string): boolean;
+    /** Run one per-turn recall; "" on silent skip. Must not throw. */
+    recallForChatTurn(input: { topic: string; sessionId: string }): Promise<string>;
+  };
 }
 
 export interface ActiveExecutorSessionState {

@@ -88,6 +88,30 @@ export interface PiLaunchSettings {
    * session JSONL never lands in the user's global sessions tree.
    */
   sessionDir?: string;
+  /**
+   * Absolute path to a session-scoped pi extension (`--extension <path>`,
+   * jiti-loaded at pi startup).
+   *
+   * FNXC:CliChatRecall 2026-08-19-19:30:
+   * RUFU-128: the per-spawn chat-recall provisioner points this at the session's
+   * generated `before_agent_start` recall extension. Emitted by the base-args
+   * builder so BOTH launch and resume re-attach it exactly once (resume must
+   * keep recall armed — the prior turn's extension dies with the prior PTY).
+   *
+   * FNXC:CliChatRecall 2026-08-20-08:25:
+   * pi extension contract (RUFU-128 Step 0/4): pi loads `--extension` files via
+   * jiti, so the file's DEFAULT EXPORT MUST BE A FUNCTION (extension factory);
+   * the recall extension's `before_agent_start` handler returns a custom
+   * message with `display: false`, which keeps the cue TUI-hidden while the
+   * session context still feeds it to the LLM. The session tailer needs NO
+   * change for the injected message: `mapSessionLine` already returns null for
+   * custom/unknown JSONL types, so the display-false entry is ignored by the
+   * tailer — pre-existing tolerance, regression-pinned by the fixture test in
+   * adapters-chat-recall.test.ts (no runtime guard added). Verified against the
+   * local pi dist 0.84.2; the engine pin is 0.84.1 (`package.json`) and the
+   * loader/event/display shape is confirmed for that pin.
+   */
+  extensionPath?: string;
 }
 
 function readSettings(ctx: CliAdapterLaunchContext): PiLaunchSettings {
@@ -106,6 +130,12 @@ function buildBaseArgs(ctx: CliAdapterLaunchContext): { command: string; args: s
   }
   if (typeof settings.sessionDir === "string" && settings.sessionDir.length > 0) {
     args.push("--session-dir", settings.sessionDir);
+  }
+  // RUFU-128: session-scoped recall extension (see PiLaunchSettings.
+  // extensionPath). Shared by launch AND resume via this base-args builder —
+  // exactly one `--extension` per argv, never duplicated on resume.
+  if (typeof settings.extensionPath === "string" && settings.extensionPath.length > 0) {
+    args.push("--extension", settings.extensionPath);
   }
   return { command, args };
 }

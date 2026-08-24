@@ -33,8 +33,17 @@ export function hasVerifiedDaemonRequest(req: Request): boolean {
  *   it validates the per-session token against the engine-held registry
  *   (constant-time) and rejects browser-context requests (Origin/Host CSRF
  *   defense). It must therefore bypass the daemon-token gate, not weaken it.
+ *
+ * FNXC:CliChatRecall 2026-08-20-16:01:
+ * `/api/cli-agent/memory-recall` (RUFU-128) joins the same exemption for the
+ * same reason: the per-spawn generated Claude Code hook / pi extension runs
+ * inside the spawned CLI process and holds ONLY the per-session TelemetryHub
+ * token. The route performs its own per-session token validation and
+ * loopback/Origin/Host rejection, so the daemon-token gate must not 401 the
+ * hook's curl before the route's own auth runs — otherwise CLI chat recall
+ * would be silently dead in daemon mode.
  */
-const EXEMPT_PATHS = ["/api/health", "/api/cli-agent/hooks"];
+const EXEMPT_PATHS = ["/api/health", "/api/cli-agent/hooks", "/api/cli-agent/memory-recall"];
 
 /**
  * Only /api/* paths are gated by this middleware. The SPA shell (index.html,

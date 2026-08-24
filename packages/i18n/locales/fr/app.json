@@ -1423,7 +1423,8 @@
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
-    "restore": ""
+    "restore": "",
+    "backToConversations": ""
   },
   "chatRooms": {
     "error": {
@@ -2401,7 +2402,9 @@
     "expandArtifactHint": "Click to expand",
     "lightboxLabel": "Artifact media preview",
     "readOnly": "",
-    "readOnlyHint": ""
+    "readOnlyHint": "",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "Actif",
@@ -6398,9 +6401,7 @@
       "perTurnRecallTopK": "Top K du rappel par tour",
       "perTurnRecallHelp": "Avant chaque chat agent ou prompt d'étape, un rappel borné du sujet actuel est préfixé afin que la mémoire pertinente reste dans le contexte, même si des indices plus anciens ont été évincés par la compactation. Par défaut : activé.",
       "perTurnRecallTopKHelp": "Nombre maximal de fragments de mémoire préfixés par prompt. Par défaut : 3 (plafond 10).",
-
       "preOverflowCompaction": "",
-
       "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
@@ -7182,29 +7183,6 @@
       "runtimeIncompatible": "The installed voice runtime is incompatible. Repair it, then re-check the runtime.",
       "recheckRuntime": "Re-check runtime",
       "recheckingRuntime": "Re-checking runtime…"
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8444,6 +8422,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     }
   },
   "taskDocuments": {

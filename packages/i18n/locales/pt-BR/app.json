@@ -1433,7 +1433,8 @@
     "currentAgentTarget": "Agente atual: {{name}}",
     "currentModelTarget": "Modelo atual: {{model}}",
     "currentDefaultTarget": "Usando o destino de chat padrão",
-    "restore": ""
+    "restore": "",
+    "backToConversations": ""
   },
   "chatRooms": {
     "error": {
@@ -2411,7 +2412,9 @@
     "closeLightbox": "Fechar pré-visualização do artefato",
     "expandArtifact": "Expandir {{title}}",
     "expandArtifactHint": "Clique para expandir",
-    "lightboxLabel": "Pré-visualização de mídia do artefato"
+    "lightboxLabel": "Pré-visualização de mídia do artefato",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "Ativo",
@@ -6906,9 +6909,7 @@
       "perTurnRecallTopK": "Top K da recuperação por turno",
       "perTurnRecallHelp": "Antes de cada chat do agente ou prompt de etapa, uma recuperação limitada do tópico atual é adicionada no início para que a memória relevante esteja no contexto mesmo se dicas anteriores tiverem sido removidas pela compactação. Padrão: habilitado.",
       "perTurnRecallTopKHelp": "Máximo de trechos de memória adicionados por prompt. Padrão: 3 (limite 10).",
-
       "preOverflowCompaction": "",
-
       "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "Falha ao carregar o status do backend: ",
       "for": "para \"",
@@ -7192,29 +7193,6 @@
       "maxSourcesPerRunHint": "Padrão: 20.",
       "maxDurationMsHint": "Padrão: 300000 (5 minutos).",
       "requestTimeoutMsHint": "Padrão: 30000 (30 segundos)."
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8454,6 +8432,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     }
   },
   "taskDocuments": {

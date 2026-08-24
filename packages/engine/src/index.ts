@@ -1218,6 +1218,11 @@ export {
   type CliAdapterCapabilities,
   type CliAdapterElevationMarkers,
 } from "./cli-agent/adapter.js";
+// CLI Agent Executor — per-turn memory recall service (RUFU-128).
+export {
+  recallForChatTurn,
+  type MemoryRecallChatTurnInput,
+} from "./cli-agent/memory-recall-service.js";
 // CLI Agent Executor — autonomy posture resolution + approval gate (U15).
 export {
   resolveEffectivePosture,

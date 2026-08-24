@@ -1185,6 +1185,7 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--
 - This is MessageStore mail plus polling, not token-streaming SSE. Replies are printed only when they carry the active conversation ID or reply to a known thread message.
 - Agents replying through `fn_send_message` should pass `reply_to_message_id`; replies default to the original sender only when that parent message was addressed to the replying agent.
 - One-shot chat has a reply deadline independent of the polling interval. Interactive chat tracks each outbound message independently: it prints a timeout for an unanswered request, clears that request, and continues the REPL for later messages.
+- CLI-agent-backed chat sessions (claude/pi PTY chat in the dashboard terminal) participate in per-turn memory recall when the cli-agent executor is enabled: each turn receives a bounded, deduped recall cue through the CLI's native channel (never as typed terminal text), silently skipped when nothing is recalled.
 
 ### Options
 

@@ -72,18 +72,37 @@ export const CLAUDE_CODE_CAPABILITIES: CliAdapterCapabilities = {
  * The adapter does NOT create these scripts — it only references them from the
  * generated settings JSON. Until U17 lands, a caller passes the paths directly
  * (one script may back several events, or each event its own script).
+ *
+ * FNXC:CliChatRecall 2026-08-19-19:30:
+ * The core refs are OPTIONAL (RUFU-128): the per-spawn chat-recall provisioner
+ * emits a recall-ONLY settings artifact (just the memory-recall UserPromptSubmit
+ * entry) for `purpose="chat"` sessions, so every ref became optional. `buildClaudeCodeSettings` registers an event ONLY when its script is present, and preserves the historical key order, so the existing task-session caller (all core refs) produces byte-identical settings JSON — regression-pinned in adapters-chat-recall.test.ts.
  */
 export interface HookScriptRefs {
   /** Script for the `Stop` hook (positive completion). */
-  stopScript: string;
+  stopScript?: string;
   /** Script for the `Notification` hook (permission_prompt / idle_prompt). */
-  notificationScript: string;
+  notificationScript?: string;
   /** Script for the `PermissionRequest` hook (waiting-on-input). */
-  permissionScript: string;
+  permissionScript?: string;
   /** Script for the `SessionStart` hook (captures session_id / source). */
-  sessionStartScript: string;
+  sessionStartScript?: string;
   /** Optional script for tool-activity hooks (PreToolUse/PostToolUse/UserPromptSubmit). */
   toolActivityScript?: string;
+  /**
+   * RUFU-128: optional chat-recall `UserPromptSubmit` hook script — the
+   * per-turn memory-recall cue channel for CLI chat sessions (never combined
+   * with task-session telemetry hooks in practice, but the builder merges the
+   * two entries when both are present).
+   *
+   * FNXC:CliChatRecall 2026-08-20-08:25:
+   * Claude Code fires `UserPromptSubmit` ONCE per user prompt, delivering the
+   * prompt JSON on the hook command's stdin; the generated recall script reads
+   * it from stdin (never argv) and POSTs it to the loopback recall route. On
+   * older CLI versions that lack the hook, the event simply never fires — the
+   * recall degrades to a SILENT NO-OP (no cue, no error, turn proceeds bare).
+   */
+  memoryRecallScript?: string;
 }
 
 /**
@@ -137,23 +156,36 @@ export interface ClaudeCodeSettings {
  * Tool-activity events (PreToolUse/PostToolUse/UserPromptSubmit) are registered
  * only when a `toolActivityScript` is supplied — they re-arm the inactivity
  * watchdog but are not required for the core ready→busy→done flow.
+ *
+ * FNXC:CliChatRecall 2026-08-19-19:30:
+ * RUFU-128: every event is registered ONLY when its script ref is present (the
+ * tool-activity conditional extended to all events), and the key order is the
+ * historical order — so a full task-session ref set serializes byte-identically
+ * to the pre-RUFU-128 output, while a recall-only ref set (chat sessions) emits
+ * exactly ONE hook entry: UserPromptSubmit → the recall script. A recall-only
+ * session never fabricates Stop/Notification/PermissionRequest/SessionStart.
  */
 export function buildClaudeCodeSettings(scripts: HookScriptRefs): ClaudeCodeSettings {
   const cmd = (command: string): HookCommandEntry => ({
     hooks: [{ type: "command", command }],
   });
-  const hooks: ClaudeCodeHooksConfig = {
-    SessionStart: [cmd(scripts.sessionStartScript)],
-    Stop: [cmd(scripts.stopScript)],
-    Notification: [cmd(scripts.notificationScript)],
-    PermissionRequest: [cmd(scripts.permissionScript)],
-  };
+  const hooks: ClaudeCodeHooksConfig = {};
+  if (scripts.sessionStartScript) hooks.SessionStart = [cmd(scripts.sessionStartScript)];
+  if (scripts.stopScript) hooks.Stop = [cmd(scripts.stopScript)];
+  if (scripts.notificationScript) hooks.Notification = [cmd(scripts.notificationScript)];
+  if (scripts.permissionScript) hooks.PermissionRequest = [cmd(scripts.permissionScript)];
   if (scripts.toolActivityScript) {
     const activity = [cmd(scripts.toolActivityScript)];
     hooks.PreToolUse = activity;
     hooks.PostToolUse = activity;
-    hooks.UserPromptSubmit = activity;
   }
+  // UserPromptSubmit merges the tool-activity re-arm entry (when present) with
+  // the chat-recall entry (RUFU-128). This builder is the single writer of the
+  // generated settings, so a recall-only document holds exactly one entry.
+  const promptSubmit: HookCommandEntry[] = [];
+  if (scripts.toolActivityScript) promptSubmit.push(cmd(scripts.toolActivityScript));
+  if (scripts.memoryRecallScript) promptSubmit.push(cmd(scripts.memoryRecallScript));
+  if (promptSubmit.length > 0) hooks.UserPromptSubmit = promptSubmit;
   return { hooks };
 }
 

@@ -92,6 +92,7 @@ import { registerVoiceRoutes } from "./routes/register-voice-routes.js";
 import { registerDiagnosticsRoutes } from "./routes/register-diagnostics-routes.js";
 import { registerSystemRoutes } from "./routes/register-system-routes.js";
 import { registerCliAgentHooksRoute } from "./routes/cli-agent-hooks.js";
+import { registerCliAgentMemoryRecallRoute } from "./routes/cli-agent-memory-recall.js";
 import { registerCliAgentSettingsRoutes } from "./routes/cli-agent-settings.js";
 import { registerIntegratedRouters, registerIntegratedDevServerRouter } from "./routes/register-integrated-routers.js";
 import { registerApprovalRoutes } from "./routes/register-approval-routes.js";
@@ -1301,6 +1302,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // CLI Agent Executor hook ingestion (U17) — per-session token auth, exempt from
   // the daemon bearer-token middleware (hook scripts only hold the session token).
   registrarMounter.mount("registerCliAgentHooksRoute", () => registerCliAgentHooksRoute(routeContext));
+
+  /*
+  FNXC:CliChatRecall 2026-08-19-11:08:
+  Per-turn memory-recall ingestion for spawned CLI agents (RUFU-128) — same
+  per-session token auth as the hook route, exempt from the daemon
+  bearer-token middleware (the agent only holds the session token). The cue is
+  returned to the CLI's native hook/extension channel, never injected into the
+  PTY/composer.
+  */
+  registrarMounter.mount("registerCliAgentMemoryRecallRoute", () => registerCliAgentMemoryRecallRoute(routeContext));
 
   // CLI Agent Executor adapter settings + autonomy approval (U15) — daemon-token
   // authed like the rest of /api (the approving principal is the token holder).

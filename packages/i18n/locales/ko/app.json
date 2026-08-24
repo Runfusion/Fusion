@@ -1423,7 +1423,8 @@
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
-    "restore": ""
+    "restore": "",
+    "backToConversations": ""
   },
   "chatRooms": {
     "error": {
@@ -2401,7 +2402,9 @@
     "expandArtifactHint": "Click to expand",
     "lightboxLabel": "Artifact media preview",
     "readOnly": "",
-    "readOnlyHint": ""
+    "readOnlyHint": "",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "활성",
@@ -6398,9 +6401,7 @@
       "perTurnRecallTopK": "턴별 회상 Top K",
       "perTurnRecallHelp": "에이전트 채팅 또는 단계 프롬프트마다 현재 주제에 대한 제한된 회상을 앞단에 붙여, 이전 힌트가 압축으로 제거되었더라도 관련 메모리가 컨텍스트에 있게 합니다. 기본: 켬.",
       "perTurnRecallTopKHelp": "프롬프트당 앞단에 붙일 최대 메모리 조각 수. 기본: 3 (최대 10).",
-
       "preOverflowCompaction": "",
-
       "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
@@ -7182,29 +7183,6 @@
       "runtimeIncompatible": "The installed voice runtime is incompatible. Repair it, then re-check the runtime.",
       "recheckRuntime": "Re-check runtime",
       "recheckingRuntime": "Re-checking runtime…"
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8444,6 +8422,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     }
   },
   "taskDocuments": {

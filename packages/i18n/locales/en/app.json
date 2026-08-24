@@ -1433,7 +1433,8 @@
     "currentAgentTarget": "Current agent: {{name}}",
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
-    "restore": "Restore"
+    "restore": "Restore",
+    "backToConversations": "Back to conversations"
   },
   "chatRooms": {
     "error": {
@@ -2411,7 +2412,9 @@
     "closeLightbox": "Close artifact preview",
     "expandArtifact": "Expand {{title}}",
     "expandArtifactHint": "Click to expand",
-    "lightboxLabel": "Artifact media preview"
+    "lightboxLabel": "Artifact media preview",
+    "closeArtifactPreview": "Close artifact preview",
+    "loadingImageArtifact": "Loading image artifact…"
   },
   "droidCli": {
     "active": "Active",
@@ -8429,6 +8432,13 @@
       "candidate": "Candidate:",
       "dismissFinding": "Dismiss this finding",
       "terminalGuidance": "Rebase or re-push the branch, dismiss a finding with justification, or land manually."
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "AI merge review reconciliation",
+      "approvedPending": "Approved — {{count}} prior finding(s) unconfirmed",
+      "candidate": "Candidate: ",
+      "dismissFinding": "Dismiss this finding",
+      "terminalHint": "Rebase or re-push the branch, dismiss a finding with justification, or land manually."
     }
   },
   "taskDocuments": {

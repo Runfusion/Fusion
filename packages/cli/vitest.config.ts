@@ -6,6 +6,19 @@ const maxWorkers = computeMaxWorkers();
 
 const quarantinedCliTests: string[] = [
   /*
+  FNXC:CliTests 2026-08-20-15:35:
+  RUFU-128 observed the SECOND sighting of the loaded-host 15000ms per-test timeout in bin.test.ts's
+  no-args dashboard-launch test: first sighting 2026-08-20 in the suite-only flake register (concurrent
+  cli batch on a loaded host), second sighting 2026-08-20 15:35 UTC at host load average 15.22 — whole
+  file 23.8s (1 failed / 76 passed) and single-test-isolated 15.39s (transform 10.59s). The suite
+  factory-mocks ../commands/dashboard.js, the only packages/cli file RUFU-128 touched, so no RUFU-128
+  code executes here; the same signature was a loaded-lane timeout in the 2026-06-20 FN-6839 history.
+  Quarantined on sight per the deletion ratchet (second sighting — no further discretion); mirrored in
+  scripts/lib/test-quarantine.json; expires 2026-09-03. No timeout widening, retries, or assertion
+  changes (anti-appeasement).
+  */
+  "src/__tests__/bin.test.ts",
+  /*
   FNXC:CliTests 2026-06-14-01:36:
   The full @runfusion/fusion package lane timed out or leaked mock state across 24 CLI integration-heavy files under changed-test load, while the same files passed in smaller direct runs.
   They were quarantined per the flaky-test deletion ratchet instead of raising the 5s test timeout or relaxing assertions.
