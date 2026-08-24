@@ -22,12 +22,21 @@ describe("canonicalStepInstanceBranchName", () => {
 });
 
 describe("planTaskWorktreePath", () => {
-  it("derives the worktree from the lower-cased task ID regardless of legacy naming inputs", () => {
+  it("derives the worktree from the lower-cased task ID when naming is unset", () => {
     expect(planTaskWorktreePath(
       { id: "FN-258", description: "unused" },
       "/repo",
       new Set(["gentle-panda"]),
     )).toBe("/repo/.fusion/worktrees/fn-258");
+  });
+
+  it("names a single-repo worktree from the working branch in branch mode", () => {
+    expect(planTaskWorktreePath(
+      { id: "FN-258", description: "unused", branch: "feature/PRD-1234-my-slug" },
+      "/repo",
+      new Set(),
+      { worktreeNaming: "branch" },
+    )).toBe("/repo/.fusion/worktrees/prd-1234-my-slug");
   });
 
   it("preserves an existing task worktree pointer until acquisition corrects it", () => {

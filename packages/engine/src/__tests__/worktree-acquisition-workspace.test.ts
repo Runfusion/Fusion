@@ -834,7 +834,7 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
 });
 
 /*
-FNXC:WorkspaceWorktree 2026-08-23-19:52:
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
 R15: the workspace task directory segment is minted once, at first acquisition, and every later
 resolution reads that pin. These tests drive the production task-level acquisition seam against the
 real two-repository fixture, because the failure this pin prevents is a path disagreement between
@@ -937,7 +937,7 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
   });
 
   /*
-  FNXC:WorkspaceWorktree 2026-08-23-19:52:
+  FNXC:WorkspaceWorktree 2026-08-24-06:10:
   Structural guard, not prose: a call site that passes a task id straight into
   resolveWorkspaceTaskWorktreeDir re-derives its own segment and reintroduces the split-directory
   failure the pin exists to prevent. Every production call site must route through
@@ -967,5 +967,167 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     };
     for (const root of roots) visit(root);
     expect(offenders).toEqual([]);
+  });
+});
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14/R16 at the production acquisition seam: the mode names the real directory that gets created,
+and every rung of the fallback ladder lands on the task id instead of failing the acquisition.
+*/
+describeIfGit("ticket-derived workspace worktree directory names (R14/R16)", { timeout: 60_000 }, () => {
+  let fixture: WorkspaceFixture | undefined;
+
+  afterEach(() => fixture?.cleanup());
+
+  const BRANCH_SETTINGS: Partial<Settings> = { ...SETTINGS, worktreeNaming: "branch" };
+
+  function branchTask(id: string, branch: string): Task {
+    const task = makeTask(id);
+    (task as Task).branch = branch;
+    return task;
+  }
+
+  it("names the checkout after the ticket in the configured grouped layout", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const configuredRoot = join(fixture.rootDir, "trees-root");
+    const { store, current } = makeFakeStore(branchTask("FN-9210", "feature/PRD-1234-my-slug"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...BRANCH_SETTINGS, worktreesDir: configuredRoot },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(configuredRoot, workspaceWorktreeGroupSegment(fixture.rootDir), "prd-1234-my-slug"));
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(existsSync(join(result.taskWorktreeDir, "repo-a"))).toBe(true);
+    expect(existsSync(join(result.taskWorktreeDir, "repo-b"))).toBe(true);
+  });
+
+  it("names the checkout with worktreesDir unset, since only grouping is opt-in", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(branchTask("FN-9211", "feature/PRD-1234-my-slug"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+    expect(existsSync(join(result.taskWorktreeDir, "repo-a"))).toBe(true);
+  });
+
+  it("does not move or re-derive the directory when the branch is renamed after acquisition", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current } = makeFakeStore(branchTask("FN-9212", "feature/PRD-1234-my-slug"));
+    const first = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+    expect(first.taskWorktreeDir.endsWith("prd-1234-my-slug")).toBe(true);
+
+    await store.updateTask("FN-9212", { branch: "feature/PRD-9999-renamed" });
+    const second = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(second.taskWorktreeDir).toBe(first.taskWorktreeDir);
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    for (const repoRelPath of fixture.repos) {
+      expect(current().workspaceWorktrees?.[repoRelPath]?.worktreePath).toBe(join(first.taskWorktreeDir, repoRelPath));
+    }
+  });
+
+  it("falls back to the task id and logs why for an empty slug and a reserved name", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    for (const [id, branch, reason] of [
+      ["FN-9213", "feature/---", "empty-slug"],
+      ["FN-9214", "feature/.AI-Merge", "reserved-name"],
+    ] as const) {
+      const { store, current, logs } = makeFakeStore(branchTask(id, branch));
+      const result = await acquireWorkspaceTaskWorktrees({
+        workspaceConfig: { repos: ["repo-a"] },
+        workspaceRootDir: fixture.rootDir,
+        task: current(),
+        store,
+        settings: BRANCH_SETTINGS,
+        registry: new ActiveSessionRegistry(),
+      });
+      expect(result.taskWorktreeDir, branch).toBe(join(fixture.rootDir, ".fusion", "worktrees", id.toLowerCase()));
+      expect(current().workspaceWorktreeDirSegment).toBe(id.toLowerCase());
+      expect(logs.some((line) => line.includes(reason)), `${branch} -> ${reason}`).toBe(true);
+    }
+  });
+
+  it("gives a second task with an identical slug its own directory", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const sibling = makeTask("FN-9215");
+    (sibling as Task).workspaceWorktreeDirSegment = "prd-1234-my-slug";
+    (sibling as Task).column = "in-progress";
+    const { store, current, logs } = makeFakeStore(branchTask("FN-9216", "feature/PRD-1234-MY-SLUG"));
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [sibling, current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-9216"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
+  it("reproduces the task-id path for task-id naming and for an unset mode", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    for (const worktreeNaming of ["task-id", undefined] as const) {
+      const { store, current } = makeFakeStore(branchTask("FN-9217", "feature/PRD-1234-my-slug"));
+      const result = await acquireWorkspaceTaskWorktrees({
+        workspaceConfig: { repos: ["repo-a"] },
+        workspaceRootDir: fixture.rootDir,
+        task: current(),
+        store,
+        settings: { ...SETTINGS, worktreeNaming },
+        registry: new ActiveSessionRegistry(),
+      });
+      expect(result.taskWorktreeDir, String(worktreeNaming)).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-9217"));
+    }
+  });
+
+  it("slugs the title for task-title naming", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const titled = makeTask("FN-9218");
+    (titled as Task).title = "Close the late acquire gap";
+    const { store, current } = makeFakeStore(titled);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "task-title" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "close-the-late-acquire-gap"));
   });
 });

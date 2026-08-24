@@ -281,7 +281,7 @@ export const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION = "0085";
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 
-/** FNXC:WorkspaceWorktree 2026-08-23-19:52: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
+/** FNXC:WorkspaceWorktree 2026-08-24-06:10: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0067->0072 because origin/main released 0067-0071 while this branch was open. */
 /* FNXC:WorkspaceWorktree 2026-09-19-00:00: renumbered 0072->0086 after rebasing onto a force-replaced main whose real migration history already claims 0072 (task planning failure) through 0085 (dropped excluded upstream feature schema). */
 export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0086";

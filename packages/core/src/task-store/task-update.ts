@@ -324,7 +324,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.planningFailure = updates.planningFailure;
       }
       /*
-      FNXC:WorkspaceWorktree 2026-08-23-19:52:
+      FNXC:WorkspaceWorktree 2026-08-24-06:10:
       R15: the pinned workspace task-directory segment is write-once in practice — acquisition
       mints it only when absent — but the write is an ordinary patch so a repair path can clear it
       (null) on a task with no recorded worktrees.

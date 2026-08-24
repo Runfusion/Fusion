@@ -2539,10 +2539,13 @@ export {
   isStrictDescendantPath,
   resolveWorkspaceTaskWorktreeDir,
   resolveWorkspaceTaskDirSegment,
+  deriveWorkspaceTaskDirSegment,
+  slugifyWorktreeSegment,
+  WORKSPACE_RESERVED_TASK_DIR_SEGMENTS,
   resolveWorkspaceRepoWorktreePath,
   isLegacyWorkspaceWorktreeLayout,
 } from "./tasks/worktree-layout.js";
-export type { WorkspaceWorktreeContext } from "./tasks/worktree-layout.js";
+export type { WorkspaceWorktreeContext, WorkspaceTaskDirSegmentFallbackReason } from "./tasks/worktree-layout.js";
 export { buildTaskResetWorktreePlan, SINGULAR_RESET_WORKTREE_REPO_REL } from "./tasks/task-reset-targets.js";
 export type { BuildTaskResetWorktreePlanOptions, TaskResetWorktreePlan, TaskResetWorktreeTarget } from "./tasks/task-reset-targets.js";
 /*

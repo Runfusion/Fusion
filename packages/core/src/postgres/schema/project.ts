@@ -240,7 +240,7 @@ export const tasks = projectSchema.table("tasks", {
   sourceIssueClosedAt: text("source_issue_closed_at"),
   mergeDetails: jsonb("merge_details"),
   workspaceWorktrees: jsonb("workspace_worktrees"),
-  // FNXC:WorkspaceWorktree 2026-08-23-19:52: R15 pins the workspace task directory segment so recorded paths are never re-derived.
+  // FNXC:WorkspaceWorktree 2026-08-24-06:10: R15 pins the workspace task directory segment so recorded paths are never re-derived.
   workspaceWorktreeDirSegment: text("workspace_worktree_dir_segment"),
   // FNXC:RepositoryScope 2026-08-20-23:07: explicit task intent must survive PostgreSQL reads independently of acquired worktrees.
   repositoryScope: jsonb("repository_scope"),
