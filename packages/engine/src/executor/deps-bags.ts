@@ -304,6 +304,8 @@ export function buildRunImplementationDeps(
       "createTaskAddDepTool", "createTaskDoneTool", "createReviewDisputeTool", "createSpawnAgentTool",
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
+      // FNXC:WorkspaceLateAcquire 2026-08-24-06:11: KTD16 — carries the merge-pending signal to fn_acquire_repo_worktree's tier-2 refusal.
+      "isTaskMergePendingOrActive",
     ]),
     reexecuteTaskInPlace: async (taskId: string) => {
       const live = await host.store.getTask(taskId);

@@ -2314,6 +2314,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   ): Promise<Task> {
     return updateTaskRepositoryScopeImpl(this, id, repositoryScope);
   }
+  /**
+   * FNXC:RepositoryScope 2026-08-21-01:53:
+   * Operator and executor changes are deltas so their repository history is merged from the
+   * planning-locked durable row rather than replacing a stale dashboard or tool snapshot.
+   */
+  async mutateTaskRepositoryScope(
+    id: string,
+    mutation: import("./task-store/task-mutation-ops.js").TaskRepositoryScopeMutation,
+  ): Promise<Task> {
+    return updateTaskRepositoryScopeImpl(this, id, mutation);
+  }
   async updateWorkspaceReviewState(
     id: string,
     expectedScopeRevision: number,

@@ -14,6 +14,26 @@ function isCodeReviewNode(node: WorkflowIrNode): boolean {
     || /code review/i.test(name);
 }
 
+/*
+FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+R10/KTD7: a late acquisition that will force Code Review re-entry must prove the route exists
+BEFORE it acquires, because an unwind after a successful acquire would tear down a worktree a live
+session may already be using. Reachability is not node presence alone — the reroute below also
+refuses when the node exists but is neither `defaultOn` nor in the task's selected `stepIds`, and a
+presence-only probe would admit that second case straight into the non-unwinding path. This shares
+the reroute's own condition so the two cannot drift.
+*/
+export async function isCodeReviewRouteReachable(store: TaskStore, task: Task): Promise<boolean> {
+  const ir = await resolveWorkflowIrForTask(store, task.id);
+  const node = ir.nodes.find(isCodeReviewNode);
+  if (!node) return false;
+  if (node.config?.defaultOn === true) return true;
+  const selection = store.getTaskWorkflowSelectionAsync
+    ? await store.getTaskWorkflowSelectionAsync(task.id)
+    : store.getTaskWorkflowSelection?.(task.id);
+  return (selection?.stepIds ?? []).includes(node.id);
+}
+
 /**
  * Seed exactly one durable Code Review owner after workspace landing rejects stale evidence.
  * A live continuation wins the race; it will consume the graph's own rework path instead.
