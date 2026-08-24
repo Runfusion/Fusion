@@ -529,6 +529,15 @@ export interface GlobalSettings {
    *  Distinct from dashboard `setupComplete` first-run flow state.
    *  Undefined means CLI onboarding has not completed yet. */
   cliOnboardingCompletedAt?: string;
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  Fusion asks the operator to star the GitHub repo once, right after onboarding finishes. The ask is
+  one-shot: this ISO stamp is written the moment the operator answers EITHER way (dismissed, or took
+  the link), because both answers mean the same thing operationally — never ask this person again.
+  Any surface that shows the ask must check this field first, so the CLI and the dashboard cannot
+  each get their own free nag.
+  */
+  githubStarPromptDismissedAt?: string;
   /** List of favorite provider names. Favorite providers appear at the top of
    *  model selection dropdowns. Order is preserved - earlier entries appear higher. */
   favoriteProviders?: string[];

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PathLike } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const createAgentSessionMock = vi.fn();
 const createBashToolMock = vi.fn((cwd: string, options?: any) => ({ name: "bash", cwd, options }));
@@ -418,6 +420,70 @@ describe("worktree path boundary helpers", () => {
       expect(mockBashTool.execute).toHaveBeenCalled();
     });
 
+    it("rejects symlink escapes through every allowed root across all path-taking tools", async () => {
+      const makeTool = (name: string) => ({
+        name,
+        label: name,
+        description: `${name} a boundary path`,
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      });
+      /*
+      FNXC:WorktreeBoundary 2026-08-23-03:44:
+      Symlink-escape coverage must include every filesystem wrapper plus both Bash path surfaces. Read-only aliases and verification cwd checks are part of the same boundary invariant, not optional follow-up cases.
+      */
+      const toolNames = ["read", "glob", "grep", "find", "ls", "write", "edit", "bash", "fn_run_verification"];
+      const tools = toolNames.map(makeTool);
+      const worktreeRoot = "/project/.worktrees/fn-001";
+      const projectRoot = "/project";
+      const hostSkillRoot = "/host/skills";
+      const userSkillRoot = join(homedir(), ".agents", "skills");
+      const externalRoot = "/host/private";
+      const escapeCases = [
+        { symlink: `${worktreeRoot}/escape`, path: `${worktreeRoot}/escape/secret.txt` },
+        { symlink: `${projectRoot}/.fusion/memory/escape`, path: `${projectRoot}/.fusion/memory/escape/secret.txt` },
+        { symlink: `${projectRoot}/.fusion/tasks/FN-001/attachments/escape`, path: `${projectRoot}/.fusion/tasks/FN-001/attachments/escape/secret.txt` },
+        { symlink: `${projectRoot}/.fusion/tasks/FN-002`, path: `${projectRoot}/.fusion/tasks/FN-002/PROMPT.md` },
+        { symlink: `${userSkillRoot}/escape`, path: `${userSkillRoot}/escape/secret.txt` },
+        { symlink: `${hostSkillRoot}/escape`, path: `${hostSkillRoot}/escape/secret.txt` },
+      ];
+      const escapedPaths = new Set(escapeCases.map(({ path }) => path));
+      const symlinkTargets = new Map(escapeCases.map(({ symlink }) => [symlink, externalRoot]));
+      realpathSyncNativeMock.mockImplementation((path: PathLike) => {
+        const text = String(path);
+        if (escapedPaths.has(text)) throw new Error("ENOENT");
+        return symlinkTargets.get(text) ?? text;
+      });
+
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary(tools as any, worktreeRoot, projectRoot, [hostSkillRoot]);
+
+      for (const { symlink, path } of escapeCases) {
+        for (const tool of wrapped as any[]) {
+          const params = tool.name === "bash"
+            ? { command: "pwd", cwd: symlink }
+            : tool.name === "fn_run_verification"
+              ? { command: "pnpm test", cwd: symlink }
+              : { path };
+          const result = await tool.execute(`call-${tool.name}-${symlink}`, params);
+          expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+        }
+
+        const wrappedBash = (wrapped as any[]).find((tool) => tool.name === "bash");
+        const commandTargetResult = await wrappedBash.execute(`call-bash-command-${symlink}`, {
+          command: `cd ${symlink} && pwd`,
+          cwd: worktreeRoot,
+        });
+        expect(commandTargetResult).toMatchObject({
+          ok: false,
+          error: expect.stringContaining("outside the worktree boundary"),
+        });
+      }
+      for (const tool of tools) {
+        expect(tool.execute).not.toHaveBeenCalled();
+      }
+    });
+
     it("allows project root .fusion/memory/ files from worktree session", async () => {
       const mockReadTool = {
         name: "read",
@@ -567,6 +633,82 @@ describe("worktree path boundary helpers", () => {
       const outsideResult = await (wrapped[0] as any).execute("call-outside", { path: "/other/project/secret" });
       expect(outsideResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
       expect(readTool.execute).toHaveBeenCalledOnce();
+    });
+
+    it("allows read/glob/grep/find/ls under the standard user agent skill root without symlink escapes", async () => {
+      const makeTool = (name: string) => ({
+        name,
+        label: name,
+        description: `${name} a user skill file`,
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      });
+      const userAgentRoot = join(homedir(), ".agents");
+      const userSkillRoot = join(userAgentRoot, "skills");
+      const skillPath = join(userSkillRoot, "code-review", "SKILL.md");
+      /*
+      FNXC:SkillReadBoundary 2026-08-23-03:54:
+      Every read-only filesystem alias must share the user-skill allowance and symlink-escape denial. Cover `find` and `ls` alongside `read`, `glob`, and `grep` so aliases cannot drift into a broader or narrower host boundary.
+      */
+      const [readTool, globTool, grepTool, findTool, lsTool, writeTool, editTool, bashTool] = [
+        makeTool("read"),
+        makeTool("glob"),
+        makeTool("grep"),
+        makeTool("find"),
+        makeTool("ls"),
+        makeTool("write"),
+        makeTool("edit"),
+        makeTool("bash"),
+      ];
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary(
+        [readTool, globTool, grepTool, findTool, lsTool, writeTool, editTool, bashTool] as any,
+        "/project/.worktrees/fn-user-skills",
+        "/project",
+      );
+
+      for (const tool of wrapped.slice(0, 5) as any[]) {
+        await tool.execute(`call-${tool.name}`, { path: skillPath });
+      }
+      expect(readTool.execute).toHaveBeenCalledOnce();
+      expect(globTool.execute).toHaveBeenCalledOnce();
+      expect(grepTool.execute).toHaveBeenCalledOnce();
+      expect(findTool.execute).toHaveBeenCalledOnce();
+      expect(lsTool.execute).toHaveBeenCalledOnce();
+
+      for (const tool of wrapped.slice(5, 7) as any[]) {
+        const result = await tool.execute(`call-${tool.name}`, { path: skillPath });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      }
+      expect(writeTool.execute).not.toHaveBeenCalled();
+      expect(editTool.execute).not.toHaveBeenCalled();
+
+      const bashResult = await (wrapped[7] as any).execute("call-bash", { command: "pwd", cwd: userSkillRoot });
+      expect(bashResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(bashTool.execute).not.toHaveBeenCalled();
+
+      const siblingConfigResult = await (wrapped[0] as any).execute("call-config", {
+        path: join(userAgentRoot, "config.json"),
+      });
+      expect(siblingConfigResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(readTool.execute).toHaveBeenCalledOnce();
+
+      const symlinkDir = join(userSkillRoot, "linked-config");
+      const symlinkEscapePath = join(symlinkDir, "config.json");
+      realpathSyncNativeMock.mockImplementation((path: PathLike) => {
+        const text = String(path);
+        if (text === symlinkEscapePath) throw new Error("ENOENT");
+        return text === symlinkDir ? userAgentRoot : text;
+      });
+      for (const tool of wrapped.slice(0, 5) as any[]) {
+        const result = await tool.execute(`call-${tool.name}-symlink`, { path: symlinkEscapePath });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      }
+      expect(readTool.execute).toHaveBeenCalledOnce();
+      expect(globTool.execute).toHaveBeenCalledOnce();
+      expect(grepTool.execute).toHaveBeenCalledOnce();
+      expect(findTool.execute).toHaveBeenCalledOnce();
+      expect(lsTool.execute).toHaveBeenCalledOnce();
     });
 
     it("rejects host skill paths when no read-only extra roots are provided", async () => {

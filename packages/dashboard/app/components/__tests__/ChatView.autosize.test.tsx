@@ -127,8 +127,20 @@ function mockDesktopViewport() {
   }));
 }
 
-function renderChatView() {
-  return render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+Chat opens list-first (FN-054) and FN-9193 docks that list beside the thread, so the composer these
+autosize assertions measure exists only after a conversation row is opened.
+*/
+async function renderChatView() {
+  const result = render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+  if (!document.querySelector(".chat-thread, .chat-room-thread-header")) {
+    const item = document.querySelector<HTMLElement>(
+      ".chat-session-item, .chat-room-item",
+    );
+    if (item) await userEvent.click(item);
+  }
+  return result;
 }
 
 function expectedAutomaticHeight(textarea: HTMLTextAreaElement, scrollHeight: number) {
@@ -147,7 +159,7 @@ describe("ChatView composer autosize", () => {
   it("resets composer height after send clears messageInput", async () => {
     const sendMessage = vi.fn();
     setup({ sendMessage });
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -183,7 +195,7 @@ describe("ChatView composer autosize", () => {
       },
     });
 
-    const { rerender } = renderChatView();
+    const { rerender } = await renderChatView();
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
 
     await waitFor(() => {
@@ -210,7 +222,7 @@ describe("ChatView composer autosize", () => {
   });
 
   it("grows composer height as direct-chat content grows below cap", async () => {
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -229,7 +241,7 @@ describe("ChatView composer autosize", () => {
   });
 
   it("caps direct-chat text at five rendered lines and scrolls overflow internally", async () => {
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -245,7 +257,7 @@ describe("ChatView composer autosize", () => {
 
   it("grows composer height in rooms scope", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -261,7 +273,7 @@ describe("ChatView composer autosize", () => {
 
   it("caps rooms text at five rendered lines and scrolls overflow internally", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -290,7 +302,7 @@ describe("ChatView composer autosize", () => {
     });
 
     setup({}, { rooms: [roomOne, roomTwo], activeRoom: roomOne });
-    const { rerender } = renderChatView();
+    const { rerender } = await renderChatView();
     const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
 
     await waitFor(() => {
@@ -314,7 +326,7 @@ describe("ChatView composer autosize", () => {
   it("ignores the former top-edge pointer drag and clears direct chat to its minimum", async () => {
     const sendMessage = vi.fn();
     setup({ sendMessage });
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -343,7 +355,7 @@ describe("ChatView composer autosize", () => {
 
   it("ignores the former top-edge pointer drag and clears rooms chat to its minimum", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {
@@ -371,7 +383,7 @@ describe("ChatView composer autosize", () => {
   it("uses the same clamp for direct typing and programmatic resets", async () => {
     const sendMessage = vi.fn();
     setup({ sendMessage });
-    renderChatView();
+    await renderChatView();
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     Object.defineProperty(textarea, "scrollHeight", {

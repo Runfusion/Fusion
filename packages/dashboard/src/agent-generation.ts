@@ -55,6 +55,10 @@ function ensureEngineReady(): Promise<void> {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /** System prompt for the AI agent that generates agent specifications */
+/*
+FNXC:PromptOverrides 2026-08-23-23:25:
+Duplicate of the `agent-generation-system` entry in core's PROMPT_KEY_CATALOG, which is what `resolvePrompt` returns for an un-overridden run; this constant is reached only if that key disappears. Keep the two literals identical — FN-021's thinking-level edit landed here alone and never reached a real generation.
+*/
 export const AGENT_GENERATION_SYSTEM_PROMPT = `You are an agent specification generator for the fn task board system.
 
 Your job: given a user-provided role description, generate a complete agent specification suitable for creating an AI agent.

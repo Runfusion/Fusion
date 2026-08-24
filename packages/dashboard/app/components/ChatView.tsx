@@ -1482,6 +1482,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         directThreadDeferredAnchorTimeoutRef.current = null;
       }
     };
+  /*
+  FNXC:ChatScrollAnchor 2026-08-23-23:20:
+  `detailOpen` is a dependency because list-first navigation (FN-054) mounts `.chat-messages` only
+  when the conversation is opened. Without it this effect last ran while the thread pane did not
+  exist, bailed at the missing container WITHOUT recording `lastAnchoredThreadStateRef`, and so (a)
+  opening a conversation never anchored to its newest message and (b) the next message growth saw a
+  null previous state and FORCE-anchored, yanking a reader who had scrolled up to the bottom.
+  */
   }, [
     roomThreadActive,
     rooms.activeRoom?.id,
@@ -1490,6 +1498,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     activeSession?.id,
     messages.length,
     messagesLoading,
+    detailOpen,
     anchorToBottom,
   ]);
 
@@ -1962,11 +1971,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     appliedComposerDraftNonceRef.current = initialComposerDraftNonce;
+    /*
+    FNXC:ChatComposerPrefill 2026-08-23-23:20:
+    List-first navigation (FN-054) renders the composer only inside an opened conversation, so a seed
+    that merely sets state would leave the imported link invisible and unfocusable behind the
+    conversation list. Opening detail is part of the seed: the operator must land in the composer with
+    the link already typed.
+    */
     const seedComposer = (willChangeDraftTarget: boolean) => {
       if (willChangeDraftTarget) {
         skipNextDraftRestoreRef.current = true;
       }
       setChatScope("direct");
+      setDetailOpen(true);
       focusComposerAfterPrefillRef.current = true;
       setMessageInput(initialComposerDraft);
     };

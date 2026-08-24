@@ -82,6 +82,26 @@ describe("useBackgroundSessions", () => {
     });
   });
 
+  /*
+  FNXC:SubtaskBreakdownRemoval 2026-08-23-22:10:
+  Subtask Breakdown is no longer a dashboard flow, so a persisted `subtask` session must never reach
+  the banner: a Resume affordance with no destination is worse than no affordance. This is the only
+  executable pin on that filter now that App's routing case for it is gone.
+  */
+  it("never surfaces a persisted subtask session", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "s-subtask", type: "subtask", status: "awaiting_input" }),
+      makeSession({ id: "s-planning", status: "awaiting_input" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["s-planning"]);
+    });
+    expect(result.current.needsInput).toBe(1);
+  });
+
   it("logs a warning when fetching background sessions fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const networkError = new Error("Network error");

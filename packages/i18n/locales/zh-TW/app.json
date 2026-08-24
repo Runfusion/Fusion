@@ -6276,6 +6276,8 @@
       "usedAutomaticallyIfThePrimaryDefaultModelHits": "",
       "useDefault": "",
       "whenEnabledStartupFetchesTheLatestAvailableModels": "",
+      "syncOrcaRouterModelListAtStartup": "",
+      "whenEnabledStartupFetchesTheLatestOrcaRouterModels": "",
       "whenEnabledStartupRefreshesModelsThroughTheLocal": "",
       "commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities": "",
       "openRouterRoutingOrderHint": "",

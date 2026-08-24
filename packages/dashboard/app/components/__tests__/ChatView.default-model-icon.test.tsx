@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { ChatView, resolveSessionProvider } from "../ChatView";
 import type { UseChatReturn, ChatMessageInfo, ChatSessionInfo } from "../../hooks/useChat";
@@ -179,6 +179,8 @@ describe("ChatView default model icon", () => {
     mockFetchModels.mockRejectedValue(new Error("boom"));
 
     renderView();
+    /* FNXC:ChatNavigation 2026-08-23-18:35: FN-054 made Chat list-first, and the Bot fallback icon lives in the thread header, so the conversation must be opened first. */
+    fireEvent.click(screen.getByTestId(`chat-session-${baseSession.id}`));
 
     await waitFor(() => expect(screen.getAllByTestId("icon-bot").length).toBeGreaterThan(0));
     expect(screen.queryByTestId("anthropic-icon")).not.toBeInTheDocument();

@@ -33,6 +33,8 @@ function setup(availableModels: Array<{ provider: string; id: string; name: stri
     get: vi.fn((path: string, handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) => {
       getHandlers.set(path, handler);
     }),
+    // FNXC:ModelCatalog 2026-08-23-23:12: registerModelRoutes also registers POST /models/refresh (FN-019 operator catalog refresh), so a router fake exposing only `get` throws before any GET handler is captured.
+    post: vi.fn(),
   } as unknown as Router;
 
   const store = {
@@ -73,6 +75,12 @@ async function callModels(handler: (req: unknown, res: { json: (body: unknown) =
 // files (~/.fusion/agent/auth.json etc.), which vary across environments.
 const OPENAI_MODEL = { provider: "droid-cli", id: "droid/model", name: "Droid", reasoning: false, contextWindow: 0 };
 
+/*
+FNXC:ModelThinkingCapabilities 2026-08-23-23:20:
+FN-021 added a derived `supportedThinkingLevels` to every catalog row emitted by the registry map in /api/models; a non-reasoning row derives ["off"]. Rows Hermes appends after that map carry no such field, so only registry-sourced rows change shape here.
+*/
+const EXPECTED_DROID_ROW = { ...OPENAI_MODEL, supportedThinkingLevels: ["off"] };
+
 describe("register-model-routes: Hermes additive surfacing", () => {
   it("adds zero Hermes rows and leaves existing rows unchanged when no profiles are configured", async () => {
     mockedList.mockResolvedValue([]);
@@ -80,7 +88,7 @@ describe("register-model-routes: Hermes additive surfacing", () => {
 
     const response = await callModels(handler);
 
-    expect(response.models).toEqual([OPENAI_MODEL]);
+    expect(response.models).toEqual([EXPECTED_DROID_ROW]);
     expect(response.models.some((m) => m.provider === "hermes")).toBe(false);
   });
 
@@ -90,7 +98,7 @@ describe("register-model-routes: Hermes additive surfacing", () => {
 
     const response = await callModels(handler);
 
-    expect(response.models).toContainEqual(OPENAI_MODEL);
+    expect(response.models).toContainEqual(EXPECTED_DROID_ROW);
     expect(response.models).toContainEqual({
       provider: "hermes",
       id: "default",
@@ -146,7 +154,7 @@ describe("register-model-routes: Hermes additive surfacing", () => {
 
     const response = await callModels(handler);
 
-    expect(response.models).toEqual([OPENAI_MODEL]);
+    expect(response.models).toEqual([EXPECTED_DROID_ROW]);
     expect(response.models.some((m) => m.provider === "hermes")).toBe(false);
   });
 

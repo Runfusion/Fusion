@@ -1006,6 +1006,81 @@ describe("TaskCard", () => {
     expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Preserve Progress?" }));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-23-21:50:
+  MOVING INTO A RENAMED INTAKE LANE MUST STILL ASK BEFORE RESETTING PROGRESS.
+
+  The board resolves workflow column traits AFTER first paint. The original defect lived on the
+  now-deleted native drop path (FN-051 removed dragging): its handler's `useCallback` omitted the
+  flags, so the DOM kept the pre-load closure where a RENAMED intake lane is not a member of the
+  legacy id set, and a card with completed steps moved with `shouldPrompt === false` — steps reset,
+  no question asked. That was the only instance of this shape that LOST WORK.
+
+  The surviving surface is this context-menu move, whose handler lists `taskMoveColumns` in its
+  deps. This case pins that: flags arriving on a re-render must be the ones the move reads.
+  THE OBSERVABLE IS `confirm`, not the move — asserting on `onMoveTask` alone would pass whether or
+  not the operator was ever asked.
+  */
+  it("prompts to preserve progress once a renamed intake lane's flags have arrived", async () => {
+    const onMoveTask = vi.fn(async () => makeTask({ column: "drafting" as any }));
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
+    const worked = makeTask({
+      column: "in-progress",
+      steps: [{ id: "s1", title: "done", status: "done" } as any],
+    });
+    const draftingIsIntake = [
+      { id: "drafting" as any, label: "Drafting", flags: { intake: true, hold: true } },
+      { id: "in-progress" as const, label: "In progress", flags: { countsTowardWip: true }, moveTargets: ["drafting"] },
+    ];
+
+    const { rerender } = render(
+      <TaskCard task={worked} onOpenDetail={noop} addToast={noop} onMoveTask={onMoveTask} />,
+    );
+    rerender(
+      <TaskCard task={worked} onOpenDetail={noop} addToast={noop} onMoveTask={onMoveTask} taskMoveColumns={draftingIsIntake} />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    // A single declared target is offered directly, without the "Move to" submenu.
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Drafting" }));
+
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Preserve Progress?" })));
+    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "drafting", { preserveProgress: true });
+  });
+
+  /*
+  The paired negative: a lane that is NOT pre-implementation must still move silently, or the prompt
+  becomes noise and gets clicked through — costing the same progress it exists to protect.
+  */
+  it("does not prompt when moving into a lane that is not pre-implementation", async () => {
+    const onMoveTask = vi.fn(async () => makeTask({ column: "building" as any }));
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
+    const worked = makeTask({
+      column: "todo",
+      steps: [{ id: "s1", title: "done", status: "done" } as any],
+    });
+    const buildingIsWip = [
+      { id: "building" as any, label: "Building", flags: { countsTowardWip: true } },
+      { id: "todo" as const, label: "Todo", flags: { intake: true, hold: true }, moveTargets: ["building"] },
+    ];
+
+    const { rerender } = render(
+      <TaskCard task={worked} onOpenDetail={noop} addToast={noop} onMoveTask={onMoveTask} />,
+    );
+    rerender(
+      <TaskCard task={worked} onOpenDetail={noop} addToast={noop} onMoveTask={onMoveTask} taskMoveColumns={buildingIsWip} />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    // A single declared target is offered directly, without the "Move to" submenu.
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Building" }));
+
+    await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-001", "building", undefined));
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
   it("omits refine without a real modal callback and offers PR status actions from the board context menu", async () => {
     const onOpenDetail = vi.fn();
     vi.mocked(refreshPrStatus).mockResolvedValueOnce({} as any);
