@@ -329,10 +329,14 @@ This is the ratchet working as designed: the drop is real, not an accounting cha
 because main's own run-context threading replaced marker sites with derived actors, and dashboard
 fell because FN-074 deleted the task-splitting/parent-deletion paths that carried several of them.
 Lowering the floor in the same commit is what stops the reclaimed ground from being given back.
+
+Engine then settled at 312 rather than 307: reconciling with the remote branch's independent main
+merge brought in five self-healing writes carrying the marker. That is the correct carrier there —
+self-healing is automation acting with no human actor behind it — so they are counted, not converted.
 */
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
   core: 34,
-  engine: 307,
+  engine: 312,
   dashboard: 138,
   cli: 2,
 };

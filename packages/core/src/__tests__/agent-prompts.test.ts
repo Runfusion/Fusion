@@ -219,22 +219,33 @@ describe("resolveAgentPrompt", () => {
   });
 
   it("executor prompt variants block workflow moves unless asked or created", () => {
-    const defaultExecutor = resolveAgentPrompt("executor");
+    /*
+    FNXC:AgentPrompts 2026-08-23-06:40:
+    Both variants are resolved on the TASK-EXECUTION surface (both creation tools withheld), which is
+    the surface this test is about. Resolving with no options instead asks for the creator-capable
+    persona, where the carve-out below is CORRECT and rendering it is not a bug — `taskCreateToolAvailable`
+    defaults to available, and the executor's only production caller always passes the real surface
+    (`system-prompt.ts`), so an unspecified surface is a test artifact rather than a reachable state.
+    */
+    const executionSurface = { taskCreateToolAvailable: false, delegateTaskToolAvailable: false };
+    const defaultExecutor = resolveAgentPrompt("executor", undefined, executionSurface);
     const seniorEngineer = resolveAgentPrompt("executor", {
       roleAssignments: {
         executor: "senior-engineer",
       },
-    });
+    }, executionSurface);
 
     for (const result of [defaultExecutor, seniorEngineer]) {
       expect(result).toContain("Do not call `fn_workflow_select` to change the workflow of the task you are executing");
       expect(result).toContain("The only exception is when the user explicitly requested a specific workflow for this task");
       /*
       FNXC:AgentPrompts 2026-08-23-23:05:
-      The "you may still set the workflow on tasks you create" carve-out was DELETED by FN-125
-      (0b4dbd219b), which withheld `fn_task_create`/`fn_delegate_task` from workflow agents — an
-      executor can no longer create a task, so the carve-out describes an impossible action. The
-      remaining guarantee is the prohibition plus its single user-directed exception.
+      FN-125 (0b4dbd219b) withheld `fn_task_create`/`fn_delegate_task` from workflow agents, so on a
+      task-execution surface the "you may still set the workflow on tasks you create" carve-out
+      describes an impossible action. The clause was made CONDITIONAL on the resolved tool surface,
+      not deleted outright — creator-capable personas still render it (see the sibling test). What
+      this test pins is that a task-execution executor gets the prohibition and its single
+      user-directed exception, and no carve-out.
       */
       expect(result).not.toContain("You may still set the workflow on tasks you create");
     }
