@@ -254,6 +254,17 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.externalBlock !== undefined) {
         task.externalBlock = updates.externalBlock;
       }
+      /*
+      FNXC:WorkspaceWorktree 2026-08-23-19:52:
+      R15: the pinned workspace task-directory segment is write-once in practice — acquisition
+      mints it only when absent — but the write is an ordinary patch so a repair path can clear it
+      (null) on a task with no recorded worktrees.
+      */
+      if (updates.workspaceWorktreeDirSegment === null) {
+        task.workspaceWorktreeDirSegment = undefined;
+      } else if (updates.workspaceWorktreeDirSegment !== undefined) {
+        task.workspaceWorktreeDirSegment = updates.workspaceWorktreeDirSegment;
+      }
       // New dependencies re-seed hold-lane tasks and exhausted Plan Review cap parks.
       let movedToTriage = false;
       let respecifyFromColumn: string | undefined;

@@ -84,7 +84,11 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:ExternalBlock 2026-08-28-03:48: advance the schema ceiling so upgraded projects materialize the external-obstacle freeze before task reads begin. */
 /* FNXC:PlanApproval 2026-08-28-06:24: advance the ceiling with the per-task approval migration so task reads never precede its column. */
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
-export const SCHEMA_BASELINE_VERSION = "0071";
+/*
+FNXC:WorkspaceWorktree 2026-09-04-04:42:
+origin/main released 0068-0071 after this branch minted the workspace directory-segment column as 0067, so the pin migration is 0072 and the binary ceiling advances with it.
+*/
+export const SCHEMA_BASELINE_VERSION = "0072";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -266,6 +270,10 @@ export const PATCHNODE_ENTRIES_VERSION = "0071";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
+
+/** FNXC:WorkspaceWorktree 2026-08-23-19:52: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
+/* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0067->0072 because origin/main released 0067-0071 while this branch was open. */
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0072";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -512,6 +520,7 @@ const TASK_STEP_REPORTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0068_fn_208_task_
 const TASK_EXTERNAL_BLOCK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0069_fn_209_task_external_block.sql");
 const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_212_task_require_plan_approval.sql");
 const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_workspace_worktree_dir_segment.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -653,6 +662,7 @@ export async function applySchemaBaseline(
     const taskExternalBlockAlreadyApplied = applied.includes(TASK_EXTERNAL_BLOCK_VERSION);
     const taskRequirePlanApprovalAlreadyApplied = applied.includes(TASK_REQUIRE_PLAN_APPROVAL_VERSION);
     const patchnodeEntriesAlreadyApplied = applied.includes(PATCHNODE_ENTRIES_VERSION);
+    const workspaceWorktreeDirSegmentAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1533,6 +1543,13 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(PATCHNODE_ENTRIES_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:WorkspaceWorktree 2026-08-23-19:52: register 0072 explicitly so an upgraded project gets the pinned workspace task-directory column before acquisition writes it. */
+    if (!workspaceWorktreeDirSegmentAlreadyApplied) {
+      const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

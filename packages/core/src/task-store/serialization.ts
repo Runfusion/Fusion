@@ -92,6 +92,7 @@ export function rowToTask(row: TaskRow): Task {
     baseCommitSha: row.baseCommitSha || undefined,
     scopeOverride: row.scopeOverride ? true : undefined,
     scopeOverrideReason: row.scopeOverrideReason || undefined,
+    workspaceWorktreeDirSegment: row.workspaceWorktreeDirSegment || undefined,
     scopeAutoWiden: fromJson<string[]>(row.scopeAutoWiden) ?? [],
     modelPresetId: row.modelPresetId || undefined,
     modelProvider: row.modelProvider || undefined,

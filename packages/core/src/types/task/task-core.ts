@@ -861,6 +861,15 @@ export interface Task {
    * it alongside `landedSha`.
    */
   workspaceWorktrees?: Record<string, WorkspaceWorktreeEntry>;
+  /**
+   * FNXC:WorkspaceWorktree 2026-08-23-19:52:
+   * R15: the workspace task's own directory segment, minted once at first workspace acquisition
+   * and authoritative for every later resolution. A branch rename, title edit, or `worktreeNaming`
+   * change after acquisition never re-derives it, so recorded `workspaceWorktrees[*].worktreePath`
+   * values stay resolvable and one task never straddles two layouts. Absent on every task that
+   * predates pinning, which resolves to the historic `taskId.toLowerCase()` segment.
+   */
+  workspaceWorktreeDirSegment?: string;
   /** Explicit repository intent. Missing legacy scope is intentionally not inferred from checkouts. */
   repositoryScope?: TaskRepositoryScope;
   steps: TaskStep[];

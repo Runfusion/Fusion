@@ -112,15 +112,34 @@ refer to the same `repo/path` spelling; a one-repository workspace is the degene
 export function resolveWorkspaceTaskWorktreeDir(
   workspaceRootDir: string,
   settings: Pick<Settings, "worktreesDir"> | undefined,
-  taskId: string,
+  taskDirSegment: string,
 ): string {
-  const normalizedTaskId = taskId.toLowerCase();
-  if (!settings?.worktreesDir) return join(workspaceRootDir, ".fusion", "worktrees", normalizedTaskId);
+  if (!taskDirSegment) throw new Error("resolveWorkspaceTaskWorktreeDir requires a resolved task directory segment");
+  if (!settings?.worktreesDir) return join(workspaceRootDir, ".fusion", "worktrees", taskDirSegment);
   return join(
     resolveWorktreesDirLayout(workspaceRootDir, settings),
     workspaceWorktreeGroupSegment(workspaceRootDir),
-    normalizedTaskId,
+    taskDirSegment,
   );
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-23-19:52:
+R15 pins a workspace task's directory segment on the task at first acquisition, so a later
+branch rename, title edit, or `worktreeNaming` change never moves, re-derives, or invalidates
+its recorded paths. Every call site that resolves a workspace task directory reads the pin
+through this function rather than deriving a segment of its own — a site that re-derived would
+disagree with what is on disk and mix layouts inside one task. A task with no pin (every task
+that predates pinning) reproduces the historic `taskId.toLowerCase()` segment exactly.
+The group segment above this one stays basename-derived and settings-independent (R17), so
+archive disposal and the pi-extension candidate builder still resolve grouped roots with no Task.
+*/
+export function resolveWorkspaceTaskDirSegment(
+  task: { id: string; workspaceWorktreeDirSegment?: string | null },
+): string {
+  const pinned = task.workspaceWorktreeDirSegment;
+  if (typeof pinned === "string" && pinned.length > 0) return pinned;
+  return task.id.toLowerCase();
 }
 
 /** Resolves a repository child without flattening nested workspace repository names. */

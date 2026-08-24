@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile 
 import { exec } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
+import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
 import { resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
@@ -1946,6 +1946,31 @@ export class WorkspaceRepoAcquireBusyError extends Error {
   }
 }
 
+/*
+FNXC:WorkspaceWorktree 2026-08-23-19:52:
+R15 mints the workspace task's directory segment exactly once, at its first workspace
+acquisition, and every later resolution reads the pin instead of re-deriving. Deriving on every
+resolution would make the directory time-varying: a mid-flight branch rename or a
+`worktreeNaming` change would move the task's paths out from under its recorded
+`workspaceWorktrees[*].worktreePath` entries, and the call sites that resolve those paths would
+disagree with each other and with what is on disk. A task that already carries a pin is returned
+untouched, so this is idempotent across the per-repository loop and across re-acquisition.
+*/
+async function ensureWorkspaceTaskDirSegmentPin(input: {
+  task: Task;
+  store: TaskStore;
+  settings: Partial<Settings>;
+  logger?: { log: (m: string) => void };
+  runContext?: RunMutationContext;
+}): Promise<Task> {
+  const existing = input.task.workspaceWorktreeDirSegment;
+  if (typeof existing === "string" && existing.length > 0) return input.task;
+  const segment = resolveWorkspaceTaskDirSegment(input.task);
+  await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
+  input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
+  return await input.store.getTask(input.task.id);
+}
+
 /**
  * FNXC:WorkspaceRootRouting 2026-08-19-12:15:
  * A workspace task needs a complete durable per-repository worktree set before any planning,
@@ -1984,7 +2009,14 @@ export async function acquireWorkspaceTaskWorktrees(
   }
   // Validate a durable remediation target without allowing it to choose session cwd.
   resolveWorkspaceReviewRemediationRepository(current, repoRelPaths);
-  const taskWorktreeDir = resolveWorkspaceTaskWorktreeDir(opts.workspaceRootDir, opts.settings, current.id);
+  current = await ensureWorkspaceTaskDirSegmentPin({
+    task: current,
+    store: opts.store,
+    settings: opts.settings,
+    logger: opts.logger,
+    runContext: opts.runContext,
+  });
+  const taskWorktreeDir = resolveWorkspaceTaskWorktreeDir(opts.workspaceRootDir, opts.settings, resolveWorkspaceTaskDirSegment(current));
   const legacyLayout = isLegacyWorkspaceWorktreeLayout(current, taskWorktreeDir);
   if (!legacyLayout) await mkdir(taskWorktreeDir, { recursive: true });
 
