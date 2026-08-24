@@ -33,7 +33,13 @@ export class MemoryMcpHandler {
     const id = (typeof value.id === "string" || typeof value.id === "number") ? value.id : undefined;
     if (value.jsonrpc !== "2.0" || typeof value.method !== "string") return id === undefined ? undefined : { jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid JSON-RPC request" } };
     if (id === undefined) return undefined;
-    if (value.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "fusion-memory" } } };
+    /*
+     * FNXC:MemoryMcp 2026-08-23-23:44:
+     * The MCP SDK validates initialize results with InitializeResultSchema, whose serverInfo
+     * requires both name and version. Omitting version made clients skip fusion-memory after
+     * retries with an opaque $ZodError category.
+     */
+    if (value.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "fusion-memory", version: "1.0.0" } } };
     if (value.method === "tools/list") return { jsonrpc: "2.0", id, result: { tools: MEMORY_MCP_TOOLS } };
     if (value.method !== "tools/call") return { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } };
     const params = value.params;

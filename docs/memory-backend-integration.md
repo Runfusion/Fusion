@@ -1,5 +1,7 @@
 # Stash Memory Backend Integration
 
+[← Docs index](./README.md)
+
 Fusion persists AI "memory" — task-completion shots, chat-session transcripts, recall hits,
 and per-conversation read focus — to a pluggable memory backend. The only memory backend
 currently wired into Fusion is **Stash**, a session-oriented event store. This document is the

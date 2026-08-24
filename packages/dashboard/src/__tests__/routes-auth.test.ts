@@ -5593,6 +5593,48 @@ describe("llama.cpp auth routes", () => {
       url: "http://127.0.0.1:8080",
       hasApiKey: false,
     });
+    /*
+    FNXC:ProviderAuth 2026-08-24-00:00:
+    The `/auth/status` tests below build the full provider catalog, which probes every CLI runtime.
+    Without these stubs those probes fall through the passthrough `execFile` mock and spawn real
+    `claude`/`droid`/`cursor`/`grok`/`omp` subprocesses, making the status assertions the slowest tests
+    in the file (~4s). Mock them unavailable like the main `GET /auth/status` block does so no real
+    subprocess is spawned.
+    */
+    mockProbeGitCliStatus.mockResolvedValue({
+      available: true,
+      version: "2.45.1",
+      installUrl: "https://git-scm.com/downloads",
+    });
+    mockIsGhAvailable.mockReturnValue(false);
+    mockIsGhAuthenticated.mockReturnValue(false);
+    vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
   });
 
   it("enables llama.cpp when probe passes", async () => {
