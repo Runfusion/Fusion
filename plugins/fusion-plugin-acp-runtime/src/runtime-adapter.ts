@@ -142,15 +142,13 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       env: buildSpawnEnv(this.settings.envAllowList, {
         required: this.settings.requiredEnv,
         /*
-        FNXC:AcpSubscribeCompat 2026-08-21-18:40:
+        FNXC:AcpTaskEnv 2026-08-21-18:40:
         `taskEnv` is the engine's contract for task-scoped subprocess env
-        (AgentRuntimeOptions.taskEnv). Merge it AFTER the allow-list so task
-        values win, but only for keys the allow-list already admits — the
-        allow-list stays the trust boundary (KTD6b).
+        (AgentRuntimeOptions.taskEnv). Overlay it before filtering so task values
+        win, while only keys admitted by the allow-list reach the subprocess —
+        the allow-list stays the trust boundary (KTD6b).
         */
-        sourceEnv: options.taskEnv
-          ? { ...process.env, ...options.taskEnv }
-          : process.env,
+        sourceEnv: { ...process.env, ...options.taskEnv },
       }),
       advertiseFs: { read: this.settings.fsRead, write: this.settings.fsWrite },
       clientHandler,

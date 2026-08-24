@@ -73,6 +73,8 @@ describe("branch-selection", () => {
     })).toEqual({
       workingBranch: "feature/planning/fn-123-add-parser",
       mergeTargetBranch: "feature/planning",
+      // FNXC:BranchSelection 2026-08-23-23:35: the helper derives the per-task branch itself, so it now declares the mandatory write origin as "engine"; only an operator-typed name writes "operator".
+      branchWriteOrigin: "engine",
     });
   });
 });

@@ -3492,8 +3492,12 @@ describe("App Planning Mode", () => {
     });
   });
 
+  /*
+  FNXC:SubtaskBreakdownRemoval 2026-08-23-22:12:
+  The `subtask` row is gone: Subtask Breakdown is no longer a dashboard flow, `useBackgroundSessions`
+  filters those sessions out entirely (pinned in its own suite), and there is no overlay left to open.
+  */
   it.each([
-    { type: "subtask" as const, expectedView: "board", opensSubtaskOverlay: true },
     { type: "mission_interview" as const, expectedView: "missions", opensSubtaskOverlay: false },
     { type: "milestone_interview" as const, expectedView: "missions", opensSubtaskOverlay: false },
     { type: "slice_interview" as const, expectedView: "missions", opensSubtaskOverlay: false },

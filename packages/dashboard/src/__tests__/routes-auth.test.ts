@@ -379,9 +379,13 @@ describe("GET /models", () => {
     const res = await GET(buildApp(modelRegistry), "/api/models");
 
     expect(res.status).toBe(200);
+    /*
+    FNXC:ModelThinkingCapabilities 2026-08-23-23:50:
+    FN-021 derives `supportedThinkingLevels` for every /api/models row; a non-reasoning model derives ["off"], while a reasoning model with no thinkingLevelMap derives nothing.
+    */
     expect(res.body.models).toEqual([
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
-      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000, supportedThinkingLevels: ["off"] },
     ]);
     expect(modelRegistry.refresh).toHaveBeenCalled();
   });
@@ -1078,6 +1082,8 @@ describe("GET /auth/status", () => {
       "kimi-coding",
       "minimax",
       "openrouter",
+      // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
+      "orcarouter",
       "opencode-go",
       "tavily",
       "zai",
@@ -1194,6 +1200,8 @@ describe("GET /auth/status", () => {
       "kimi-coding",
       "minimax",
       "openrouter",
+      // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
+      "orcarouter",
       "opencode-go",
       "tavily",
       "zai",
@@ -1662,6 +1670,8 @@ describe("GET /auth/status", () => {
       "kimi-coding",
       "minimax",
       "openrouter",
+      // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
+      "orcarouter",
       "opencode-go",
       "tavily",
       "zai",
@@ -5582,6 +5592,48 @@ describe("llama.cpp auth routes", () => {
       reachable: true,
       url: "http://127.0.0.1:8080",
       hasApiKey: false,
+    });
+    /*
+    FNXC:ProviderAuth 2026-08-24-00:00:
+    The `/auth/status` tests below build the full provider catalog, which probes every CLI runtime.
+    Without these stubs those probes fall through the passthrough `execFile` mock and spawn real
+    `claude`/`droid`/`cursor`/`grok`/`omp` subprocesses, making the status assertions the slowest tests
+    in the file (~4s). Mock them unavailable like the main `GET /auth/status` block does so no real
+    subprocess is spawned.
+    */
+    mockProbeGitCliStatus.mockResolvedValue({
+      available: true,
+      version: "2.45.1",
+      installUrl: "https://git-scm.com/downloads",
+    });
+    mockIsGhAvailable.mockReturnValue(false);
+    mockIsGhAuthenticated.mockReturnValue(false);
+    vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
     });
   });
 

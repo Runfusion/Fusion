@@ -17,6 +17,8 @@ function createModelsHandler(modelRegistry: ReturnType<typeof createKimiModelCat
     get: vi.fn((path: string, handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) => {
       handlers.set(path, handler);
     }),
+    // FNXC:ModelCatalog 2026-08-23-23:12: registerModelRoutes also registers POST /models/refresh (FN-019 operator catalog refresh), so a router fake exposing only `get` throws before any GET handler is captured.
+    post: vi.fn(),
   } as unknown as Router;
   const authStorage = {
     reload: vi.fn(),
@@ -50,15 +52,19 @@ async function getK3Rows(modelRegistry: ReturnType<typeof createKimiModelCatalog
   return response.models.filter((model) => model.provider === "kimi-coding" && model.id === "k3");
 }
 
+/*
+FNXC:ModelThinkingCapabilities 2026-08-23-23:20:
+FN-021 derives `supportedThinkingLevels` for every /api/models row from the pinned catalog's thinkingLevelMap; K3's bundled map yields low/high/max. Asserted explicitly so a regression in the derivation is visible from the K3 catalog coverage.
+*/
 describe("FN-8180: Kimi K3 /api/models catalog", () => {
   it("surfaces the native K3 model once for a configured Kimi provider", async () => {
     const k3Rows = await getK3Rows(createKimiModelCatalogRegistry());
-    expect(k3Rows).toEqual([{ provider: "kimi-coding", id: "k3", name: "Kimi K3", reasoning: true, contextWindow: 1_048_576 }]);
+    expect(k3Rows).toEqual([{ provider: "kimi-coding", id: "k3", name: "Kimi K3", reasoning: true, contextWindow: 1_048_576, supportedThinkingLevels: ["low", "high", "max"] }]);
   });
 
   it("dedupes a colliding native K3 row after the route's supplemental merges", async () => {
     const k3Rows = await getK3Rows(createKimiModelCatalogRegistry({ duplicateK3: true }));
-    expect(k3Rows).toEqual([{ provider: "kimi-coding", id: "k3", name: "Kimi K3", reasoning: true, contextWindow: 1_048_576 }]);
+    expect(k3Rows).toEqual([{ provider: "kimi-coding", id: "k3", name: "Kimi K3", reasoning: true, contextWindow: 1_048_576, supportedThinkingLevels: ["low", "high", "max"] }]);
   });
 
   it("makes a missing native K3 catalog row explicit instead of passing vacuously", async () => {

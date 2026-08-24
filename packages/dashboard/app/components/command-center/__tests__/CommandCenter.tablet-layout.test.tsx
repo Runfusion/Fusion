@@ -498,7 +498,6 @@ describe("CommandCenter tablet layout regression (FN-6679)", () => {
     expect(tabletCss).toMatch(/\.cc-live-strip,\s*\n\s*\.cc-overview-charts,\s*\n\s*\.cc-team-chart-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
     expect(tabletCss).toMatch(/\.cc-live-strip-metrics\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
     expect(styles).toMatch(/\.cc-table-wrap\s*\{[^}]*overflow-x:\s*auto/);
-    expect(tabletCss).toContain("FNXC:CommandCenterStyling 2026-06-18-20:30");
   });
 
   it("keeps the same flex-fill scroll-owner contract on desktop", () => {

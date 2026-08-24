@@ -14,6 +14,8 @@ import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import { SWR_CACHE_KEYS, writeCache } from "../../utils/swrCache";
 import {
   renderWithAct,
+  renderChatDetailWithAct,
+  openFirstConversation,
   setupMockChat,
   setupMockRooms,
   mockViewportMode,
@@ -143,7 +145,7 @@ describe("ChatView core interactions", () => {
   describe("attachments", () => {
     it("clicking paperclip triggers hidden file input", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const clickSpy = vi.spyOn(fileInput, "click");
@@ -157,7 +159,7 @@ describe("ChatView core interactions", () => {
         callbacks?.onAccepted?.();
       });
       setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const attachButton = screen.getByTestId("chat-attach-btn");
       expect(attachButton).toBeInTheDocument();
@@ -189,7 +191,7 @@ describe("ChatView core interactions", () => {
         callbacks?.onAccepted?.();
       });
       setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const imageFile = new File(["image"], "accepted.png", { type: "image/png" });
       const textFile = new File(["note"], "accepted.txt", { type: "text/plain" });
@@ -214,7 +216,7 @@ describe("ChatView core interactions", () => {
         onAccepted = callbacks?.onAccepted;
       });
       setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const acceptedFile = new File(["accepted"], "accepted.png", { type: "image/png" });
       const stagedLaterFile = new File(["later"], "later.png", { type: "image/png" });
@@ -240,7 +242,7 @@ describe("ChatView core interactions", () => {
       const sendMessage = vi.fn();
       const addToast = vi.fn();
       setupMockChat({ activeSession: activeSessionFixture, messages: [], isStreaming: true, sendMessage });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const imageFile = new File(["image"], "queued.png", { type: "image/png" });
@@ -257,7 +259,7 @@ describe("ChatView core interactions", () => {
       const sendMessage = vi.fn();
       const addToast = vi.fn();
       setupMockChat({ activeSession: activeSessionFixture, messages: [], createSession, sendMessage });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       fireEvent.change(fileInput, { target: { files: [new File(["image"], "guarded.png", { type: "image/png" })] } });
@@ -278,7 +280,7 @@ describe("ChatView core interactions", () => {
         messages: [],
         createSession,
       });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       fireEvent.change(fileInput, { target: { files: [new File(["image"], "planner.png", { type: "image/png" })] } });
@@ -296,7 +298,7 @@ describe("ChatView core interactions", () => {
         callbacks?.onFailed?.();
       });
       setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const textFile = new File(["retry"], "retry.txt", { type: "text/plain" });
@@ -309,7 +311,7 @@ describe("ChatView core interactions", () => {
 
     it("accepts non-image files and renders filename preview", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const textFile = new File(["hello"], "note.txt", { type: "text/plain" });
@@ -321,7 +323,7 @@ describe("ChatView core interactions", () => {
 
     it("accepts the task attachment MIME set and rejects server-unsupported logs", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const video = new File(["video"], "demo.mp4", { type: "video/mp4" });
@@ -338,7 +340,7 @@ describe("ChatView core interactions", () => {
 
     it("accepts mixed image and supported text attachments from paste events", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       const imageFile = new File(["image"], "paste.png", { type: "image/png" });
@@ -352,7 +354,7 @@ describe("ChatView core interactions", () => {
 
     it("adds supported text attachments from drag-and-drop", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const wrapper = document.querySelector(".chat-input-wrapper") as HTMLElement;
       const textFile = new File(["log"], "drop.txt", { type: "text/plain" });
@@ -363,7 +365,7 @@ describe("ChatView core interactions", () => {
 
     it("removes pending attachments and revokes preview urls", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const imageFile = new File(["image"], "shot.png", { type: "image/png" });
@@ -408,7 +410,7 @@ describe("ChatView core interactions", () => {
         ],
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const links = screen.getAllByTestId("chat-message-attachment");
       expect(links).toHaveLength(2);
@@ -423,7 +425,7 @@ describe("ChatView core interactions", () => {
     it("opens direct-chat mention popup above the composer when @ is typed", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       await userEvent.click(screen.getByTestId("chat-session-session-001"));
       const textarea = screen.getByTestId("chat-input");
@@ -435,7 +437,7 @@ describe("ChatView core interactions", () => {
     it("filters mention popup by text after @", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       await userEvent.click(screen.getByTestId("chat-session-session-001"));
       const textarea = screen.getByTestId("chat-input");
@@ -448,7 +450,7 @@ describe("ChatView core interactions", () => {
     it("hides mention popup on Escape", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       await userEvent.click(screen.getByTestId("chat-session-session-001"));
       const textarea = screen.getByTestId("chat-input");
@@ -462,7 +464,7 @@ describe("ChatView core interactions", () => {
     it("inserts mention text when selecting an agent", async () => {
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       await userEvent.click(screen.getByTestId("chat-session-session-001"));
       const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
@@ -512,7 +514,7 @@ describe("ChatView core interactions", () => {
       style.textContent = allCss;
       document.head.appendChild(style);
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
       const user = userEvent.setup({ delay: null });
       await user.click(screen.getByTestId("chat-sidebar-scope-rooms"));
@@ -551,7 +553,7 @@ describe("ChatView core interactions", () => {
         ],
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       await userEvent.click(screen.getByTestId("chat-session-session-001"));
       await waitFor(() => {
@@ -569,7 +571,7 @@ describe("ChatView core interactions", () => {
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/");
@@ -585,7 +587,7 @@ describe("ChatView core interactions", () => {
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/re");
@@ -600,7 +602,7 @@ describe("ChatView core interactions", () => {
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/re");
@@ -618,7 +620,7 @@ describe("ChatView core interactions", () => {
         createMockSkill({ id: "skill-gamma", name: "gamma", relativePath: "skills/gamma.md" }),
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       fireEvent.change(textarea, { target: { value: "/" } });
@@ -654,7 +656,7 @@ describe("ChatView core interactions", () => {
         () => new Promise<DiscoveredSkill[]>((resolve) => { resolveFetch = resolve; }),
       );
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       fireEvent.change(textarea, { target: { value: "/" } });
@@ -684,7 +686,7 @@ describe("ChatView core interactions", () => {
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/");
@@ -705,7 +707,7 @@ describe("ChatView core interactions", () => {
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/");
@@ -721,7 +723,7 @@ describe("ChatView core interactions", () => {
       ]);
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/re");
@@ -741,7 +743,7 @@ describe("ChatView core interactions", () => {
       );
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/");
@@ -758,7 +760,7 @@ describe("ChatView core interactions", () => {
       mockFetchDiscoveredSkills.mockRejectedValueOnce(new Error("skills endpoint unavailable"));
       setupMockChat({ activeSession: activeSessionFixture, messages: [] });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const textarea = screen.getByTestId("chat-input");
       await userEvent.type(textarea, "/");
@@ -773,7 +775,7 @@ describe("ChatView core interactions", () => {
       messages: [],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sendButton = screen.getByTestId("chat-send-btn");
     expect(sendButton).toBeDisabled();
@@ -786,7 +788,7 @@ describe("ChatView core interactions", () => {
       isStreaming: true,
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     expect(screen.getByTestId("chat-stop-btn")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-send-btn")).not.toBeInTheDocument();
@@ -801,7 +803,7 @@ describe("ChatView core interactions", () => {
       stopStreaming,
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     await userEvent.click(screen.getByTestId("chat-stop-btn"));
     expect(stopStreaming).toHaveBeenCalledTimes(1);
@@ -828,7 +830,7 @@ describe("ChatView core interactions", () => {
       } satisfies UseChatReturn;
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Start streaming" } });
     await act(async () => {
@@ -855,7 +857,7 @@ describe("ChatView core interactions", () => {
       stopStreaming,
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     await act(async () => {
       fireEvent.pointerDown(screen.getByTestId("chat-stop-btn"), { pointerType: "touch" });
@@ -887,7 +889,7 @@ describe("ChatView core interactions", () => {
       } satisfies UseChatReturn;
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Start then stop" } });
     await act(async () => {
@@ -914,7 +916,7 @@ describe("ChatView core interactions", () => {
       isStreaming: false,
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     expect(screen.getByTestId("chat-send-btn")).toBeInTheDocument();
   });
@@ -935,7 +937,7 @@ describe("ChatView core interactions", () => {
       forceSendPendingMessage,
     });
 
-    const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const { rerender } = await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const indicators = screen.getAllByTestId("chat-pending-indicator");
     expect(indicators).toHaveLength(3);
@@ -998,7 +1000,7 @@ describe("ChatView core interactions", () => {
       streamingText: "Thinking...",
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const textarea = screen.getByTestId("chat-input");
     expect(textarea).not.toBeDisabled();
@@ -1014,7 +1016,7 @@ describe("ChatView core interactions", () => {
       streamingText: "Thinking...",
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const textarea = screen.getByTestId("chat-input");
 
@@ -1033,7 +1035,7 @@ describe("ChatView core interactions", () => {
       streamingText: "Typing...",
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     // Streaming message should show
     const streamingMessage = document.querySelector(".chat-message--streaming") as HTMLElement | null;
@@ -1056,7 +1058,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     if (viewport === "mobile") {
       await user.click(screen.getByTestId("chat-session-session-001"));
     }
@@ -1085,7 +1087,7 @@ describe("ChatView core interactions", () => {
       messages: [{ id: "msg-titled", sessionId: "session-001", role: "assistant", content: "Done", thinkingOutput: trace, createdAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     await userEvent.click(screen.getByTestId("chat-session-session-001"));
     const message = await screen.findByTestId("chat-message-msg-titled");
     const disclosure = message.querySelector("details.chat-message-thinking")!;
@@ -1133,7 +1135,7 @@ describe("ChatView core interactions", () => {
         .mockReturnValueOnce(streamingState)
         .mockReturnValue(refreshedStreamingState);
 
-      const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      const { rerender } = await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Working");
       await user.click(screen.getByTestId("chat-session-session-001"));
@@ -1159,7 +1161,7 @@ describe("ChatView core interactions", () => {
         streamingThinking: "",
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const streamingMessage = document.querySelector(".chat-message--streaming") as HTMLElement | null;
       expect(streamingMessage).toBeInTheDocument();
@@ -1178,7 +1180,7 @@ describe("ChatView core interactions", () => {
         streamingThinking: "",
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       expect(screen.queryByText("Response failed")).not.toBeInTheDocument();
       expect(screen.queryByText("Timed out waiting for first response event")).not.toBeInTheDocument();
@@ -1201,7 +1203,7 @@ describe("ChatView core interactions", () => {
         streamingThinking: "",
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
       await user.click(screen.getByTestId("chat-session-session-001"));
 
       expect(screen.queryByText("Response failed")).not.toBeInTheDocument();
@@ -1225,7 +1227,7 @@ describe("ChatView core interactions", () => {
         streamingThinking: "",
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       // Streaming message should show with "Working..." text
       const streamingMessage = document.querySelector(".chat-message--streaming") as HTMLElement | null;
@@ -1254,7 +1256,7 @@ describe("ChatView core interactions", () => {
         streamingThinking: "analyzing the request...",
       });
 
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       // Streaming message should show with "Thinking..." text
       const streamingMessage = document.querySelector(".chat-message--streaming") as HTMLElement | null;
@@ -1294,31 +1296,38 @@ describe("ChatView core interactions", () => {
       setSearchQuery: vi.fn(),
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     expect(screen.getByText("Frontend work")).toBeInTheDocument();
     expect(screen.queryByText("Backend API")).not.toBeInTheDocument();
   });
 
-  it("shows empty state with Start Chat button (no inline agent selector)", async () => {
+  /*
+  FNXC:ChatNavigation 2026-08-23-23:20:
+  Chat opens list-first (FN-054) and FN-9193 docks that list on desktop, so a project with no
+  conversations never enters detail: the empty state a user actually sees is the sidebar's
+  "No conversations yet" beside the header New Chat action. The former full-pane
+  "Start a new conversation" placeholder is no longer reachable from any host, so this test asserts
+  the reachable contract instead — still guarding that no inline agent selector is offered.
+  */
+  it("shows the no-conversation empty state with New Chat and no inline agent selector", async () => {
     setupMockChat({ sessions: [], filteredSessions: [] });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    expect(screen.getByText("Start a new conversation")).toBeInTheDocument();
-    // Find the New Chat button in the empty state section
-    const emptyStateText = screen.getByText("Start a new conversation");
-    const emptyState = emptyStateText.closest(".chat-empty-state") as HTMLElement | null;
-    expect(within(emptyState!).getByRole("button", { name: /new chat/i })).toBeInTheDocument();
-    // Should NOT have an agent selector in empty state
+    const emptyState = screen.getByText("No conversations yet").closest(".chat-empty-state") as HTMLElement | null;
+    expect(emptyState).toBeInTheDocument();
+    expect(screen.getByTestId("chat-new-btn")).toBeInTheDocument();
+    // No inline agent selector: the only sidebar select is the tag filter.
     expect(emptyState?.querySelector("select")).toBeNull();
+    expect(Array.from(document.querySelectorAll("select")).map((element) => element.id)).toEqual(["chat-tag-filter"]);
   });
 
   it("creates a model-mode new chat with the selected thinking level", async () => {
     const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__fn_agent__", status: "active", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" });
     setupMockChat({ sessions: [], filteredSessions: [], createSession });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     await userEvent.click(screen.getByTestId("chat-new-btn"));
     await userEvent.click(screen.getByTestId("chat-new-dialog-mode-model"));
@@ -1340,7 +1349,7 @@ describe("ChatView core interactions", () => {
   it("does not render a thinking-level control in agent-mode new chat", async () => {
     setupMockChat({ sessions: [], filteredSessions: [], createSession: vi.fn() });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     await userEvent.click(screen.getByTestId("chat-new-btn"));
 
@@ -1353,7 +1362,7 @@ describe("ChatView core interactions", () => {
       filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sessionItem = screen.getByTestId("chat-session-session-001");
 
@@ -1393,7 +1402,7 @@ describe("ChatView core interactions", () => {
 
   it("assigns a newly created tag from the context-menu Enter path", async () => {
     const { createTag, createdTag, setSessionTags } = setupStatefulTagCreationMock();
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     await userEvent.pointer({ target: screen.getByTestId("chat-session-session-001"), keys: "[MouseRight]" });
 
     const input = screen.getByLabelText("New tag");
@@ -1408,7 +1417,7 @@ describe("ChatView core interactions", () => {
 
   it("assigns a newly created tag from the context-menu Add button", async () => {
     const { createdTag, setSessionTags } = setupStatefulTagCreationMock();
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     await userEvent.pointer({ target: screen.getByTestId("chat-session-session-001"), keys: "[MouseRight]" });
 
     await userEvent.type(screen.getByLabelText("New tag"), "New tag");
@@ -1421,7 +1430,7 @@ describe("ChatView core interactions", () => {
   it("preserves existing tags when creating a context-menu tag", async () => {
     const existingTag = { id: "tag-existing", projectId: "proj-123", name: "Existing", createdAt: "2026-07-24T00:00:00.000Z", updatedAt: "2026-07-24T00:00:00.000Z" };
     const { createdTag, setSessionTags } = setupStatefulTagCreationMock([existingTag]);
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     await userEvent.pointer({ target: screen.getByTestId("chat-session-session-001"), keys: "[MouseRight]" });
 
     await userEvent.type(screen.getByLabelText("New tag"), "New tag");
@@ -1441,7 +1450,7 @@ describe("ChatView core interactions", () => {
       createTag,
       setSessionTags,
     });
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     await userEvent.pointer({ target: screen.getByTestId("chat-session-session-001"), keys: "[MouseRight]" });
 
     const input = screen.getByLabelText("New tag");
@@ -1465,7 +1474,7 @@ describe("ChatView core interactions", () => {
       deleteTag,
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     await userEvent.pointer({ target: screen.getByTestId("chat-session-session-001"), keys: "[MouseRight]" });
 
     await userEvent.click(screen.getByTestId("chat-context-rename-tag-tag-topic"));
@@ -1488,7 +1497,7 @@ describe("ChatView core interactions", () => {
       archiveSession,
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sessionItem = screen.getByTestId("chat-session-session-001");
     await userEvent.pointer({ target: sessionItem, keys: "[MouseRight]" });
@@ -1504,7 +1513,7 @@ describe("ChatView core interactions", () => {
       filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sessionItem = screen.getByTestId("chat-session-session-001");
     await userEvent.pointer({ target: sessionItem, keys: "[MouseRight]" });
@@ -1543,9 +1552,15 @@ describe("ChatView core interactions", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
+    /*
+    FNXC:ChatNavigation 2026-08-23-23:20:
+    FN-9193 splits the conversation-row meta into the assistant name span plus a dedicated
+    `chat-session-model-tag-<id>` span, so an fn-agent row now reads "Fusion" AND its formatted model
+    instead of the model alone. Assert the model tag by its own testid rather than the row's raw text.
+    */
     const sessionItem = screen.getByTestId("chat-session-session-001");
-    expect(within(sessionItem).getByText("Claude Sonnet 4.5")).toBeInTheDocument();
-    expect(within(sessionItem).queryByText("Fusion")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-session-model-tag-session-001")).toHaveTextContent("Claude Sonnet 4.5");
+    expect(within(sessionItem).getByText("Fusion")).toBeInTheDocument();
   });
 
   it("shows Fusion fallback for fn agent sessions in sidebar without model info", async () => {
@@ -1564,7 +1579,9 @@ describe("ChatView core interactions", () => {
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sessionItem = screen.getByTestId("chat-session-session-001");
-    expect(within(sessionItem).getByText("Fusion")).toBeInTheDocument();
+    expect(sessionItem).toBeInTheDocument();
+    // FN-9193: a model-less fn-agent row falls back to "Fusion" in its dedicated model-tag span.
+    expect(screen.getByTestId("chat-session-model-tag-session-001")).toHaveTextContent("Fusion");
   });
 
   it("shows agent ID for non-fn agent sessions in sidebar", async () => {
@@ -1573,7 +1590,7 @@ describe("ChatView core interactions", () => {
       filteredSessions: [{ id: "session-001", agentId: "my-custom-agent", status: "active", title: "Custom Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const sessionItem = screen.getByTestId("chat-session-session-001");
     // Should show the agent ID (truncated to 30 chars)
@@ -1596,7 +1613,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const title = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
     expect(title).toBeInTheDocument();
@@ -1619,7 +1636,7 @@ describe("ChatView core interactions", () => {
       messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const title = document.querySelector(".chat-thread-header-title") as HTMLElement;
     expect(title).toHaveTextContent(longTitle);
@@ -1643,7 +1660,7 @@ describe("ChatView core interactions", () => {
       messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     expect(document.querySelector(".chat-thread-header-title")).toHaveTextContent("Untitled conversation");
     expect(document.querySelector(".chat-thread-header-title")).not.toHaveTextContent("Claude Sonnet 4.5");
@@ -1655,7 +1672,7 @@ describe("ChatView core interactions", () => {
     const duplicate = { ...selected, id: "session-002" };
     setupMockChat({ activeSession: selected, sessions: [selected, duplicate], filteredSessions: [selected, duplicate] });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     expect(screen.getAllByText(duplicateTitle)).toHaveLength(3);
     expect(document.querySelector(".chat-thread-header-title")).toHaveTextContent(duplicateTitle);
@@ -1678,7 +1695,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const headerModelTag = document.querySelector(".chat-thread-header .chat-model-tag") as HTMLElement | null;
     expect(headerModelTag).toBeInTheDocument();
@@ -1701,7 +1718,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const title = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
     expect(title).toHaveTextContent("Test Chat");
@@ -1729,7 +1746,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const header = document.querySelector(".chat-thread-header") as HTMLElement | null;
     const identity = screen.getByTestId("chat-thread-header-identity");
@@ -1788,7 +1805,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const messageBubble = screen.getByTestId("chat-message-msg-001");
     const avatar = messageBubble.querySelector(".chat-message-avatar") as HTMLElement | null;
@@ -1812,7 +1829,7 @@ describe("ChatView core interactions", () => {
       ],
     });
 
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const messageBubble = screen.getByTestId("chat-message-msg-001");
     expect(messageBubble.querySelector(".chat-message-avatar")).toBeNull();
@@ -1891,7 +1908,7 @@ describe("ChatView core interactions", () => {
         activeSession: null,
         renameSession,
       });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const row = screen.getByTestId("chat-session-session-empty-title");
       const menuButton = within(row).getByRole("button", { name: /conversation actions for untitled/i });
@@ -1922,7 +1939,7 @@ describe("ChatView core interactions", () => {
         activeSession: session,
         renameSession,
       });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       fireEvent.contextMenu(screen.getByTestId("chat-session-session-context"), { clientX: 12, clientY: 24 });
       await userEvent.click(screen.getByTestId("chat-context-rename"));
@@ -1954,7 +1971,7 @@ describe("ChatView core interactions", () => {
 
       try {
         setupMockChat({ sessions: [session], filteredSessions: [session], activeSession: session });
-        await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+        await renderChatDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
         const menuButton = within(screen.getByTestId("chat-session-session-menu-position")).getByTestId("chat-session-menu-btn");
         vi.spyOn(menuButton, "getBoundingClientRect").mockReturnValue({

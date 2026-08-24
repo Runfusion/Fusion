@@ -1035,8 +1035,13 @@ describe("POST /tasks", () => {
     );
 
     expect(res.status).toBe(201);
+    /*
+    FNXC:BranchSelection 2026-08-23-23:30:
+    A `branch` write must declare its origin. Both branches here are DERIVED by the route from the task id/title, never typed by the operator, so they are stamped "engine"; only a name the operator supplied writes "operator".
+    */
     expect(store.updateTask).toHaveBeenCalledWith("FN-5671", {
       branch: "fusion/fn-5671-branch-strategy-dropdown",
+      branchWriteOrigin: "engine",
     });
     expect(res.body.branch).toBe("fusion/fn-5671-branch-strategy-dropdown");
   });
@@ -1090,6 +1095,7 @@ describe("POST /tasks", () => {
     expect(store.setTaskBranchGroup).toHaveBeenCalledWith("FN-7001", "BG-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-7001", {
       branch: "feature/shared/shared-group-branch-task",
+      branchWriteOrigin: "engine",
     });
     expect(res.body.branch).toBe("feature/shared/shared-group-branch-task");
   });

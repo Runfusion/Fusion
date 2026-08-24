@@ -29,8 +29,8 @@ const TEST_FILE_PATTERN = /\.test\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)$/;
 /*
 An assertion matcher applied to a string carrying an FNXC stamp.
 
-DELIBERATELY NARROW: an earlier draft also flagged `/*` and `*​/` as comment delimiters and produced
-24 false positives and zero true ones - every hit was a path glob or a legitimate pattern
+DELIBERATELY NARROW: an earlier draft also flagged opening and closing block-comment delimiters and
+produced 24 false positives and zero true ones - every hit was a path glob or a legitimate pattern
 assertion, which a regex cannot tell apart from comment prose. Comment prose is not reliably distinguishable from
 data by regex, so this check enforces the one unambiguous, observed case and the standing rule in
 AGENTS.md covers the rest for human and agent reviewers.

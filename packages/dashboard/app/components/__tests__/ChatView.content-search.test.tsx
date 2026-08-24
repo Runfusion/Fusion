@@ -62,10 +62,22 @@ function dispatchFind(target: EventTarget, modifier: "ctrl" | "meta" = "ctrl") {
   return event;
 }
 
+/*
+FNXC:ChatNavigation 2026-08-23-18:25:
+FN-9193 docks the conversation list on tablet-or-wider hosts, so the in-thread Back control renders
+only while that list is collapsed. Detail entry is proven by the thread header identity, and a case
+that needs to LEAVE the conversation collapses the docked list first to reach Back.
+*/
 async function enterDirectDetail() {
   fireEvent.pointerDown(screen.getByTestId(`chat-session-${activeSessionFixture.id}`));
   fireEvent.click(screen.getByTestId(`chat-session-${activeSessionFixture.id}`));
-  return screen.findByTestId("chat-back-btn");
+  return screen.findByTestId("chat-thread-header-identity");
+}
+
+function leaveDirectDetail() {
+  const dockToggle = screen.queryByTestId("chat-docked-sidebar-toggle");
+  if (dockToggle) fireEvent.click(dockToggle);
+  fireEvent.click(screen.getByTestId("chat-back-btn"));
 }
 
 describe("ChatView content search", () => {
@@ -162,7 +174,7 @@ describe("ChatView content search", () => {
     expect(screen.getByTestId("chat-message-message-1")).toHaveClass("chat-message--search-active");
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(screen.getByTestId("chat-message-message-2")).toHaveClass("chat-message--search-active");
-    fireEvent.click(screen.getByTestId("chat-back-btn"));
+    leaveDirectDetail();
     expect(screen.queryByTestId("chat-conversation-search")).toBeNull();
   });
 

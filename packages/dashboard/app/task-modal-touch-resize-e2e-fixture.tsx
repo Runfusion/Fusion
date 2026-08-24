@@ -77,7 +77,13 @@ window.fetch = async (input) => {
           ? fixtureTask
           : pathname === "/api/tasks"
             ? [fixtureTask]
-          : url.includes("/insights")
+          /*
+    FNXC:WorkspaceRepos 2026-08-23-23:58:
+    New Task fetches the workspace repository set on open; without this entry the stub's `[]` default answered it and the modal stored a non-array, so every surface here rendered an empty page.
+    */
+    : url.includes("/git/workspace-repos")
+      ? { repos: [] }
+    : url.includes("/insights")
             ? { insights: [], count: 0 }
             : url.includes("/evals")
               ? { results: [] }

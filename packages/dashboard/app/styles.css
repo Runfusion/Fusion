@@ -238,6 +238,15 @@ html {
   previously referenced undefined tokens, silently resolving z-index to auto
   and letting dashboard scroll owners clip or cover guided report actions.
   */
+  /*
+  FNXC:DashboardStyling 2026-08-23-22:35:
+  FN-9202's shared `.banner--chrome` shell referenced `--z-sticky`, which nothing defined — the same
+  undefined-token defect FN-8406 records above, silently resolving z-index to auto so a sticky
+  top banner no longer sat in the documented stacking order. 30 restores the value the per-banner
+  shells carried before the unification, staying below the popover/modal scale and the 100
+  `.modal-overlay` floor that must cover it.
+  */
+  --z-sticky: 30;
   --z-popover: 60;
   --z-dropdown: 1000;
   --z-modal: 1100;
