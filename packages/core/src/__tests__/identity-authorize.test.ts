@@ -181,10 +181,10 @@ describe("authorize: failure is a denial", () => {
       context: HUMAN,
       permission: PERMISSION,
       resolveGrants: () => {
-        throw new Error("postgres://user:hunter2@host/db is unreachable");
+        throw new Error("grant lookup failed: canary-must-not-appear-in-decision");
       },
     });
-    expect(JSON.stringify(decision)).not.toContain("hunter2");
+    expect(JSON.stringify(decision)).not.toContain("canary-must-not-appear-in-decision");
   });
 });
 
