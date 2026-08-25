@@ -914,7 +914,6 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
   store: TaskStore,
   id: string,
   segment: string,
-  options?: { replaceIfCurrent?: string },
 ): Promise<{ task: Task; segment: string; minted: boolean }> {
   const candidate = segment.trim();
   if (!candidate) throw new Error(`Cannot pin an empty workspace worktree directory segment for ${id}`);
@@ -928,21 +927,14 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
       const current = store.rowToTask(store.pgRowToTaskRow(row));
       const existing = current.workspaceWorktreeDirSegment;
       /*
-      FNXC:WorkspaceWorktree 2026-08-25-07:41:
-      `replaceIfCurrent` is the ONE narrow rewrite this write-once pin allows: the sibling-collision
-      yield, which must undo a segment it minted moments earlier. It is a compare-and-set inside the
-      same advisory transaction, and it additionally refuses once ANY repository worktree is
-      recorded. Without that second condition a concurrent acquisition for this same task (a
-      mid-flight scope extension racing the primary dispatch) could adopt the minted segment,
-      record its checkout under that root, and then have this yield re-pin the task somewhere else —
-      splitting one task across two roots, which is strictly worse than two tasks sharing a name.
+      FNXC:WorkspaceWorktree 2026-08-25-07:53:
+      Write-once with no rewrite path. A rewrite — even a guarded one — can always move a root that a
+      concurrent acquisition for the same task is already building under, because that writer records
+      its `workspaceWorktrees` entry only after the checkout exists. One task split across two roots
+      is silent and unrecoverable, so the pin never changes once set and collisions are settled
+      before minting instead.
       */
-      if (options?.replaceIfCurrent !== undefined) {
-        const anchored = Object.keys(current.workspaceWorktrees ?? {}).length > 0;
-        if (existing !== options.replaceIfCurrent || anchored) {
-          return { task: current, segment: existing ?? candidate, minted: false };
-        }
-      } else if (typeof existing === "string" && existing.length > 0) {
+      if (typeof existing === "string" && existing.length > 0) {
         return { task: current, segment: existing, minted: false };
       }
       const [updatedRow] = await tx.update(schema.project.tasks).set({
