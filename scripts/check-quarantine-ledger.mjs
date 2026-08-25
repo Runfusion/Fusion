@@ -135,9 +135,42 @@ function extractBalancedArray(source, openingBracket) {
   return null;
 }
 
+function extractConcreteTestFiles(arrayText) {
+  const files = [];
+  const strings = /"((?:\\.|[^"\\])*)"/g;
+  let stringMatch;
+  while ((stringMatch = strings.exec(arrayText))) {
+    const value = JSON.parse(`"${stringMatch[1]}"`);
+    if (/\.test\.tsx?$/.test(value) && !/[*?{}]/.test(value)) files.push(value);
+  }
+  return files;
+}
+
+/*
+FNXC:QuarantineLedgerConstArray 2026-08-23-00:27:
+RUFU-157: the four package vitest configs (cli, core, dashboard, desktop) quarantine flaky files through the
+documented const-array shape — `const quarantined<Package>Tests: string[] = [...]` — spread into `test.exclude`
+through a filtered identifier (e.g. the CLI's `activeQuarantinedCliTests` requested-file filter), so the concrete
+path appears in no inline `exclude:` literal and the literal-only scanner reported a false `missing-exclude`
+for the RUFU-128 bin.test.ts quarantine. The concrete-exclude scan therefore also reads `const <name>: string[] = [...]`
+declarations: a const-array entry satisfies `missing-exclude`, and a stale const-array entry surfaces as
+`dangling-exclude` through the same existsSync direction.
+Superset semantics with a documented masking trade-off: any concrete `.test.ts`/`.test.tsx` path in ANY typed
+`string[]` const array of a config counts as an exclude, including a path that actually lives only in an unrelated
+`string[]` array in that config. The trade-off is bounded by the concrete test-file filter (no `*?{}` glob
+characters, path must end in `.test.ts`/`.test.tsx`) and is pinned by fixtures. Conservative scope: only
+`const <name>: string[] = [` declarations are scanned — untyped const arrays, `let`/`var` declarations, and
+`readonly string[]`/ReadonlyArray shapes are intentionally out of scope. Concrete paths are deduplicated across
+inline `exclude:` literals and const-array declarations so a path double-covered (dashboard's `coverage.exclude`
+no-op plus its const array) verifies exactly once.
+*/
 function extractConcreteExcludes(source) {
   const commentFree = stripComments(source);
-  const excludes = [];
+  const excludes = new Set();
+  const collect = (array) => {
+    for (const file of extractConcreteTestFiles(array)) excludes.add(file);
+  };
+
   const excludePattern = /\bexclude\s*:/g;
   let match;
   while ((match = excludePattern.exec(commentFree))) {
@@ -146,15 +179,22 @@ function extractConcreteExcludes(source) {
     if (commentFree[index] !== "[") continue;
     const array = extractBalancedArray(commentFree, index);
     if (array == null) continue;
-    const strings = /"((?:\\.|[^"\\])*)"/g;
-    let stringMatch;
-    while ((stringMatch = strings.exec(array))) {
-      const value = JSON.parse(`"${stringMatch[1]}"`);
-      if (/\.test\.tsx?$/.test(value) && !/[*?{}]/.test(value)) excludes.push(value);
-    }
+    collect(array);
     excludePattern.lastIndex = index + array.length;
   }
-  return excludes;
+
+  const constArrayPattern = /\bconst\s+[A-Za-z_$][\w$]*\s*:\s*string\[\]\s*=\s*\[/g;
+  while ((match = constArrayPattern.exec(commentFree))) {
+    const openingBracket = match.index + match[0].length - 1;
+    const array = extractBalancedArray(commentFree, openingBracket);
+    if (array == null) {
+      constArrayPattern.lastIndex = openingBracket + 1;
+      continue;
+    }
+    collect(array);
+    constArrayPattern.lastIndex = openingBracket + array.length;
+  }
+  return [...excludes];
 }
 
 function discoverPackageConfigs(rootDir) {
