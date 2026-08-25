@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -2001,7 +2001,7 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
     branch: input.namingBranch,
     title: input.task.title,
     description: input.task.description,
-    siblingSegments: namesFromTask ? await collectLiveSiblingTaskDirSegments(input.store, input.task.id) : undefined,
+    ...(namesFromTask ? await collectLiveSiblingClaims(input.store, input.task.id) : {}),
   });
   const segment = derived.segment;
   let fallbackReason = derived.fallbackReason;
@@ -2032,7 +2032,18 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
       fallbackReason = "sibling-collision";
       outcome = await pinCas.call(input.store, input.task.id, taskIdSegment);
       if (!outcome.claimed) {
-        throw new Error(`Cannot pin a workspace worktree directory segment for ${input.task.id}: ${taskIdSegment} is already claimed`);
+        /*
+        The task-id fallback is normally guaranteed free — a derived name may not occupy another
+        task's id — but a pre-existing pin from an earlier build could still hold it. Never throw
+        here: the pin is write-once, so a throw would wedge this task on every future retry. Fall
+        back to a deterministic per-task suffix, which the same task re-derives identically.
+        */
+        const suffixed = `${taskIdSegment}-${createHash("sha256").update(input.task.id).digest("hex").slice(0, 8)}`;
+        input.logger?.log(`${input.task.id}: task-id segment ${taskIdSegment} is already claimed; using ${suffixed}`);
+        outcome = await pinCas.call(input.store, input.task.id, suffixed);
+        if (!outcome.claimed) {
+          throw new Error(`Cannot pin a workspace worktree directory segment for ${input.task.id}: ${suffixed} is already claimed`);
+        }
       }
     }
     /*
@@ -2093,16 +2104,24 @@ another task owns. A `done` task is deliberately INCLUDED: its checkout survives
 cleanup removes it, so reusing its segment would put two tasks in one directory. Archived rows are
 already excluded by the read, and the collision penalty is only a fallback to the task id.
 */
-async function collectLiveSiblingTaskDirSegments(store: TaskStore, taskId: string): Promise<string[]> {
+async function collectLiveSiblingClaims(
+  store: TaskStore,
+  taskId: string,
+): Promise<{ siblingSegments: string[]; siblingTaskIds: string[] }> {
   try {
-    if (typeof store.listTasks !== "function") return [];
-    const tasks = await store.listTasks({ slim: true, includeArchived: false });
-    return tasks
-      .filter((sibling) => sibling.id !== taskId)
-      .map((sibling) => sibling.workspaceWorktreeDirSegment)
-      .filter((segment): segment is string => typeof segment === "string" && segment.length > 0);
+    if (typeof store.listTasks !== "function") return { siblingSegments: [], siblingTaskIds: [] };
+    const siblings = (await store.listTasks({ slim: true, includeArchived: false }))
+      .filter((sibling) => sibling.id !== taskId);
+    return {
+      siblingSegments: siblings
+        .map((sibling) => sibling.workspaceWorktreeDirSegment)
+        .filter((segment): segment is string => typeof segment === "string" && segment.length > 0),
+      // Reserving other task ids keeps every task's own fallback claimable — see the note on
+      // `siblingTaskIds` in deriveWorkspaceTaskDirSegment.
+      siblingTaskIds: siblings.map((sibling) => sibling.id),
+    };
   } catch {
-    return [];
+    return { siblingSegments: [], siblingTaskIds: [] };
   }
 }
 

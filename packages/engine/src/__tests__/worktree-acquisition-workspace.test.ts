@@ -952,6 +952,47 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
   });
 
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:33:
+  The last resort must never throw: the pin is write-once, so a task that cannot claim any segment
+  could never acquire a workspace on any future retry either. A pre-existing pin holding this task's
+  id yields a deterministic suffixed claim instead.
+  */
+  it("uses a deterministic suffixed segment when even the task-id fallback is claimed", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const blocked = makeTask("FN-PIN-14");
+    (blocked as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current, logs } = makeFakeStore(blocked);
+    const claimed = new Set(["prd-1234-my-slug", "fn-pin-14"]);
+    const attempted: string[] = [];
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        const existing = current().workspaceWorktreeDirSegment;
+        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false, claimed: true };
+        attempted.push(segment);
+        if (claimed.has(segment)) return { task: current(), segment, minted: false, claimed: false };
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        return { task: current(), segment, minted: true, claimed: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    const pinned = current().workspaceWorktreeDirSegment!;
+    expect(attempted).toEqual(["prd-1234-my-slug", "fn-pin-14", pinned]);
+    expect(pinned).toMatch(/^fn-pin-14-[a-f0-9]{8}$/);
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", pinned));
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
   it("falls back before minting when a sibling's segment is already visible", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const second = makeTask("FN-PIN-12");

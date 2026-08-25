@@ -192,6 +192,14 @@ export function deriveWorkspaceTaskDirSegment(input: {
   description?: string | null;
   /** Live segments already pinned by sibling tasks under the same group. */
   siblingSegments?: Iterable<string>;
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:33:
+  Other live task ids, so a DERIVED name can never occupy another task's fallback. A branch named
+  `feature/FN-A` slugs to exactly `fn-a`; if task FN-B claimed that, task FN-A would lose its derived
+  claim AND find its own task-id fallback taken — and because the pin is write-once, it could never
+  acquire a workspace at all. Reserving the task-id namespace keeps the last resort always available.
+  */
+  siblingTaskIds?: Iterable<string>;
 }): { segment: string; fallbackReason?: WorkspaceTaskDirSegmentFallbackReason } {
   const taskIdSegment = input.taskId.toLowerCase();
   let candidate: string;
@@ -214,6 +222,11 @@ export function deriveWorkspaceTaskDirSegment(input: {
   }
   for (const sibling of input.siblingSegments ?? []) {
     if (sibling.toLowerCase() === candidate.toLowerCase()) {
+      return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
+    }
+  }
+  for (const siblingTaskId of input.siblingTaskIds ?? []) {
+    if (siblingTaskId.toLowerCase() === candidate.toLowerCase()) {
       return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
     }
   }

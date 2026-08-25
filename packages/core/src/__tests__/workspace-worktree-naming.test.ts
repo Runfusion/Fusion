@@ -53,6 +53,30 @@ describe("workspace task directory naming", () => {
     expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(".ai-merge");
   });
 
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:33:
+  A derived name may never occupy another task's id. A branch called `feature/FN-A` slugs to exactly
+  `fn-a`; if another task claimed that, task FN-A would lose its derived claim AND find its own
+  fallback taken — and the pin is write-once, so it could never acquire a workspace at all.
+  */
+  it("refuses a derived name that is another task's id, keeping every fallback claimable", () => {
+    expect(deriveWorkspaceTaskDirSegment({
+      taskId: "FN-9220",
+      worktreeNaming: "branch",
+      branch: "feature/FN-9221",
+      siblingTaskIds: ["FN-9221", "FN-9222"],
+    })).toEqual({ segment: "fn-9220", fallbackReason: "sibling-collision" });
+  });
+
+  it("still allows a derived name matching the task's OWN id", () => {
+    expect(deriveWorkspaceTaskDirSegment({
+      taskId: "FN-9223",
+      worktreeNaming: "branch",
+      branch: "feature/FN-9223",
+      siblingTaskIds: ["FN-9224"],
+    })).toEqual({ segment: "fn-9223" });
+  });
+
   it("gives two tasks whose branches slug identically distinct directories", () => {
     const first = deriveWorkspaceTaskDirSegment({ taskId: "FN-9203", worktreeNaming: "branch", branch: "feature/PRD-1234-my-slug" });
     expect(first).toEqual({ segment: "prd-1234-my-slug" });
