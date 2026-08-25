@@ -2037,11 +2037,23 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
         .map(([siblingId]) => siblingId)
         .sort()[0];
       if (conflictingTaskId) {
+        /*
+        The yield is itself a compare-and-set: it replaces the segment only while the pin still
+        equals what this call minted AND no repository worktree has been recorded for the task. A
+        concurrent acquisition for this SAME task can have adopted the minted segment and anchored
+        its checkout under that root in between; re-pinning then would split one task across two
+        roots, which is worse than two tasks sharing a name (that collides on a reserved path and
+        fails loudly, rather than silently mismatching recorded paths).
+        */
         const taskIdSegment = input.task.id.toLowerCase();
-        await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: taskIdSegment }, input.runContext);
-        pinnedTask = await input.store.getTask(input.task.id);
-        resolvedFallbackReason = "sibling-collision";
-        input.logger?.log(`${input.task.id}: workspace directory segment ${outcome.segment} is already claimed by ${conflictingTaskId}; using ${taskIdSegment}`);
+        const yielded = await pinCas.call(input.store, input.task.id, taskIdSegment, { replaceIfCurrent: outcome.segment });
+        pinnedTask = yielded.task;
+        if (yielded.minted) {
+          resolvedFallbackReason = "sibling-collision";
+          input.logger?.log(`${input.task.id}: workspace directory segment ${outcome.segment} is already claimed by ${conflictingTaskId}; using ${taskIdSegment}`);
+        } else {
+          input.logger?.log(`${input.task.id}: workspace directory segment ${outcome.segment} collides with ${conflictingTaskId} but is already anchored; keeping ${yielded.segment}`);
+        }
       }
     }
     input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${pinnedTask.workspaceWorktreeDirSegment ?? outcome.segment}`);
