@@ -963,6 +963,7 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     const blocked = makeTask("FN-PIN-14");
     (blocked as Task).branch = "feature/PRD-1234-my-slug";
     const { store, current, logs } = makeFakeStore(blocked);
+    // Both the derived name and the first two rungs of this task's own fallback ladder are taken.
     const claimed = new Set(["prd-1234-my-slug", "fn-pin-14"]);
     const attempted: string[] = [];
     (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
@@ -988,9 +989,46 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     const pinned = current().workspaceWorktreeDirSegment!;
     expect(attempted).toEqual(["prd-1234-my-slug", "fn-pin-14", pinned]);
     expect(pinned).toMatch(/^fn-pin-14-[a-f0-9]{8}$/);
+    expect(attempted.slice(1).every((rung) => rung.startsWith("fn-pin-14"))).toBe(true);
     expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", pinned));
     expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
     expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
+  it("walks past a claimed rung of its own fallback ladder", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const blocked = makeTask("FN-PIN-15");
+    (blocked as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current } = makeFakeStore(blocked);
+    const attempted: string[] = [];
+    // Everything up to and including the hashed rung is claimed; only a numbered rung is free.
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        const existing = current().workspaceWorktreeDirSegment;
+        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false, claimed: true };
+        attempted.push(segment);
+        if (!/-[a-f0-9]{8}-\d+$/.test(segment)) return { task: current(), segment, minted: false, claimed: false };
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        return { task: current(), segment, minted: true, claimed: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    const pinned = current().workspaceWorktreeDirSegment!;
+    expect(pinned).toMatch(/^fn-pin-15-[a-f0-9]{8}-2$/);
+    expect(attempted[0]).toBe("prd-1234-my-slug");
+    expect(attempted[1]).toBe("fn-pin-15");
+    expect(attempted[2]).toMatch(/^fn-pin-15-[a-f0-9]{8}$/);
+    expect(attempted[3]).toBe(pinned);
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", pinned));
   });
 
   it("falls back before minting when a sibling's segment is already visible", async () => {
