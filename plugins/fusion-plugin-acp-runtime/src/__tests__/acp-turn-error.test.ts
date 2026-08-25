@@ -11,7 +11,9 @@ These tests pin the diagnostic SHAPE, because `transient-error-patterns.ts` and
 regexes silently reintroduces the FN-8004 stranding — the string is a cross-package contract.
 */
 import { describe, expect, it } from "vitest";
-import { describeAcpTurnError, inspectAcpTurnError, promptAcpSession } from "../provider.js";
+import crypto from "node:crypto";
+import os from "node:os";
+import { describeAcpTurnError, inspectAcpTurnError, newAcpSession, promptAcpSession } from "../provider.js";
 
 /** Flat `{ code, message, data }` — one of two shapes the SDK throws depending on build. */
 function flatRpcError(code: number, message: string, data?: unknown): Error {
@@ -108,5 +110,78 @@ describe("promptAcpSession error propagation", () => {
     const original = flatRpcError(-32603, "Internal error");
     const failing = { conn: { prompt: async () => { throw original; } } };
     await expect(promptAcpSession(failing as never, "s1", [])).rejects.toMatchObject({ cause: original });
+  });
+});
+
+
+describe("newAcpSession error propagation", () => {
+  // Unpredictable per-run path: avoids CWE-377 (predictable temp path) and
+  // matches real usage, where each session scopes to its own worktree.
+  const opts = { cwd: `${os.tmpdir()}/acp-session-new-${crypto.randomUUID()}` };
+  const cwdPrefix = `session/new failed (cwd ${opts.cwd}):`;
+
+  it("opens a session on success", async () => {
+    const conn = { conn: { newSession: async () => ({ sessionId: "abc" }) } };
+    await expect(newAcpSession(conn as never, opts)).resolves.toMatchObject({ sessionId: "abc" });
+  });
+
+  it("rethrows session/new faults with rpc code AND the scoping cwd in the message", async () => {
+    // The regression: a stale acpBinaryPath made every heartbeat fail with bare
+    // "Invalid params" -- no hint of which agent binary rejected the request.
+    const failing = { conn: { newSession: async () => { throw flatRpcError(-32602, "Invalid params"); } } };
+    await expect(newAcpSession(failing as never, opts)).rejects.toThrow(
+      `session/new failed (cwd ${opts.cwd}): Invalid params (acp rpc code -32602)`,
+    );
+  });
+
+  it("retains the original error as `cause`", async () => {
+    const original = flatRpcError(-32602, "Invalid params");
+    const failing = { conn: { newSession: async () => { throw original; } } };
+    await expect(newAcpSession(failing as never, opts)).rejects.toMatchObject({ cause: original });
+  });
+
+  it("covers the full inspectAcpTurnError invariant across known RPC shapes", async () => {
+    // Each shape asserts: cwd prefix, formatted diagnostic, original cause.
+    const cases: Array<{ name: string; error: Error; expected: string; retryable?: boolean }> = [
+      {
+        name: "nested { error: { code, message } } envelope",
+        error: Object.assign(new Error("request failed"), {
+          error: { code: -32602, message: "Invalid params" },
+        }),
+        expected: `${cwdPrefix} Invalid params (acp rpc code -32602)`,
+      },
+      {
+        name: "retryable provider fault (-32603)",
+        error: flatRpcError(-32603, "Internal error"),
+        expected: `session/new failed (cwd ${opts.cwd}): Internal error (acp rpc code -32603, retryable)`,
+      },
+      {
+        name: "structured data payload from the agent",
+        error: flatRpcError(-32000, "Server error", { reason: "unknown session" }),
+        expected:
+          `${cwdPrefix} Server error (acp rpc code -32000, retryable) [data: {"reason":"unknown session"}]`,
+      },
+      {
+        name: "nested envelope with structured data payload",
+        error: Object.assign(new Error("request failed"), {
+          error: { code: -32602, message: "Invalid params", data: { foo: "bar" } },
+        }),
+        expected: `${cwdPrefix} Invalid params (acp rpc code -32602) [data: {"foo":"bar"}]`,
+      },
+    ];
+
+    for (const c of cases) {
+      const failing = { conn: { newSession: async () => { throw c.error; } } };
+      await expect(newAcpSession(failing as never, opts)).rejects.toThrow(c.expected);
+      await expect(newAcpSession(failing as never, opts)).rejects.toMatchObject({ cause: c.error });
+    }
+  });
+
+  it("passes plain non-RPC errors through without disguising them as ACP faults", async () => {
+    const original = new Error("spawn ENOENT");
+    const failing = { conn: { newSession: async () => { throw original; } } };
+    await expect(newAcpSession(failing as never, opts)).rejects.toThrow(
+      `${cwdPrefix} spawn ENOENT`,
+    );
   });
 });

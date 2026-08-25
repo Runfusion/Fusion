@@ -478,11 +478,26 @@ export async function newAcpSession(
     meta?: Record<string, unknown>;
   },
 ): Promise<NewAcpSessionResult> {
-  const res = await connection.conn.newSession({
-    cwd: opts.cwd,
-    mcpServers: (opts.mcpServers ?? []) as never,
-    ...(opts.meta && Object.keys(opts.meta).length > 0 ? { _meta: opts.meta } : {}),
-  });
+  let res: { sessionId: string; modes?: unknown };
+  try {
+    res = await connection.conn.newSession({
+      cwd: opts.cwd,
+      mcpServers: (opts.mcpServers ?? []) as never,
+      ...(opts.meta && Object.keys(opts.meta).length > 0 ? { _meta: opts.meta } : {}),
+    });
+  } catch (error) {
+    /*
+    FNXC:AcpNewSession:
+    A `session/new` rejection escaped raw, surfacing only the bare protocol message (e.g.
+    "Invalid params") with no hint of which agent binary rejected it or why. Same diagnostic
+    contract as promptAcpSession below: code/data survive via describeAcpTurnError, plus the cwd
+    that scoped the failing session. Caller-fault codes stay non-retryable by design.
+    */
+    throw new Error(
+      `session/new failed (cwd ${opts.cwd}): ${describeAcpTurnError(error)}`,
+      { cause: error },
+    );
+  }
   // `sessionId` is agent-supplied/untrusted (U6/Risk S7): bound its length and
   // strip path separators / NUL bytes before it is stored on the session or
   // could ever touch a resume-file path.
