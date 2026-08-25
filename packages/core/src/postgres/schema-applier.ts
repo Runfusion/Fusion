@@ -285,6 +285,10 @@ export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0067->0072 because origin/main released 0067-0071 while this branch was open. */
 /* FNXC:WorkspaceWorktree 2026-09-19-00:00: renumbered 0072->0086 after rebasing onto a force-replaced main whose real migration history already claims 0072 (task planning failure) through 0085 (dropped excluded upstream feature schema). */
 export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0086";
+/** FNXC:WorkspaceWorktree 2026-08-25-08:12: the segment is a CLAIM — this partial unique index is what makes a concurrent duplicate mint fail instead of persisting two write-once pins on one directory. */
+/* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0068->0073 to follow the 0072 column migration. */
+/* FNXC:WorkspaceWorktree 2026-09-19-00:00: renumbered 0073->0087 after rebasing onto a force-replaced main; follows the 0086 column migration. */
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION = "0087";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -552,6 +556,7 @@ const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, 
 const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0084_fn_332_overlap_sync.sql");
 const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0085_drop_excluded_upstream_feature_schema.sql");
 const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_workspace_worktree_dir_segment.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_workspace_worktree_dir_segment_unique.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -698,6 +703,7 @@ export async function applySchemaBaseline(
     const overlapWaitSyncAlreadyApplied = applied.includes(OVERLAP_WAIT_SYNC_VERSION);
     const dropExcludedUpstreamFeatureSchemaAlreadyApplied = applied.includes(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION);
     const workspaceWorktreeDirSegmentAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION);
+    const workspaceWorktreeDirSegmentUniqueAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1646,6 +1652,14 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:WorkspaceWorktree 2026-08-25-08:12: register 0073 explicitly; without the unique claim two tasks can persist the same write-once segment and contend for one directory permanently. */
+    if (!workspaceWorktreeDirSegmentUniqueAlreadyApplied) {
+      const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

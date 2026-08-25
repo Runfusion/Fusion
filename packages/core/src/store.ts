@@ -2344,7 +2344,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * task advisory lock; every later caller adopts the recorded value (`minted: false`) instead of
    * overwriting it, so nodes sharing one database cannot disagree about a task's directory.
    */
-  async pinWorkspaceWorktreeDirSegment(id: string, segment: string): Promise<{ task: Task; segment: string; minted: boolean }> {
+  async pinWorkspaceWorktreeDirSegment(id: string, segment: string): Promise<{ task: Task; segment: string; minted: boolean; claimed: boolean }> {
     return pinWorkspaceWorktreeDirSegmentImpl(this, id, segment);
   }
   async resolveTaskWedgeNotificationEpisode(id: string, episodeId: string): Promise<{ task: Task; resolved: boolean }> {

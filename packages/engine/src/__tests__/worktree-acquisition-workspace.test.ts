@@ -882,7 +882,7 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
         expect(segment).toBe("prd-1234-my-slug");
         // The winner already pinned a different segment for this task.
         await store.updateTask(id, { workspaceWorktreeDirSegment: "won-by-another-writer" });
-        return { task: current(), segment: "won-by-another-writer", minted: false };
+        return { task: current(), segment: "won-by-another-writer", minted: false, claimed: true };
       };
 
     const result = await acquireWorkspaceTaskWorktrees({
@@ -899,12 +899,15 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
   });
 
   /*
-  FNXC:WorkspaceWorktree 2026-08-25-07:53:
-  The pin never changes after it is minted. A post-mint rewrite (the earlier collision "yield") could
-  always move a root that a concurrent acquisition for the SAME task was already building under, so
-  the collision defense is entirely pre-mint and the pin is strictly write-once.
+  FNXC:WorkspaceWorktree 2026-08-25-08:12:
+  The segment is a project-wide CLAIM and the pin is never rewritten. The sibling scan cannot see a
+  task that has not written yet, so two tasks can derive the same slug and reach the write together;
+  the database settles it and the loser re-mints its task id BEFORE any checkout exists. A post-mint
+  rewrite would instead move a root a concurrent acquisition for the SAME task may already be
+  building under, and leaving both pins would wedge the loser permanently — its path reservation
+  would fail on every retry, since the pin can never change.
   */
-  it("never rewrites a segment it just minted, even when a sibling turns out to hold it", async () => {
+  it("re-mints with the task id when another task already claimed the derived segment", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const racing = makeTask("FN-PIN-7");
     (racing as Task).branch = "feature/PRD-1234-my-slug";
@@ -916,12 +919,17 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     const pinWrites: string[] = [];
     (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
       .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        // Models the store contract: the segment is a project-wide claim, so a segment another task
+        // already holds is refused rather than written.
         const existing = current().workspaceWorktreeDirSegment;
-        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false };
+        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false, claimed: true };
+        // The rival holds the claim in the database from the start; only the *scan* (listTasks) is
+        // blind to it — that gap is the race this settles.
+        if (rival.workspaceWorktreeDirSegment === segment) return { task: current(), segment, minted: false, claimed: false };
         pinWrites.push(segment);
         await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
         rivalVisible = true;
-        return { task: current(), segment, minted: true };
+        return { task: current(), segment, minted: true, claimed: true };
       };
     (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () =>
       (rivalVisible ? [rival, current()] : [current()]);
@@ -935,9 +943,12 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
       registry: new ActiveSessionRegistry(),
     });
 
-    expect(pinWrites).toEqual(["prd-1234-my-slug"]);
-    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
-    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+    // The claim, not a read-before-write scan, is what settles the race: the first write wins and
+    // the loser re-mints its task id BEFORE any checkout exists, so no pin is ever rewritten.
+    expect(pinWrites).toEqual(["fn-pin-7"]);
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-7");
+    expect(rival.workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-pin-7"));
     expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
   });
 

@@ -117,6 +117,7 @@ import {
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
   WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+  WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -174,7 +175,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(OVERLAP_WAIT_SYNC_VERSION).toBe("0084");
     expect(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION).toBe("0086");
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION));
+    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION).toBe("0087");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION));
     expect(SCHEMA_BASELINE_VERSION).toBe("0087");
   });
 
