@@ -202,9 +202,15 @@ describe("workspace late repository acquisition tiers", () => {
     forever — the "resolved seam nobody wired" failure this test exists to prevent.
     */
     const runtimeSource = readFileSync(join(import.meta.dirname, "..", "runtimes", "in-process-runtime.ts"), "utf8");
-    const constructionBlock = runtimeSource.slice(runtimeSource.indexOf("this.executor = new TaskExecutor("));
-    expect(constructionBlock.slice(0, 1200)).toContain("setMergePendingProvider(this.mergePendingProvider)");
-    expect(constructionBlock.slice(0, 1200)).toContain("setActiveMergeTaskIdProvider(this.activeMergeTaskIdProvider)");
+    // Bound the slice by the next statement in start(), not by a character count: the claim is that
+    // the providers are re-applied AT construction, and the same calls also appear in the setters.
+    const constructionStart = runtimeSource.indexOf("this.executor = new TaskExecutor(");
+    const constructionEnd = runtimeSource.indexOf("this.worktreePool.setInvariantViolationHandler(", constructionStart);
+    expect(constructionStart).toBeGreaterThan(-1);
+    expect(constructionEnd).toBeGreaterThan(constructionStart);
+    const constructionBlock = runtimeSource.slice(constructionStart, constructionEnd);
+    expect(constructionBlock).toContain("setMergePendingProvider(this.mergePendingProvider)");
+    expect(constructionBlock).toContain("setActiveMergeTaskIdProvider(this.activeMergeTaskIdProvider)");
   });
 
   it("refuses a complete or archived column even with nothing landed", async () => {

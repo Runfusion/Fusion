@@ -2015,14 +2015,40 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   const pinCas = (input.store as Partial<TaskStore>).pinWorkspaceWorktreeDirSegment;
   if (typeof pinCas === "function") {
     const outcome = await pinCas.call(input.store, input.task.id, segment);
-    input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${outcome.segment}`);
-    if (fallbackReason && outcome.minted) {
+    let pinnedTask = outcome.task;
+    let resolvedFallbackReason = outcome.minted ? fallbackReason : undefined;
+    /*
+    FNXC:WorkspaceWorktree 2026-08-25-07:32:
+    R16: the compare-and-set is write-once PER TASK, which is not the same as globally unique. Two
+    different tasks whose branches or titles slug identically can start their first acquisition at
+    the same moment, each read siblings before the other's pin exists, and each successfully mint the
+    SAME segment — two tasks then claim one directory. So a freshly minted name-bearing segment is
+    re-checked against siblings once the write is visible. The tie-break is deterministic rather than
+    first-come: the lower task id keeps the derived name and the other re-pins to its task id, so
+    both nodes reach the same verdict without coordinating. Nothing has been created on disk yet —
+    minting runs before the task directory is made — so this re-pin moves no path.
+    */
+    if (outcome.minted && namesFromTask && outcome.segment !== input.task.id.toLowerCase()) {
+      const conflictingTaskId = (await collectLiveSiblingTaskDirSegmentOwners(input.store, input.task.id))
+        .filter(([, siblingSegment]) => siblingSegment.toLowerCase() === outcome.segment.toLowerCase())
+        .map(([siblingId]) => siblingId)
+        .sort()[0];
+      if (conflictingTaskId && conflictingTaskId.toLowerCase() < input.task.id.toLowerCase()) {
+        const taskIdSegment = input.task.id.toLowerCase();
+        await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: taskIdSegment }, input.runContext);
+        pinnedTask = await input.store.getTask(input.task.id);
+        resolvedFallbackReason = "sibling-collision";
+        input.logger?.log(`${input.task.id}: workspace directory segment ${outcome.segment} is already claimed by ${conflictingTaskId}; using ${taskIdSegment}`);
+      }
+    }
+    input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${pinnedTask.workspaceWorktreeDirSegment ?? outcome.segment}`);
+    if (resolvedFallbackReason) {
       await input.store.logEntry(
         input.task.id,
-        `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
+        `[worktree] workspace directory name fell back to the task id (${resolvedFallbackReason})`,
       ).catch(() => {});
     }
-    return outcome.task;
+    return pinnedTask;
   }
   await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
   input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
@@ -2059,13 +2085,18 @@ cleanup removes it, so reusing its segment would put two tasks in one directory.
 already excluded by the read, and the collision penalty is only a fallback to the task id.
 */
 async function collectLiveSiblingTaskDirSegments(store: TaskStore, taskId: string): Promise<string[]> {
+  return (await collectLiveSiblingTaskDirSegmentOwners(store, taskId)).map(([, segment]) => segment);
+}
+
+/** The same scan keyed by owner, so a post-mint collision can name the task it lost to. */
+async function collectLiveSiblingTaskDirSegmentOwners(store: TaskStore, taskId: string): Promise<[string, string][]> {
   try {
     if (typeof store.listTasks !== "function") return [];
     const tasks = await store.listTasks({ slim: true, includeArchived: false });
     return tasks
       .filter((sibling) => sibling.id !== taskId)
-      .map((sibling) => sibling.workspaceWorktreeDirSegment)
-      .filter((segment): segment is string => typeof segment === "string" && segment.length > 0);
+      .map((sibling): [string, string | undefined] => [sibling.id, sibling.workspaceWorktreeDirSegment])
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
   } catch {
     return [];
   }

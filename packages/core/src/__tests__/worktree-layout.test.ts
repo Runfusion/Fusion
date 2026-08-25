@@ -105,29 +105,30 @@ task that has no pin — every task that exists today. These literals were captu
 pre-pin implementation and are the invariant the pin refactor may not change.
 */
 describe("unpinned workspace task directory characterization", () => {
-  const safeWorkspace = "/tmp/PRD-1234-my-slug";
-  const unsafeWorkspace = "/tmp/PRD-1234 My Slug";
+  // Pure string fixtures: these paths are inputs to pure resolvers, never created on disk.
+  const safeWorkspace = "/repos/PRD-1234-my-slug";
+  const unsafeWorkspace = "/repos/PRD-1234 My Slug";
   const unsafeGroup = `PRD-1234-My-Slug-${createHash("sha256").update(resolve(unsafeWorkspace)).digest("hex").slice(0, 8)}`;
   const unpinned = { id: "FN-158" };
 
   it("resolves the historic path for a safe workspace basename in both layouts", () => {
     expect(resolveWorkspaceTaskWorktreeDir(safeWorkspace, undefined, resolveWorkspaceTaskDirSegment(unpinned)))
       .toBe(join(safeWorkspace, ".fusion", "worktrees", "fn-158"));
-    expect(resolveWorkspaceTaskWorktreeDir(safeWorkspace, { worktreesDir: "/var/tmp/trees" } as any, resolveWorkspaceTaskDirSegment(unpinned)))
-      .toBe("/var/tmp/trees/PRD-1234-my-slug/fn-158");
+    expect(resolveWorkspaceTaskWorktreeDir(safeWorkspace, { worktreesDir: "/srv/trees" } as any, resolveWorkspaceTaskDirSegment(unpinned)))
+      .toBe("/srv/trees/PRD-1234-my-slug/fn-158");
   });
 
   it("resolves the historic sanitize-plus-hash path for an unsafe workspace basename", () => {
     expect(resolveWorkspaceTaskWorktreeDir(unsafeWorkspace, undefined, resolveWorkspaceTaskDirSegment(unpinned)))
       .toBe(join(unsafeWorkspace, ".fusion", "worktrees", "fn-158"));
-    expect(resolveWorkspaceTaskWorktreeDir(unsafeWorkspace, { worktreesDir: "/var/tmp/trees" } as any, resolveWorkspaceTaskDirSegment(unpinned)))
-      .toBe(`/var/tmp/trees/${unsafeGroup}/fn-158`);
+    expect(resolveWorkspaceTaskWorktreeDir(unsafeWorkspace, { worktreesDir: "/srv/trees" } as any, resolveWorkspaceTaskDirSegment(unpinned)))
+      .toBe(`/srv/trees/${unsafeGroup}/fn-158`);
   });
 
   it("prefers a pinned segment over the task id and never re-derives it", () => {
     const pinned = { id: "FN-158", workspaceWorktreeDirSegment: "prd-1234-my-slug" };
     expect(resolveWorkspaceTaskDirSegment(pinned)).toBe("prd-1234-my-slug");
-    expect(resolveWorkspaceTaskWorktreeDir(safeWorkspace, { worktreesDir: "/var/tmp/trees" } as any, resolveWorkspaceTaskDirSegment(pinned)))
-      .toBe("/var/tmp/trees/PRD-1234-my-slug/prd-1234-my-slug");
+    expect(resolveWorkspaceTaskWorktreeDir(safeWorkspace, { worktreesDir: "/srv/trees" } as any, resolveWorkspaceTaskDirSegment(pinned)))
+      .toBe("/srv/trees/PRD-1234-my-slug/prd-1234-my-slug");
   });
 });

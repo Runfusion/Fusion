@@ -898,6 +898,74 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
   });
 
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-07:32:
+  R16: the per-task compare-and-set is not a global uniqueness claim. Two tasks whose branches slug
+  identically can both mint the same segment when each read siblings before the other's pin was
+  visible, and one directory would then be claimed twice. The deterministic tie-break — lower task id
+  keeps the derived name — is what makes both racers agree without coordinating.
+  */
+  it("re-pins to the task id when another task already claimed the same freshly minted segment", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const racing = makeTask("FN-PIN-7");
+    (racing as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current, logs } = makeFakeStore(racing);
+    const winner = { ...makeTask("FN-PIN-6"), workspaceWorktreeDirSegment: "prd-1234-my-slug" } as Task;
+    // The racer's pin is invisible to the pre-mint scan and visible only once this mint has landed —
+    // the exact ordering that lets two tasks mint one segment.
+    let winnerVisible = false;
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        winnerVisible = true;
+        return { task: current(), segment, minted: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () =>
+      (winnerVisible ? [winner, current()] : [current()]);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-7");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-pin-7"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
+  it("keeps a freshly minted segment when the colliding task sorts after it", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const racing = makeTask("FN-PIN-8");
+    (racing as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current } = makeFakeStore(racing);
+    const laterTask = { ...makeTask("FN-PIN-9"), workspaceWorktreeDirSegment: "prd-1234-my-slug" } as Task;
+    let laterVisible = false;
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        laterVisible = true;
+        return { task: current(), segment, minted: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () =>
+      (laterVisible ? [laterTask, current()] : [current()]);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+  });
+
   it("reuses an existing pin verbatim instead of re-deriving it from the task", async () => {
     fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
     const pinned = makeTask("FN-PIN-2");

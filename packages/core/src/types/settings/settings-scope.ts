@@ -1515,8 +1515,9 @@ export interface ProjectSettings {
    *  each task to its own directory is incompatible with the cross-task recycle pool. Pinning therefore only
    *  applies when `recycleWorktrees` is off; the runtime also degrades a legacy config that carries both back
    *  to recycling. Worktrunk-managed layouts own their own path derivation, so pinning is bypassed when that
-   *  backend is on. */
-  /*  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+   *  backend is on.
+   *
+   *  FNXC:WorkspaceWorktree 2026-08-24-06:11:
    *  R14/KTD15: "branch" names a checkout after the ticket its working branch identifies
    *  (`feature/PRD-1234-my-slug` -> `prd-1234-my-slug`), which is what makes workspace tasks
    *  honor this setting instead of hardcoding the task id. It composes with the JIRA branch
