@@ -16,7 +16,9 @@ import {
 } from "../tasks/worktree-layout.js";
 
 describe("workspace task directory naming", () => {
-  const workspace = "/tmp/PRD-1234-my-slug";
+  // Pure string fixtures for pure path functions: nothing here touches the filesystem, so they
+  // deliberately do not name a real temp directory.
+  const workspace = "/repos/PRD-1234-my-slug";
 
   it("derives a ticket slug from a namespaced working branch", () => {
     expect(deriveWorkspaceTaskDirSegment({ taskId: "FN-9200", worktreeNaming: "branch", branch: "feature/PRD-1234-my-slug" }))
@@ -31,9 +33,9 @@ describe("workspace task directory naming", () => {
   it("names the task directory in both layouts, since only grouping is opt-in", () => {
     const { segment } = deriveWorkspaceTaskDirSegment({ taskId: "FN-9200", worktreeNaming: "branch", branch: "feature/PRD-1234-my-slug" });
     expect(resolveWorkspaceTaskWorktreeDir(workspace, undefined, segment))
-      .toBe("/tmp/PRD-1234-my-slug/.fusion/worktrees/prd-1234-my-slug");
-    expect(resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: "/var/tmp/trees" } as any, segment))
-      .toBe("/var/tmp/trees/PRD-1234-my-slug/prd-1234-my-slug");
+      .toBe("/repos/PRD-1234-my-slug/.fusion/worktrees/prd-1234-my-slug");
+    expect(resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: "/srv/trees" } as any, segment))
+      .toBe("/srv/trees/PRD-1234-my-slug/prd-1234-my-slug");
   });
 
   it("falls back to the task id when the branch slugs to empty", () => {
@@ -86,18 +88,18 @@ describe("workspace task directory naming", () => {
   reached the group level, those two callers would resolve a different directory than acquisition.
   */
   it("resolves the grouped root from settings alone, with no task and no naming mode", () => {
-    const grouped = resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: "/var/tmp/trees" } as any, {
+    const grouped = resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: "/srv/trees" } as any, {
       workspaceRootDir: workspace,
       repoRelPath: "api",
     });
-    expect(grouped).toBe("/var/tmp/trees/PRD-1234-my-slug/api");
+    expect(grouped).toBe("/srv/trees/PRD-1234-my-slug/api");
     expect(workspaceWorktreeGroupSegment(workspace)).toBe("PRD-1234-my-slug");
 
     // Every naming mode leaves the group segment untouched; only the task level below it moves.
     for (const worktreeNaming of ["branch", "task-title", "task-id", undefined]) {
       const { segment } = deriveWorkspaceTaskDirSegment({ taskId: "FN-9207", worktreeNaming, branch: "feature/PRD-9999-other", title: "Other" });
-      expect(resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: "/var/tmp/trees" } as any, segment))
-        .toBe(`/var/tmp/trees/PRD-1234-my-slug/${segment}`);
+      expect(resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: "/srv/trees" } as any, segment))
+        .toBe(`/srv/trees/PRD-1234-my-slug/${segment}`);
     }
   });
 });
