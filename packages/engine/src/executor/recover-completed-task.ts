@@ -230,7 +230,27 @@ export async function recoverCompletedTask(
       return false;
     }
     await deps.persistTokenUsage(task.id);
-    const originColumn = task.column;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-25-10:15 (stale-snapshot race):
+    `originColumn` must come from the AUTHORITATIVE re-read, not the caller's `task`
+    snapshot. A pause/resume abort can benignly re-queue the card (in-progress → todo)
+    between the caller's capture and this recovery; deciding promotion from the stale
+    snapshot skips the todo → wip re-home hop and hands off straight from `todo`,
+    which `handoffToReview` rejects ("Invalid transition: 'todo' → 'in-review'")
+    and strands the completed card. Observed on GDPR-052: unpause-resume captured
+    column=in-progress while the live row had already been re-queued to todo.
+    FNXC:WorkflowLifecycleColumns 2026-08-25-10:20 (late-mutation re-read):
+    The task row was last read before awaited recovery work (captureModifiedFiles, gate
+    evaluation), and lane resolution also awaits. A pause/resume abort can re-queue the row
+    (in-progress → todo) in any of those windows, so lane resolution happens FIRST and one
+    final getTask follows it immediately before the promotion decision — nothing awaits
+    between that read and the moves it feeds. Seed BOTH `originColumn` and `completionTask`
+    from this freshest read. A failed read returns via the outer catch: recovery retries on
+    the next sweep rather than acting on known-stale state.
+    */
+    const plannerLanes = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
+    const prePromotionTask = await deps.store.getTask(task.id);
+    const originColumn = prePromotionTask.column;
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (Phase C convergence):
     Resolved from the task's OWN workflow. On a renamed board the literals matched nothing,
@@ -251,10 +271,7 @@ export async function recoverCompletedTask(
     every card and `promotedFromPlannerColumn` was false on every renamed board — the exact
     stranding this recovery exists to fix, with the conversion in place and the census counting it.
 
-    Same struct, same fallbacks, one await. `recoverCompletedTask` has already awaited store reads
-    by this point, so this adds no ordering constraint it did not already have.
     */
-    const plannerLanes = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
     const promotedFromPlannerColumn = originColumn === plannerLanes.hold || originColumn === plannerLanes.intake;
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-16:45 (PR #2628 review, greptile P1):
@@ -275,7 +292,13 @@ export async function recoverCompletedTask(
       await deps.store.logEntry(task.id, message).catch(() => undefined);
       return false;
     }
-    let completionTask = task;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-25-10:15 (stale-snapshot race, part 2):
+    Seed from the AUTHORITATIVE re-read, not the caller snapshot — the handoff
+    receives this object, and a stale column here mislabels the promoted card
+    (and its logs) even though handoffToReview re-reads internally.
+    */
+    let completionTask: Task = prePromotionTask;
     if (promotedFromPlannerColumn) {
       deps.recoveringCompleted.add(task.id);
       /*
