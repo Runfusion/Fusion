@@ -5,11 +5,13 @@
  * The mobile project switch (.mobile-project-switch-dropdown) and the mobile header overflow
  * menu (.mobile-overflow-menu) had no max-height/overflow-y/overscroll-behavior, so with 8+
  * projects (or menu items) the list grew past the viewport bottom and lower items were
- * unreachable. The fix caps both at the desktop selector's viewport-aware
- * max-height: min(480px, calc(100vh - 120px)) with overflow-y: auto and
- * overscroll-behavior: contain. This regression test renders the real dropdowns with a long
- * list and asserts the computed-style scroll cap (red before the CSS fix, green after), and
- * guards the desktop .project-selector-dropdown cap as a regression check (Case C).
+ * unreachable. The fix caps both with the desktop selector's viewport-aware cap, repeated
+ * with the dynamic-viewport unit (100dvh) so the cap tracks the VISIBLE mobile viewport
+ * (100vh is the layout viewport and can exceed the visible area with expanded browser
+ * chrome), with overflow-y: auto and overscroll-behavior: contain. This regression test
+ * renders the real dropdowns with a long list and asserts the computed-style scroll cap
+ * (red before the CSS fix, green after), and guards the desktop .project-selector-dropdown
+ * cap as a regression check (Case C).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -73,13 +75,21 @@ function injectRufuCss() {
   document.head.appendChild(style);
 }
 
+/* FNXC:MobileProjectSwitchScroll 2026-08-25-18:44:
+   Review P1: the mobile cap now resolves to the dvh restatement (last valid declaration
+   wins); the desktop guard (Case C) keeps asserting the original vh cap, which is the
+   pre-existing upstream declaration and intentionally unchanged. */
+const MOBILE_CAP = "min(480px, calc(100dvh - 120px))";
+const DESKTOP_CAP = "min(480px, calc(100vh - 120px))";
+
 /**
  * The RUFU-170 invariant: the dropdown is viewport-capped and scrolls internally.
- * All three values are the desktop selector's exact literals (no parallel variant).
+ * The cap literal matches the desktop selector's exact declarations (no parallel variant),
+ * with the mobile cap additionally restated in dvh (see the CSS FNXC notes).
  */
-function assertDropdownScrollCap(el: HTMLElement) {
+function assertDropdownScrollCap(el: HTMLElement, expectedMaxHeight: string) {
   const style = window.getComputedStyle(el);
-  expect(style.maxHeight).toBe("min(480px, calc(100vh - 120px))");
+  expect(style.maxHeight).toBe(expectedMaxHeight);
   expect(style.overflowY).toBe("auto");
   expect(style.overscrollBehavior).toBe("contain");
 }
@@ -113,7 +123,7 @@ describe("Header mobile dropdown scroll cap (RUFU-170)", () => {
     const dropdown = screen.getByTestId("mobile-project-switch-dropdown");
     // The cap must not silently collapse the panel: every project item still renders.
     expect(dropdown.querySelectorAll(".mobile-project-switch-item").length).toBe(12);
-    assertDropdownScrollCap(dropdown);
+    assertDropdownScrollCap(dropdown, MOBILE_CAP);
   });
 
   it("Case B: the mobile header overflow menu scrolls internally with a long list", () => {
@@ -141,7 +151,7 @@ describe("Header mobile dropdown scroll cap (RUFU-170)", () => {
 
     const menu = container.querySelector(".mobile-overflow-menu");
     expect(menu).not.toBeNull();
-    assertDropdownScrollCap(menu as HTMLElement);
+    assertDropdownScrollCap(menu as HTMLElement, MOBILE_CAP);
   });
 
   it("Case C (regression guard): the desktop project selector keeps its scroll cap", () => {
@@ -160,6 +170,6 @@ describe("Header mobile dropdown scroll cap (RUFU-170)", () => {
 
     fireEvent.click(screen.getByTestId("project-selector-trigger"));
     const dropdown = screen.getByTestId("project-selector-dropdown");
-    assertDropdownScrollCap(dropdown);
+    assertDropdownScrollCap(dropdown, DESKTOP_CAP);
   });
 });

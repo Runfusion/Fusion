@@ -466,8 +466,15 @@
   rather than a new variant, and contain overscroll so wheeling to the list end does not
   scroll the page. The cap lives on the base class (not a media query) so a short-landscape
   phone in JS mobile mode with a 769-1024px CSS width gets it too.
+
+  FNXC:MobileProjectSwitchScroll 2026-08-25-18:44:
+  Review P1: on mobile, vh tracks the LAYOUT viewport, so with the browser chrome expanded
+  `100vh - 120px` can exceed the visible area and the cap no longer guarantees the list fits.
+  The repeated declaration restates the cap with the dynamic-viewport unit (dvh) for browsers
+  that support it; older browsers keep the vh fallback from the first declaration.
   */
   max-height: min(480px, calc(100vh - 120px));
+  max-height: min(480px, calc(100dvh - 120px));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
