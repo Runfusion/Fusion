@@ -4246,6 +4246,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             worktree: inspection.livePath,
             branch: task.branch,
+            // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned reclaim re-pin (FN-9161 store validation).
+            branchWriteOrigin: "engine" as const,
             paused: false,
             pausedReason: undefined,
             status: null,
@@ -4264,6 +4266,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         await this.store.updateTask(task.id, {
           worktree: inspection.livePath,
           branch: task.branch,
+          // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned reclaim re-pin (FN-9161 store validation).
+          branchWriteOrigin: "engine" as const,
           paused: false,
           pausedReason: undefined,
           status: null,
@@ -5001,6 +5005,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             worktree: reclaimedWorktreePath,
             branch: task.branch,
+            // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned resume-limbo re-pin (FN-9161 store validation).
+            branchWriteOrigin: "engine" as const,
             paused: false,
             pausedReason: undefined,
             status: null,

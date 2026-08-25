@@ -7197,6 +7197,7 @@ export async function aiMergeTask(
             rootDir,
             integrationBranch: mergeTarget.branch,
           });
+          /* FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write; merge reuse re-pinning is engine-owned. */
           await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: "engine" as const });
           await emitReuseHandoffAuditEvent(
             "merge:reuse-fallback-reused-existing-registration",

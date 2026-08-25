@@ -192,8 +192,9 @@ export async function handleBranchConflict(
       status: "failed",
       error: conflictMessage,
       branch: error.branchName,
-      branchWriteOrigin: "engine" as const,
       worktree: error.conflictingWorktreePath,
+      /* FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write; the sticky-park record is engine-owned. */
+      branchWriteOrigin: "engine" as const,
       paused: true,
       pausedReason: "branch-conflict-unrecoverable",
     });

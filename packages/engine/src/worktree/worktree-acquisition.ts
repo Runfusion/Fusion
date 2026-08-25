@@ -735,8 +735,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
     worktreePath = created.path;
     branch = created.branch;
+    /* FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write; the fresh-create finalize is an engine-owned assignment. */
     try {
-      await persistWorktreeAssignment({ worktree: created.path, branch: created.branch });
+      await persistWorktreeAssignment({ worktree: created.path, branch: created.branch, branchWriteOrigin: "engine" as const });
     } catch (error) {
       /*
        * FNXC:WorktreeAcquisition 2026-08-21-09:09:
@@ -938,7 +939,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
          * was already correct.
          */
         if (task.worktree !== pinnedPath || task.branch !== resumedBranch) {
-          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch });
+          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch, branchWriteOrigin: "engine" as const });
         }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
       }
@@ -1197,7 +1198,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
            * task-row assignment fails. The outer handler releases the lease and preserves that error.
            */
           poolAssignmentPersistenceStarted = true;
-          await persistWorktreeAssignment({ worktree: worktreePath, branch });
+          await persistWorktreeAssignment({ worktree: worktreePath, branch, branchWriteOrigin: "engine" as const });
           poolAssignmentPersistenceStarted = false;
           await audit?.git({ type: "worktree:reuse", target: worktreePath, metadata: { branch, reclaimed: prepared.reclaimed } });
           if (prepared.reclaimed) {
