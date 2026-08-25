@@ -2015,55 +2015,29 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   const pinCas = (input.store as Partial<TaskStore>).pinWorkspaceWorktreeDirSegment;
   if (typeof pinCas === "function") {
     const outcome = await pinCas.call(input.store, input.task.id, segment);
-    let pinnedTask = outcome.task;
-    let resolvedFallbackReason = outcome.minted ? fallbackReason : undefined;
     /*
-    FNXC:WorkspaceWorktree 2026-08-25-07:32:
-    R16: the compare-and-set is write-once PER TASK, which is not the same as globally unique. Two
-    different tasks whose branches or titles slug identically can start their first acquisition at
-    the same moment, each read siblings before the other's pin exists, and each successfully mint the
-    SAME segment — two tasks then claim one directory. So a freshly minted name-bearing segment is
-    re-checked against siblings once the write is visible, and WHOEVER SEES A CONFLICT YIELDS to its
-    task id. Yielding is deliberately unconditional rather than ordered: an ordered tie-break loses
-    the race it exists to settle, because the task that mints and re-checks FIRST sees no conflict
-    yet and keeps the name, and the one that arrives second may be the side the ordering tells to
-    stay. If both sides observe each other, both fall back — no directory is shared, which is the
-    invariant; the readable name is only a convenience. Nothing exists on disk yet — minting runs
-    before the task directory is made — so this re-pin moves no path.
+    FNXC:WorkspaceWorktree 2026-08-25-07:53:
+    The pin is write-once with NO rewrite path, deliberately. An earlier revision of this branch
+    tried to settle a mint race after the fact — re-pinning to the task id when a sibling turned out
+    to hold the same segment — and each attempt only narrowed the window instead of closing it: a
+    concurrent acquisition for the SAME task can adopt the segment and start building its checkout
+    before any `workspaceWorktrees` entry exists to detect, so a post-mint rewrite can always move a
+    root another writer is already using. Splitting one task across two roots is silent and
+    unrecoverable; two tasks sharing a derived name is neither.
+
+    So the collision defense is entirely PRE-mint (the sibling scan feeding the fallback ladder),
+    and the residual — two tasks whose branches slug identically minting in the same instant — is
+    left to fail loudly downstream: the second task's repository checkout hits the worktree path
+    reservation and the acquisition fails rather than quietly sharing a directory.
     */
-    if (outcome.minted && namesFromTask && outcome.segment !== input.task.id.toLowerCase()) {
-      const conflictingTaskId = (await collectLiveSiblingTaskDirSegmentOwners(input.store, input.task.id))
-        .filter(([, siblingSegment]) => siblingSegment.toLowerCase() === outcome.segment.toLowerCase())
-        .map(([siblingId]) => siblingId)
-        .sort()[0];
-      if (conflictingTaskId) {
-        /*
-        The yield is itself a compare-and-set: it replaces the segment only while the pin still
-        equals what this call minted AND no repository worktree has been recorded for the task. A
-        concurrent acquisition for this SAME task can have adopted the minted segment and anchored
-        its checkout under that root in between; re-pinning then would split one task across two
-        roots, which is worse than two tasks sharing a name (that collides on a reserved path and
-        fails loudly, rather than silently mismatching recorded paths).
-        */
-        const taskIdSegment = input.task.id.toLowerCase();
-        const yielded = await pinCas.call(input.store, input.task.id, taskIdSegment, { replaceIfCurrent: outcome.segment });
-        pinnedTask = yielded.task;
-        if (yielded.minted) {
-          resolvedFallbackReason = "sibling-collision";
-          input.logger?.log(`${input.task.id}: workspace directory segment ${outcome.segment} is already claimed by ${conflictingTaskId}; using ${taskIdSegment}`);
-        } else {
-          input.logger?.log(`${input.task.id}: workspace directory segment ${outcome.segment} collides with ${conflictingTaskId} but is already anchored; keeping ${yielded.segment}`);
-        }
-      }
-    }
-    input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${pinnedTask.workspaceWorktreeDirSegment ?? outcome.segment}`);
-    if (resolvedFallbackReason) {
+    input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${outcome.segment}`);
+    if (fallbackReason && outcome.minted) {
       await input.store.logEntry(
         input.task.id,
-        `[worktree] workspace directory name fell back to the task id (${resolvedFallbackReason})`,
+        `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
       ).catch(() => {});
     }
-    return pinnedTask;
+    return outcome.task;
   }
   await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
   input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
@@ -2100,18 +2074,13 @@ cleanup removes it, so reusing its segment would put two tasks in one directory.
 already excluded by the read, and the collision penalty is only a fallback to the task id.
 */
 async function collectLiveSiblingTaskDirSegments(store: TaskStore, taskId: string): Promise<string[]> {
-  return (await collectLiveSiblingTaskDirSegmentOwners(store, taskId)).map(([, segment]) => segment);
-}
-
-/** The same scan keyed by owner, so a post-mint collision can name the task it lost to. */
-async function collectLiveSiblingTaskDirSegmentOwners(store: TaskStore, taskId: string): Promise<[string, string][]> {
   try {
     if (typeof store.listTasks !== "function") return [];
     const tasks = await store.listTasks({ slim: true, includeArchived: false });
     return tasks
       .filter((sibling) => sibling.id !== taskId)
-      .map((sibling): [string, string | undefined] => [sibling.id, sibling.workspaceWorktreeDirSegment])
-      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
+      .map((sibling) => sibling.workspaceWorktreeDirSegment)
+      .filter((segment): segment is string => typeof segment === "string" && segment.length > 0);
   } catch {
     return [];
   }
