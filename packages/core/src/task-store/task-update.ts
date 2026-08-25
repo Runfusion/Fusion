@@ -1200,6 +1200,13 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         rewritten plan cannot inherit release authorization from its predecessor.
         */
         task.approvedPlanFingerprint = undefined;
+        /*
+        FNXC:PromptReadBack 2026-08-22-15:55:
+        The PG tasks row has no prompt column, so the row re-read never hydrates task.prompt.
+        Assign the content just written to PROMPT.md here so the returned task reflects the
+        authoritative write and the prompt-write tool's read-back check can verify it.
+        */
+        task.prompt = updates.prompt;
       }
 
       // When runContext is provided, record audit event atomically with task mutation
