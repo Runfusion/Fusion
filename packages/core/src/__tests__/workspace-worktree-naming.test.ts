@@ -68,6 +68,17 @@ describe("workspace task directory naming", () => {
     })).toEqual({ segment: "fn-9220", fallbackReason: "sibling-collision" });
   });
 
+  it("refuses a derived name inside another task's fallback namespace", () => {
+    for (const branch of ["feature/FN-9221-a1b2c3d4", "feature/FN-9221-a1b2c3d4-2", "feature/FN-9221-anything"]) {
+      expect(deriveWorkspaceTaskDirSegment({
+        taskId: "FN-9220",
+        worktreeNaming: "branch",
+        branch,
+        siblingTaskIds: ["FN-9221"],
+      }), branch).toEqual({ segment: "fn-9220", fallbackReason: "sibling-collision" });
+    }
+  });
+
   it("still allows a derived name matching the task's OWN id", () => {
     expect(deriveWorkspaceTaskDirSegment({
       taskId: "FN-9223",

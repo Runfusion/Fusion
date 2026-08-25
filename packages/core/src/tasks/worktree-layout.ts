@@ -225,8 +225,19 @@ export function deriveWorkspaceTaskDirSegment(input: {
       return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
     }
   }
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:52:
+  Reserve each sibling's WHOLE task-id namespace — `fn-a` and anything starting `fn-a-` — not just the
+  bare id. Fallback segments are minted inside that namespace (`fn-a`, then `fn-a-<hash>`, then
+  `fn-a-<hash>-2`…), so a derived name allowed to land on any of those shapes could claim another
+  task's last resort. Since the pin is write-once, that task could then never acquire a workspace at
+  all. Making the two namespaces disjoint ends the regress: a derived name can occupy no fallback,
+  and the fallback space stays open for its owner.
+  */
   for (const siblingTaskId of input.siblingTaskIds ?? []) {
-    if (siblingTaskId.toLowerCase() === candidate.toLowerCase()) {
+    const reserved = siblingTaskId.toLowerCase();
+    const lowered = candidate.toLowerCase();
+    if (lowered === reserved || lowered.startsWith(`${reserved}-`)) {
       return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
     }
   }

@@ -2030,20 +2030,24 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
       const taskIdSegment = input.task.id.toLowerCase();
       input.logger?.log(`${input.task.id}: workspace directory segment ${segment} is already claimed; using ${taskIdSegment}`);
       fallbackReason = "sibling-collision";
-      outcome = await pinCas.call(input.store, input.task.id, taskIdSegment);
+      /*
+      FNXC:WorkspaceWorktree 2026-08-25-08:52:
+      The fallback space is a LADDER inside this task's own id namespace, not a single value: `fn-a`,
+      then `fn-a-<hash8>`, then numbered variants. A single fixed fallback is always claimable by
+      something, and because the pin is write-once, one lost claim would wedge the task forever. Only
+      this task may occupy the namespace — derived names are refused from every sibling's `<id>-`
+      prefix — so a rung can be taken only by a legacy pin or this task's own earlier attempt, and
+      the ladder walks past it deterministically (identical order on every retry).
+      */
+      const taskIdHash = createHash("sha256").update(input.task.id).digest("hex").slice(0, 8);
+      const ladder = [taskIdSegment, `${taskIdSegment}-${taskIdHash}`, ...Array.from({ length: 8 }, (_, i) => `${taskIdSegment}-${taskIdHash}-${i + 2}`)];
+      for (const rung of ladder) {
+        outcome = await pinCas.call(input.store, input.task.id, rung);
+        if (outcome.claimed) break;
+        input.logger?.log(`${input.task.id}: workspace directory segment ${rung} is already claimed; trying the next fallback`);
+      }
       if (!outcome.claimed) {
-        /*
-        The task-id fallback is normally guaranteed free — a derived name may not occupy another
-        task's id — but a pre-existing pin from an earlier build could still hold it. Never throw
-        here: the pin is write-once, so a throw would wedge this task on every future retry. Fall
-        back to a deterministic per-task suffix, which the same task re-derives identically.
-        */
-        const suffixed = `${taskIdSegment}-${createHash("sha256").update(input.task.id).digest("hex").slice(0, 8)}`;
-        input.logger?.log(`${input.task.id}: task-id segment ${taskIdSegment} is already claimed; using ${suffixed}`);
-        outcome = await pinCas.call(input.store, input.task.id, suffixed);
-        if (!outcome.claimed) {
-          throw new Error(`Cannot pin a workspace worktree directory segment for ${input.task.id}: ${suffixed} is already claimed`);
-        }
+        throw new Error(`Cannot pin a workspace worktree directory segment for ${input.task.id}: every fallback in its own id namespace is claimed`);
       }
     }
     /*
