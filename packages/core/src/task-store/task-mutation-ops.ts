@@ -914,7 +914,7 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
   store: TaskStore,
   id: string,
   segment: string,
-): Promise<{ task: Task; segment: string; minted: boolean }> {
+): Promise<{ task: Task; segment: string; minted: boolean; claimed: boolean }> {
   const candidate = segment.trim();
   if (!candidate) throw new Error(`Cannot pin an empty workspace worktree directory segment for ${id}`);
   return store.withTaskLock(id, async () => {
@@ -935,14 +935,29 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
       before minting instead.
       */
       if (typeof existing === "string" && existing.length > 0) {
-        return { task: current, segment: existing, minted: false };
+        return { task: current, segment: existing, minted: false, claimed: true };
       }
-      const [updatedRow] = await tx.update(schema.project.tasks).set({
-        workspaceWorktreeDirSegment: candidate,
-        updatedAt: new Date().toISOString(),
-      }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer))).returning();
-      if (!updatedRow) throw new TaskNotFoundError(id);
-      return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), segment: candidate, minted: true };
+      /*
+      FNXC:WorkspaceWorktree 2026-08-25-08:12:
+      The segment is a project-wide CLAIM, enforced by `uqTasksWorkspaceWorktreeDirSegment`, not a
+      per-row write. Two tasks that derive the same slug can both read an empty sibling scan, and a
+      per-task compare-and-set would let both persist it — permanently, since the pin never changes,
+      so the loser's later path reservation would fail with no way to retry. The unique index makes
+      the second write raise instead, and the caller re-mints with its task-id fallback before any
+      checkout exists. A conflict is reported, never thrown: it is an ordinary outcome here.
+      */
+      try {
+        const [updatedRow] = await tx.update(schema.project.tasks).set({
+          workspaceWorktreeDirSegment: candidate,
+          updatedAt: new Date().toISOString(),
+        }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer))).returning();
+        if (!updatedRow) throw new TaskNotFoundError(id);
+        return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), segment: candidate, minted: true, claimed: true };
+      } catch (error: unknown) {
+        const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+        if (code !== "23505") throw error;
+        return { task: current, segment: candidate, minted: false, claimed: false };
+      }
     });
     if (outcome.minted) {
       await store.writeTaskJsonFile(store.taskDir(id), outcome.task);

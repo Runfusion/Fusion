@@ -86,9 +86,9 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /*
 FNXC:WorkspaceWorktree 2026-09-04-04:42:
-origin/main released 0068-0071 after this branch minted the workspace directory-segment column as 0067, so the pin migration is 0072 and the binary ceiling advances with it.
+origin/main released 0068-0071 after this branch minted the workspace directory-segment column as 0067, so the pin column is 0072, the unique claim is 0073, and the binary ceiling advances with them.
 */
-export const SCHEMA_BASELINE_VERSION = "0072";
+export const SCHEMA_BASELINE_VERSION = "0073";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -274,6 +274,9 @@ export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 /** FNXC:WorkspaceWorktree 2026-08-24-06:10: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0067->0072 because origin/main released 0067-0071 while this branch was open. */
 export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0072";
+/** FNXC:WorkspaceWorktree 2026-08-25-08:12: the segment is a CLAIM — this partial unique index is what makes a concurrent duplicate mint fail instead of persisting two write-once pins on one directory. */
+/* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0068->0073 to follow the 0072 column migration. */
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION = "0073";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -521,6 +524,7 @@ const TASK_EXTERNAL_BLOCK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0069_fn_209_tas
 const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_212_task_require_plan_approval.sql");
 const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
 const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_workspace_worktree_dir_segment.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_workspace_worktree_dir_segment_unique.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -663,6 +667,7 @@ export async function applySchemaBaseline(
     const taskRequirePlanApprovalAlreadyApplied = applied.includes(TASK_REQUIRE_PLAN_APPROVAL_VERSION);
     const patchnodeEntriesAlreadyApplied = applied.includes(PATCHNODE_ENTRIES_VERSION);
     const workspaceWorktreeDirSegmentAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION);
+    const workspaceWorktreeDirSegmentUniqueAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1550,6 +1555,14 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:WorkspaceWorktree 2026-08-25-08:12: register 0073 explicitly; without the unique claim two tasks can persist the same write-once segment and contend for one directory permanently. */
+    if (!workspaceWorktreeDirSegmentUniqueAlreadyApplied) {
+      const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

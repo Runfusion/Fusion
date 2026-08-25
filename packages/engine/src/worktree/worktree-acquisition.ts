@@ -1995,7 +1995,7 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   // Only a name-bearing mode can collide with a sibling, so the project-wide read is skipped for the
   // task-id and random modes — i.e. for every project that has not opted into ticket-derived names.
   const namesFromTask = input.settings.worktreeNaming === "branch" || input.settings.worktreeNaming === "task-title";
-  const { segment, fallbackReason } = deriveWorkspaceTaskDirSegment({
+  const derived = deriveWorkspaceTaskDirSegment({
     taskId: input.task.id,
     worktreeNaming: input.settings.worktreeNaming,
     branch: input.namingBranch,
@@ -2003,6 +2003,8 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
     description: input.task.description,
     siblingSegments: namesFromTask ? await collectLiveSiblingTaskDirSegments(input.store, input.task.id) : undefined,
   });
+  const segment = derived.segment;
+  let fallbackReason = derived.fallbackReason;
   /*
   FNXC:WorkspaceWorktree 2026-08-24-06:11:
   The pin is write-ONCE, so minting it is a compare-and-set rather than a read-then-write: two
@@ -2014,7 +2016,25 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   */
   const pinCas = (input.store as Partial<TaskStore>).pinWorkspaceWorktreeDirSegment;
   if (typeof pinCas === "function") {
-    const outcome = await pinCas.call(input.store, input.task.id, segment);
+    let outcome = await pinCas.call(input.store, input.task.id, segment);
+    /*
+    FNXC:WorkspaceWorktree 2026-08-25-08:12:
+    R16: the sibling scan above cannot see a task that has not written its pin yet, so two tasks
+    deriving the same slug can reach this line together. The database settles it — the segment is a
+    project-wide unique claim — and the loser re-mints with its task id, which is unique by
+    construction. This happens BEFORE any checkout exists, so nothing on disk moves; the alternative
+    (both pins persisting) would wedge the loser permanently, because the pin never changes and its
+    path reservation would fail on every retry.
+    */
+    if (!outcome.claimed) {
+      const taskIdSegment = input.task.id.toLowerCase();
+      input.logger?.log(`${input.task.id}: workspace directory segment ${segment} is already claimed; using ${taskIdSegment}`);
+      fallbackReason = "sibling-collision";
+      outcome = await pinCas.call(input.store, input.task.id, taskIdSegment);
+      if (!outcome.claimed) {
+        throw new Error(`Cannot pin a workspace worktree directory segment for ${input.task.id}: ${taskIdSegment} is already claimed`);
+      }
+    }
     /*
     FNXC:WorkspaceWorktree 2026-08-25-07:53:
     The pin is write-once with NO rewrite path, deliberately. An earlier revision of this branch
