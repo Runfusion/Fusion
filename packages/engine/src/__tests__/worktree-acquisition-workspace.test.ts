@@ -921,8 +921,15 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
       // The rival's pin is invisible to the pre-mint scan and visible only once this mint lands —
       // the exact ordering that lets two tasks mint one segment.
       let rivalVisible = false;
-      (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
-        .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+      (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string, options?: { replaceIfCurrent?: string }) => Promise<unknown> })
+        .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string, options?: { replaceIfCurrent?: string }) => {
+          // Mirrors the store contract: a replace applies only while the pin still equals the minted
+          // value and the task has recorded no worktree yet.
+          const existing = current().workspaceWorktreeDirSegment;
+          const anchored = Object.keys(current().workspaceWorktrees ?? {}).length > 0;
+          if (options?.replaceIfCurrent !== undefined && (existing !== options.replaceIfCurrent || anchored)) {
+            return { task: current(), segment: existing ?? segment, minted: false };
+          }
           await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
           rivalVisible = true;
           return { task: current(), segment, minted: true };
@@ -946,6 +953,55 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
       expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
     });
   }
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-07:41:
+  A concurrent acquisition for the SAME task (a mid-flight scope extension racing the primary
+  dispatch) can adopt the minted segment and record its checkout under that root before the
+  collision yield runs. Re-pinning then would split one task across two roots — worse than two tasks
+  sharing a name, which collides on a reserved path and fails loudly. The yield is a compare-and-set
+  that refuses once any repository worktree is anchored.
+  */
+  it("does not re-pin a task whose checkout is already anchored under the minted segment", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const racing = makeTask("FN-PIN-11");
+    (racing as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current, logs } = makeFakeStore(racing);
+    const rival = { ...makeTask("FN-PIN-1"), workspaceWorktreeDirSegment: "prd-1234-my-slug" } as Task;
+    let rivalVisible = false;
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string, options?: { replaceIfCurrent?: string }) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string, options?: { replaceIfCurrent?: string }) => {
+        const existing = current().workspaceWorktreeDirSegment;
+        const anchored = Object.keys(current().workspaceWorktrees ?? {}).length > 0;
+        if (options?.replaceIfCurrent !== undefined && (existing !== options.replaceIfCurrent || anchored)) {
+          return { task: current(), segment: existing ?? segment, minted: false };
+        }
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        rivalVisible = true;
+        // A concurrent acquisition for this same task adopted the pin and anchored its checkout.
+        await store.updateTask(id, {
+          workspaceWorktrees: { "repo-b": { worktreePath: join(fixture!.rootDir, ".fusion", "worktrees", segment, "repo-b"), branch: "fusion/fn-pin-11" } } as Task["workspaceWorktrees"],
+        });
+        return { task: current(), segment, minted: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () =>
+      (rivalVisible ? [rival, current()] : [current()]);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    // One task, one root: the anchored segment wins over the collision yield.
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+    expect(current().workspaceWorktrees?.["repo-b"]?.worktreePath).toContain(join(".fusion", "worktrees", "prd-1234-my-slug"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(false);
+  });
 
   it("keeps the derived name when no other task holds it", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
