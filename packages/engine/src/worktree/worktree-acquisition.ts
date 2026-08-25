@@ -2023,17 +2023,20 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
     different tasks whose branches or titles slug identically can start their first acquisition at
     the same moment, each read siblings before the other's pin exists, and each successfully mint the
     SAME segment — two tasks then claim one directory. So a freshly minted name-bearing segment is
-    re-checked against siblings once the write is visible. The tie-break is deterministic rather than
-    first-come: the lower task id keeps the derived name and the other re-pins to its task id, so
-    both nodes reach the same verdict without coordinating. Nothing has been created on disk yet —
-    minting runs before the task directory is made — so this re-pin moves no path.
+    re-checked against siblings once the write is visible, and WHOEVER SEES A CONFLICT YIELDS to its
+    task id. Yielding is deliberately unconditional rather than ordered: an ordered tie-break loses
+    the race it exists to settle, because the task that mints and re-checks FIRST sees no conflict
+    yet and keeps the name, and the one that arrives second may be the side the ordering tells to
+    stay. If both sides observe each other, both fall back — no directory is shared, which is the
+    invariant; the readable name is only a convenience. Nothing exists on disk yet — minting runs
+    before the task directory is made — so this re-pin moves no path.
     */
     if (outcome.minted && namesFromTask && outcome.segment !== input.task.id.toLowerCase()) {
       const conflictingTaskId = (await collectLiveSiblingTaskDirSegmentOwners(input.store, input.task.id))
         .filter(([, siblingSegment]) => siblingSegment.toLowerCase() === outcome.segment.toLowerCase())
         .map(([siblingId]) => siblingId)
         .sort()[0];
-      if (conflictingTaskId && conflictingTaskId.toLowerCase() < input.task.id.toLowerCase()) {
+      if (conflictingTaskId) {
         const taskIdSegment = input.task.id.toLowerCase();
         await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: taskIdSegment }, input.runContext);
         pinnedTask = await input.store.getTask(input.task.id);
