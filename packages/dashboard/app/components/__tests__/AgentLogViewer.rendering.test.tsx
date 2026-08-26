@@ -16,6 +16,7 @@ vi.mock("lucide-react", () => ({
   Cpu: () => null,
   ChevronDown: () => null,
   ChevronRight: () => null,
+  Sparkles: () => null,
 }));
 
 describe("AgentLogViewer", () => {
@@ -45,6 +46,19 @@ describe("AgentLogViewer", () => {
 
     expect(screen.getByText("streamed chunk")).toBeTruthy();
     consoleErrorSpy.mockRestore();
+  });
+
+  it("renders one attributed disclosure for a grouped executor response", () => {
+    const entries = [
+      makeEntry({ text: "first chunk", agent: "executor" }),
+      makeEntry({ text: " second chunk", agent: "executor" }),
+    ];
+    render(<AgentLogViewer entries={entries} loading={false} executorModel={{ provider: "anthropic", modelId: "claude-opus-4-1" }} />);
+
+    const notes = screen.getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(notes[0]).toHaveAttribute("data-ai-model", "claude-opus-4-1");
   });
 
   it("renders grouped text entries in chronological order (oldest first)", () => {

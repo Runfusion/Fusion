@@ -30,6 +30,7 @@ import {
   type GitLabImportItem,
 } from "../api";
 import { Loader2, RefreshCw, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User, Filter, ListPlus } from "lucide-react";
+import { AiDisclosure } from "./AiDisclosure";
 import { GithubIcon } from "./GithubIcon";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import {
@@ -1951,6 +1952,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
                               >
                                 {autoTranslate.translations.get(issue.number)?.title ?? issue.title}
                               </span>
+                              {autoTranslate.translations.has(issue.number) ? <AiDisclosure kind="ai-translation" compact /> : null}
                             </div>
                             {issue.labels.length > 0 && (
                               <span className="issue-labels">

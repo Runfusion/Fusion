@@ -26,6 +26,7 @@ import {
   Settings,
   Activity,
 } from "lucide-react";
+import { AiDisclosure } from "./AiDisclosure";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ViewHeader } from "./ViewHeader";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
@@ -494,7 +495,10 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
                     </div>
                   </div>
                   {insight.content && (
-                    <p className="insight-item-content">{insight.content}</p>
+                    <>
+                      <AiDisclosure kind="ai-assisted-analysis" compact />
+                      <p className="insight-item-content">{insight.content}</p>
+                    </>
                   )}
                   <div className="insight-item-meta">
                     <span className={`insight-item-status insight-item-status--${insight.status}`}>

@@ -2433,6 +2433,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   );
   const activeModelTag = formatModelTag(activeResolvedModel?.provider, activeResolvedModel?.modelId);
   const activeModelProvider = activeResolvedModel?.provider ?? null;
+  const activeModelId = activeResolvedModel?.modelId ?? null;
+  const persistedModelProvider = activeSession?.modelProvider && activeSession.modelId ? activeSession.modelProvider : null;
+  const persistedModelId = activeSession?.modelProvider && activeSession.modelId ? activeSession.modelId : null;
   const hasThreadInView = Boolean(activeSession || isStreaming || messages.length > 0);
   const hasDetailSelection = detailOpen && hasThreadInView;
   // ── CLI-backed chat mount (U12) ──────────────────────────────────────────
@@ -2753,7 +2756,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               hideAssistantIdentity={resolveMessageAssistantIdentity(message).hideAssistantIdentity}
               showAssistantModelTag={showAssistantModelTag}
               activeModelTag={activeModelTag}
-              activeModelProvider={activeModelProvider}
+              activeModelProvider={persistedModelProvider}
+              activeModelId={persistedModelId}
               activeSessionId={activeSession?.id ?? null}
               projectId={projectId}
               mentionAgentsByName={mentionAgentsByName}
@@ -2781,6 +2785,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             showAssistantModelTag={showAssistantModelTag}
             activeModelTag={activeModelTag}
             activeModelProvider={activeModelProvider}
+            activeModelId={activeModelId}
             /* FNXC:StructuralMail 2026-08-09-09:09: A streaming answer is unfinished and must never be routed as a report. */
             copyAction={showProviderResponseCopy && streamingText ? renderMessageActions("__streaming__", streamingText, "assistant", "chat-copy-response-streaming", false) : undefined}
             onQuestionSubmit={handleQuestionSubmit}
@@ -2805,7 +2810,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               hideAssistantIdentity={resolveMessageAssistantIdentity(message).hideAssistantIdentity}
               showAssistantModelTag={showAssistantModelTag}
               activeModelTag={activeModelTag}
-              activeModelProvider={activeModelProvider}
+              activeModelProvider={persistedModelProvider}
+              activeModelId={persistedModelId}
               activeSessionId={activeSession?.id ?? null}
               projectId={projectId}
               mentionAgentsByName={mentionAgentsByName}

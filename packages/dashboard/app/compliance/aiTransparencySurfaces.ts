@@ -47,7 +47,7 @@ export const aiTransparencySurfaces = [
     sourceFiles: ["ComposeChatPanel.tsx"],
     decision: "included",
     rationale: "The narrative helper directly requests and renders an assistant-authored draft.",
-    disclosure: "generated-output",
+    disclosure: "ai-interaction",
     providerStrategy: "provider-agnostic",
   },
   {
@@ -59,12 +59,28 @@ export const aiTransparencySurfaces = [
     providerStrategy: "task-lane-metadata",
   },
   {
+    id: "fusion-active-agent-transcript",
+    sourceFiles: ["ActiveAgentsPanel.tsx"],
+    decision: "included",
+    rationale: "Active-agent cards directly render the current agent transcript preview.",
+    disclosure: "generated-output",
+    providerStrategy: "provider-agnostic",
+  },
+  {
     id: "fusion-agent-log-group",
     sourceFiles: ["AgentLogViewer.tsx"],
     decision: "included",
     rationale: "The standalone activity log groups agent text and thinking output by role.",
     disclosure: "generated-output",
     providerStrategy: "task-lane-metadata",
+  },
+  {
+    id: "fusion-agent-detail-log",
+    sourceFiles: ["AgentDetailView.tsx"],
+    decision: "nested",
+    parentId: "fusion-agent-log-group",
+    rationale: "Agent detail and heartbeat-run tabs reuse AgentLogViewer and its adjacent per-group disclosure.",
+    providerStrategy: "not-applicable",
   },
   {
     id: "fusion-agent-log-operational",
@@ -127,12 +143,12 @@ export const aiTransparencySurfaces = [
     sourceFiles: ["AgentGenerationModal.tsx"],
     decision: "included",
     rationale: "The modal directly asks AI to generate and preview an agent specification and system prompt.",
-    disclosure: "generated-output",
+    disclosure: "ai-interaction",
     providerStrategy: "provider-agnostic",
   },
   {
     id: "fusion-import-ai-translation",
-    sourceFiles: ["GitHubImportTranslateControls.tsx"],
+    sourceFiles: ["GitHubImportTranslateControls.tsx", "GitHubImportModal.tsx"],
     decision: "included",
     rationale: "The translated issue or pull-request variant is model-produced and shown in place of original prose.",
     disclosure: "ai-translation",
@@ -208,6 +224,13 @@ export const aiTransparencySurfaces = [
     providerStrategy: "not-applicable",
   },
   {
+    id: "fusion-dev-server-log",
+    sourceFiles: ["DevServerLogViewer.tsx"],
+    decision: "excluded",
+    rationale: "Development server logs are operational process output, not model-generated content.",
+    providerStrategy: "not-applicable",
+  },
+  {
     id: "fusion-task-operational-metrics",
     sourceFiles: ["TaskCard.tsx", "TaskContextMenu.tsx", "TaskDetailModal.tsx", "TaskTokenStatsPanel.tsx"],
     decision: "excluded",
@@ -225,6 +248,7 @@ export const FUSION_AI_CENSUS_PATTERNS = [
   /selectedEval\.rationale|recommendation\.description/,
   /item\.origin|origin\s*===\s*["']agent["']/,
   /workflowStepResults/,
+  /AgentLogEntry|entry\.text/,
 ] as const;
 
 export function validateAiTransparencyRegistry(surfaces: readonly AiTransparencySurface[] = aiTransparencySurfaces): string[] {

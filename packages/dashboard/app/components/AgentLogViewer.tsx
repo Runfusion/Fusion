@@ -4,6 +4,7 @@ import type { AgentLogEntry } from "@fusion/core";
 import { PLANNER_AGENT_ROLE } from "@fusion/core";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { AiDisclosure } from "./AiDisclosure";
 import { ProviderIcon } from "./ProviderIcon";
 import React, { useRef, useEffect, useState, useCallback, useLayoutEffect, useMemo, useId, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
@@ -584,6 +585,13 @@ export function AgentLogViewer({
     planningModel,
   ]);
 
+  const attributionForEntry = (entry: AgentLogEntry): ModelInfo | null => {
+    if (entry.agent === PLANNER_AGENT_ROLE) return planningModel ?? null;
+    if (entry.agent === "executor") return executorModel ?? null;
+    if (entry.agent === "reviewer" || entry.agent === "merger") return validatorModel ?? null;
+    return null;
+  };
+
   if (loading && entries.length === 0) {
     return (
       <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
@@ -805,11 +813,16 @@ export function AgentLogViewer({
           const groupedText = group.kind === "single"
             ? firstEntry.text
             : group.entries.map((entry) => entry.text).join("");
+          const attribution = attributionForEntry(firstEntry);
+          const disclosure = firstEntry.type === "text" || firstEntry.type === "thinking"
+            ? <AiDisclosure kind="generated-output" provider={attribution?.provider} modelId={attribution?.modelId} compact />
+            : null;
 
           if (group.kind === "thinking") {
             return (
               <div key={group.key} className="agent-log-thinking">
                 {agentBadge}
+                {disclosure}
                 <AgentLogTimingLabels entry={firstEntry} />
                 <ThinkingTrace text={groupedText} format={renderMarkdown ? "markdown" : "plain"} className={renderMarkdown ? undefined : "agent-log-plain-block"} />
               </div>
@@ -819,6 +832,7 @@ export function AgentLogViewer({
           return (
             <div key={group.key} className="agent-log-text">
               {agentBadge}
+              {disclosure}
               <AgentLogTimingLabels entry={firstEntry} />
               {renderMarkdown ? (
                 <div className="markdown-body">

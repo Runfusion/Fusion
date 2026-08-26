@@ -562,6 +562,30 @@ describe("TaskChatTab", () => {
     expectRoleIcon("Merger", "anthropic-icon");
   });
 
+  it("renders one exact AI disclosure per agent group from proven task-lane metadata", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", text: "executor output" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "nested thought" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({ modelProvider: "openai", modelId: "gpt-5.6" })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+
+    const executorGroup = getRoleGroup("Executor");
+    const notes = within(executorGroup).getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveAttribute("data-compliance", "eu-ai-act-art-50");
+    expect(notes[0]).toHaveAttribute("data-ai-disclosure", "generated-output");
+    expect(notes[0]).toHaveAttribute("data-ai-provider", "openai");
+    expect(notes[0]).toHaveAttribute("data-ai-model", "gpt-5.6");
+    expect(notes[0]).not.toHaveTextContent("Mistral");
+  });
+
   it("uses status and text runtime markers before static overrides for reviewer, executor, and planner icons", () => {
     mockLogs([
       makeEntry({ agent: "triage", type: "text", text: "Planning using model: openai/gpt-4o" }),
