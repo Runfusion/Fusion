@@ -42,6 +42,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
   resolveEngineIncarnationId,
   resolveEngineNodeId,
   isFusionDeletableBranch,
+  classifyTaskBranchOrigin,
 } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
@@ -4246,8 +4247,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             worktree: inspection.livePath,
             branch: task.branch,
-            // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned reclaim re-pin (FN-9161 store validation).
-            branchWriteOrigin: "engine" as const,
+            /* FNXC:BranchWriteOrigin 2026-08-20-16:10: re-pin after PR-conflict reclaim (FN-9161 store validation).
+               FNXC:BranchWriteOrigin 2026-08-28-10:12: origin derives from the classifier — the re-pinned task.branch may be
+               operator-supplied, and hardcoding "engine" exposed it to engine cleanup (#3523 Greptile P1). */
+            branchWriteOrigin: classifyTaskBranchOrigin(task, task.branch) === "operator-supplied" ? "operator" : "engine",
             paused: false,
             pausedReason: undefined,
             status: null,
@@ -4266,8 +4269,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         await this.store.updateTask(task.id, {
           worktree: inspection.livePath,
           branch: task.branch,
-          // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned reclaim re-pin (FN-9161 store validation).
-          branchWriteOrigin: "engine" as const,
+          /* FNXC:BranchWriteOrigin 2026-08-20-16:10: re-pin after PR-conflict reclaim (FN-9161 store validation).
+             FNXC:BranchWriteOrigin 2026-08-28-10:12: origin derives from the classifier (#3523 Greptile P1). */
+          branchWriteOrigin: classifyTaskBranchOrigin(task, task.branch) === "operator-supplied" ? "operator" : "engine",
           paused: false,
           pausedReason: undefined,
           status: null,
@@ -5005,8 +5009,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             worktree: reclaimedWorktreePath,
             branch: task.branch,
-            // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned resume-limbo re-pin (FN-9161 store validation).
-            branchWriteOrigin: "engine" as const,
+            /* FNXC:BranchWriteOrigin 2026-08-20-16:10: resume-limbo re-pin (FN-9161 store validation).
+               FNXC:BranchWriteOrigin 2026-08-28-10:12: origin derives from the classifier (#3523 Greptile P1). */
+            branchWriteOrigin: classifyTaskBranchOrigin(task, task.branch) === "operator-supplied" ? "operator" : "engine",
             paused: false,
             pausedReason: undefined,
             status: null,

@@ -38,7 +38,7 @@ export async function normalizeWorkspaceTaskRouting(store: TaskStore, taskId: st
     await store.updateTask(taskId, {
       worktree: null,
       branch: null,
-      // FNXC:BranchWriteOrigin 2026-08-20-16:10: engine-owned stale-routing clear (FN-9161 store validation requires origin even for null clears).
+      // FNXC:BranchWriteOrigin 2026-08-28-10:12: engine-owned stale-routing clear (FN-9161 store validation requires origin even for null clears; timestamp refreshed per #3523 CodeRabbit minor).
       branchWriteOrigin: "engine" as const,
       executionStartBranch: null,
       baseCommitSha: null,

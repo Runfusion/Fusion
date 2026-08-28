@@ -1078,6 +1078,55 @@ describe("acquireTaskWorktree", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
   });
 
+  /*
+   * FNXC:BranchWriteOrigin 2026-08-28-10:12:
+   * #3523 review (Greptile P1) regressions: branch-value writes carrying operator-provided branches must
+   * persist "operator" provenance; a hardcoded "engine" stamp made those branches eligible for engine cleanup.
+   */
+  it("#3523 stamps operator provenance when fresh-create finalizes an operator-override branch", async () => {
+    const rootDir = makeRepo();
+    const freshPath = join(rootDir, ".worktrees", "op-fresh");
+    const overrideTask = {
+      ...task,
+      branch: "operator/branch",
+      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "operator/branch" } },
+    } as any;
+
+    await acquireTaskWorktree({
+      task: overrideTask,
+      rootDir,
+      store,
+      settings: {} as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: freshPath, branch: "operator/branch" }),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "operator/branch", branchWriteOrigin: "operator" });
+  });
+
+  it("#3523 stamps operator provenance when pool acquisition adopts an operator-override branch", async () => {
+    const overrideTask = {
+      ...task,
+      branch: "operator/branch",
+      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "operator/branch" } },
+    } as any;
+
+    const result = await acquireTaskWorktree({
+      task: overrideTask,
+      rootDir: process.cwd(),
+      store,
+      settings: { recycleWorktrees: true } as any,
+      pool: {
+        acquire: (_taskId: string) => "/tmp/pooled-operator",
+        prepareForTask: vi.fn().mockResolvedValue({ branch: "operator/branch", worktreePath: "/tmp/pooled-operator", reclaimed: false }),
+        release: vi.fn(),
+      } as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "operator/branch" }),
+    });
+
+    expect(result.source).toBe("pool");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled-operator", branch: "operator/branch", branchWriteOrigin: "operator" });
+  });
+
   it("FN-6922 rejects a canonical-equal resumed repo root before returning", async () => {
     const rootDir = makeRepo();
     const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");

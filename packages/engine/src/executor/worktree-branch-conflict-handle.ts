@@ -193,8 +193,12 @@ export async function handleBranchConflict(
       error: conflictMessage,
       branch: error.branchName,
       worktree: error.conflictingWorktreePath,
-      /* FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write; the sticky-park record is engine-owned. */
-      branchWriteOrigin: "engine" as const,
+      /*
+       * FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write.
+       * FNXC:BranchWriteOrigin 2026-08-28-10:12: the parked branch may be operator-supplied, so origin derives from the classifier
+       * like the sibling re-pin above (#3523 Greptile P1).
+       */
+      branchWriteOrigin: classifyTaskBranchOrigin(task, error.branchName) === "operator-supplied" ? "operator" : "engine",
       paused: true,
       pausedReason: "branch-conflict-unrecoverable",
     });
