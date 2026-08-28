@@ -625,3 +625,32 @@ this investigation.
 One genuinely structural failure WAS found and fixed rather than recorded here: the lane runner's own
 self-tests spawned `pnpm --filter @fusion/dashboard test`, re-entering the suite from inside it. See
 `cc19584cc4`.
+
+---
+
+## Entry: `executor-prompt` pause-resume agent-creation count (first sighting)
+
+- **File:** `packages/engine/src/__tests__/executor-prompt.test.ts`
+- **Exact test:** `TaskExecutor pause behavior > resumes unpaused in-progress task with no active session`
+- **Owner:** unowned — first sighting, recorded rather than quarantined because the file's remaining 113 tests are substantial coverage and quarantine is file-level.
+- **Observed tree/SHA:** `5769d5cd6` plus the then-uncommitted main-checkout-guard narrowing (guard classification, its audit metadata, and the workspace prompt string) — none of which this test exercises.
+- **Observed frequency:** once, and only when the file ran in the same vitest command as five other executor/workspace files. Passes deterministically alone (114/114).
+
+Verbatim observed failure:
+
+```
+FAIL |engine-default| src/__tests__/executor-prompt.test.ts > TaskExecutor pause behavior > resumes unpaused in-progress task with no active session
+AssertionError: expected 0 to be greater than or equal to 2
+ ❯ src/__tests__/executor-prompt.test.ts:1047:51
+```
+
+| run | result |
+|---|---|
+| six files in one command (`task-done-refusal-x-invariant`, `executor-workspace`, `executor-prompt`, `verify-worktree-invariants-missing`, `executor-workspace-config-propagation`, `executor-workspace-capture`) | **failed** — 1 failed / 147 passed |
+| `executor-prompt.test.ts` alone, same tree | **passed** (114/114) |
+
+The assertion counts `createFnAgent` calls after a resume and observed ZERO, so the resume path never
+reached agent creation at all — reads as module-mock ownership racing across files that share the
+`@fusion/core` agent-factory mock, not a wait that needs lengthening. No timeout was widened, no retry
+added, and no assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further
+discretion, per the standing rule in AGENTS.md.

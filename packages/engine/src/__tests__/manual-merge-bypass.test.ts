@@ -16,6 +16,7 @@ function createTask(status: Task["status"]): Task {
     currentStep: 0,
     log: [],
     workflowStepResults: [],
+    enabledWorkflowSteps: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     dependencies: [],

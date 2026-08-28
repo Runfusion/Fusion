@@ -100,6 +100,7 @@ import {
 
 
   planTaskWorktreePath,
+  describeFileScopeOverlapBlocker,
   promoteHeldTask,
   evaluateTaskReleaseGate,
   performTaskRevert,
@@ -5986,6 +5987,22 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         : (err instanceof Error ? err.message : String(err)).includes("Invalid transition") ? 400
         : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  router.get("/tasks/:id/overlap-blocker", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) throw notFound(`Task ${req.params.id} not found`);
+      if (typeof scopedStore.parseFileScopeFromPrompt !== "function") {
+        throw new ApiError(501, "Overlap blocker reporting is unavailable for this store");
+      }
+      res.json(await describeFileScopeOverlapBlocker(scopedStore, task.id));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err)) throw notFound(`Task ${req.params.id} not found`);
+      throw new ApiError(500, err instanceof Error ? err.message : String(err));
     }
   });
 

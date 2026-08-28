@@ -8,7 +8,7 @@
     {
       "name": "@fusion/engine",
       "dir": "packages/engine",
-      "projects": ["engine-default", "engine-reliability", "engine-slow"]
+      "projects": ["engine-default", "engine-reliability", "engine-slow", "engine-pipeline-smoke"]
     },
     {
       "name": "@fusion/engine-slow",

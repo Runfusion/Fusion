@@ -294,6 +294,8 @@ export function buildRunImplementationDeps(
       "finalizeMergeConfirmedWorkflowGraphTask", "cleanupMergeStateForReverification", "createWorktree",
       "emitWorktreeReanchoredAudit", "buildInjectedRuntimeEnv", "reconcileStepsFromGitHistory",
       "setActiveStepExecutor", "captureWorkspaceModifiedFiles", "runExecutorDeterministicVerification",
+      /* FNXC:VerificationRemediation 2026-08-26-04:58: the FN-3345 gate needs the named-remediation authority for `stepReopenPolicy: "none"` workflows. */
+      "appendReviewRemediationSteps",
       "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
       "createTaskAddDepTool", "createTaskDoneTool", "createReviewDisputeTool", "createSpawnAgentTool",
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
@@ -549,9 +551,6 @@ export function buildDispatchUnpauseResumeDeps(host: any): any {
 export function buildHoldForSessionContentionDeps(host: any): any {
   return {
     ...buildStoreRunContextDeps(host),
-    getHoldAttempts: (taskId: string) => host.sessionContentionHoldAttempts.get(taskId) ?? 0,
-    setHoldAttempts: (taskId: string, attempt: number) => { host.sessionContentionHoldAttempts.set(taskId, attempt); },
-    clearHold: (taskId: string) => host.clearSessionContentionHold(taskId),
     reexecute: (t: unknown) => host.execute(t),
   };
 }
@@ -669,8 +668,15 @@ export function buildRequestPreMergeOptionalStepFixDeps(host: any): any {
     ...facadeFields(host, ["store", "workflowLifecycleMovesInFlight"]),
     ...facadeMethods(host, [
       "getRunContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
-      "clearPausedAborted", "sendTaskBackForFix",
+      "clearPausedAborted", "readTaskArtifact", "appendReviewRemediationSteps", "sendTaskBackForFix",
     ]),
+  };
+}
+
+export function buildAppendReviewRemediationStepsDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["readTaskArtifact", "sendTaskBackForFix"]),
   };
 }
 
@@ -1363,8 +1369,9 @@ export function buildPauseAbortMarkerDeps(host: any): any {
     ...facadeFields(host, [
       "pausedAborted", "pausedAbortProvenance", "completionFinalizedTaskIds",
     ]),
-    markPausedAborted: (id: string, provenance?: unknown, source?: string) =>
-      host.markPausedAborted(id, provenance, source),
+    /* FNXC:PausedAbortProvenance 2026-08-26-09:52: forward the quiet flag so the breadcrumb can wait for evidence. */
+    markPausedAborted: (id: string, provenance?: unknown, source?: string, options?: { quiet?: boolean }) =>
+      host.markPausedAborted(id, provenance, source, options),
   };
 }
 

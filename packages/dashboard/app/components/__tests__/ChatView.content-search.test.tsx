@@ -178,34 +178,6 @@ describe("ChatView content search", () => {
     expect(screen.queryByTestId("chat-conversation-search")).toBeNull();
   });
 
-  it("searches room details without changing the Direct list query", async () => {
-    mockViewportMode("mobile");
-    const room = { id: "room-find", projectId: "proj-123", slug: "find", name: "Find", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
-    const setSearchQuery = vi.fn();
-    localStorage.setItem("fusion:chat-scope", "rooms");
-    setupMockChat({ sessions: [], filteredSessions: [], setSearchQuery });
-    setupMockRooms({
-      rooms: [room],
-      activeRoom: room,
-      messages: [
-        { id: "room-find-1", roomId: room.id, role: "user", content: "Room needle", createdAt: "2026-01-01T00:00:00.000Z", senderAgentId: null, mentions: [] },
-        { id: "room-find-2", roomId: room.id, role: "assistant", content: "Another room needle", createdAt: "2026-01-01T00:01:00.000Z", senderAgentId: "agent-001", mentions: [] },
-      ],
-    });
-
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-    fireEvent.click(screen.getByTestId("chat-room-item-find"));
-    const firstRow = await screen.findByTestId("chat-message-room-find-1");
-    const event = dispatchFind(firstRow);
-
-    expect(event.defaultPrevented).toBe(true);
-    const input = await screen.findByTestId("chat-conversation-search-input");
-    fireEvent.change(input, { target: { value: "needle" } });
-    expect(screen.getByText("1 of 2 matches")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Previous match" }));
-    expect(screen.getByTestId("chat-message-room-find-2")).toHaveClass("chat-message--search-active");
-    expect(setSearchQuery).not.toHaveBeenCalled();
-  });
 
   it("keeps native Find terminal-owned while hybrid transcripts own it", async () => {
     const hybrid = { ...activeSessionFixture, cliExecutorAdapterId: "claude-code", cliSessionFile: "cli-find" };

@@ -91,6 +91,13 @@ export const LEGACY_STATUS_ADOPTION: Readonly<Record<string, LegacyAdoptionActio
    * the merge bridge conditionally seeds its single Code Review continuation; legacy adoption
    * must preserve it rather than erase the recovery owner after restart. */
   "workspace-review-required": { kind: "preserve", note: "live workspace review re-entry signal — merge bridge seeds Code Review" },
+  /*
+  FNXC:SessionContentionHold 2026-08-23-09:05:
+  A contention hold is an active scheduler-owned retry state, not an unmappable legacy value.
+  Preserve it at startup so self-healing can resume its bounded contention retry without parking a
+  task that merely waits on another session.
+  */
+  "contention-hold": { kind: "preserve", note: "live session-contention retry hold — self-healing owns restart recovery" },
   // ── Scheduler / dispatch states — queued has live writers → preserve ──────
   "queued": { kind: "preserve", note: "live scheduler capacity/dependency marker — scheduler re-evaluates each poll" },
   "triaged": { kind: "resume-graph", note: "scheduler re-pickup" },

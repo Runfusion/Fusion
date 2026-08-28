@@ -12,6 +12,13 @@ export interface ResolvedWorkflowOptionalStep {
   icon?: string;
   phase: NonNullable<WorkflowStepTemplate["phase"]>;
   defaultOn: boolean;
+  /*
+  FNXC:ReportingOnlyGroup 2026-08-26-06:56:
+  A reporting group observes accepted work: it holds no approval and never reopens implementation.
+  Surfaced here so merge admission and the remediation seam read ONE declaration instead of each
+  re-deriving "is this thing allowed to stop the card".
+  */
+  reportingOnly: boolean;
 }
 
 /** Resolve one optional group's effective state consistently across runtime and
@@ -114,6 +121,7 @@ export function resolveWorkflowOptionalSteps(
       */
       phase: config.phase === "post-merge" ? "post-merge" : "pre-merge",
       defaultOn: config.defaultOn === true,
+      reportingOnly: config.reportingOnly === true,
       /*
       FNXC:WorkflowDefinitionSteps 2026-06-29-00:41:
       Definition/task creation surfaces must order optional groups by graph execution position, not raw node-array order. Derived built-ins can insert Plan Review between planning and parse while appending its node object, and operators still need the step list to show Plan Review before execution.
@@ -145,4 +153,15 @@ Every optional-group node id in a workflow, regardless of `defaultOn`. These ids
 */
 export function resolveAllOptionalGroupIds(ir: WorkflowIr): string[] {
   return resolveWorkflowOptionalSteps(ir).map((step) => step.templateId);
+}
+
+/*
+FNXC:ReportingOnlyGroup 2026-08-26-06:56:
+Resolve whether a node id names a REPORTING optional group — one that observes accepted work and
+records what it found, holding no approval and owning no remediation. Shared by merge admission and
+the remediation seam so "is this allowed to stop the card" has exactly one answer.
+*/
+export function isReportingOnlyOptionalGroup(ir: WorkflowIr, nodeId: string | undefined): boolean {
+  if (!nodeId) return false;
+  return resolveWorkflowOptionalSteps(ir).some((step) => step.templateId === nodeId && step.reportingOnly);
 }

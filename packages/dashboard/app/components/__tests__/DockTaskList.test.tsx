@@ -176,7 +176,7 @@ describe("DockTaskList", () => {
   FNXC:RightDockTasks 2026-06-28-18:42:
   Empty right-dock task states must distinguish a truly empty list from a list whose only rows are completed or archived, so the compact panel never renders blank and the Show Done affordance remains reachable when completed rows exist.
   */
-  it("routes dock reverted cards through resolved column flags and revise", () => {
+  it("renders reverted complete work as an ordinary dock row with revise", () => {
     const reverted = {
       ...makeTask("FN-REVERTED", "Cancelled task", "shipped"),
       description: "first line\nsecond line",
@@ -186,7 +186,7 @@ describe("DockTaskList", () => {
 
     render(
       <DockTaskList
-        tasks={[reverted]}
+        tasks={[reverted, reverted]}
         columnFlagsByTaskId={new Map([[reverted.id, { complete: true }]])}
         onOpenTask={vi.fn()}
         onDeleteTask={vi.fn()}
@@ -195,7 +195,10 @@ describe("DockTaskList", () => {
       />,
     );
 
-    expect(screen.getByTestId("dock-reverted-tasks")).toBeInTheDocument();
+    expect(screen.queryByTestId("dock-reverted-tasks")).toBeNull();
+    expect(screen.queryByTestId("dock-task-list-row-FN-REVERTED")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show Done" }));
+    expect(screen.getAllByTestId("dock-task-list-row-FN-REVERTED")).toHaveLength(1);
     expect(screen.getByTestId("mock-task-card-FN-REVERTED")).toHaveAttribute("data-complete", "true");
     fireEvent.click(screen.getByTestId("mock-task-card-revise-FN-REVERTED"));
     expect(onReviseTask).toHaveBeenCalledWith(reverted);

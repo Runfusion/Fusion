@@ -39,6 +39,11 @@
   --iceberg-swatch-sample-2: #242940;
   --iceberg-swatch-sample-3: #84a0c6;
   --iceberg-swatch-sample-4: #a093c7;
+  /* FNXC:DashboardTheming 2026-08-27-04:23: Flexoki preview samples stay global so its selector chip remains accurate even while another persisted theme supplies active tokens. */
+  --flexoki-swatch-sample-1: #100f0f;
+  --flexoki-swatch-sample-2: #282726;
+  --flexoki-swatch-sample-3: #4385be;
+  --flexoki-swatch-sample-4: #8b7ec8;
   --medieval-swatch-sample-1: #21170f;
   --medieval-swatch-sample-2: #392417;
   --medieval-swatch-sample-3: #d5ad67;
@@ -82,6 +87,10 @@
   --iceberg-swatch-sample-2: #dfe5f0;
   --iceberg-swatch-sample-3: #2d539e;
   --iceberg-swatch-sample-4: #6142a0;
+  --flexoki-swatch-sample-1: #fffcf0;
+  --flexoki-swatch-sample-2: #e6e4d9;
+  --flexoki-swatch-sample-3: #205ea6;
+  --flexoki-swatch-sample-4: #5e409d;
   --medieval-swatch-sample-1: #f4ead2;
   --medieval-swatch-sample-2: #e1ceb0;
   --medieval-swatch-sample-3: #765125;
@@ -7773,6 +7782,82 @@ Iceberg is a persisted navy-slate palette with a pale blue-gray light counterpar
   --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
   --accent: #2d539e;
   --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-08-27-04:23:
+Flexoki is a persisted warm inky palette with a cream paper light counterpart. Keep its id/order synchronized across the core union, selector metadata, web/Electron first-paint validators, token blocks, and swatch CSS so saved selections never flash or fall back.
+*/
+[data-color-theme="flexoki"] {
+  --bg: #100f0f;
+  --surface: #1c1b1a;
+  --card: #282726;
+  --card-hover: #343331;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #403e3c;
+  --text: #cecdc3;
+  --text-muted: #b7b5ac;
+  --text-dim: #878580;
+
+  --todo: #878580;
+  --in-progress: #4385be;
+  --in-progress-rgb: 67, 133, 190;
+  --in-review: #8b7ec8;
+  --triage: #da702c;
+  --done: #6f6e69;
+  --color-success: #879a39;
+  --color-warning: #d0a215;
+  --color-error: #d14d41;
+  --color-info: #3aa99f;
+
+  --cta-bg: #4385be;
+  --cta-border: #6ba3d4;
+  --cta-text: #100f0f;
+  --cta-bg-hover: #5b96cb;
+  --cta-border-hover: #8fbde0;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #4385be;
+  --accent-text: #100f0f;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="flexoki"][data-theme="light"] {
+  --bg: #fffcf0;
+  --surface: #f2f0e5;
+  --card: #ffffff;
+  --card-hover: #e6e4d9;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #dad8ce;
+  --text: #100f0f;
+  --text-muted: #6f6e69;
+  --text-dim: #878580;
+
+  --todo: #6f6e69;
+  --in-progress: #205ea6;
+  --in-progress-rgb: 32, 94, 166;
+  --in-review: #5e409d;
+  --triage: #bc5215;
+  --done: #878580;
+  --color-success: #66800b;
+  --color-warning: #ad8301;
+  --color-error: #af3029;
+  --color-info: #24837b;
+
+  --cta-bg: #205ea6;
+  --cta-border: #1a4c88;
+  --cta-text: #fffcf0;
+  --cta-bg-hover: #1a4c88;
+  --cta-border-hover: #143a68;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #205ea6;
+  --accent-text: #fffcf0;
   --logo-accent: var(--accent);
   --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
   --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);

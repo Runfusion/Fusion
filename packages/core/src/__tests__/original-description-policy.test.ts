@@ -224,6 +224,34 @@ describe("original description policy", () => {
     expect(applyOriginalDescription(marked, SAMPLE_DESC)).toBe(marked);
   });
 
+  it("preserves What This Delivers when an unmarked description cannot align", () => {
+    const summary = "Operators can confirm the planned outcome before reading technical details.";
+    const prompt = `# Task: FN-195\n\n## Original Description\n\nPlanner paraphrase that does not align.\n\n## What This Delivers\n\n${summary}\n\n## Before → After Transformation\n\n- **Before:** intent is buried\n`;
+    const rewritten = applyOriginalDescription(prompt, SAMPLE_DESC);
+
+    expect(extractOriginalDescriptionBody(rewritten)).toBe(SAMPLE_DESC);
+    expect(rewritten).toContain(`## What This Delivers\n\n${summary}`);
+    expect(rewritten).toContain("## Before → After Transformation");
+  });
+
+  it("preserves a marker-bounded product summary byte-identically", () => {
+    const summary = "Operators see the expected outcome at a glance.\n\n- No technical jargon";
+    const prompt = `# Task: FN-195\n\n${buildOriginalDescriptionSection("planner paraphrase")}\n## What This Delivers\n\n${summary}\n\n## Mission\n\nImplement it.\n`;
+    const rewritten = applyOriginalDescription(prompt, SAMPLE_DESC);
+
+    expect(rewritten).toContain(`## What This Delivers\n\n${summary}`);
+  });
+
+  it("inserts Original Description above a leading What This Delivers section", () => {
+    const prompt = "# Task: FN-195\n\n## What This Delivers\n\nOperators can confirm the outcome.\n\n## Mission\n\nImplement it.\n";
+    const rewritten = applyOriginalDescription(prompt, SAMPLE_DESC);
+
+    expect(rewritten.indexOf(ORIGINAL_DESCRIPTION_HEADING)).toBeLessThan(
+      rewritten.indexOf("## What This Delivers"),
+    );
+    expect(rewritten).toContain("## What This Delivers\n\nOperators can confirm the outcome.");
+  });
+
   it("uses the allowlist-priority tiebreak after alignment failure", () => {
     const prompt = "# Task: FN-8659\n\n## Original Description\n\nPlanner rewrite has no matching opening line.\n\n## Mission\n\nEarlier lower-priority heading.\n\n## Before → After Transformation\n\nChosen by allowlist priority.\n";
     const once = applyOriginalDescription(prompt, "Operator opening line.");

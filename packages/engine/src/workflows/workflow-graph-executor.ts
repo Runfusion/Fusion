@@ -1,6 +1,7 @@
 import type {
   Settings,
   TaskDetail,
+  TaskRecommendation,
   TaskStep,
   WorkflowIr,
   WorkflowIrEdge,
@@ -182,6 +183,16 @@ export interface WorkflowTaskProjection {
     deletions?: number;
   };
   summary?: string;
+  /*
+  FNXC:ReviewLaneRecommendations 2026-08-26-07:34:
+  A review-lane node runs `toolMode: "readonly"`, whose allowlist is read/grep/find/ls plus a few
+  read-only task reads — it holds NO writer. Projection is therefore the only way such a node can
+  leave anything durable behind, and it is why the completion-summary contract exists.
+  Recommendations join it so an in-review milestone can propose follow-up work without the one thing
+  it must never have: the ability to create tasks. The operator turns a proposal into a task from the
+  Recommendations tab; the agent only proposes.
+  */
+  recommendations?: TaskRecommendation[];
 }
 
 export interface WorkflowNodeExecutionContext {
@@ -491,6 +502,15 @@ function extractTaskProjection(contextPatch: Record<string, unknown> | undefined
   }
 
   if (typeof contextPatch.summary === "string") patch.summary = contextPatch.summary;
+  /*
+  FNXC:ReviewLaneRecommendations 2026-08-26-07:34:
+  Already normalized by the producing node (unknown entries dropped, capped, screened for secrets and
+  shell syntax). An empty array is deliberately NOT projected: a node that proposed nothing must not
+  erase proposals an earlier lane recorded.
+  */
+  if (Array.isArray(contextPatch.recommendations) && contextPatch.recommendations.length > 0) {
+    patch.recommendations = contextPatch.recommendations as TaskRecommendation[];
+  }
   return patch;
 }
 
@@ -1316,7 +1336,7 @@ export class WorkflowGraphExecutor {
               if (!this.shouldTraverseEdge(edge, remediationRouteSource)) return false;
               const target = nodeMap.get(edge.to);
               const action = target?.config?.workflowAction;
-              return action === "plan-replan" || action === "pre-merge-remediation";
+              return action === "plan-replan" || action === "pre-merge-remediation" || action === "review-remediation-steps";
             });
             if (explicitWorkflowRemediationRoute) {
               return await traverseChildren(node, remediationRouteSource);
@@ -1331,7 +1351,7 @@ export class WorkflowGraphExecutor {
         }
 
         const workflowAction = node.config?.workflowAction;
-        if (workflowAction === "plan-replan" || workflowAction === "pre-merge-remediation") {
+        if (workflowAction === "plan-replan" || workflowAction === "pre-merge-remediation" || workflowAction === "review-remediation-steps") {
           const stepId = typeof node.config?.forWorkflowStepId === "string"
             ? node.config.forWorkflowStepId
             : undefined;

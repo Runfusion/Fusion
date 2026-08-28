@@ -1,5 +1,6 @@
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./builtin-coding-ideas-workflow-ir.js";
+import { BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR } from "./builtin-coding-ideas-v2-workflow-ir.js";
 import { BUILTIN_BRAINSTORMING_WORKFLOW_IR } from "./builtin-brainstorming-workflow-ir.js";
 import { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "./builtin-lead-generation-workflow-ir.js";
 import { BUILTIN_MARKETING_WORKFLOW_IR } from "./builtin-marketing-workflow-ir.js";
@@ -583,6 +584,48 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "merge-manual-hold": { x: 1590, y: 240 },
       "post-merge-verification": { x: 2270, y: 160 },
       end: { x: 2440, y: 160 },
+    },
+    createdAt: BUILTIN_TS,
+    updatedAt: BUILTIN_TS,
+  },
+  /*
+   * FNXC:CodingIdeasV2Workflow 2026-08-26-05:56:
+   * Same Ideas board as builtin:coding-ideas, with one rule: in-review NEVER writes code.
+   * Implementation and its tests finish in `in-progress` — the executor's own final verification
+   * runs the project's configured test/build commands there, and a red result appends named fix
+   * steps rather than letting the card advance. `in-review` is then three read-only milestones:
+   * Code Review judges, Documentation reports, and the merge is the last thing that happens.
+   * The layout is ordered left-to-right in that same sequence so the editor's diagram reads the way
+   * the graph runs; nodes deleted from the graph must be deleted from this map too, or the editor
+   * keeps positioning ghosts.
+   */
+  {
+    id: "builtin:coding-ideas-v2",
+    name: "Coding (Ideas) V2",
+    description:
+      "Capture-first coding pipeline with a read-only review lane: park ideas in a manual intake, plan, implement and test per step, then review, document, and merge.",
+    kind: "workflow",
+    ir: BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR,
+    layout: {
+      start: { x: 60, y: 160 },
+      plan: { x: 230, y: 160 },
+      "plan-review": { x: 400, y: 160 },
+      "plan-replan": { x: 400, y: 320 },
+      "plan-review-no-op": { x: 570, y: 320 },
+      parse: { x: 570, y: 160 },
+      steps: { x: 740, y: 160 },
+      "review-pending-handoff": { x: 740, y: 320 },
+      "code-review": { x: 910, y: 160 },
+      "code-review-remediation": { x: 910, y: 320 },
+      "documentation-delivery": { x: 1080, y: 160 },
+      "merge-gate": { x: 1250, y: 160 },
+      "branch-group-member-integration": { x: 1420, y: 80 },
+      "branch-group-promotion": { x: 1590, y: 80 },
+      "merge-manual-hold": { x: 1420, y: 240 },
+      "merge-attempt": { x: 1760, y: 160 },
+      "merge-retry": { x: 1930, y: 80 },
+      "recovery-router": { x: 1930, y: 240 },
+      end: { x: 2100, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,

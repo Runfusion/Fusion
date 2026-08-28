@@ -123,6 +123,7 @@ import {
   isMergeRequestContractShadowEnabled,
   resolveMergerFallbackModel,
   resolveWorkflowIrForTask,
+  resolvePreMergeGateForTask,
   resolveRequiredPreMergeStepIds,
   resolveReboundTarget,
   resolveCompleteColumn,
@@ -130,7 +131,7 @@ import {
   resolveTaskLifecycleColumns,
   isFusionDeletableBranch,
   classifyTaskBranchOrigin,
-  type WorkflowIr, resolveReviewColumns
+  type WorkflowIr
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge/merge-trait.js";
@@ -6421,6 +6422,21 @@ workflow steps run exclusively as the workflow graph's own post-merge optional-g
  *   - On finalize, best-effort cleanup of the stranded `task.worktree` and
  *     `fusion/<id>` branch keeps `.worktrees/` and the branch namespace tidy.
  */
+/*
+ * FNXC:ReviewGatedRemediation 2026-08-23-05:23:
+ * Empty-diff finalizers must resolve the selected workflow's required pre-merge gates, not infer
+ * verification from implementation-step names. Legacy callers without a workflow selection retain
+ * their historical guard behavior.
+ */
+async function resolveNoOpFinalizeGateIds(store: TaskStore, task: Task): Promise<ReadonlySet<string> | undefined> {
+  const selection = store.getTaskWorkflowSelectionAsync
+    ? await store.getTaskWorkflowSelectionAsync(task.id)
+    : store.getTaskWorkflowSelection?.(task.id);
+  if (!selection) return undefined;
+  const ir = await resolveWorkflowIrForTask(store, task.id).catch(() => undefined);
+  return ir ? resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps) : undefined;
+}
+
 async function tryEarlyEmptyOwnDiffFinalize(input: {
   task: Task;
   taskId: string;
@@ -6483,7 +6499,9 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
     return null;
   }
 
-  const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+  const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task, {
+    requiredVerificationStepIds: await resolveNoOpFinalizeGateIds(store, task),
+  });
   if (noCommitsFinalize.blocked) {
     const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
     /*
@@ -6800,24 +6818,20 @@ export async function aiMergeTask(
   The helper's own comment records this exact defect being fixed in `moves.ts`; these two merge
   entry points were missed. Resolve the task's own review lanes and pass them.
   */
-  const mergeReviewColumns = new Set<string>(["in-review"]);
-  let requiredPreMergeStepIds: ReadonlySet<string> | undefined;
+  let mergeGate;
   try {
-    // Legacy direct-merger callers have no workflow selection to resolve. Keep
-    // their historical admission semantics; graph-owned tasks supply one.
-    const selection = store.getTaskWorkflowSelectionAsync
-      ? await store.getTaskWorkflowSelectionAsync(taskId)
-      : store.getTaskWorkflowSelection?.(taskId);
-    const mergeIr = selection ? await resolveWorkflowIrForTask(store, taskId) : null;
-    if (mergeIr) {
-      for (const id of resolveReviewColumns(mergeIr)) mergeReviewColumns.add(id);
-      requiredPreMergeStepIds = resolveRequiredPreMergeStepIds(mergeIr, task.enabledWorkflowSteps);
-    }
-  } catch { /* degraded: the legacy id above still answers */ }
+    mergeGate = await resolvePreMergeGateForTask(store, taskId, task.enabledWorkflowSteps);
+  } catch {
+    throw new Error(`Cannot merge ${taskId}: merge gate could not resolve the task workflow`);
+  }
+  if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
+    throw new Error(`Cannot merge ${taskId}: merge gate could not resolve the task workflow`);
+  }
   const mergeBlocker = getTaskMergeBlocker(task, {
     manual: options.manual === true,
-    reviewColumns: mergeReviewColumns,
-    requiredPreMergeStepIds,
+    reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
+    /* FNXC:LegacyPreMergeGate 2026-08-23-08:32: Legacy tasks without a persisted optional-group selection predate graph gates. New planned tasks always persist an explicit list, including Review Level 0's []. */
+    requiredPreMergeStepIds: Array.isArray(task.enabledWorkflowSteps) ? mergeGate.requiredPreMergeStepIds : undefined,
   });
   if (mergeBlocker) {
     /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure — see PreMergeStepsNotRunError. */
@@ -7624,7 +7638,9 @@ export async function aiMergeTask(
       // — NOT a legitimate no-op. Demote to the unproven-recovery path which
       // moves the task back to todo with progress preserved instead of
       // clearing modifiedFiles to [].
-      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task, {
+        requiredVerificationStepIds: await resolveNoOpFinalizeGateIds(store, task),
+      });
       if (noCommitsFinalize.blocked) {
         const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
         /*
@@ -7928,7 +7944,9 @@ export async function aiMergeTask(
       result.mergeTargetSource = mergeTarget.source;
       mergerLog.log(`${taskId}: branch missing; recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
     } else {
-      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task, {
+        requiredVerificationStepIds: await resolveNoOpFinalizeGateIds(store, task),
+      });
       if (noCommitsFinalize.blocked) {
         const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
         /*

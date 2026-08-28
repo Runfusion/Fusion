@@ -7,14 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { ChatView, CHAT_DOCKED_SIDEBAR_DEFAULT_WIDTH, CHAT_DOCKED_SIDEBAR_MAX_WIDTH, CHAT_DOCKED_SIDEBAR_MIN_WIDTH, CHAT_DOCKED_SIDEBAR_OPEN_STORAGE_KEY, CHAT_DOCKED_SIDEBAR_WIDTH_STORAGE_KEY, clampChatDockedSidebarWidth } from "../ChatView";
 import {
-  createRoomFixture,
   installChatViewEnv,
   mockTabletClassTouchViewport,
   mockViewportMode,
   mockFetchModels,
   renderWithAct,
   setupMockChat,
-  setupMockRooms,
 } from "./ChatView.test-harness";
 
 vi.mock("../../hooks/useChat");
@@ -119,21 +117,18 @@ describe("ChatView docked conversation sidebar", () => {
     view.unmount();
   });
 
-  it("keeps the Rooms scope inside the docked sidebar and removes its Back shell", async () => {
-    const room = createRoomFixture("docked");
+  /*
+  FNXC:ChatDirectOnly 2026-08-24-03:34:
+  A legacy Rooms preference or feature flag must not revive removed Rooms UI inside the docked list.
+  */
+  it("keeps the docked sidebar direct-only when legacy Rooms state is present", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
     setupMockChat({ sessions: [], filteredSessions: [] });
-    setupMockRooms({ rooms: [room], activeRoom: room });
     const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
     expectDocked();
-    const rooms = screen.getByTestId("chat-sidebar-rooms");
-    expect(rooms.closest(".chat-sidebar")).toHaveClass("chat-sidebar--docked");
-    fireEvent.click(screen.getByTestId(`chat-room-item-${room.slug}`));
-    const header = document.querySelector(".chat-room-thread-header") as HTMLElement;
-    expect(header.querySelector('[aria-label="Back to conversations"]')).toBeNull();
-    expect(header.querySelector("button.btn, button.btn-icon")).toBeNull();
-    fireEvent.click(screen.getByTestId("chat-docked-sidebar-toggle"));
-    expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-sidebar-rooms")).toBeNull();
+    expect(screen.queryByTestId("chat-create-room-btn")).toBeNull();
+    expect(screen.getByTestId("chat-search-input").closest(".chat-sidebar")).toHaveClass("chat-sidebar--docked");
     view.unmount();
   });
 

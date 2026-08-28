@@ -1,3 +1,4 @@
+import { isRemediationStep } from "../tasks/remediation-steps.js";
 import type { Task } from "../types.js";
 
 export interface NoCommitsNoOpFinalizeEvaluation {
@@ -20,12 +21,19 @@ export interface NoCommitsNoOpFinalizeEvaluation {
 const VERIFICATION_STEP_NAME = /test|verif|qa|review/i;
 
 export function evaluateNoCommitsNoOpFinalize(
-  task: Pick<Task, "noCommitsExpected" | "steps">,
+  task: Pick<Task, "noCommitsExpected" | "steps" | "workflowStepResults">,
+  options: { requiredVerificationStepIds?: ReadonlySet<string> } = {},
 ): NoCommitsNoOpFinalizeEvaluation {
   const steps = task.steps ?? [];
   const doneCount = steps.filter((step) => step.status === "done").length;
   const incompleteCount = steps.length - doneCount;
   const noCommitsExpected = task.noCommitsExpected === true;
+  const missingRequiredGate = [...(options.requiredVerificationStepIds ?? [])].find((id) =>
+    !task.workflowStepResults?.some((result) => result.workflowStepId === id && result.status === "passed"),
+  );
+  if (missingRequiredGate) {
+    return { blocked: true, reason: `required verification gate '${missingRequiredGate}' has no passing result`, doneCount, incompleteCount };
+  }
 
   const skippedSteps = steps.filter((step) => step.status === "skipped");
   const hasCompletedVerification = steps.some((step) =>
@@ -35,7 +43,7 @@ export function evaluateNoCommitsNoOpFinalize(
   // FN-8141: skipped step + empty diff. Applies to ALL tasks regardless of `noCommitsExpected`.
   if (skippedSteps.length > 0) {
     const verificationSkipped = skippedSteps.filter((step) =>
-      VERIFICATION_STEP_NAME.test(step.name ?? ""),
+      VERIFICATION_STEP_NAME.test(step.name ?? "") || isRemediationStep(step),
     );
 
     // A skipped verification/QA/review step over an empty diff blocks unconditionally:

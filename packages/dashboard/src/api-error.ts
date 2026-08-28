@@ -1,4 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+import { summarizeErrorForOperator } from "@fusion/core";
 import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 
 export interface ApiErrorResponse {
@@ -205,8 +206,18 @@ export function rethrowAsApiError(error: unknown, fallbackMessage = "Internal se
     throw error;
   }
 
+  /*
+  FNXC:ErrorCauseChain 2026-08-26-08:14:
+  Report the CAUSE, not just the frame. Drizzle wraps a query failure in an error whose message is
+  `Failed query: <the whole statement> params: …` and puts the real `PostgresError` — the one saying
+  `column "x" does not exist` — in `cause`. Reading `error.message` alone showed an operator a wall of
+  SQL and nothing about what broke: reported from the task chat as a screenful of column names with
+  no reason attached, and undiagnosable from the report alone.
+  `summarizeErrorForOperator` leads with the deepest cause and keeps a short frame for context. An
+  error with no cause renders exactly as before, so ordinary API failures are unchanged.
+  */
   if (error instanceof Error && error.message) {
-    throw internalError(error.message, error);
+    throw internalError(summarizeErrorForOperator(error), error);
   }
 
   throw internalError(fallbackMessage, error);

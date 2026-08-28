@@ -15,7 +15,7 @@ import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 
 export type AwaitAbortInFlightTaskWorkDeps = {
   userCanceledTaskIds: Set<string>;
-  markPausedAborted: (taskId: string, provenance: PausedAbortProvenance, source: string) => void;
+  markPausedAborted: (taskId: string, provenance: PausedAbortProvenance, source: string, options?: { quiet?: boolean }) => void;
   untrackStuckTask: (taskId: string) => void;
   clearWorkflowRerunWatchdog: (taskId: string) => void;
   clearCompletedTaskWatchdog: (taskId: string) => void;
@@ -55,7 +55,17 @@ export async function awaitAbortInFlightTaskWork(
   FNXC:WorkflowLifecycle 2026-07-26-11:20:
   KB-PROV: Stamp the provenance the caller actually reported instead of a blanket `hard-cancel`. `options.userCanceled` is already the truthful operator-intent signal every caller computes (`source === "user"`, soft-delete, the registered move disposer), so derive the label from it: operator withdrawal keeps `hard-cancel`, everything else is an `engine-abort`. Without this, the FN-8596 engine rerun bounce told the operator `provenance=hard-cancel` for work the engine itself re-dispatched, and any future consumer branching on `hard-cancel` would read an engine bounce as an operator withdrawal. Behaviour is unchanged: `userPaused` is still never set by engine rebounds, and the downstream classifiers accept both labels via `isGenericAbortProvenance()`.
   */
-  deps.markPausedAborted(taskId, options.userCanceled ? "hard-cancel" : "engine-abort", `abort-in-flight:${reason}`);
+  /*
+  FNXC:PausedAbortProvenance 2026-08-26-09:52:
+  Record the marker now (it must be claimed synchronously, before any await, so two concurrent
+  disposals cannot race) but hold the operator-facing breadcrumb until we know a surface was really
+  aborted. Emitted eagerly, it announced an interruption on cards that had no session at all: every
+  newly created task logged `Pause abort marked: provenance=hard-cancel` seconds after creation,
+  because creation moves the card out of the planning lane and that move is user-sourced.
+  */
+  const abortProvenance = options.userCanceled ? "hard-cancel" : "engine-abort";
+  const abortSource = `abort-in-flight:${reason}`;
+  deps.markPausedAborted(taskId, abortProvenance, abortSource, { quiet: true });
   deps.untrackStuckTask(taskId);
   deps.clearWorkflowRerunWatchdog(taskId);
   deps.clearCompletedTaskWatchdog(taskId);
@@ -177,6 +187,12 @@ export async function awaitAbortInFlightTaskWork(
   deps.stuckAborted.delete(taskId);
 
   if (hadActiveSurface) {
+    /*
+    The deferred breadcrumb: something was genuinely interrupted, so say so and why. Emitted directly
+    rather than through a second `markPausedAborted` call, whose first-mark deduplication would
+    suppress it — the marker was already recorded above, quietly.
+    */
+    deps.safeLogEntry(taskId, `Pause abort marked: provenance=${abortProvenance} source=${abortSource}`);
     executorLog.log(`${taskId}: awaited abort of in-flight work — ${reason}`);
     deps.safeLogEntry(
       taskId,

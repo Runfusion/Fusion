@@ -71,12 +71,12 @@ describe("task detail modal tablet width (FN-5599, FN-6500)", () => {
   above, and the mobile full-screen sheet below.
   */
   it("keeps mobile full-screen sheet width behavior", () => {
-    const mobileBlockMatch = detailModalCss.match(
-      /@media\s*\(max-width:\s*768px\)\s*\{\s*\.detail-move-btn__arrow[\s\S]*?\.modal\.task-detail-modal\s*\{[^}]*\}[\s\S]*?\n\}/,
-    );
-    expect(mobileBlockMatch).toBeTruthy();
+    const mobileWidthIndex = detailModalCss.indexOf("width: 100vw;");
+    const mobileMediaStart = detailModalCss.lastIndexOf("@media (max-width: 768px)", mobileWidthIndex);
+    expect(mobileWidthIndex).toBeGreaterThanOrEqual(0);
+    expect(mobileMediaStart).toBeGreaterThanOrEqual(0);
 
-    const mobileBlock = mobileBlockMatch![0];
+    const mobileBlock = detailModalCss.slice(mobileMediaStart, detailModalCss.indexOf("\n}", mobileWidthIndex) + 2);
     const modalRuleMatch = mobileBlock.match(/\.modal\.task-detail-modal\s*\{[^}]*\}/s);
     expect(modalRuleMatch).toBeTruthy();
     expect(modalRuleMatch![0]).toContain("width: 100vw;");

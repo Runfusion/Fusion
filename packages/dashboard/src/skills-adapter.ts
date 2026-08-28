@@ -183,7 +183,7 @@ export interface SkillsAdapter {
   /**
    * Fetch the skills.sh catalog with optional authentication.
    */
-  fetchCatalog(input: { limit: number; query?: string }): Promise<CatalogFetchResult | UpstreamError>;
+  fetchCatalog(input: { limit: number; query?: string; rootDir?: string; projectStore?: TaskStore }): Promise<CatalogFetchResult | UpstreamError>;
 
   /**
    * Read the contents of a skill's SKILL.md file and list supplementary files.
@@ -264,17 +264,50 @@ function isSkillEnabled(
   return getSkillSettingState(skillId, settings) === "enabled";
 }
 
+type PackageManagerLike = {
+  resolve(onMissing?: (source: string) => Promise<unknown>): Promise<{
+    skills: ResolvedResource[];
+  }>;
+};
+
+async function collectFusionSkillResources(rootDir: string): Promise<ResolvedResource[]> {
+  const skillsDir = join(rootDir, ".fusion", "skills");
+  try {
+    const entries = await readdir(skillsDir, { withFileTypes: true });
+    const resources: ResolvedResource[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const path = join(skillsDir, entry.name, "SKILL.md");
+      if (await pathExists(path)) {
+        resources.push({
+          path,
+          enabled: true,
+          metadata: { source: "auto", scope: "project", origin: "top-level", baseDir: join(rootDir, ".fusion") },
+        });
+      }
+    }
+    return resources;
+  } catch {
+    return [];
+  }
+}
+
+function resourcePrecedence(resource: ResolvedResource, rootDir: string): number {
+  const path = resolve(resource.path);
+  if (path.startsWith(resolve(rootDir, ".fusion", "skills") + sep)) return 0;
+  if (path.startsWith(resolve(rootDir, ".pi", "skills") + sep)) return 1;
+  if (path.startsWith(resolve(rootDir, ".agents", "skills") + sep)) return 2;
+  return 3;
+}
+
 /**
  * Create the skills adapter implementation.
  */
 export function createSkillsAdapter(options: {
-  /** Package manager for skill resolution */
-  packageManager: {
-    resolve(onMissing?: (source: string) => Promise<unknown>): Promise<{
-      skills: ResolvedResource[];
-      [key: string]: ResolvedResource[];
-    }>;
-  };
+  /** Shared package manager fallback for legacy hosts and tests. */
+  packageManager?: PackageManagerLike;
+  /** Creates a package manager rooted at the requesting project. */
+  getPackageManager?: (rootDir: string) => PackageManagerLike | Promise<PackageManagerLike>;
   /** Project settings path helper */
   getSettingsPath: (rootDir: string) => string;
   /**
@@ -300,9 +333,17 @@ export function createSkillsAdapter(options: {
 }): SkillsAdapter {
   return {
     async discoverSkills(rootDir: string, projectStore?: TaskStore): Promise<DiscoveredSkill[]> {
-      // Resolve all resources including skills
-      const resolved = await options.packageManager.resolve();
-      const skillResources = resolved.skills ?? [];
+      /*
+       * FNXC:Skills 2026-08-27-03:10:
+       * Dashboard discovery must construct resolution from the requested project root, not the daemon root. Pi owns .pi/.agents discovery while Fusion scans its own .fusion/skills location, so project-local inventory remains isolated and complete.
+       */
+      const packageManager = await options.getPackageManager?.(rootDir) ?? options.packageManager;
+      if (!packageManager) {
+        throw new Error("Skills adapter requires a package manager or per-project package manager factory");
+      }
+      const resolved = await packageManager.resolve(async () => "skip");
+      const skillResources = [...await collectFusionSkillResources(rootDir), ...(resolved.skills ?? [])]
+        .sort((left, right) => resourcePrecedence(left, rootDir) - resourcePrecedence(right, rootDir));
 
       // Load current settings to check enabled state
       const settingsPath = options.getSettingsPath(rootDir);
@@ -316,8 +357,13 @@ export function createSkillsAdapter(options: {
       }
 
       const discoveredSkills: DiscoveredSkill[] = [];
+      const seenPaths = new Set<string>();
+      const seenIds = new Set<string>();
 
       for (const resource of skillResources) {
+        const canonicalPath = resolve(resource.path);
+        if (seenPaths.has(canonicalPath)) continue;
+        seenPaths.add(canonicalPath);
         // Compute relative path for the skill.
         // Guard against baseDir being the parent of the skills directory,
         // which causes relative() to already include "skills/" in the result.
@@ -326,6 +372,8 @@ export function createSkillsAdapter(options: {
         const skillRelativePath = relPath.startsWith("skills/") ? relPath : `skills/${relPath}`;
 
         const skillId = computeSkillId(resource.metadata.source, skillRelativePath);
+        if (seenIds.has(skillId)) continue;
+        seenIds.add(skillId);
         const skillName = extractSkillName(skillRelativePath, resource.metadata.source);
 
         discoveredSkills.push({
@@ -583,8 +631,27 @@ export function createSkillsAdapter(options: {
       }
     },
 
-    async fetchCatalog(input: { limit: number; query?: string }): Promise<CatalogFetchResult | UpstreamError> {
+    async fetchCatalog(input: { limit: number; query?: string; rootDir?: string; projectStore?: TaskStore }): Promise<CatalogFetchResult | UpstreamError> {
       const { limit, query } = input;
+      const annotate = async (result: CatalogFetchResult | UpstreamError): Promise<CatalogFetchResult | UpstreamError> => {
+        if (!("entries" in result) || !input.rootDir) return result;
+        const skills = await this.discoverSkills(input.rootDir, input.projectStore);
+        return {
+          ...result,
+          entries: result.entries.map((entry) => {
+            const candidates = new Set([entry.id, entry.slug, entry.name].map(bareSkillName));
+            const matches = skills.filter((skill) => candidates.has(bareSkillName(skill.name)));
+            return {
+              ...entry,
+              installation: {
+                installed: matches.length > 0,
+                matchingSkillIds: matches.map((skill) => skill.id),
+                matchingPaths: matches.map((skill) => skill.path),
+              },
+            };
+          }),
+        };
+      };
       const boundedLimit = Math.min(Math.max(1, limit), 100);
 
       // Get skills.sh token if available
@@ -596,18 +663,18 @@ export function createSkillsAdapter(options: {
       // Empty/short queries return a deterministic empty catalog result.
       if (!token) {
         if (!publicSearchQuery) {
-          return buildEmptyCatalogResult({
+          return annotate(buildEmptyCatalogResult({
             mode: "unauthenticated",
             tokenPresent: false,
             fallbackUsed: false,
-          });
+          }));
         }
 
-        return fetchPublicCatalog(boundedLimit, publicSearchQuery, {
+        return annotate(await fetchPublicCatalog(boundedLimit, publicSearchQuery, {
           mode: "unauthenticated",
           tokenPresent: false,
           fallbackUsed: false,
-        });
+        }));
       }
 
       // Try authenticated v1 catalog endpoint first
@@ -623,7 +690,7 @@ export function createSkillsAdapter(options: {
         if (authResponse.ok) {
           const data = await authResponse.json().catch(() => null);
           if (data) {
-            return normalizeCatalogResponse(data, false);
+            return annotate(normalizeCatalogResponse(data, false));
           }
 
           return {
@@ -635,18 +702,18 @@ export function createSkillsAdapter(options: {
         // 400/401/403 from authenticated request - fall back to public search endpoint
         if (authResponse.status === 400 || authResponse.status === 401 || authResponse.status === 403) {
           if (!publicSearchQuery) {
-            return buildEmptyCatalogResult({
+            return annotate(buildEmptyCatalogResult({
               mode: "fallback-unauthenticated",
               tokenPresent: true,
               fallbackUsed: true,
-            });
+            }));
           }
 
-          return fetchPublicCatalog(boundedLimit, publicSearchQuery, {
+          return annotate(await fetchPublicCatalog(boundedLimit, publicSearchQuery, {
             mode: "fallback-unauthenticated",
             tokenPresent: true,
             fallbackUsed: true,
-          });
+          }));
         }
 
         // Upstream error

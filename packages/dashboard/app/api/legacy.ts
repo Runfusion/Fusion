@@ -43,6 +43,7 @@ export {
   createTaskFromRecommendation,
   createTask,
   repairOverlapBlocker,
+  fetchOverlapBlockerReport,
   updateTask,
   batchUpdateTaskModels,
   moveTask,
@@ -65,6 +66,7 @@ import type {
   BranchSelectionInput,
   CreateTaskInput,
   RepairOverlapBlockerResult,
+  TaskOverlapBlockerReport,
 } from "./tasks/tasks.js";
 export type {
   DeleteTaskOptions,
@@ -83,6 +85,7 @@ export type {
   BranchSelectionInput,
   CreateTaskInput,
   RepairOverlapBlockerResult,
+  TaskOverlapBlockerReport,
 };
 
 /*

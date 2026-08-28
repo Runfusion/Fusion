@@ -283,8 +283,8 @@ Do not repeatedly rerun a broad failing or hanging workspace command without a n
       workspaceConfig.repos.map((r: string) => `- \`${r}\``).join("\n") +
       `\n\nBefore editing files in any sub-repo, call \`fn_acquire_repo_worktree\` ` +
       `with the repo name to get an isolated worktree path. ` +
-      /* FNXC:Workspace 2026-08-15-07:05: Completion mechanically refuses task-era main-checkout writes and commits, even outside File Scope or before acquisition. */
-      `Work exclusively inside that returned path — never edit the repo's main checkout directly. This is mechanically enforced at \`fn_task_done\`: any file created, modified, or deleted, or any commit landed in a sub-repo main checkout during this run refuses completion regardless of File Scope or acquisition. Move the work into an acquired worktree and restore the main checkout before retrying.\n`;
+      /* FNXC:WorkspaceFinalization 2026-08-27-08:42: Completion refuses main-checkout COMMITS (they reach the shared branch unreviewed). Uncommitted main-checkout edits only warn — the merger already stashes/restores a dirty checkout — but they deliver nothing, so the acquired-worktree commit invariant still fails work that lives only there. */
+      `Work exclusively inside that returned path — never edit the repo's main checkout directly. Committing in a sub-repo main checkout refuses completion at \`fn_task_done\`: that commit would reach the shared branch without review. Uncommitted edits left in a main checkout are reported but deliver nothing — completion still requires commits in the acquired worktree. Move the work into an acquired worktree and leave the main checkout as you found it.\n`;
   }
 
   return executionPrompt;

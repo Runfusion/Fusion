@@ -150,8 +150,14 @@ mode, `cloudflared` backs remote access, and `tailscale` is the private-network 
 installed from its vendor's signed apt repository. Assert the repo wiring AND the package names, so
 dropping either half (a keyring without the install, or an install whose repo line was removed) fails
 here instead of at first use inside a container.
+
+FNXC:DockerRun 2026-08-27-20:00:
+`google-chrome-stable` is covered by the same guard because its absence is the failure mode that is
+HARDEST to attribute: the agent-browser plugin and the Chrome DevTools MCP server both launch an
+existing browser and download none, so an image without one fails only at first browser use, far
+from the Dockerfile, with an error naming a channel path rather than a missing package.
 */
-test("runner stage installs gh, tailscale and cloudflared from vendor repositories", () => {
+test("runner stage installs gh, tailscale, cloudflared and google-chrome-stable from vendor repositories", () => {
   const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   const runnerStage = dockerfile.slice(dockerfile.indexOf("FROM node:22-slim AS runner"));
 
@@ -159,6 +165,7 @@ test("runner stage installs gh, tailscale and cloudflared from vendor repositori
     ["gh", "https://cli.github.com/packages"],
     ["tailscale", "https://pkgs.tailscale.com/stable/debian"],
     ["cloudflared", "https://pkg.cloudflare.com/cloudflared"],
+    ["google-chrome-stable", "https://dl.google.com/linux/chrome/deb/"],
   ]) {
     assert.ok(runnerStage.includes(repo), `runner stage must configure the ${tool} apt repository (${repo})`);
     assert.match(runnerStage, new RegExp(`apt-get install[^\n]*(?:\\\n[^\n]*)*\\b${tool}\\b`), `runner stage must install ${tool}`);

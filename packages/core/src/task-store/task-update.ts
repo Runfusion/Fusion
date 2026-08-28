@@ -52,9 +52,13 @@ Recommendations are task-ready prose, not a shell execution channel. Reject dire
 syntax and imperative command forms with flags, paths, or script extensions at persistence, where
 future writers cannot evade the executor's user-facing validation.
 */
-/* FNXC:TaskRecommendations 2026-08-08-07:26: Treat credential-like values, not ordinary security work such as a password-reset feature, as secrets. */
-const UNSAFE_RECOMMENDATION_CONTENT = /(?:```|\b(?:api[_-]?key|password|secret|token)\b\s*(?:=|:)\s*\S+|(?:^|\n)\s*(?:[$#]\s*)?(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:^|\n)\s*(?:run|execute)\s+(?:(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:\.?\.?[\\/]|~[\\/])\S*|\S+\s+(?:-{1,2}\S*|\S*[\\/]\S*|\S+\.(?:sh|py|js|ts|mjs|cjs|exe|bat|cmd)\b))|`(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b)/im;
-const RECOMMENDATION_KEYS = new Set(["id", "title", "description", "category", "createdTaskId"]);
+/*
+FNXC:TaskRecommendations 2026-08-26-07:34:
+The content rule and key set now live in tasks/recommendation-validation.ts so the review-lane
+projection writer is screened by the SAME definition instead of a copy. This boundary still ASSERTS
+(a caller handing it malformed data has a bug); the projection path normalizes before it gets here.
+*/
+import { RECOMMENDATION_KEYS, UNSAFE_RECOMMENDATION_CONTENT } from "../tasks/recommendation-validation.js";
 
 function assertValidRecommendations(value: unknown): asserts value is TaskRecommendation[] {
   if (!Array.isArray(value)) throw new Error("recommendations must be an array");
@@ -801,6 +805,16 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.recoveryRetryCount = undefined;
       } else if (updates.recoveryRetryCount !== undefined) {
         task.recoveryRetryCount = updates.recoveryRetryCount;
+      }
+      if (updates.sessionContentionHoldCount === null) {
+        task.sessionContentionHoldCount = undefined;
+      } else if (updates.sessionContentionHoldCount !== undefined) {
+        task.sessionContentionHoldCount = updates.sessionContentionHoldCount;
+      }
+      if (updates.sessionContentionWaitReason === null) {
+        task.sessionContentionWaitReason = undefined;
+      } else if (updates.sessionContentionWaitReason !== undefined) {
+        task.sessionContentionWaitReason = updates.sessionContentionWaitReason;
       }
       if (updates.taskDoneRetryCount === null) {
         task.taskDoneRetryCount = undefined;

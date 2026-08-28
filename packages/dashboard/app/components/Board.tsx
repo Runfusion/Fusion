@@ -1,6 +1,5 @@
 import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { Column } from "./Column";
-import { TaskCard } from "./TaskCard";
 import "./Lane.css";
 import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
@@ -26,7 +25,7 @@ import {
   writeBoardWorkflowSelection,
 } from "../utils/boardWorkflowSelection";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
-import { isTaskReverted, partitionRevertedTasks } from "../utils/taskRevert";
+import { isTaskReverted } from "../utils/taskRevert";
 
 interface BoardProps {
   tasks: Task[];
@@ -236,6 +235,11 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
   remains native until horizontal intent is proven. A real pan captures and consumes its compatibility
   click; stationary card bodies/text retain their configured detail route, while controls, editing,
   the skeleton, and mobile snap ownership remain unchanged.
+
+  FNXC:BoardTextSelection 2026-08-27-10:06:
+  FN-194 makes selection suppression CSS-owned by the shared `.board` class before this 4px-intent
+  hook can capture a drag. Keep the class name and pan wiring unchanged so the intentional pan remains
+  the sole pointer-driven horizontal scroll path while editable descendants opt back in through Board.css.
   */
   const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, viewportMode !== "mobile");
   const boardClassName = `board board-workflow-columns${isBoardMousePanning ? " is-mouse-panning" : ""}`;
@@ -618,7 +622,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     for (const workflow of boardWorkflows?.workflows ?? []) {
       map.set(workflow.id, workflow.columns
         .filter((column) => !column.flags.hiddenFromBoard)
-        .map((column) => ({ id: column.id, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) })));
+        .map((column) => ({ id: column.id, label: column.name, flags: column.flags })));
     }
     return map;
   }, [boardWorkflows]);
@@ -677,8 +681,17 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     FNXC:WorkflowBoard 2026-07-05-14:20:
     Safety net (defense in depth for the taskWorkflowIds refetch above): a card that passed the selected-workflow membership filter genuinely belongs on THIS board, so it must always land in a rendered lane. If its stored `column` is not one this workflow declares (a workflow edited to drop a column, or a create/refetch race that lands an intake-column card before its lane is known), re-home it for DISPLAY into the workflow's intake/first visible column instead of a `??=`-created bucket that is never rendered. Display-only — the task's stored column is untouched.
     */
+    /*
+    FNXC:TaskRevert 2026-08-27-02:34:
+    Reverted work stays in its stored lane and may arrive twice during an optimistic/refetch overlap.
+    Preserve the former reverted-group identity guarantee without deduplicating ordinary task rows.
+    */
+    const seenRevertedTaskIds = new Set<string>();
     for (const task of selectedWorkflowTasks) {
-      if (isTaskReverted(task.sourceMetadata) && selectedWorkflow.columns.find((column) => column.id === task.column)?.flags.complete) continue;
+      if (isTaskReverted(task.sourceMetadata)) {
+        if (seenRevertedTaskIds.has(task.id)) continue;
+        seenRevertedTaskIds.add(task.id);
+      }
       const columnId = grouped[task.column] !== undefined
         ? task.column
         : (selectedWorkflowCreateColumnId ?? task.column);
@@ -820,17 +833,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     [aggregateArchivedBoardColumns, aggregateVisibleBoardColumns],
   );
 
-  /*
-  FNXC:TaskRevert 2026-08-01-20:06:
-  A successful revert is resolution-required work, not completed work. Aggregate the
-  shared, deduplicated partition once so All Workflows keeps those cards discoverable
-  after its complete lanes exclude them, including custom complete columns.
-  */
-  const aggregateRevertedTasks = useMemo(
-    () => partitionRevertedTasks(tasks).reverted,
-    [tasks],
-  );
-
   const aggregateTasksByColumn = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
     for (const column of aggregateBoardColumns) grouped[column.id] = [];
@@ -844,7 +846,17 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
         if (column.flags.hiddenFromBoard) hiddenAnywhereColumnIds.add(column.id);
       }
     }
+    /*
+    FNXC:TaskRevert 2026-08-27-02:34:
+    Reverted cards no longer have a separate group that deduplicates their ids. Retain that
+    protection in the aggregate lane grouping so a refetch duplicate cannot render twice.
+    */
+    const seenRevertedTaskIds = new Set<string>();
     for (const task of tasks) {
+      if (isTaskReverted(task.sourceMetadata)) {
+        if (seenRevertedTaskIds.has(task.id)) continue;
+        seenRevertedTaskIds.add(task.id);
+      }
       const workflowId = getEffectiveTaskWorkflowId(task);
       const workflowColumn = workflowId ? workflowColumnsByWorkflowId.get(workflowId)?.get(task.column) : null;
       /*
@@ -852,7 +864,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
       Aggregate Board grouping must resolve the task's effective workflow before using a shared column id. If one workflow hides `qa` while another shows it, tasks assigned to the hidden `qa` column stay hidden instead of leaking into the visible aggregate lane.
       */
       if (workflowColumn?.flags.hiddenFromBoard) continue;
-      if (isTaskReverted(task.sourceMetadata) && workflowColumn?.flags.complete) continue;
       if (!workflowColumn) {
         /*
         FNXC:WorkflowBoard 2026-07-12-23:35:
@@ -992,6 +1003,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
                   onRevertTask={onRevertTask}
+                  onReviseTask={onReviseTask}
                   onDeleteTask={onDeleteTask}
                   allTasks={tasks}
                   availableModels={availableModels}
@@ -1020,22 +1032,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 />
               );
             })}
-            {aggregateRevertedTasks.length > 0 && (
-              <section className="reverted-tasks-section" aria-label={t("tasks.revertedTasks", "Reverted Tasks")} data-testid="board-reverted-tasks">
-                <h2>{t("tasks.revertedTasks", "Reverted Tasks")}</h2>
-                {aggregateRevertedTasks.map((task) => (
-                  <TaskCard
-                    key={`reverted-${task.id}`}
-                    task={task}
-                    taskColumnFlags={blockerFanoutColumnFlagsByTaskId.get(task.id)}
-                    onOpenDetail={onOpenDetail}
-                    onDeleteTask={onDeleteTask}
-                    onReviseTask={onReviseTask}
-                    addToast={addToast}
-                  />
-                ))}
-              </section>
-            )}
           </main>
         </div>
       );
@@ -1090,6 +1086,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 onArchiveTask={onArchiveTask}
                 onUnarchiveTask={onUnarchiveTask}
                 onRevertTask={onRevertTask}
+                onReviseTask={onReviseTask}
                 onDeleteTask={onDeleteTask}
                 availableModels={availableModels}
                 onOpenDetailWithTab={onOpenDetailWithTab}
@@ -1114,12 +1111,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               />
             );
           })}
-          {partitionRevertedTasks(selectedWorkflowTasks).reverted.length > 0 && (
-            <section className="reverted-tasks-section" aria-label={t("tasks.revertedTasks", "Reverted Tasks")} data-testid="board-reverted-tasks">
-              <h2>{t("tasks.revertedTasks", "Reverted Tasks")}</h2>
-              {partitionRevertedTasks(selectedWorkflowTasks).reverted.map((task) => <TaskCard key={`reverted-${task.id}`} task={task} taskColumnFlags={blockerFanoutColumnFlagsByTaskId.get(task.id)} onOpenDetail={onOpenDetail} onDeleteTask={onDeleteTask} onReviseTask={onReviseTask} addToast={addToast} />)}
-            </section>
-          )}
           {selectedWorkflowArchivedColumn && (
             <Column
               key={selectedWorkflowArchivedColumn.id}
@@ -1155,6 +1146,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               onArchiveTask={onArchiveTask}
               onUnarchiveTask={onUnarchiveTask}
               onRevertTask={onRevertTask}
+              onReviseTask={onReviseTask}
               onDeleteTask={onDeleteTask}
               availableModels={availableModels}
               onOpenDetailWithTab={onOpenDetailWithTab}

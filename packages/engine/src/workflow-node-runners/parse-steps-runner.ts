@@ -1,4 +1,4 @@
-import { getStepParser } from "@fusion/core";
+import { getStepParser, isRemediationStep } from "@fusion/core";
 import type { TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 
 import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -12,6 +12,8 @@ export interface ParseStepsHandlerDeps {
   writeSteps: (task: TaskDetail, steps: TaskStep[]) => Promise<void>;
   hasExpandedForeach?: (task: TaskDetail) => Promise<boolean> | boolean;
   audit?: (reason: string, detail: string) => void;
+  /** Re-read live task state before replacement writes can erase concurrently appended work. */
+  getLiveTask?: (taskId: string) => Promise<TaskDetail>;
 }
 
 /*
@@ -28,7 +30,22 @@ export class ParseStepsNodeRunner implements WorkflowNodeRunner {
       artifact?: unknown;
       parser?: unknown;
       requireStepsUnlessNoCommits?: unknown;
+      implementationOnlySteps?: unknown;
+      preserveRemediationSteps?: unknown;
     };
+
+    /*
+     * FNXC:ReviewGatedRemediation 2026-08-23-05:06:
+     * writeSteps replaces the whole list. Preserve live appended remediation before every parser,
+     * artifact, or empty-list path so re-entry cannot wipe pending correction work.
+     */
+    if (cfg.preserveRemediationSteps === true) {
+      const liveTask = this.deps.getLiveTask ? await this.deps.getLiveTask(ctx.task.id) : ctx.task;
+      if (liveTask.steps.some(isRemediationStep)) {
+        this.audit("preserved-remediation-steps", `parse-steps node '${node.id}' preserved live remediation steps for task ${ctx.task.id}`);
+        return { outcome: "success", value: "preserved-remediation-steps" };
+      }
+    }
     const parserId = typeof cfg.parser === "string" ? cfg.parser : "";
     const artifactKey =
       typeof cfg.artifact === "string" && cfg.artifact.trim() !== ""
@@ -115,6 +132,24 @@ export class ParseStepsNodeRunner implements WorkflowNodeRunner {
       if (Array.isArray(s.dependsOn)) step.dependsOn = s.dependsOn;
       return step;
     });
+    if (cfg.implementationOnlySteps === true) {
+      /*
+      FNXC:PlanningDocumentationStep 2026-08-26-05:56:
+      TESTING IS NO LONGER LEAKAGE. This audit used to flag `testing|verification` too, from the
+      revision that moved test execution into a review-column gate. That reversed: a readonly
+      reviewer cannot run commands, so testing belongs to the executor and the planner emits a
+      `Testing & Verification` step ON PURPOSE. Flagging it made every card on such a workflow report
+      review-gate leakage for its own intended plan, which trains an operator to ignore the signal.
+      Documentation and delivery ARE still leakage: those are produced by the in-review Documentation
+      milestone, and a step planning them is duplicated work (see stripDocumentationDeliveryStep).
+      Detection stays deliberately non-destructive — an implementation step name can legitimately
+      contain these words.
+      */
+      const leakage = steps.filter((step) => /(^|[^a-z])(documentation|delivery)([^a-z]|$)/i.test(step.name));
+      if (leakage.length > 0) {
+        this.audit("implementation-only-leakage", `parse-steps node '${node.id}' detected possible review-gate work: ${leakage.map((step) => step.name).join(", ")}`);
+      }
+    }
     try {
       await this.deps.writeSteps(ctx.task, steps);
     } catch (err) {

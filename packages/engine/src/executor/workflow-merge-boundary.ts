@@ -4,6 +4,7 @@
  * Establish durable merge-column handoff + graph-native checklist projection before merge.
  */
 import type { TaskDetail, TaskStore } from "@fusion/core";
+import { hasNonTerminalSteps } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 
@@ -89,7 +90,40 @@ export async function ensureWorkflowMergeBoundaryTask(
   projection continues to depend only on proof.complete.
   */
   const mergeProof = await deps.evaluateWorkflowMergeBoundary(live, metadata.runId);
-  if (mergeProof.hasForeachStepExecute && !mergeProof.complete) {
+  /*
+  FNXC:WorkflowMerge 2026-08-26-13:05:
+  A TASK THAT LEGITIMATELY PRODUCED NOTHING HAS NOTHING TO PROVE.
+
+  This proof asks "did the planned implementation actually run" and refuses the boundary when a
+  foreach step-execute region left no terminal node result. That is right for work that was supposed
+  to happen. It is meaningless for a task whose accepted outcome is that no work happens at all — a
+  verified duplicate or an authorized no-commit decision — because there is no implementation whose
+  absence could be suspicious.
+
+  Measured on a live card: MULT-024 was closed through the duplicate sentinel ("explicitly duplicates
+  MULT-010; implementation should not proceed", recorded as no commits expected). Its Code Review had
+  nothing to read and finished in 265ms without recording a result, so the boundary found no node
+  result and terminalized the card with `merge-boundary-unproven — operator action required`. A task
+  that did exactly what was asked ended as an error demanding human rescue.
+
+  The exemption is deliberately narrow: `noCommitsExpected` is set by an authorized terminal decision,
+  and every step must already be settled, so a card with pending work still faces the full proof. It
+  waives only THIS structural proof — pre-merge approval, blocking statuses and the no-op finalize
+  guard (which still refuses a SKIPPED verification step over an empty diff, FN-8141) all continue to
+  apply at the merge door itself.
+  */
+  /* `hasNonTerminalSteps` is the shared rule behind the merge door's own "incomplete steps" refusal,
+     so this exemption cannot drift from what the door considers unfinished work. */
+  const noCommitsExpectedTerminal = live.noCommitsExpected === true && !hasNonTerminalSteps(live);
+  if (noCommitsExpectedTerminal && mergeProof.hasForeachStepExecute && !mergeProof.complete) {
+    await deps.store.logEntry(
+      live.id,
+      "Workflow merge boundary: no implementation proof required — task is an authorized no-commit outcome",
+      undefined,
+      deps.getRunContextFor(live.id),
+    );
+  }
+  if (!noCommitsExpectedTerminal && mergeProof.hasForeachStepExecute && !mergeProof.complete) {
     const blocked = !mergeProof.hasRelevantNodeResult
       ? { reason: "no pre-merge node result recorded", code: "no-node-result" as const }
       : !mergeProof.allResultsTerminal

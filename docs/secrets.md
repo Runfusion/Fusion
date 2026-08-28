@@ -37,7 +37,7 @@ Threat-model baseline:
 
 - Secret plaintext is **not** stored in PostgreSQL.
 - Ciphertext + nonce are persisted; plaintext exists only in process memory during create/reveal.
-- Secret values must never be logged.
+- Secret values must never be logged in audit metadata, structured logs, or API responses. A policy-allowed `fn_secret_get` read intentionally delivers plaintext into the agent's model-visible transcript; that session/agent log is persisted and executor memory capture can record its `tool_result`, so operators should use `prompt` or `deny` when that exposure is unsuitable.
 - MCP server settings store only secret references for sensitive env/header/token fields; imports surface plaintext as secret-creation descriptors instead of persisting it in settings.
 - MCP server secret references are materialized only at session/probe creation time for MCP-capable AI lanes and `POST /api/mcp/validate`; responses and structured logs include status/count metadata only, never resolved env/header values.
 
@@ -121,15 +121,16 @@ Older dashboard writes made without an explicit project id may be stranded in a 
 
 ## Agent Access (`fn_secret_get`)
 
-`fn_secret_get` is shipped in `packages/cli/src/extension.ts:1542-1629`.
+`fn_secret_get` is shipped in `packages/cli/src/extension.ts`.
 
 Tool contract:
 - Params: `key` (required), `scope?: "project" | "global"`.
 - Resolution: when `scope` is omitted, lookup is project → global; when provided, only that scope is queried. Missing key returns `{ error: "not-found" }`.
+- An `auto` read, or a one-time approved `prompt` read, returns plaintext in model-visible tool `content` with an immediate-use instruction. `details.value` remains available for host consumers.
+- Ambiguous identity, missing, deny, pending approval, and denied approval outcomes contain no plaintext in either `content` or `details`.
 - Policy outcomes:
-  - `auto` → reveals and returns plaintext value (`secret:read` audit at `extension.ts:1615`).
-  - `prompt` → creates `ApprovalRequestStore` request (`secret-read:{scope}:{key}:{agentId}` dedupe key) and returns `{ outcome: "pending_approval", approvalRequestId }` (`extension.ts:1607-1611`).
-  - `deny` → immediate refusal and `secret:approval-denied` audit (`extension.ts:1581-1583`).
+  - `prompt` creates an `ApprovalRequestStore` request (`secret-read:{scope}:{key}:{agentId}` dedupe key) and returns `{ outcome: "pending_approval", approvalRequestId }` until approval is redeemed once.
+  - `deny` returns an immediate refusal and emits `secret:approval-denied`.
 
 ## `.env` Auto-write into Worktrees
 

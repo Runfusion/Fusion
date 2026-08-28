@@ -333,7 +333,7 @@ function LiveAgentLogOutput({
           if (entry.type === "thinking") {
             /*
             FNXC:ThinkingTrace 2026-08-22-16:56:
-            This append-only console renders raw deltas, which may end mid-title or mid-token. It deliberately remains unsectioned; ThinkingTrace is for complete transcript messages.
+            This append-only console renders raw deltas, which may end mid-title or mid-token. It deliberately remains unsectioned; transcript panes expose the same source through their Raw trace toggle.
             */
             return (
               <div key={i} className="workflow-live-log-thinking">

@@ -1217,6 +1217,25 @@ describe("TaskChatTab", () => {
     expect([...sections].find((section) => section.textContent?.includes("README edits"))).toHaveAttribute("open");
   });
 
+  it.each([
+    ["desktop", false],
+    ["mobile", true],
+  ] as const)("keeps titles-only thinking raw-toggle interactions inside the host on %s", (_viewport, matchesMobile) => {
+    const titlesOnly = "**One**\n\n**Two**\n\n**Three**";
+    mockLogs([makeEntry({ agent: "executor", type: "thinking", text: titlesOnly })]);
+    mockMatchMedia(matchesMobile);
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const host = screen.getByTestId("task-chat-thinking");
+    fireEvent.click(host.querySelector("summary")!);
+    expect(host).toHaveAttribute("open");
+    expect(host.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(0);
+    expect(within(host).queryAllByText("No reasoning captured for this step")).toHaveLength(0);
+    fireEvent.click(within(host).getByTestId("thinking-trace-raw-toggle"));
+    expect(within(host).getByTestId("thinking-trace-raw")).toHaveTextContent("**One**");
+    expect(host).toHaveAttribute("open");
+  });
+
   it("renders consecutive thinking entries as one continuous section", () => {
     mockLogs([
       makeEntry({ agent: "triage", type: "thinking", text: "First" }),

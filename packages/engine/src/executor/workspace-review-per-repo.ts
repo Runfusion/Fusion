@@ -12,8 +12,9 @@
  * worktrees are never task intent: clean scoped repositories are recorded as not-reviewed and
  * out-of-scope worktrees are not opened. Modified in-scope verdicts aggregate as a conjunction.
  * verdict becomes the aggregate verdict (mirroring verifyWorktreeInvariants' first-failing-repo return), and its
- * findings are repo-tagged. A zero-acquire workspace task is classified with the completion invariant: proven
- * commit-free work approves honestly, while unproven work returns non-retryable UNAVAILABLE.
+ * findings are repository-qualified before they leave the loop, so aggregate evidence and per-repository
+ * outcomes match the workspace task's scoped file paths. A zero-acquire workspace task is classified with the
+ * completion invariant: proven commit-free work approves honestly, while unproven work returns non-retryable UNAVAILABLE.
  *
  * Verdict severity for the conjunction: any RETHINK/REVISE/UNAVAILABLE fails the whole review; only all-APPROVE
  * (or all-skipped UNAVAILABLE-advisory, handled by the caller) approves. We surface the first failing repo's exact
@@ -22,17 +23,45 @@
  */
 import { existsSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import type { Settings, Task, WorkflowRepositoryReviewOutcome } from "@fusion/core";
+import type { Settings, Task, WorkflowRepositoryReviewOutcome, WorkflowReviewFinding } from "@fusion/core";
 import type { ReviewResult } from "../execution/reviewer.js";
 import { captureWorkspaceReviewEvidence } from "../worktree/workspace-review-evidence.js";
 import { classifyWorkspaceZeroAcquire, type WorkspaceZeroAcquireOptions } from "./workspace-zero-acquire.js";
 import { captureModifiedFiles } from "./worktree-capture-modified-files.js";
 
+const hasRepositoryPrefix = (value: string | undefined, repoRel: string, separator: "/" | ":") =>
+  value === repoRel || value?.startsWith(`${repoRel}${separator}`) === true;
+
+/*
+FNXC:WorkspaceReviewFindings 2026-08-27-12:05:
+FN-201 requires workspace findings to match repository-qualified File Scope and modified-file entries;
+unqualified paths are scope-rejected and model-supplied finding identifiers collide across repositories.
+*/
+export function qualifyRepositoryFindings(repoRel: string, findings: readonly WorkflowReviewFinding[] | undefined): WorkflowReviewFinding[] | undefined {
+  if (!findings?.length) return undefined;
+  return findings.map((finding) => ({
+    ...finding,
+    id: hasRepositoryPrefix(finding.id, repoRel, ":") || hasRepositoryPrefix(finding.id, repoRel, "/")
+      ? finding.id
+      : `${repoRel}:${finding.id}`,
+    ...(finding.filePath
+      ? { filePath: hasRepositoryPrefix(finding.filePath, repoRel, "/") ? finding.filePath : `${repoRel}/${finding.filePath}` }
+      : {}),
+    ...(finding.rebutsDisputedFindingId
+      ? {
+          rebutsDisputedFindingId: hasRepositoryPrefix(finding.rebutsDisputedFindingId, repoRel, ":") || hasRepositoryPrefix(finding.rebutsDisputedFindingId, repoRel, "/")
+            ? finding.rebutsDisputedFindingId
+            : `${repoRel}:${finding.rebutsDisputedFindingId}`,
+        }
+      : {}),
+  }));
+}
+
 export async function reviewWorkspacePerRepo(
   // FNXC:Workspace 2026-06-21-15:00: F7 — drop the dead `repoRel` callback param.
   // Both call sites bind `(cwd) => runForCwd(cwd)` and discard the second arg, so the type wrongly
   // implied repo identity is observable inside `runForCwd`. Removed until a real consumer needs it
-  // (Phase C). The loop below still tags findings with `repoRel` from its own iteration key.
+  // (Phase C). The loop uses its own iteration key to qualify reviewer findings before aggregation.
   task: Task,
   invokeForCwd: (cwd: string) => Promise<ReviewResult>,
   options: Omit<WorkspaceZeroAcquireOptions, "workspaceMode"> & {
@@ -182,21 +211,24 @@ export async function reviewWorkspacePerRepo(
   const reviewSections: string[] = notReviewedRepos.map((repoRel) => `### [${repoRel}] NOT_REVIEWED\nNo changes — not reviewed.`);
   const summarySections: string[] = notReviewedRepos.map((repoRel) => `[${repoRel}] NOT_REVIEWED: no changes`);
   let firstFailing: { repo: string; result: ReviewResult } | undefined;
+  const findings: WorkflowReviewFinding[] = [];
   for (const repoRel of repoKeys) {
     const repo = workspaceWorktrees[repoRel];
     const result = await invokeForCwd(repo.worktreePath);
+    const qualifiedFindings = qualifyRepositoryFindings(repoRel, result.findings);
+    if (qualifiedFindings) findings.push(...qualifiedFindings);
     repositoryReviewOutcomes.push({
       repository: repoRel,
       status: "REVIEWED",
       verdict: result.verdict,
       output: result.review,
-      findings: result.findings,
+      ...(qualifiedFindings ? { findings: qualifiedFindings } : {}),
       fingerprint: repositoryDiffFingerprints[repoRel],
       episodeId: reviewedAt,
       scopeRevision: repositoryScopeRevision,
       reviewedAt,
     });
-    // Tag every per-repo finding with its sub-repo so downstream readers attribute it correctly.
+    // Structured findings are qualified before both durable outcomes and aggregate evidence consume them.
     reviewSections.push(`### [${repoRel}] ${result.verdict}\n${result.review}`);
     summarySections.push(`[${repoRel}] ${result.verdict}: ${result.summary}`);
     if (result.verdict !== "APPROVE") {
@@ -222,6 +254,7 @@ export async function reviewWorkspacePerRepo(
       repositoryDiffFingerprints,
       repositoryModifiedFiles: modifiedFiles,
       repositoryReviewOutcomes,
+      ...(findings.length > 0 ? { findings } : {}),
       repositoryScopeRevision: repositoryScopeRevision,
     };
   }
@@ -234,6 +267,7 @@ export async function reviewWorkspacePerRepo(
     repositoryDiffFingerprints,
     repositoryModifiedFiles: modifiedFiles,
     repositoryReviewOutcomes,
+    ...(findings.length > 0 ? { findings } : {}),
     repositoryScopeRevision: repositoryScopeRevision,
   };
 }

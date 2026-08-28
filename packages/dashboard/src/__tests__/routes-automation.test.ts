@@ -747,6 +747,26 @@ describe("Automation routes", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
     });
+
+    it("reads project-scoped schedules from an engine-backed store without a global store", async () => {
+      const automationStore = createMockAutomationStore();
+      const projectSchedule = { ...FAKE_SCHEDULE, id: "sched-project-1", scope: "project" as const };
+      const globalSchedule = { ...FAKE_SCHEDULE, id: "sched-global-1", scope: "global" as const };
+      automationStore.listSchedules.mockResolvedValue([projectSchedule, globalSchedule]);
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(createMockStore(), {
+        engineManager: {
+          getEngine: vi.fn().mockReturnValue({ getAutomationStore: () => automationStore }),
+        },
+      } as any));
+
+      const res = await GET(app, "/api/automations?scope=project&projectId=proj-1");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([projectSchedule]);
+      expect(automationStore.listSchedules).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("POST /automations", () => {
@@ -1900,16 +1920,33 @@ describe("Automation routes", () => {
       expect(res.body.some((s: any) => s.scope === "global")).toBe(false);
     });
 
-    it("returns empty array when automation store unavailable (scope=project) - legacy fallback", async () => {
-      // Build app WITHOUT automationStore option - routes return empty array for backward compatibility
-      const store = createMockStore();
+    it("returns 503 when no automation store is resolvable for scope=project", async () => {
       const app = express();
       app.use(express.json());
-      app.use("/api", createApiRoutes(store));
+      app.use("/api", createApiRoutes(createMockStore()));
 
-      const res = await GET(app, "/api/automations?scope=project");
+      const res = await GET(app, "/api/automations?scope=project&projectId=proj-1");
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain("Automation store not available");
+    });
+
+    it("returns an empty project list from the engine-backed automation store", async () => {
+      const automationStore = createMockAutomationStore();
+      automationStore.listSchedules.mockResolvedValue([]);
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(createMockStore(), {
+        engineManager: {
+          getEngine: vi.fn().mockReturnValue({ getAutomationStore: () => automationStore }),
+        },
+      } as any));
+
+      const res = await GET(app, "/api/automations?scope=project&projectId=proj-1");
+
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
+      expect(automationStore.listSchedules).toHaveBeenCalledTimes(1);
     });
 
     it("returns empty array when automation store unavailable (scope=global) - legacy fallback", async () => {
@@ -2029,6 +2066,53 @@ describe("Routine routes", () => {
       const res = await GET(app, "/api/routines");
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
+    });
+
+    it("reads duplicate project-scoped routines from an engine-backed store without a global store", async () => {
+      const routineStore = createMockRoutineStore();
+      const projectRoutineOne = { ...FAKE_ROUTINE, id: "routine-project-1", scope: "project" as const };
+      const projectRoutineTwo = { ...FAKE_ROUTINE, id: "routine-project-2", scope: "project" as const };
+      const globalRoutine = { ...FAKE_ROUTINE, id: "routine-global-1", scope: "global" as const };
+      routineStore.listRoutines.mockResolvedValue([projectRoutineOne, projectRoutineTwo, globalRoutine]);
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(createMockStore(), {
+        engineManager: {
+          getEngine: vi.fn().mockReturnValue({ getRoutineStore: () => routineStore }),
+        },
+      } as any));
+
+      const res = await GET(app, "/api/routines?scope=project&projectId=proj-1");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([projectRoutineOne, projectRoutineTwo]);
+      expect(routineStore.listRoutines).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the same engine-backed routine store for project-scoped creation and listing", async () => {
+      const routineStore = createMockRoutineStore();
+      const createdRoutine = { ...FAKE_ROUTINE, id: "routine-created-1", name: "Created Project Routine" };
+      routineStore.createRoutine.mockResolvedValue(createdRoutine);
+      routineStore.listRoutines.mockResolvedValue([createdRoutine]);
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(createMockStore(), {
+        engineManager: {
+          getEngine: vi.fn().mockReturnValue({ getRoutineStore: () => routineStore }),
+        },
+      } as any));
+
+      const create = await REQUEST(app, "POST", "/api/routines?scope=project&projectId=proj-1", JSON.stringify({
+        name: "Created Project Routine",
+        trigger: { type: "cron", cronExpression: "0 * * * *" },
+      }), { "Content-Type": "application/json" });
+      const list = await GET(app, "/api/routines?scope=project&projectId=proj-1");
+
+      expect(create.status).toBe(201);
+      expect(routineStore.createRoutine).toHaveBeenCalledTimes(1);
+      expect(list.status).toBe(200);
+      expect(list.body).toEqual([createdRoutine]);
+      expect(routineStore.listRoutines).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -3022,16 +3106,33 @@ describe("Routine routes", () => {
       expect(res.body.some((r: any) => r.scope === "global")).toBe(false);
     });
 
-    it("returns empty array when routine store unavailable (scope=project) - legacy fallback", async () => {
-      // Build app WITHOUT routineStore option - routes return empty array for backward compatibility
-      const store = createMockStore();
+    it("returns 503 when no routine store is resolvable for scope=project", async () => {
       const app = express();
       app.use(express.json());
-      app.use("/api", createApiRoutes(store));
+      app.use("/api", createApiRoutes(createMockStore()));
 
-      const res = await GET(app, "/api/routines?scope=project");
+      const res = await GET(app, "/api/routines?scope=project&projectId=proj-1");
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain("Routine store not available");
+    });
+
+    it("returns an empty project list from the engine-backed routine store", async () => {
+      const routineStore = createMockRoutineStore();
+      routineStore.listRoutines.mockResolvedValue([]);
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(createMockStore(), {
+        engineManager: {
+          getEngine: vi.fn().mockReturnValue({ getRoutineStore: () => routineStore }),
+        },
+      } as any));
+
+      const res = await GET(app, "/api/routines?scope=project&projectId=proj-1");
+
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
+      expect(routineStore.listRoutines).toHaveBeenCalledTimes(1);
     });
 
     it("returns empty array when routine store unavailable (scope=global) - legacy fallback", async () => {

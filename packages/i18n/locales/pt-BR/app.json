@@ -1432,7 +1432,11 @@
     "currentAgentTarget": "Agente atual: {{name}}",
     "currentModelTarget": "Modelo atual: {{model}}",
     "currentDefaultTarget": "Usando o destino de chat padrão",
-    "restore": ""
+    "restore": "",
+    "quoteMessage": "Citar mensagem",
+    "agentRepliesFailed": "Alguns agentes não puderam responder: {{agents}}",
+    "noDefaultModelConfigured": "Configure um modelo de chat padrão nas Configurações antes de criar uma conversa.",
+    "newChatOpenInNewWindowHint": ""
   },
   "chatRooms": {
     "error": {
@@ -1519,7 +1523,6 @@
     "autoMerge": "Merge automático",
     "autoMergeDisabled": "Merge automático desativado",
     "autoMergeEnabled": "Merge automático ativado",
-    "cancelMove": "Cancelar movimentação",
     "collapseArchivedLabel": "Recolher tarefas arquivadas",
     "collapseArchivedTitle": "Recolher tarefas arquivadas",
     "expandArchivedLabel": "Expandir tarefas arquivadas",
@@ -1528,41 +1531,25 @@
     "keepProgress": "Manter progresso",
     "loadMore_one": "Carregar mais {{count}} ({{remaining}} restante)",
     "loadMore_other": "Carregar mais {{count}} ({{remaining}} restantes)",
-    "moveAllToTodo": "Mover tudo para A Fazer",
-    "moveAllToTodoMessage_one": "Mover {{count}} tarefa{{plural}} de {{columnLabel}} para A Fazer?",
-    "moveAllToTodoMessage_other": "Mover todas as {{count}} tarefa{{plural}} de {{columnLabel}} para A Fazer?",
-    "moveAllToTodoTitle": "Mover tudo para A Fazer",
-    "movedToPlanning_one": "{{count}} tarefa{{plural}} movida para Planejamento para replanejamento",
-    "movedToPlanning_other": "{{count}} tarefa{{plural}} movidas para Planejamento para replanejamento",
-    "movedToTodo_one": "{{count}} tarefa{{plural}} movida para A Fazer",
-    "movedToTodo_other": "{{count}} tarefa{{plural}} movidas para A Fazer",
-    "movePartialFailure": "Movidas {{moved}} de {{total}} tarefas; {{failed}} falharam",
-    "moveToTodoHint_one": "Mover {{count}} tarefa{{plural}} para A Fazer",
-    "moveToTodoHint_other": "Mover {{count}} tarefa{{plural}} para A Fazer",
-    "moveToTodoPartialFailure": "Movidas {{moved}} de {{total}} tarefas para A Fazer; {{failed}} falharam",
     "newTask": "Nova tarefa",
     "noManuallyPausableTasks": "Nenhuma tarefa pausável manualmente",
     "noTasks": "Nenhuma tarefa",
     "noTasksInColumn": "Nenhuma tarefa nesta coluna",
     "pauseHint_one": "Pausar {{count}} tarefa{{plural}} ativa não atribuída",
     "pauseHint_other": "Pausar {{count}} tarefa{{plural}} ativas não atribuídas",
-    "preserveProgressMessage": "Esta tarefa tem etapas concluídas. Manter o progresso antes de mover?",
-    "preserveProgressMoveTodoMessage": "Algumas tarefas têm etapas concluídas. Manter o progresso antes de mover para A Fazer?",
     "preserveProgressTitle": "Preservar progresso?",
     "promoteUnplannedCancel": "Continuar aguardando",
     "promoteUnplannedConfirm": "Iniciar mesmo assim",
     "promoteUnplannedMessage": "{{taskId}} ainda está aguardando o planejamento ou a revisão do plano. Promover agora inicia a execução com o plano atual e cancela o replanejamento pendente.",
     "promoteUnplannedTitle": "Iniciar a execução mesmo assim?",
     "replanAll": "Replanejar tudo",
-    "replanAllHint_one": "Mover {{count}} tarefa{{plural}} para Planejamento",
-    "replanAllHint_other": "Mover {{count}} tarefa{{plural}} para Planejamento",
-    "replanAllMessage_one": "Mover {{count}} tarefa{{plural}} em A Fazer de volta para Planejamento para ser replanejada?",
-    "replanAllMessage_other": "Mover todas as {{count}} tarefa{{plural}} em A Fazer de volta para Planejamento para serem replanejadas?",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "Replanejar todas as tarefas",
     "resetProgress": "Redefinir progresso",
     "resetProgressConfirm": "Redefinir progresso",
-    "resetProgressMessage": "Redefinir todo o progresso das etapas antes de mover esta tarefa?",
-    "resetProgressMoveTodoMessage": "Redefinir o progresso das etapas das tarefas antes de mover para A Fazer?",
     "resetProgressTitle": "Redefinir progresso?",
     "stopAll": "Parar tudo",
     "stopAllMessage_one": "Parar {{count}} tarefa{{plural}} de {{columnLabel}}?",
@@ -1575,7 +1562,10 @@
     "sortArrivalDesc": "",
     "sortArrivalDescHint": "",
     "sortTaskIdDesc": "",
-    "sortTaskIdDescHint": ""
+    "sortTaskIdDescHint": "",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -3456,7 +3446,9 @@
     "unpauseUnavailable": "A ação de retomar não está disponível",
     "useProjectDefault": "Usar padrão do projeto",
     "viewOptions": "Opções de exibição",
-    "workflowLabel": "Fluxo de trabalho"
+    "workflowLabel": "Fluxo de trabalho",
+    "statusWaiting": "",
+    "statusWaitingOn": ""
   },
   "mailbox": {
     "agent": "Agente",
@@ -6697,7 +6689,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " e mostra avisos de atualização na CLI e no painel. A frequência é definida pela opção abaixo. Padrão: ativado. ",
-      "autoReloadDashboardOnVersionChange": " Recarregar o painel automaticamente quando a versão mudar ",
       "checkForThe": " Verificar o ",
       "checkForUpdatesAutomatically": " Verificar atualizações automaticamente ",
       "cLIBinaryOnPATH": " binário da CLI no PATH ",
@@ -6733,7 +6724,6 @@
       "updates": "Atualizações",
       "weekly": "Semanal",
       "whenDisabledToolRowsAreStillLoggedBut": " Quando desativado, as linhas de ferramentas continuam sendo registradas, mas os payloads detalhados das ferramentas são omitidos. Payloads de ferramentas muito grandes ainda podem ser cortados mesmo quando isso permanece ativado. Padrão: desativado. ",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": " Quando ativado (padrão), o painel recarrega automaticamente ao detectar uma nova versão de build — seja por rebuilds do servidor ou atualizações do service worker. Desative isso para permanecer na versão atual até atualizar manualmente. Padrão: ativado. ",
       "whenEnabledFusionChecksNpmForNewVersions": " Quando ativado, o Fusion verifica o npm em busca de novas versões de",
       "whenEnabledTheDashboardProbesForAGlobally": " Quando ativado, o painel verifica se existe, instalado globalmente, um",
       "gitLabEnabledHint": "Os valores globais de URL e token do GitLab servem de reserva para projetos que não definem os próprios valores. Sem padrão — não definido (o estado não definido se comporta como ativado até ser explicitamente desativado).",
@@ -7948,7 +7938,14 @@
       "overlapBlocker": "Bloqueador de sobreposição de escopo de arquivos:",
       "removeTitle": "Remover dependência {{id}}",
       "searchPlaceholder": "Buscar tarefas…",
-      "stale": "(desatualizado)"
+      "stale": "(desatualizado)",
+      "overlapFiles": {
+        "loading": "",
+        "error": "",
+        "noScope": "",
+        "none": "",
+        "matches": ""
+      }
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8092,21 +8089,8 @@
       "noBranchToMerge": "nenhuma branch para fazer merge",
       "title": "Merge da tarefa"
     },
-    "move": {
-      "backToInProgress": "Voltar para Em Andamento",
-      "backTo": "Voltar para {{column}}",
-      "cancelMove": "Cancelar movimentação",
-      "keepProgress": "Manter progresso",
-      "movedTo": "Movida para {{column}}",
-      "moveTo": "Mover para {{column}}",
-      "preserveProgressMessage": "Esta tarefa tem etapas concluídas. Manter o progresso antes de mover?",
-      "preserveProgressTitle": "Preservar progresso?",
-      "resetProgress": "Redefinir progresso",
-      "resetProgressMessage": "Redefinir todo o progresso das etapas antes de mover esta tarefa?",
-      "resetProgressTitle": "Redefinir progresso?"
-    },
     "nearDuplicate": {
-      "actions": "Escolha Arquivar para mover esta tarefa para arquivadas, ou Manter para continuar com esta tarefa.",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "Arquivar",
       "archiveConfirm": "Arquivar",
       "archived": "{{id}} arquivada",
@@ -8119,9 +8103,9 @@
       "deleteMessage": "Excluir {{id}} como duplicado de {{duplicateOf}}?",
       "deleteTitle": "Excluir tarefa duplicada",
       "headline": "Possível duplicado detectado",
-      "keepBtn": "Manter",
-      "kept": "{{id}} mantida e aviso de duplicado dispensado",
-      "triageActions": "Escolha Excluir para remover este duplicado, ou Manter para continuar mesmo assim."
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "Próxima recuperação às {{time}}",
     "no": "Não",
@@ -8340,7 +8324,11 @@
       "worktreeTerminal": "Terminal",
       "workflow": "Fluxo de trabalho",
       "cost": "Custo",
-      "recommendations": "Recomendações"
+      "recommendations": "Recomendações",
+      "dependencies": "",
+      "attachments": "",
+      "details": "",
+      "debug": ""
     },
     "terminal": {
       "loading": "Carregando terminal…"
@@ -8419,6 +8407,9 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "debug": {
+      "none": ""
     }
   },
   "taskDocuments": {
@@ -8699,9 +8690,8 @@
     "depsCount_other": "{{count}} dependências",
     "descriptionPlaceholder": "Descrição da tarefa",
     "descriptionRefined": "Descrição refinada com IA",
-    "doneNoMerge": "Concluída (sem merge)",
     "duplicateCheckFailed": "Falha na verificação de duplicados; criando a tarefa mesmo assim.",
-    "duplicateDismissed": "{{taskId}} mantida; aviso de duplicado descartado",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "Duplicada de {{id}}",
     "editTask": "Editar tarefa",
     "enterDescriptionFirst": "Insira uma descrição primeiro",
@@ -8737,10 +8727,7 @@
     "issueClosed": "fechado",
     "issueDeleted": "excluído",
     "issueLeft": "mantido",
-    "keep": "Manter",
-    "keepFailed": "Falha ao manter {{taskId}}: {{error}}",
     "keepProgress": "Manter progresso",
-    "keepTaskTitle": "Manter esta tarefa e descartar o aviso de duplicado",
     "leaveUnchanged": "Deixar sem alterações",
     "lineageConflict": "{{taskId}} possui tarefas descendentes de linhagem ({{children}}) que a referenciam como tarefa de origem.\n\nExcluir mesmo assim, desvinculando essas referências primeiro?",
     "linkedIssueChipAriaLabel": "Issue do GitHub vinculado #{{number}}",
@@ -8764,7 +8751,7 @@
     "moved": "{{taskId}} movida para {{column}}",
     "moveFailed": "Falha ao mover {{taskId}}: {{error}}",
     "moveTask": "Mover tarefa",
-    "nearDuplicateTitle": "Possível quase duplicata de {{id}}",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "Precisa de entrada",
     "noAgentsAvailable": "Nenhum agente disponível",
     "node": "Nó",
@@ -8860,7 +8847,10 @@
     "workflow": "fluxo de trabalho",
     "workflowCheck": "Verificação de fluxo de trabalho",
     "costBadgeTitle": "Custo estimado {{amount}}",
-    "costBadgeAriaLabel": "Custo estimado {{amount}}"
+    "costBadgeAriaLabel": "Custo estimado {{amount}}",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
   },
   "terminal": {
     "arrowKeysLabel": "Teclas de seta do terminal",
@@ -9722,7 +9712,9 @@
     "noDetail": "",
     "untitledSection": "",
     "sectionCount": "",
-    "sectionCountPlural": ""
+    "sectionCountPlural": "",
+    "showRaw": "",
+    "showSections": ""
   },
   "artifactImageViewer": {
     "openTask": "",

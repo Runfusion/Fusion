@@ -247,6 +247,29 @@ describe("SkillsView component structure", () => {
     cleanup();
   });
 
+  it("renders an installed catalog entry without an install button in the narrow layout", async () => {
+    mockFetchSkillsCatalog.mockResolvedValue({
+      entries: [{
+        id: "mobile-installed",
+        slug: "mobile-installed",
+        name: "Mobile Installed",
+        repo: "owner/mobile-installed",
+        installation: { installed: true, matchingSkillIds: ["*::skills/mobile-installed/SKILL.md"], matchingPaths: [] },
+      }],
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    window.dispatchEvent(new Event("resize"));
+    const { SkillsView } = await import("../SkillsView");
+
+    render(<SkillsView projectId="mobile-project" addToast={vi.fn()} onClose={vi.fn()} />);
+
+    const indicator = await screen.findByText("Installed");
+    const card = indicator.closest(".skills-view-card");
+    expect(card).not.toBeNull();
+    expect(card!.querySelector("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Install Mobile Installed" })).toBeNull();
+  });
+
   it("renders .skills-view-content wrapper around sections", async () => {
     const { SkillsView } = await import("../SkillsView");
 

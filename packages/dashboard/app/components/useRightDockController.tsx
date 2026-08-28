@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { ColumnId, GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
+import type { GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
 import type { ChatSessionInfo } from "../hooks/useChat";
@@ -38,7 +38,7 @@ export interface RightDockControllerInput {
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   openMobileTasksInPopup: boolean;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
-  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask; never mutates the source task's column. */
@@ -187,6 +187,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       projectId={input.projectId}
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
       onDeleteTask={input.onDeleteTask}
+      onUpdateTask={input.onUpdateTask}
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
@@ -209,6 +210,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     anchorGoalId: input.goalAnchorId,
     tasks: input.tasks,
     columnFlagsByTaskId: input.columnFlagsByTaskId,
+    onUpdateTask: input.onUpdateTask,
     workflowSteps: input.workflowSteps,
     pluginContext: {
       projectId: input.projectId,
@@ -268,7 +270,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       embedded
       onRequestClose={closeDockTask}
       onOpenDetail={(value, initialTab) => input.openDetailTask(value, initialTab ?? "chat")}
-      onMoveTask={input.onMoveTask}
       /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
       onReviseTask={(task) => input.onSendSelectionToTask(task.description)}
       onDeleteTask={input.onDeleteTask}
