@@ -1127,6 +1127,29 @@ describe("acquireTaskWorktree", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled-operator", branch: "operator/branch", branchWriteOrigin: "operator" });
   });
 
+  it("#3523 keeps operator provenance when a Fusion-named override is sibling-renamed by a branch collision", async () => {
+    // Greptile P1 (re-review of 1c02ddd0): a bare branch collision renames the
+    // requested `fusion/fn-1` to `fusion/fn-1-2`; the renamed branch is still
+    // the operator's and must persist as operator-owned.
+    const rootDir = makeRepo();
+    const freshPath = join(rootDir, ".worktrees", "op-renamed");
+    const overrideTask = {
+      ...task,
+      branch: "fusion/fn-1",
+      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "fusion/fn-1" } },
+    } as any;
+
+    await acquireTaskWorktree({
+      task: overrideTask,
+      rootDir,
+      store,
+      settings: {} as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1-2" }),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1-2", branchWriteOrigin: "operator" });
+  });
+
   it("FN-6922 rejects a canonical-equal resumed repo root before returning", async () => {
     const rootDir = makeRepo();
     const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");

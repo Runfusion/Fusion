@@ -207,6 +207,23 @@ describe("task branch provenance", () => {
     expect(isOperatorAttachEligibleBranch(task)).toBe(true);
   });
 
+  it("keeps the operator marker on numeric sibling renames of an override branch", () => {
+    const task = {
+      id: "FN-123",
+      branch: "fusion/fn-123",
+      branchContext: {branchOverride: {by: "operator" as const, at: "2026-08-20T03:40:00.000Z", branch: "fusion/fn-123"}},
+    };
+    // PR #3523 review (Greptile P1): collision renames append -<n>; the renamed
+    // branch is still the operator's and must stay protected from engine cleanup.
+    expect(classifyTaskBranchOrigin(task, "fusion/fn-123-2")).toBe("operator-supplied");
+    expect(isFusionDeletableBranch(task, "fusion/fn-123-2")).toBe(false);
+    // Engine derivatives with non-numeric suffixes remain engine-owned.
+    expect(classifyTaskBranchOrigin(task, "fusion/fn-123-step-0")).toBe("engine-canonical");
+    expect(classifyTaskBranchOrigin(task, "fusion/fn-123-stranded")).toBe("engine-canonical");
+    // Without the operator marker, canonical siblings stay engine-owned as before.
+    expect(classifyTaskBranchOrigin({id: "FN-123", branch: "fusion/fn-123-2"})).toBe("engine-canonical");
+  });
+
   it("keeps canonical and group-derived branches Fusion-owned", () => {
     expect(classifyTaskBranchOrigin({id: "FN-123", branch: "fusion/fn-123"})).toBe("engine-canonical");
     expect(classifyTaskBranchOrigin({id: "FN-123", branch: "feature/onboarding/fn-123", branchContext: {assignmentMode: "per-task-derived"}})).toBe("group-derived");
