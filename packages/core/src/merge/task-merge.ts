@@ -703,16 +703,19 @@ export function isTaskReadyForMerge(
   } = {},
 ): boolean {
   /*
-  FNXC:LaneWiring 2026-08-28-18:53:
-  The lane answer must be forwarded VISIBLY. The lane-wiring census
-  (scripts/lib/lane-wiring-census.mjs) recognizes a wired call only from inline object literals;
-  a bare `options` identifier is opaque, so this wrapper tripped the ratchet
-  (`task-merge.ts: 1 unwired now, baseline allows 0`) and failed the PR Lint gate — the same
-  #2956-family shape the ratchet exists to catch, reached here through a census blind spot rather
-  than a dropped argument. The spread keeps forwarding future option fields; the explicit
-  `reviewColumns` member makes the forwarding provable to the census.
+  FNXC:WorkflowLifecycleColumns 2026-08-29-23:50:
+  Forward each resolved lane input by name rather than spreading `options` through.
+  #3514 wrote it this way so the lane-wiring census can prove the seam is active; a
+  later merge of origin/main resolved the conflict back to the wholesale forward, and
+  because a bare `options` pass reads as an unwired call site the ratchet went red on
+  main — failing the Lint gate on every open PR at once, none of which had touched
+  this file. Keep the arguments explicit: the census reads call sites, not types.
   */
-  return getTaskMergeBlocker(task, { ...options, reviewColumns: options.reviewColumns }) === undefined;
+  return getTaskMergeBlocker(task, {
+    reviewColumns: options.reviewColumns,
+    requiredPreMergeStepIds: options.requiredPreMergeStepIds,
+    mergeContent: options.mergeContent,
+  }) === undefined;
 }
 
 export interface TaskCompletionBlockerOptions {
