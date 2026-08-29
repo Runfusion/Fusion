@@ -1,0 +1,343 @@
+/*
+FNXC:ResearchViewStyling 2026-06-20-01:33:
+FN-6789 mounts Research as a flex child of .project-content; grow, zero min-width, and use 100% width so the view fills the viewport instead of collapsing to intrinsic content width, mirroring the FN-6446 SecretsView fix.
+*/
+/*
+FNXC:Navigation 2026-06-22-01:10:
+The title row now comes from the shared .view-header, which supplies the --space-lg top/side padding. The root drops its top/side inset (keeping a bottom inset) and the remaining body blocks (subtitle, layout, setup state) carry their own horizontal padding so they stay aligned with the header.
+*/
+.research-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-md);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+  padding: 0 0 var(--space-lg);
+}
+
+.research-view__subtitle {
+  margin: 0;
+  padding-inline: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.research-view__state {
+  margin-inline: var(--space-lg);
+}
+
+.research-view__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-md);
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding-inline: var(--space-lg);
+}
+
+.research-view__sidebar,
+.research-view__reader {
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.research-view__sidebar-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.research-view__reader {
+  overflow: auto;
+}
+
+.research-view__reader-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.research-view__run-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.research-view__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.research-view__form .form-group,
+.research-view__history-header.form-group,
+.research-view__actions .form-group {
+  margin: 0;
+  padding: 0;
+}
+
+.research-view__textarea {
+  min-height: calc(var(--space-2xl) * 3);
+  resize: vertical;
+}
+
+.research-view__providers {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.research-view__provider-lock {
+  margin-left: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.research-view__history-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.research-view__history-search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.research-view__history-search-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.research-view__history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.research-view__history-item {
+  text-align: left;
+  padding: var(--space-sm);
+  min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+}
+
+.research-view__history-item--active {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.research-view__status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  text-transform: capitalize;
+}
+
+.research-view__run-title,
+.research-view__run-query,
+.research-view__run-summary {
+  margin: 0;
+}
+
+.research-view__run-query {
+  color: var(--text-muted);
+}
+
+.research-view__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.research-view__citations {
+  margin: var(--space-sm) 0 0;
+  padding-left: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.research-view__citations a {
+  color: var(--text);
+}
+
+.research-view__error {
+  color: var(--color-error);
+}
+
+.research-view__findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.research-view__finding {
+  padding: var(--space-sm);
+}
+
+.research-view__finding h4,
+.research-view__finding p {
+  margin: 0;
+}
+
+.research-view__finding-actions {
+  margin-top: var(--space-sm);
+}
+
+.research-view__events {
+  margin: var(--space-sm) 0 0;
+  padding-left: var(--space-lg);
+}
+
+.research-view__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: var(--btn-border-width) solid var(--border);
+}
+
+.research-view__stat-card {
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  background: var(--surface);
+}
+
+.research-view__stat-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.research-view__stat-value {
+  font-family: var(--font-mono);
+}
+
+.research-view__state--error {
+  border-color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .research-view {
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 0;
+    padding-bottom: calc(var(--space-md) + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+  }
+
+  .research-view__subtitle {
+    padding-inline: var(--space-md);
+  }
+
+  .research-view__state {
+    margin-inline: var(--space-md);
+  }
+
+  .research-view__layout {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-md);
+    flex: initial;
+    min-height: auto;
+    overflow: visible;
+    padding-inline: var(--space-md);
+  }
+
+  .research-view__sidebar,
+  .research-view__reader,
+  .research-view__sidebar-content,
+  .research-view__reader-content {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .research-view__history {
+    flex: initial;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .research-view__stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .research-view__history-item {
+    min-height: calc(var(--space-lg) * 2 + var(--space-sm));
+  }
+}
+
+/*
+FNXC:ResearchView 2026-06-20-00:33:
+Research tablets at 769px–1024px were inheriting the desktop two-column grid, leaving the reader cramped inside the .project-content flex chain. Reflow to one full-width column while preserving internal history and reader scroll containers so the document itself does not overflow horizontally.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .research-view {
+    flex: 1;
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .research-view__layout {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
+    inline-size: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .research-view__sidebar,
+  .research-view__reader,
+  .research-view__sidebar-content,
+  .research-view__reader-content {
+    min-width: 0;
+    min-inline-size: 0;
+    min-block-size: 0;
+  }
+
+  .research-view__sidebar {
+    flex: 0 1 auto;
+  }
+
+  .research-view__reader {
+    flex: 1 1 0;
+    overflow: auto;
+  }
+
+  .research-view__history {
+    overflow: auto;
+  }
+}

@@ -1,0 +1,739 @@
+/**
+ * Migration and First-Run Experience
+ *
+ * Handles the multi-project setup flow:
+ * - Detects first-run state (fresh install, setup wizard, normal)
+ * - Auto-discovers existing .fusion/ directories for registration
+ * - Coordinates project registration to central database
+ * - Provides backward compatibility for single-project workflows
+ *
+ * @module migration
+ */
+
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, resolve, basename, dirname } from "node:path";
+import type { CentralCore } from "./central-core.js";
+import { CentralCore as CentralCoreClass } from "./central-core.js";
+import { resolveGlobalDir } from "../config/global-settings.js";
+import { isValidSqliteDatabaseFile } from "../db/sqlite-validation.js";
+import { readProjectIdentity, writeProjectIdentity, type ProjectIdentity } from "./project-identity.js";
+
+function getHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
+/**
+ * Check whether `<dir>/<folderName>/<dbName>` exists as an openable SQLite file.
+ * Used to decide if a directory contains a current (.fusion/fusion.db) project database.
+ */
+function hasProjectDbFile(dir: string, folderName: string, dbName: string): boolean {
+  const projectDir = join(dir, folderName);
+  const dbPath = join(projectDir, dbName);
+
+  if (!existsSync(projectDir)) return false;
+  return isValidSqliteDatabaseFile(dbPath);
+}
+
+/**
+ * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+ * PostgreSQL-era projects are identified by `.fusion/project.json`. An openable
+ * `fusion.db` remains accepted only so pre-cutover projects can enter the
+ * one-time migration flow; it is no longer the current project marker.
+ */
+function hasFusionProjectMarkerOrLegacyDb(dir: string): boolean {
+  const fusionDir = join(dir, ".fusion");
+  return readProjectIdentity(fusionDir) !== null
+    || hasProjectDbFile(dir, ".fusion", "fusion.db");
+}
+
+// ── Types ────────────────────────────────────────────────────────────
+
+/** First-run state detection results */
+export type FirstRunState =
+  | "fresh-install"      // No central DB, no .fusion/ anywhere
+  | "setup-wizard"       // Central DB exists but has zero projects
+  | "normal-operation";  // Central DB exists with projects
+
+/** Detected project for registration consideration */
+export interface DetectedProject {
+  /** Absolute path to project directory */
+  path: string;
+  /** Auto-generated or derived project name */
+  name: string;
+  /** Whether the directory has a current project marker or valid legacy migration DB. */
+  hasDb: boolean;
+  /** Persisted project identity id if present */
+  identityId?: string;
+}
+
+/** Result of a migration operation */
+export interface MigrationResult {
+  /** Whether the migration succeeded */
+  success: boolean;
+  /** IDs of projects that were registered */
+  projectsRegistered: string[];
+  /** Error messages for any failures */
+  errors: string[];
+}
+
+/** Input for setting up a project via the wizard */
+export interface ProjectSetupInput {
+  /** Project path */
+  path: string;
+  /** Display name */
+  name: string;
+  /** Isolation mode preference */
+  isolationMode?: "in-process" | "child-process";
+  /** Persisted local project identity for central recovery */
+  identity?: ProjectIdentity | null;
+}
+
+/** Resolved project context for backward compatibility */
+export interface ResolvedContext {
+  /** Project ID in central registry */
+  projectId: string;
+  /** Absolute path to project working directory */
+  workingDirectory: string;
+  /** Whether running in legacy mode (no central DB) */
+  isLegacy: boolean;
+}
+
+/** Error thrown when project selection is required but not provided */
+export class ProjectRequiredError extends Error {
+  constructor(
+    message: string,
+    public readonly availableProjects: Array<{ id: string; name: string }>
+  ) {
+    super(message);
+    this.name = "ProjectRequiredError";
+  }
+}
+
+// ── FirstRunDetector ─────────────────────────────────────────────────
+
+/**
+ * Detects the first-run state and existing projects for registration.
+ *
+ * This class determines which startup path to take:
+ * - Fresh install → Show setup wizard
+ * - Already set up → Normal operation
+ */
+export class FirstRunDetector {
+  private readonly globalDir: string;
+
+  /**
+   * Create a FirstRunDetector.
+   * @param globalDir — Directory for central database. Defaults to `~/.pi/kb/`.
+   */
+  constructor(globalDir?: string) {
+    this.globalDir = globalDir ?? this.getDefaultGlobalDir();
+  }
+
+  /**
+   * Detect the current first-run state.
+   *
+   * Returns one of three states:
+   * - `"fresh-install"` — No central DB, no local `.fusion/` found
+   * - `"setup-wizard"` — Central DB exists but has zero projects
+   * - `"normal-operation"` — Central DB exists with one or more projects
+   *
+   * @param existingCentral — Optional existing CentralCore instance to use instead of creating a new one
+   */
+  async detectFirstRunState(existingCentral?: CentralCore): Promise<FirstRunState> {
+    /*
+     * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+     * First-run state comes from the PostgreSQL central project registry, not
+     * the removed `fusion-central.db` file. A reachable empty registry with a
+     * local marker enters setup; a populated registry is normal operation.
+     */
+    let central: CentralCore | undefined = existingCentral;
+    let shouldClose = false;
+
+    if (!central) {
+      try {
+        central = new CentralCoreClass(this.globalDir);
+        await central.init();
+        shouldClose = true;
+      } catch {
+        const detected = await this.detectExistingProjects(process.cwd());
+        return detected.length > 0 ? "setup-wizard" : "fresh-install";
+      }
+    }
+
+    try {
+      const projects = await central.listProjects();
+      if (projects.length > 0) return "normal-operation";
+      const detected = await this.detectExistingProjects(process.cwd());
+      return detected.length > 0 ? "setup-wizard" : "fresh-install";
+    } catch {
+      const detected = await this.detectExistingProjects(process.cwd());
+      return detected.length > 0 ? "setup-wizard" : "fresh-install";
+    } finally {
+      if (shouldClose && central) {
+        await central.close();
+      }
+    }
+  }
+
+  /**
+   * Compatibility predicate for the mandatory central PostgreSQL backend.
+   */
+  hasCentralDb(): boolean {
+    /*
+     * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+     * PostgreSQL is mandatory after cutover, so filesystem presence cannot
+     * represent central availability. Keep this compatibility predicate true;
+     * callers needing health/state must initialize CentralCore and query the
+     * central project registry.
+     */
+    return true;
+  }
+
+  /**
+   * Get the legacy central SQLite path used only by migration tooling.
+   */
+  getCentralDbPath(): string {
+    return join(this.globalDir, "fusion-central.db");
+  }
+
+  /**
+   * Detect existing projects by walking up the directory tree.
+   *
+   * Starting from `cwd`, walks up looking for `.fusion/project.json` markers
+   * or legacy `.fusion/fusion.db` migration inputs.
+   * Stops at home directory or root.
+   *
+   * @param cwd — Starting directory (default: process.cwd())
+   * @returns Array of detected projects
+   */
+  async detectExistingProjects(cwd?: string): Promise<DetectedProject[]> {
+    const startDir = cwd ?? process.cwd();
+    const projects: DetectedProject[] = [];
+    const visited = new Set<string>();
+
+    let current = resolve(startDir);
+    const home = resolve(getHomeDir());
+    const root = dirname(current) === current ? current : "/"; // Handle Windows vs Unix root
+    // Also stop at the OS temp directory — it is a shared system boundary and
+    // should never itself host a project; stopping here prevents the walk from
+    // picking up stale .fusion/ directories left by other processes in /tmp.
+    const systemTmp = resolve(tmpdir());
+
+    const normalizePath = (path: string): string => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return resolve(path);
+      }
+    };
+
+    const normalizedHome = normalizePath(home);
+    const normalizedSystemTmp = normalizePath(systemTmp);
+
+    const normalizedStartDir = normalizePath(current);
+
+    while (true) {
+      if (visited.has(current)) break;
+      visited.add(current);
+
+      const normalizedCurrent = normalizePath(current);
+      const isRootBoundary = current === root;
+      const isHomeBoundary = normalizedCurrent === normalizedHome;
+      const isTmpBoundary = normalizedCurrent === normalizedSystemTmp;
+      const isStopBoundary = isRootBoundary || isHomeBoundary || isTmpBoundary;
+
+      // Never inspect root/tmp boundaries. Home is checked only when it is the
+      // explicit starting directory (covers cwd===home tests).
+      if (
+        (isRootBoundary || isTmpBoundary) ||
+        (isHomeBoundary && normalizedCurrent !== normalizedStartDir)
+      ) {
+        break;
+      }
+
+      if (this.hasFusionProject(current)) {
+        const name = await this.generateProjectName(current);
+        const identity = readProjectIdentity(join(current, ".fusion"));
+        projects.push({
+          path: current,
+          name,
+          hasDb: true,
+          identityId: identity?.id,
+        });
+        // Only detect one project - stop at first match
+        break;
+      }
+
+      if (isStopBoundary) {
+        break;
+      }
+
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+
+    return projects;
+  }
+
+  /**
+   * Generate a project name from git remote or directory name.
+   *
+   * Priority:
+   * 1. Git remote origin URL (extract repo name)
+   * 2. Directory basename
+   *
+   * @param projectPath — Absolute path to project
+   * @returns Generated name
+   */
+  async generateProjectName(projectPath: string): Promise<string> {
+    // Fast path: avoid invoking git for non-repositories (prevents unnecessary delays in tests/startup).
+    if (!existsSync(join(projectPath, ".git"))) {
+      return basename(projectPath);
+    }
+
+    // Try git remote first
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+
+      const { stdout } = await execFileAsync(
+        "git",
+        ["remote", "get-url", "origin"],
+        { cwd: projectPath, timeout: 1000 }
+      );
+
+      const remoteUrl = stdout.trim();
+      if (remoteUrl) {
+        const name = this.extractRepoName(remoteUrl);
+        if (name) return name;
+      }
+    } catch {
+      // Git CLI unavailable/blocked in some environments; fall through to config parsing.
+    }
+
+    const remoteFromConfig = this.readOriginRemoteFromGitConfig(projectPath);
+    if (remoteFromConfig) {
+      const name = this.extractRepoName(remoteFromConfig);
+      if (name) return name;
+    }
+
+    // Fallback to directory name
+    return basename(projectPath);
+  }
+
+  private readOriginRemoteFromGitConfig(projectPath: string): string | null {
+    try {
+      const gitConfig = readFileSync(join(projectPath, ".git", "config"), "utf8");
+      const originSectionMatch = gitConfig.match(/\[remote\s+"origin"\]([\s\S]*?)(?:\n\[|$)/);
+      if (!originSectionMatch) {
+        return null;
+      }
+
+      const urlMatch = originSectionMatch[1]?.match(/^\s*url\s*=\s*(.+)$/m);
+      return urlMatch?.[1]?.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Extract repository name from git remote URL.
+   *
+   * Handles formats:
+   * - https://github.com/owner/repo.git → repo
+   * - https://github.com/owner/repo → repo
+   * - git@github.com:owner/repo.git → repo
+   * - git@github.com:owner/repo → repo
+   */
+  private extractRepoName(remoteUrl: string): string | null {
+    // Remove .git suffix
+    const withoutGit = remoteUrl.replace(/\.git$/, "");
+
+    // Handle SSH format: git@host:owner/repo
+    const sshMatch = withoutGit.match(/:([^/:]+\/([^/]+))$/);
+    if (sshMatch) {
+      return sshMatch[2];
+    }
+
+    // Handle HTTPS format: https://host/owner/repo
+    const httpsMatch = withoutGit.match(/\/([^/]+)$/);
+    if (httpsMatch) {
+      return httpsMatch[1];
+    }
+
+    return null;
+  }
+
+  /**
+   * Check for a current marker or a valid legacy migration database.
+   */
+  private hasFusionProject(dir: string): boolean {
+    return hasFusionProjectMarkerOrLegacyDb(dir);
+  }
+
+  private getDefaultGlobalDir(): string {
+    return resolveGlobalDir();
+  }
+}
+
+// ── MigrationCoordinator ─────────────────────────────────────────────
+
+/**
+ * Coordinates project setup flows.
+ *
+ * Orchestrates:
+ * - Auto-registration of existing single projects
+ * - Setup wizard project registration
+ * - Idempotent re-runs
+ */
+export class MigrationCoordinator {
+  private readonly central: CentralCore;
+
+  /**
+   * Create a MigrationCoordinator.
+   * @param central — Initialized CentralCore instance
+   */
+  constructor(central: CentralCore) {
+    this.central = central;
+  }
+
+  /**
+   * Coordinate the full setup flow based on current state.
+   *
+   * Detects state and executes appropriate path:
+   * - setup-wizard with local project → Auto-register existing project
+   * - others → No-op
+   */
+  async coordinateMigration(): Promise<MigrationResult> {
+    const detector = new FirstRunDetector(this.central.getGlobalDir());
+    const state = await detector.detectFirstRunState();
+
+    switch (state) {
+      case "fresh-install":
+        return {
+          success: true,
+          projectsRegistered: [],
+          errors: [],
+        };
+
+      case "setup-wizard": {
+        // Central DB exists but no projects — check for local project to auto-register
+        const localProjects = await detector.detectExistingProjects(process.cwd());
+        if (localProjects.length > 0) {
+          return this.registerSingleProject(localProjects[0].path);
+        }
+        return {
+          success: true,
+          projectsRegistered: [],
+          errors: [],
+        };
+      }
+
+      case "normal-operation":
+        // No migration needed
+        return {
+          success: true,
+          projectsRegistered: [],
+          errors: [],
+        };
+    }
+  }
+
+  /**
+   * Register a single existing project (for auto-registration).
+   *
+   * @param projectPath — Absolute path to project
+   * @returns Migration result
+   */
+  async registerSingleProject(projectPath: string): Promise<MigrationResult> {
+    const result: MigrationResult = {
+      success: false,
+      projectsRegistered: [],
+      errors: [],
+    };
+
+    // Validate path
+    if (!isAbsolute(projectPath)) {
+      result.errors.push(`Project path must be absolute: ${projectPath}`);
+      return result;
+    }
+
+    // Validate it's an actual fusion project
+    const detector = new FirstRunDetector(this.central.getGlobalDir());
+    if (!this.isValidFusionProject(projectPath)) {
+      result.errors.push(`Path is not a valid kb project: ${projectPath}`);
+      return result;
+    }
+
+    // Check if already registered
+    try {
+      const existing = await this.central.getProjectByPath(projectPath);
+      if (existing) {
+        // Already registered - idempotent success
+        result.success = true;
+        result.projectsRegistered.push(existing.id);
+        return result;
+      }
+    } catch (err) {
+      result.errors.push(`Failed to check existing registration: ${(err as Error).message}`);
+      return result;
+    }
+
+    // Check for overlapping registered projects (nested inside or parent of existing)
+    try {
+      const allProjects = await this.central.listProjects();
+      const normalizedPath = resolve(projectPath);
+      for (const p of allProjects) {
+        const normalizedExisting = resolve(p.path);
+        if (normalizedPath.startsWith(normalizedExisting + "/") || normalizedExisting.startsWith(normalizedPath + "/")) {
+          result.errors.push(`Path "${projectPath}" overlaps an existing registered project at "${p.path}"`);
+          return result;
+        }
+      }
+    } catch {
+      // Non-fatal — continue with registration
+    }
+
+    // Generate unique name
+    const baseName = await detector.generateProjectName(projectPath);
+    const uniqueName = await this.ensureUniqueName(baseName);
+
+    // Register the project
+    try {
+      const identity = readProjectIdentity(join(projectPath, ".fusion"));
+      const ensured = await this.central.ensureProjectForPath({
+        path: projectPath,
+        identity: identity ? { id: identity.id, createdAt: identity.createdAt } : undefined,
+        name: uniqueName,
+      });
+      const project = ensured.project;
+
+      // Activate the project after successful registration
+      await this.central.updateProject(project.id, { status: "active" });
+      try {
+        writeProjectIdentity(join(projectPath, ".fusion"), {
+          id: project.id,
+          createdAt: project.createdAt,
+        });
+      } catch {
+        // Best-effort stamp only.
+      }
+
+      result.success = true;
+      result.projectsRegistered.push(project.id);
+    } catch (err) {
+      result.errors.push(`Failed to register project: ${(err as Error).message}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Complete setup by registering multiple projects (from wizard).
+   *
+   * @param projects — Array of project setup inputs
+   * @returns Migration result
+   */
+  async completeSetup(projects: ProjectSetupInput[]): Promise<MigrationResult> {
+    const result: MigrationResult = {
+      success: true,
+      projectsRegistered: [],
+      errors: [],
+    };
+
+    for (const input of projects) {
+      try {
+        // Validate it's a valid fusion project
+        if (!this.isValidFusionProject(input.path)) {
+          result.success = false;
+          result.errors.push(`Path is not a valid kb project: ${input.path}`);
+          continue;
+        }
+
+        // Check if already registered
+        const existing = await this.central.getProjectByPath(input.path);
+        if (existing) {
+          result.projectsRegistered.push(existing.id);
+          continue;
+        }
+
+        // Ensure unique name
+        const uniqueName = await this.ensureUniqueName(input.name);
+
+        const identity = input.identity ?? readProjectIdentity(join(input.path, ".fusion"));
+        const ensured = await this.central.ensureProjectForPath({
+          path: input.path,
+          identity: identity ? { id: identity.id, createdAt: identity.createdAt } : undefined,
+          name: uniqueName,
+        });
+        const project = ensured.project;
+
+        // Activate after registration
+        await this.central.updateProject(project.id, { status: "active" });
+        try {
+          writeProjectIdentity(join(input.path, ".fusion"), {
+            id: project.id,
+            createdAt: project.createdAt,
+          });
+        } catch {
+          // Best-effort stamp only.
+        }
+
+        result.projectsRegistered.push(project.id);
+      } catch (err) {
+        result.success = false;
+        result.errors.push(`Failed to register ${input.name}: ${(err as Error).message}`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Ensure a project name is unique by appending -N suffix if needed.
+   */
+  private async ensureUniqueName(baseName: string): Promise<string> {
+    const existing = await this.central.listProjects();
+    const existingNames = new Set(existing.map((p) => p.name.toLowerCase()));
+
+    if (!existingNames.has(baseName.toLowerCase())) {
+      return baseName;
+    }
+
+    // Find unique suffix
+    let counter = 1;
+    let candidate = `${baseName}-${counter}`;
+    while (existingNames.has(candidate.toLowerCase())) {
+      counter++;
+      candidate = `${baseName}-${counter}`;
+    }
+
+    return candidate;
+  }
+
+  /**
+   * Check for a current marker or a valid legacy migration database.
+   */
+  private isValidFusionProject(dir: string): boolean {
+    return hasFusionProjectMarkerOrLegacyDb(dir);
+  }
+}
+
+// ── BackwardCompat ───────────────────────────────────────────────────
+
+/**
+ * Backward compatibility layer for single-project workflows.
+ *
+ * Ensures existing users with single projects continue working
+ * without needing to specify `--project` flags.
+ */
+export class BackwardCompat {
+  private readonly central: CentralCore;
+
+  /**
+   * Create a BackwardCompat helper.
+   * @param central — Initialized CentralCore instance
+   */
+  constructor(central: CentralCore) {
+    this.central = central;
+  }
+
+  /**
+   * Resolve project context for a command.
+   *
+   * Resolution order:
+   * 1. If `projectId` provided → look up that project
+   * 2. If no `projectId` and single project registered → auto-use it
+   * 3. If no `projectId` and multiple projects → throw ProjectRequiredError
+   *
+   * @param _cwd — Retained for API compatibility; registry paths are authoritative.
+   * @param projectId — Optional explicit project ID/name
+   * @returns Resolved context
+   * @throws ProjectRequiredError when multiple projects and no selection
+   */
+  async resolveProjectContext(
+    _cwd: string,
+    projectId?: string
+  ): Promise<ResolvedContext> {
+    /*
+     * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+     * Runtime project resolution always consults the PostgreSQL registry. The
+     * old filesystem test for fusion-central.db could incorrectly route a
+     * healthy PostgreSQL installation into removed SQLite legacy mode.
+     */
+
+    // Explicit project ID provided
+    if (projectId) {
+      const project = await this.findProjectByIdOrName(projectId);
+      if (!project) {
+        throw new ProjectRequiredError(
+          `Project not found: ${projectId}`,
+          await this.getAvailableProjects()
+        );
+      }
+      return {
+        projectId: project.id,
+        workingDirectory: project.path,
+        isLegacy: false,
+      };
+    }
+
+    // No explicit project - check how many are registered
+    const projects = await this.central.listProjects();
+
+    if (projects.length === 0) {
+      throw new ProjectRequiredError(
+        "No projects registered. Run 'fn init' or 'fn project add' to set up a project.",
+        []
+      );
+    }
+
+    if (projects.length === 1) {
+      // Single project - auto-use it for backward compatibility
+      const project = projects[0];
+      return {
+        projectId: project.id,
+        workingDirectory: project.path,
+        isLegacy: false,
+      };
+    }
+
+    // Multiple projects - require explicit selection
+    throw new ProjectRequiredError(
+      "Multiple projects registered. Use --project <name> to specify which project to use.",
+      projects.map((p) => ({ id: p.id, name: p.name }))
+    );
+  }
+
+  /**
+   * Report whether removed SQLite legacy runtime mode is active.
+   */
+  async isLegacyMode(): Promise<boolean> {
+    return false;
+  }
+
+  /**
+   * Find a project by ID or name (case-insensitive name match).
+   */
+  private async findProjectByIdOrName(idOrName: string): Promise<import("../types.js").RegisteredProject | undefined> {
+    // Try exact ID match first
+    const byId = await this.central.getProject(idOrName);
+    if (byId) return byId;
+
+    // Try name match (case-insensitive)
+    const all = await this.central.listProjects();
+    const lower = idOrName.toLowerCase();
+    return all.find((p) => p.name.toLowerCase() === lower);
+  }
+
+  /**
+   * Get list of available projects for error messages.
+   */
+  private async getAvailableProjects(): Promise<Array<{ id: string; name: string }>> {
+    const all = await this.central.listProjects();
+    return all.map((p) => ({ id: p.id, name: p.name }));
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node", "vitest/globals"],
+    "jsx": "react-jsx",
+    "paths": {
+      "@fusion/test-utils": ["../core/src/__test-utils__/workspace.ts"],
+      "node-pty": ["../dashboard/src/types/node-pty/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts", "src/**/__tests__/**/*"]
+}

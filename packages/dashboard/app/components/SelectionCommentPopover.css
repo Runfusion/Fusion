@@ -1,0 +1,133 @@
+.selection-comment-trigger,
+.selection-comment-panel {
+  position: fixed;
+  z-index: 10001;
+  left: var(--selection-comment-left);
+  top: var(--selection-comment-top);
+}
+
+.selection-comment-trigger {
+  transform: translate(-50%, calc(-1 * var(--space-xl)));
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+/*
+FNXC:ArtifactsView 2026-07-10-16:05:
+The "Add comment" trigger is positioned entirely by its transform translate. The global
+`.btn:active { transform: scale(0.97) }` press feedback REPLACED that translate while the
+mouse button was held, teleporting the trigger about half its width right and one spacing
+unit down between mousedown and mouseup, so the browser never dispatched `click` on the
+button and the comment composer silently never opened (user-reported no-op while viewing a
+markdown file in the Artifacts view; reproduced with real mouse events — jsdom clicks
+cannot catch this).
+Every :active override here must restate the positioning translate alongside the press
+feedback so the trigger stays under the cursor for the whole press. This one shared rule
+covers all popover surfaces: DocumentsView project-file preview (plain and markdown) and
+FileEditor (editor and preview), desktop and mobile.
+
+FNXC:ArtifactsView 2026-07-11-14:20:
+Regression: `.selection-comment-trigger:active` and the global `.btn:active` are both
+specificity (0,2,0), so this fix silently lost to `.btn:active` when the CSS bundle order
+flipped and the mid-press teleport/no-op came back (same bundle-order failure mode the
+`.selection-comment-panel.card` rule below documents). `.btn.selection-comment-trigger:active`
+is (0,3,0) so the positioning translate wins regardless of bundle order. Never rely on
+source order against `.btn:active` here.
+*/
+.btn.selection-comment-trigger:active {
+  transform: translate(-50%, calc(-1 * var(--space-xl))) scale(0.97);
+}
+
+/*
+FNXC:ArtifactsView 2026-07-10-18:20:
+The composer panel carries the shared `.card` class, and `.card { position: relative }` loads AFTER
+this file in the bundle, so at equal specificity it silently replaced the panel's `position: fixed`.
+The panel then flowed inside `.documents-content-viewer` with the left/top vars applied as relative
+offsets — rendering clipped at the bottom-right of the viewport nowhere near the selection.
+`.selection-comment-panel.card` (0,2,0) makes the fixed positioning immune to bundle order.
+The `left` clamp keeps the whole panel inside the viewport on every width: it accounts for half the
+panel width (the panel is centered on the selection via translate(-50%)), and the `top` clamp stops
+a selection near the bottom of the viewport from pushing the composer off-screen.
+*/
+.selection-comment-panel.card {
+  position: fixed;
+}
+
+.selection-comment-panel {
+  --scp-width: min(var(--selection-comment-panel-width, calc(var(--space-2xl) * 12)), calc(100vw - (var(--space-lg) * 2)));
+  width: var(--scp-width);
+  left: clamp(calc(var(--space-lg) + (var(--scp-width) / 2)), var(--selection-comment-left), calc(100vw - var(--space-lg) - (var(--scp-width) / 2)));
+  top: min(var(--selection-comment-top), calc(100vh - var(--space-lg) - 20rem));
+  transform: translate(-50%, var(--space-xs));
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  box-shadow: var(--shadow-lg);
+}
+
+.selection-comment-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.selection-comment-snippet {
+  margin: 0;
+  max-height: calc(var(--space-2xl) * 3);
+  overflow: auto;
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.selection-comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.selection-comment-textarea {
+  min-height: calc(var(--space-2xl) * 2.5);
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  /*
+  FNXC:ArtifactsView 2026-07-10-18:20:
+  Only the trigger keeps the simple center-point clamp here — the panel's base rule already applies
+  a width-aware clamp on all viewports, and re-declaring `left` in this later block would override
+  it with a clamp that lets half the panel hang past the edge.
+  */
+  .selection-comment-trigger {
+    left: max(var(--space-lg), min(var(--selection-comment-left), calc(100vw - var(--space-lg))));
+  }
+
+  .selection-comment-trigger {
+    transform: translate(-50%, calc(-1 * var(--space-2xl)));
+  }
+
+  /*
+  FNXC:ArtifactsView 2026-07-10-16:05:
+  Mobile uses a taller lift, so its :active rule must restate the mobile translate too —
+  otherwise the desktop :active rule (space-xl) would snap the pressed trigger to the
+  desktop offset and reintroduce the missed-click no-op on touch/landscape-phone widths.
+  FNXC:ArtifactsView 2026-07-11-14:20: `.btn.` prefix for bundle-order immunity — see the desktop rule above.
+  */
+  .btn.selection-comment-trigger:active {
+    transform: translate(-50%, calc(-1 * var(--space-2xl))) scale(0.97);
+  }
+
+  .selection-comment-actions {
+    flex-direction: column-reverse;
+  }
+
+  .selection-comment-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

@@ -1,0 +1,184 @@
+/*
+FNXC:MissionInterviewModal 2026-06-24-00:00:
+Desktop mission planning is a floating workspace hosted by FloatingWindow. The embedded `.modal` must fill the floating panel instead of applying the fixed planning modal size, while mobile keeps the full-screen sheet contract and hides FloatingWindow resize shells.
+*/
+.floating-window--mission-interview .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--mission-interview .mission-interview-modal {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+.floating-window--mission-interview .mission-interview-modal__drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-window--mission-interview .mission-interview-modal__drag-handle:active {
+  cursor: grabbing;
+}
+
+@media (max-width: 768px) {
+  .floating-window--mission-interview {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--mission-interview .floating-window__resize-handle {
+    display: none;
+  }
+
+  .floating-window--mission-interview .mission-interview-modal {
+    border-radius: 0;
+  }
+}
+
+.roadmap-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.roadmap-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.roadmap-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: calc(var(--space-sm) + var(--space-xs) * 0.5) var(--space-md);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.roadmap-card-body {
+  padding: 0 var(--space-md) var(--space-md) calc(var(--space-2xl) + var(--space-xs));
+}
+
+.roadmap-textarea-sm {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  margin-top: calc(var(--space-xs) * 0.5);
+}
+
+.roadmap-textarea-md {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  margin-top: var(--space-sm);
+}
+
+.roadmap-textarea-xs {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  margin-top: calc(var(--space-xs) * 0.5);
+}
+
+.roadmap-field-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.roadmap-field-group {
+  margin-top: calc(var(--space-sm) - var(--space-xs) * 0.5);
+}
+
+.roadmap-slice-card {
+  margin-top: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.roadmap-slice-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs) * 0.5);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.roadmap-slice-body {
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs) * 0.5) calc(var(--space-sm) + var(--space-xs) * 0.5) calc(var(--space-xl) + var(--space-sm) * 0.75);
+}
+
+.roadmap-slice-field-group {
+  margin-bottom: var(--space-sm);
+}
+
+.roadmap-input-title {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
+  font-weight: 600;
+}
+
+.roadmap-input-subtitle {
+  flex: 1;
+  padding: calc(var(--space-xs) * 0.75) calc(var(--space-sm) - var(--space-xs) * 0.5);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 500;
+}
+
+.roadmap-input-feature {
+  width: 100%;
+  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.5);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.roadmap-feature-row {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  padding: calc(var(--space-sm) - var(--space-xs) * 0.5) 0;
+}
+
+.roadmap-feature-row + .roadmap-feature-row {
+  border-top: 1px solid var(--border);
+}
+
+.roadmap-feature-text,
+.roadmap-feature-text--italic {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  margin: calc(var(--space-xs) * 0.5) 0 0 calc(var(--space-sm) - var(--space-xs) * 0.5);
+}
+
+.roadmap-feature-text--italic {
+  font-style: italic;
+}
+
+.roadmap-feature-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.roadmap-add-feature-btn {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  padding: var(--space-xs) var(--space-sm);
+  margin-top: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  gap: var(--space-xs);
+  display: flex;
+  align-items: center;
+}
+
+.roadmap-shrink {
+  flex-shrink: 0;
+}

@@ -1,0 +1,16 @@
+{
+  "id": "fusion-plugin-roadmap",
+  "name": "Roadmaps",
+  "version": "0.1.0",
+  "description": "Standalone roadmap planning plugin",
+  "dashboardViews": [
+    {
+      "viewId": "roadmaps",
+      "label": "Roadmaps",
+      "componentPath": "./dashboard-view",
+      "icon": "Map",
+      "placement": "primary",
+      "order": 30
+    }
+  ]
+}

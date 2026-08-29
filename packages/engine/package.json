@@ -1,0 +1,62 @@
+{
+  "name": "@fusion/engine",
+  "version": "0.77.0-beta.8",
+  "license": "MIT",
+  "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/engine"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --silent=passed-only --reporter=dot --project=engine-default --project=engine-reliability",
+    "test:core": "vitest run --silent=passed-only --reporter=dot --project=engine-core",
+    "test:slow": "vitest run --silent=passed-only --reporter=dot --project=engine-slow",
+    "test:all": "vitest run --silent=passed-only --reporter=dot",
+    "test:executor": "vitest run src/__tests__/executor-*.test.ts",
+    "test:watch": "vitest src/__tests__/executor-*.test.ts --watch"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@fusion/core": "workspace:*",
+    "@fusion/pi-claude-cli": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cron-parser": "^5.5.0",
+    "esbuild": "^0.25.12",
+    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
+    "playwright-core": "^1.60.0",
+    "proper-lockfile": "^4.1.2",
+    "typebox": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.10",
+    "postgres": "3.4.9",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  },
+  "private": true
+}

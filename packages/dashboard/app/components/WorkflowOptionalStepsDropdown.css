@@ -1,0 +1,73 @@
+/* WorkflowOptionalStepsDropdown — shared optional-step multi-select. The panel
+ * renders through a portal (position: fixed) so it is not clipped inside a modal's
+ * overflow boundary. */
+
+.wf-optional-steps-dropdown {
+  display: inline-flex;
+}
+
+.wf-optional-steps-dropdown-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wf-optional-steps-dropdown-panel {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  /* FNXC:DashboardThemeTokens 2026-06-27-00:00: Optional-step panels share the canonical dropdown surface tokens so Quick Entry, Task Form, and Inline Create render correctly across dark, light, and shadcn color themes without hardcoded hex or px fallbacks. */
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.wf-optional-steps-dropdown-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* FNXC:DashboardThemeTokens 2026-06-28-00:00: Optional-step option checkboxes must use the themed --todo accent so Quick Entry, Task Form, and Inline Create match every dashboard checkbox across dark, light, and shadcn themes. */
+.wf-optional-steps-dropdown-option input[type="checkbox"] {
+  accent-color: var(--todo);
+  cursor: pointer;
+}
+
+.wf-optional-steps-dropdown-option:hover,
+.wf-optional-steps-dropdown-option.is-active {
+  background: var(--card-hover);
+}
+
+.wf-optional-steps-dropdown-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.wf-optional-steps-dropdown-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wf-optional-steps-dropdown-option-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.wf-optional-steps-dropdown-option-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}

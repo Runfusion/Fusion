@@ -1,0 +1,1062 @@
+import os from "node:os";
+import v8 from "node:v8";
+import { appendFileSync } from "node:fs";
+import { findVitestProcessIds, getAvailableMemoryBytes, getAvailableMemoryInfo } from "@fusion/core";
+
+const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
+function tuiDebug(tag: string, data: Record<string, unknown>): void {
+  if (!TUI_DEBUG_LOG) return;
+  try {
+    const line = `${new Date().toISOString()} [${tag}] ${JSON.stringify(data)}\n`;
+    appendFileSync(TUI_DEBUG_LOG, line);
+  } catch {
+    // best-effort
+  }
+}
+import { LogRingBuffer } from "./log-ring-buffer.js";
+import type { LogEntry } from "./log-ring-buffer.js";
+import type {
+  SystemInfo,
+  SystemStats,
+  TaskStats,
+  SettingsValues,
+  TUICallbacks,
+  SectionId,
+  DashboardState,
+  InteractiveData,
+  InteractiveView,
+  RemoteStatus,
+  UpdateStatus,
+} from "./state.js";
+import { SECTION_ORDER } from "./state.js";
+
+/*
+FNXC:DashboardTui 2026-07-24-18:40:
+Window in which the second Utilities [t] press confirms an engine pause. Long
+enough to read the warning line in the log pane, short enough that an unrelated
+`t` minutes later cannot land on an armed confirmation.
+*/
+export const PAUSE_CONFIRM_WINDOW_MS = 5_000;
+
+// ── DashboardTUI ─────────────────────────────────────────────────────────────
+//
+// Public API is identical to the old imperative class so dashboard.ts requires
+// no changes other than the import path. State fields are kept as direct class
+// properties (matching the old names) so the test suite can reach them via
+// `(tui as any).activeSection` etc. without modification.
+//
+// The Ink App component subscribes via `subscribe()` / `getSnapshot()` — the
+// same pattern as `useSyncExternalStore`.
+
+export class DashboardTUI {
+  // State fields mirror the original private layout so tests can access them.
+  activeSection: SectionId = "system";
+  // Named `logBuffer` to match what captureConsole tests access via
+  // `(tui as unknown as { logBuffer: LogRingBuffer }).logBuffer`.
+  logBuffer: LogRingBuffer;
+  systemInfo: SystemInfo | null = null;
+  taskStats: TaskStats | null = null;
+  systemStats: SystemStats | null = null;
+  // When set, dashboard.ts refreshes task stats from this project path
+  // instead of the launch cwd. Mirrors BoardView's selected project.
+  boardScopedProjectPath: string | null = null;
+  private boardScopeListener: ((path: string | null) => void) | null = null;
+  settings: SettingsValues | null = null;
+  callbacks: TUICallbacks | null = null;
+  isRunning = false;
+  showHelp = false;
+  logsSeverityFilter: "all" | LogEntry["level"] = "all";
+  logsWrapEnabled = false;
+  logsExpandedMode = false;
+  selectedLogIndex = 0;
+  logsViewportStart = 0;
+  // True when the narrow single-pane view is split and the bottom log
+  // strip currently owns the keyboard. Cleared whenever the active section
+  // changes or the split is no longer rendered.
+  narrowLogSplitFocused = false;
+  loadingStatus = "Starting…";
+  isReady = false;
+  mode: "status" | "interactive" = "status";
+  // When true, sampleSystemStats() kills any running vitest processes if
+  // system memory usage crosses 90%. Toggled by [v] in the Utilities panel.
+  autoKillVitestOnPressure = true;
+  // System-memory ratio (0..1) at which auto-kill triggers. Adjustable from
+  // the Utilities panel via [+]/[-] in 5% steps. Clamped to [0.5, 0.99].
+  vitestKillThreshold = 0.9;
+  // Throttle so we don't spam kills while the sampler keeps firing during
+  // sustained pressure (sampler runs every 2s).
+  private lastAutoKillAt = 0;
+  clipboardFlash: { ok: boolean; at: number } | null = null;
+  private clipboardFlashTimer: ReturnType<typeof setTimeout> | null = null;
+  /*
+  FNXC:DashboardTui 2026-07-24-18:40:
+  Pausing the engine from Utilities [t] is a silent, board-wide stop: triage and
+  planning stall while in-flight tasks drain, so the board keeps moving for
+  minutes and the cause is invisible from the terminal. One unmodified keystroke
+  must not do that — the first `t` arms this deadline and only a second `t`
+  inside the window pauses. Resuming is not destructive and stays single-press.
+  */
+  private pausePendingConfirmUntil = 0;
+  interactiveData: InteractiveData | null = null;
+  interactiveView: InteractiveView = "board";
+  interactiveInputLocked = false;
+  updateStatus: UpdateStatus | null = null;
+
+  // Subscribers registered by the Ink App component.
+  private subscribers: Set<() => void> = new Set();
+
+  // Cached snapshot — useSyncExternalStore compares by Object.is, so we must
+  // return the same reference between renders unless state actually changed.
+  // notify() invalidates this; getSnapshot() rebuilds on demand.
+  private cachedSnapshot: DashboardState | null = null;
+
+  // Ink instance — set when start() is called.
+  // Loose type — the real Ink Instance has additional methods (clear,
+  // rerender, etc.) that we use defensively below.
+  private inkInstance: {
+    unmount: () => void;
+    waitUntilExit: () => Promise<unknown>;
+    clear?: () => void;
+  } & Record<string, unknown> | null = null;
+  // Captured at start() so a full-screen terminal attach (U14) can unmount Ink,
+  // hand the TTY to the passthrough loop, then remount the same app on detach.
+  private renderApp: (() => unknown) | null = null;
+  private inkRender: ((node: unknown) => typeof this.inkInstance) | null = null;
+  // True while a full-screen terminal attach owns the TTY; suppresses Ink
+  // re-render/resize work that would corrupt the passthrough surface.
+  private terminalAttachActive = false;
+
+  // Resize listener attached at start(), detached at stop().
+  private resizeListener: (() => void) | null = null;
+  // Debounce timer for resize handling — coalesces tmux/ssh resize bursts.
+  private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // Last observed terminal dims, used by the dim-poll fallback to detect
+  // resizes that didn't deliver a SIGWINCH (common under tmux/ssh).
+  private lastObservedCols: number = 0;
+  private lastObservedRows: number = 0;
+
+  // Uptime ticker to keep footer time live.
+  private uptimeTimer: ReturnType<typeof setInterval> | null = null;
+  // System stats sampler — process memory + CPU%.
+  private systemStatsTimer: ReturnType<typeof setInterval> | null = null;
+  private lastCpuUsage: NodeJS.CpuUsage | null = null;
+  private lastCpuSampleAt = 0;
+
+  // Polled remote tunnel status; null until first successful fetch (or when
+  // no remote API is wired up).
+  private remoteStatus: RemoteStatus | null = null;
+  private remoteStatusTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Mouse-wheel handling. We enable xterm SGR mouse mode in start() so the
+  // terminal sends button reports for wheel up/down (buttons 64/65). A
+  // parallel `data` listener parses those reports and dispatches to wheel
+  // handlers. Ink's own keypress parser ignores SGR mouse sequences so
+  // long as the full sequence (including the leading ESC) arrives in one
+  // chunk — which it does once raw mode is enabled before mouse mode is
+  // requested. (See ink#222 / @zenobius/ink-mouse for prior art.)
+  private wheelHandlers: Set<(direction: "up" | "down") => void> = new Set();
+  private mouseStdinListener: ((chunk: Buffer | string) => void) | null = null;
+  // Tracks the desired mouse-reporting state. Default OFF so click-drag
+  // text selection works out of the box — terminal owns the mouse. The
+  // dashboard auto-enables it via setMouseEnabled() when the user focuses
+  // a panel that uses wheel scrolling (Logs / Files / Git / Board task
+  // detail). [M] is also a manual override, but the next focus change
+  // will reapply the auto policy.
+  mouseEnabled: boolean = false;
+
+  // Optional `--lang` override; highest-precedence locale source for the TUI.
+  lang?: string;
+
+  constructor() {
+    this.logBuffer = new LogRingBuffer();
+  }
+
+  // ── Subscription API (for Ink App) ────────────────────────────────────────
+
+  subscribe(callback: () => void): () => void {
+    this.subscribers.add(callback);
+    return () => this.subscribers.delete(callback);
+  }
+
+  /**
+   * Subscribe to mouse-wheel events. Direction is "up" (scroll back/older
+   * content) or "down" (scroll forward/newer content). Only fires while the
+   * dashboard is running and the terminal supports xterm mouse reporting.
+   */
+  onWheel(handler: (direction: "up" | "down") => void): () => void {
+    this.wheelHandlers.add(handler);
+    return () => this.wheelHandlers.delete(handler);
+  }
+
+  getSnapshot(): DashboardState {
+    if (this.cachedSnapshot) return this.cachedSnapshot;
+    this.cachedSnapshot = {
+      activeSection: this.activeSection,
+      logEntries: this.logBuffer.getAll(),
+      systemInfo: this.systemInfo,
+      taskStats: this.taskStats,
+      systemStats: this.systemStats,
+      settings: this.settings,
+      callbacks: this.callbacks,
+      showHelp: this.showHelp,
+      logsSeverityFilter: this.logsSeverityFilter,
+      logsWrapEnabled: this.logsWrapEnabled,
+      logsExpandedMode: this.logsExpandedMode,
+      selectedLogIndex: this.selectedLogIndex,
+      logsViewportStart: this.logsViewportStart,
+      narrowLogSplitFocused: this.narrowLogSplitFocused,
+      loadingStatus: this.loadingStatus,
+      isReady: this.isReady,
+      mode: this.mode,
+      interactiveData: this.interactiveData,
+      interactiveView: this.interactiveView,
+      interactiveInputLocked: this.interactiveInputLocked,
+      autoKillVitestOnPressure: this.autoKillVitestOnPressure,
+      vitestKillThreshold: this.vitestKillThreshold,
+      updateStatus: this.updateStatus,
+      clipboardFlash: this.clipboardFlash,
+      remoteStatus: this.remoteStatus,
+      mouseEnabled: this.mouseEnabled,
+    };
+    return this.cachedSnapshot;
+  }
+
+  private notify(): void {
+    this.cachedSnapshot = null;
+    for (const cb of this.subscribers) cb();
+  }
+
+  // ── Public API (unchanged from original DashboardTUI) ─────────────────────
+
+  get running(): boolean {
+    return this.isRunning;
+  }
+
+  get ready(): boolean {
+    return this.isReady;
+  }
+
+  setCallbacks(callbacks: TUICallbacks): void {
+    this.callbacks = callbacks;
+    this.notify();
+  }
+
+  setSystemInfo(info: SystemInfo): void {
+    this.systemInfo = info;
+    this.notify();
+  }
+
+  setTaskStats(stats: TaskStats): void {
+    this.taskStats = stats;
+    this.notify();
+  }
+
+  setSystemStats(stats: SystemStats): void {
+    this.systemStats = stats;
+    this.notify();
+  }
+
+  setBoardScopedProjectPath(path: string | null): void {
+    if (this.boardScopedProjectPath === path) return;
+    this.boardScopedProjectPath = path;
+    this.boardScopeListener?.(path);
+    this.notify();
+  }
+
+  onBoardScopeChange(listener: (path: string | null) => void): () => void {
+    this.boardScopeListener = listener;
+    return () => {
+      if (this.boardScopeListener === listener) this.boardScopeListener = null;
+    };
+  }
+
+  /** Sample process memory + CPU% in-place. Called from the sampler timer. */
+  sampleSystemStats(): void {
+    const mem = process.memoryUsage();
+    const heapStats = v8.getHeapStatistics();
+    const now = Date.now();
+    const cpu = process.cpuUsage();
+    let cpuPercent = 0;
+    if (this.lastCpuUsage && this.lastCpuSampleAt > 0) {
+      const elapsedMicros = (now - this.lastCpuSampleAt) * 1000;
+      if (elapsedMicros > 0) {
+        const usedMicros =
+          (cpu.user - this.lastCpuUsage.user) +
+          (cpu.system - this.lastCpuUsage.system);
+        cpuPercent = (usedMicros / elapsedMicros) * 100;
+      }
+    }
+    this.lastCpuUsage = cpu;
+    this.lastCpuSampleAt = now;
+
+    const load = os.loadavg();
+    this.setSystemStats({
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      heapLimit: heapStats.heap_size_limit,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
+      cpuPercent,
+      loadAvg: [load[0] ?? 0, load[1] ?? 0, load[2] ?? 0],
+      cpuCount: os.cpus().length,
+      systemTotalMem: os.totalmem(),
+      systemFreeMem: getAvailableMemoryBytes(),
+      pid: process.pid,
+      nodeVersion: process.version,
+      platform: `${process.platform}/${process.arch}`,
+    });
+
+    if (this.autoKillVitestOnPressure) {
+      const total = os.totalmem();
+      const { bytes: free, reliable } = getAvailableMemoryInfo();
+      // Without a reliable availability reading the ratio is garbage (freemem
+      // on macOS ≈ always >90% used) — never SIGKILL on a garbage signal.
+      if (total > 0 && reliable) {
+        const usedRatio = (total - free) / total;
+        // 30s minimum gap between auto-kills — vitest restart and OS reclaim
+        // both take a few seconds; firing every 2s would flap.
+        if (usedRatio > this.vitestKillThreshold && now - this.lastAutoKillAt > 30_000) {
+          this.lastAutoKillAt = now;
+          void this.killVitestProcesses().then((result) => {
+            if (result.killed > 0) {
+              this.warn(
+                `Auto-killed ${result.killed} vitest process${result.killed === 1 ? "" : "es"} (system memory at ${Math.round(usedRatio * 100)}%, threshold ${Math.round(this.vitestKillThreshold * 100)}%)`,
+                "memory-guard",
+              );
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  /**
+   * Find and SIGKILL any running vitest processes, excluding this dashboard
+   * itself. Returns a count of pids signalled (best-effort — a pid may be
+   * gone by the time we send the signal).
+   */
+  async killVitestProcesses(): Promise<{ killed: number; pids: number[] }> {
+    // findVitestProcessIds is pgrep-based (POSIX-only; no-op on Windows) and
+    // uses async execFile so the TUI render loop stays responsive while the
+    // process table is walked. Crucially it filters matches to actual node
+    // processes: a bare `pgrep -f vitest` also matches wrapper shells whose
+    // command line mentions vitest, monitors, and editors — SIGKILLing those
+    // took out unrelated process trees (2026-06-03 incident).
+    const pids = await findVitestProcessIds();
+
+    let killed = 0;
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+        killed += 1;
+      } catch {
+        // Process already exited or we lack permission — skip.
+      }
+    }
+    return { killed, pids };
+  }
+
+  adjustVitestKillThreshold(deltaPct: number): number {
+    const next = this.vitestKillThreshold + deltaPct / 100;
+    this.vitestKillThreshold = Math.max(0.5, Math.min(0.99, Math.round(next * 100) / 100));
+    this.notify();
+    void this.persistVitestKillSettings({ thresholdPct: Math.round(this.vitestKillThreshold * 100) });
+    return this.vitestKillThreshold;
+  }
+
+  toggleAutoKillVitest(): boolean {
+    this.autoKillVitestOnPressure = !this.autoKillVitestOnPressure;
+    if (!this.autoKillVitestOnPressure) {
+      this.lastAutoKillAt = 0;
+    }
+    this.notify();
+    void this.persistVitestKillSettings({ enabled: this.autoKillVitestOnPressure });
+    return this.autoKillVitestOnPressure;
+  }
+
+  /** Apply persisted values from global settings on startup. Does not
+   *  trigger a write-back. */
+  hydrateVitestKillSettings(values: { enabled?: boolean; thresholdPct?: number }): void {
+    if (typeof values.enabled === "boolean") {
+      this.autoKillVitestOnPressure = values.enabled;
+    }
+    if (typeof values.thresholdPct === "number" && Number.isFinite(values.thresholdPct)) {
+      const ratio = values.thresholdPct / 100;
+      this.vitestKillThreshold = Math.max(0.5, Math.min(0.99, ratio));
+    }
+    this.notify();
+  }
+
+  private async persistVitestKillSettings(
+    partial: { enabled?: boolean; thresholdPct?: number },
+  ): Promise<void> {
+    if (!this.callbacks?.onPersistVitestKillSettings) return;
+    try {
+      await this.callbacks.onPersistVitestKillSettings(partial);
+    } catch {
+      // Best-effort persistence — the in-memory toggle remains in effect
+      // even if disk write fails. The next adjust will retry.
+    }
+  }
+
+  setSettings(settings: SettingsValues): void {
+    this.settings = settings;
+    this.notify();
+  }
+
+  setLoadingStatus(text: string): void {
+    this.loadingStatus = text;
+    this.notify();
+  }
+
+  setReady(ready: boolean): void {
+    this.isReady = ready;
+    this.notify();
+  }
+
+  setInteractiveData(data: InteractiveData): void {
+    this.interactiveData = data;
+    this.notify();
+    this.startRemoteStatusPolling();
+  }
+
+  private startRemoteStatusPolling(): void {
+    if (this.remoteStatusTimer) return;
+    const tick = async () => {
+      const remote = this.interactiveData?.remote;
+      if (!remote) return;
+      try {
+        const status = await remote.getStatus();
+        const changed = JSON.stringify(this.remoteStatus) !== JSON.stringify(status);
+        this.remoteStatus = status;
+        if (changed) this.notify();
+      } catch {
+        // network/auth errors are non-fatal — leave the prior value alone
+      }
+    };
+    void tick();
+    this.remoteStatusTimer = setInterval(() => { void tick(); }, 3000);
+  }
+
+  setInteractiveView(view: InteractiveView): void {
+    this.interactiveView = view;
+    this.notify();
+  }
+
+  setInteractiveInputLocked(locked: boolean): void {
+    if (this.interactiveInputLocked === locked) return;
+    this.interactiveInputLocked = locked;
+    this.notify();
+  }
+
+  setUpdateStatus(status: UpdateStatus | null): void {
+    this.updateStatus = status;
+    this.notify();
+  }
+
+  addLog(entry: Omit<LogEntry, "timestamp">): void {
+    // If the cursor was sitting on the most recent entry (or there were no
+    // entries yet), keep it pinned to the new tail so live logs follow the
+    // latest event — same behavior as `tail -f` or k9s.
+    const beforeEntries = this.getFilteredLogEntries();
+    const beforeCount = beforeEntries.length;
+    const wasAtTail = beforeCount === 0 || this.selectedLogIndex === beforeCount - 1;
+    // While the user is reading a single entry in expanded mode, pin the
+    // cursor on that entry so streaming logs don't yank the view away.
+    // Track by reference so ring-buffer eviction shifts the index correctly.
+    const pinnedEntry = this.logsExpandedMode ? beforeEntries[this.selectedLogIndex] : undefined;
+    this.logBuffer.push({ ...entry, timestamp: new Date() });
+    const after = this.getFilteredLogEntries();
+    if (pinnedEntry) {
+      const newIdx = after.indexOf(pinnedEntry);
+      if (newIdx >= 0) {
+        this.selectedLogIndex = newIdx;
+      } else {
+        // Pinned entry was evicted from the ring buffer — fall back to oldest.
+        this.selectedLogIndex = 0;
+      }
+    } else if (wasAtTail) {
+      this.selectedLogIndex = Math.max(0, after.length - 1);
+    } else {
+      this.clampSelectedLogIndex(after);
+    }
+    this.notify();
+  }
+
+  clearLogs(): void {
+    this.logBuffer.clear();
+    this.selectedLogIndex = 0;
+    this.logsViewportStart = 0;
+    this.logsExpandedMode = false;
+    this.notify();
+  }
+
+  log(message: string, prefix?: string): void {
+    this.addLog({ level: "info", message, prefix });
+  }
+
+  flashClipboard(ok: boolean): void {
+    this.clipboardFlash = { ok, at: Date.now() };
+    if (this.clipboardFlashTimer) clearTimeout(this.clipboardFlashTimer);
+    this.clipboardFlashTimer = setTimeout(() => {
+      this.clipboardFlash = null;
+      this.clipboardFlashTimer = null;
+      this.notify();
+    }, 1800);
+    this.notify();
+  }
+
+  warn(message: string, prefix?: string): void {
+    this.addLog({ level: "warn", message, prefix });
+  }
+
+  error(message: string, prefix?: string): void {
+    this.addLog({ level: "error", message, prefix });
+  }
+
+  // ── State helpers called from Ink App ────────────────────────────────────
+
+  setActiveSection(section: SectionId): void {
+    this.activeSection = section;
+    this.showHelp = false;
+    // Section change supersedes any sub-focus on the narrow log split.
+    this.narrowLogSplitFocused = false;
+    this.notify();
+  }
+
+  setShowHelp(show: boolean): void {
+    this.showHelp = show;
+    this.notify();
+  }
+
+  // Toggle xterm mouse reporting at runtime. When disabled, the terminal
+  // owns the mouse — click-drag does native text selection (the only path
+  // that works under tmux, where Shift-bypass is intercepted by tmux).
+  // Re-enable to restore wheel-driven log/list scrolling.
+  setMouseEnabled(enabled: boolean): void {
+    if (this.mouseEnabled === enabled) return;
+    this.mouseEnabled = enabled;
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      if (enabled) {
+        process.stdout.write("\x1b[?1000h\x1b[?1006h");
+        this.installMouseListener();
+      } else {
+        this.uninstallMouseListener();
+        process.stdout.write("\x1b[?1006l\x1b[?1000l");
+      }
+    }
+    this.notify();
+  }
+
+  setLogsWrapEnabled(enabled: boolean): void {
+    this.logsWrapEnabled = enabled;
+    this.notify();
+  }
+
+  setLogsExpandedMode(expanded: boolean): void {
+    this.logsExpandedMode = expanded;
+    this.notify();
+  }
+
+  setNarrowLogSplitFocused(focused: boolean): void {
+    if (this.narrowLogSplitFocused === focused) return;
+    this.narrowLogSplitFocused = focused;
+    this.notify();
+  }
+
+  setSelectedLogIndex(index: number): void {
+    const entries = this.getFilteredLogEntries();
+    this.selectedLogIndex = this.clampIndex(index, entries.length);
+    this.notify();
+  }
+
+  setLogsViewportStart(start: number): void {
+    this.logsViewportStart = start;
+    this.notify();
+  }
+
+  setMode(mode: "status" | "interactive"): void {
+    this.mode = mode;
+    this.notify();
+  }
+
+  cycleSection(direction: 1 | -1): void {
+    const idx = SECTION_ORDER.indexOf(this.activeSection);
+    this.activeSection = SECTION_ORDER[(idx + direction + SECTION_ORDER.length) % SECTION_ORDER.length];
+    this.showHelp = false;
+    this.notify();
+  }
+
+  cycleSeverityFilter(): void {
+    const order: Array<"all" | LogEntry["level"]> = ["all", "info", "warn", "error"];
+    const idx = order.indexOf(this.logsSeverityFilter);
+    this.logsSeverityFilter = order[(idx + 1) % order.length];
+    this.clampSelectedLogIndex(this.getFilteredLogEntries());
+    this.logsViewportStart = 0;
+    this.notify();
+  }
+
+  getFilteredLogEntries(): LogEntry[] {
+    const all = this.logBuffer.getAll();
+    return this.logsSeverityFilter === "all"
+      ? all
+      : all.filter((e) => e.level === this.logsSeverityFilter);
+  }
+
+  /**
+   * Two-press confirmation for an engine pause initiated from Utilities [t].
+   *
+   * Returns true when the caller may pause: either a prior press armed the
+   * window and it has not expired, or this call arms it and returns false so the
+   * caller can prompt. Any successful confirmation disarms, so a third press
+   * re-arms rather than toggling twice.
+   */
+  private consumePauseConfirmation(now: number = Date.now()): boolean {
+    if (this.pausePendingConfirmUntil > now) {
+      this.pausePendingConfirmUntil = 0;
+      return true;
+    }
+    this.pausePendingConfirmUntil = now + PAUSE_CONFIRM_WINDOW_MS;
+    return false;
+  }
+
+  async handleUtilityAction(key: string): Promise<void> {
+    if (!this.callbacks) return;
+
+    switch (key.toLowerCase()) {
+      case "r":
+        await this.callbacks.onRefreshStats();
+        break;
+      case "c":
+        this.callbacks.onClearLogs();
+        this.clearLogs();
+        break;
+      case "t":
+        if (this.systemInfo) {
+          const newPaused = this.systemInfo.engineMode !== "paused";
+          if (newPaused && !this.consumePauseConfirmation()) {
+            this.warn(
+              `Press [t] again within ${Math.round(PAUSE_CONFIRM_WINDOW_MS / 1000)}s to pause the engine (stops triage, planning, and new dispatch).`,
+              "engine",
+            );
+            break;
+          }
+          const newSettings = await this.callbacks.onTogglePause(newPaused);
+          const newEngineMode = newSettings.enginePaused ? "paused" : "active";
+          this.setSystemInfo({ ...this.systemInfo, engineMode: newEngineMode });
+          this.setSettings(newSettings);
+        }
+        break;
+      case "k": {
+        const result = await this.killVitestProcesses();
+        if (result.killed === 0) {
+          this.log("No vitest processes found.", "kill-vitest");
+        } else {
+          this.warn(
+            `Killed ${result.killed} vitest process${result.killed === 1 ? "" : "es"}: ${result.pids.join(", ")}`,
+            "kill-vitest",
+          );
+        }
+        break;
+      }
+      case "v": {
+        const enabled = this.toggleAutoKillVitest();
+        this.log(
+          `Auto-kill vitest on memory pressure (>${Math.round(this.vitestKillThreshold * 100)}%): ${enabled ? "ON" : "OFF"}`,
+          "memory-guard",
+        );
+        break;
+      }
+      case "+":
+      case "=": {
+        const v = this.adjustVitestKillThreshold(+5);
+        this.log(`Vitest kill threshold: ${Math.round(v * 100)}%`, "memory-guard");
+        break;
+      }
+      case "-":
+      case "_": {
+        const v = this.adjustVitestKillThreshold(-5);
+        this.log(`Vitest kill threshold: ${Math.round(v * 100)}%`, "memory-guard");
+        break;
+      }
+    }
+  }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  async start(): Promise<void> {
+    if (this.isRunning) return;
+    this.isRunning = true;
+
+    // Dynamic import avoids pulling Ink into non-TTY paths (CI, tests
+    // that only exercise pure logic).
+    const { render } = await import("ink");
+    const { createElement } = await import("react");
+    const { DashboardApp } = await import("./app.js");
+    const { I18nextProvider } = await import("react-i18next");
+    const { initCliI18n, resolveCliLocale } = await import("../../i18n/index.js");
+    const { GlobalSettingsStore } = await import("@fusion/core");
+
+    // Resolve locale: --lang flag → persisted GlobalSettings → env → en.
+    let settingLanguage: string | undefined;
+    try {
+      settingLanguage = (await new GlobalSettingsStore().getSettings())?.language;
+    } catch {
+      // Settings unreadable — fall back to env/default.
+    }
+    const i18n = initCliI18n(
+      resolveCliLocale({ flag: this.lang, setting: settingLanguage, env: process.env }),
+    );
+
+    // Enter the terminal's alternate-screen buffer before mounting Ink so
+    // the TUI gets a dedicated fullscreen surface that doesn't share
+    // scrollback with the user's shell history. Without this, Ink writes
+    // top-down and any frame taller than the terminal pushes the top
+    // (header) into scrollback. Especially noticeable under tmux/ssh
+    // where dimension reporting and status bars can leave the rendered
+    // frame a row or two too tall.
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      // \x1b[?1049h = enter alt-screen, \x1b[H = home cursor.
+      process.stdout.write("\x1b[?1049h\x1b[H");
+    }
+
+    // Capture the app element factory + render fn so openTerminalAttach() can
+    // remount the identical tree after a full-screen passthrough detaches.
+    this.renderApp = () =>
+      createElement(I18nextProvider, { i18n }, createElement(DashboardApp, { controller: this }));
+    this.inkRender = (node: unknown) => render(node as Parameters<typeof render>[0]);
+
+    this.inkInstance = render(
+      createElement(I18nextProvider, { i18n }, createElement(DashboardApp, { controller: this })),
+    );
+
+    // Mouse mode must be enabled AFTER Ink mounts (which calls
+    // setRawMode(true) and resumes stdin). If we write the enable sequence
+    // before raw mode is on, the terminal can deliver the first wheel
+    // report's leading ESC byte alone, which Ink would parse as a bare
+    // Esc keypress (closing modals on every wheel tick).
+    if (process.stdin?.isTTY && this.mouseEnabled) {
+      // Enable xterm mouse reporting with SGR-encoded coordinates.
+      //   ?1000h = button press/release reports (includes wheel as
+      //            buttons 64/65)
+      //   ?1006h = SGR encoding (handles wide terminals; the legacy form
+      //            caps coords at 223 columns/rows)
+      // We deliberately do NOT enable ?1002h (button-event tracking with
+      // motion) or ?1003h (any-event tracking). Without motion reporting
+      // the terminal still owns drag gestures, so Shift+drag (and on most
+      // terminals plain click+drag) keeps doing native text selection.
+      // Holding Shift always works as a hard override even on terminals
+      // that grab the bare drag gesture.
+      //
+      // Gated by `this.mouseEnabled` so the default-off policy
+      // (selection-friendly on the System panel) holds at startup. The
+      // app component re-enables via setMouseEnabled() as soon as the
+      // user focuses a panel that uses wheel scrolling.
+      process.stdout.write("\x1b[?1000h\x1b[?1006h");
+      this.installMouseListener();
+    }
+
+    // Reset Ink's internal frame buffer (log-update line tracking) on every
+    // terminal resize. Without this Ink keeps treating the previous frame's
+    // line count as the clear region, leaving stale rows above/below the
+    // new render until another unrelated rerender happens.
+    //
+    // Debounced: tmux and mosh fire resize bursts during pane negotiation,
+    // and `process.stdout.rows` can briefly read stale/zero values mid-burst.
+    // Coalescing to a single trailing edge lets dimensions settle before we
+    // clear+rerender, then a follow-up notify() forces React to re-read
+    // stdout dims one more time so any timer-driven render that landed
+    // mid-burst with stale rows is corrected.
+    this.resizeListener = () => {
+      if (this.resizeDebounceTimer) clearTimeout(this.resizeDebounceTimer);
+      this.resizeDebounceTimer = setTimeout(() => {
+        this.resizeDebounceTimer = null;
+        const rows = process.stdout?.rows ?? 0;
+        const cols = process.stdout?.columns ?? 0;
+        if (rows <= 0 || cols <= 0) return;
+        this.recoverFrame(cols, rows);
+      }, 50);
+    };
+    if (process.stdout && typeof process.stdout.on === "function") {
+      process.stdout.on("resize", this.resizeListener);
+    }
+
+    // Prime the observed-dims baseline so the systemStats poll below can
+    // detect when stdout dims change without a SIGWINCH (tmux/ssh
+    // sometimes drop the signal — the dims still update on the stream
+    // object, but no resize event fires, so the user sees a stuck
+    // layout). Polling every 2s catches that case at minor cost.
+    this.lastObservedCols = process.stdout?.columns ?? 0;
+    this.lastObservedRows = process.stdout?.rows ?? 0;
+
+    this.uptimeTimer = setInterval(() => {
+      if (this.isRunning) this.notify();
+    }, 5000);
+
+    // Prime CPU baseline, then sample every 2s.
+    this.lastCpuUsage = process.cpuUsage();
+    this.lastCpuSampleAt = Date.now();
+    this.sampleSystemStats();
+    this.systemStatsTimer = setInterval(() => {
+      if (!this.isRunning) return;
+      this.sampleSystemStats();
+      // Dim-poll fallback: tmux/ssh sometimes drop SIGWINCH entirely, and
+      // Node only refreshes process.stdout.columns/rows when SIGWINCH
+      // arrives — so reading those properties returns stale values that
+      // never recover on their own. Force-query the OS via getWindowSize
+      // (ioctl-backed) and compare against Node's cached dims; if they
+      // diverge, SIGWINCH was lost. Calling _refreshSize() pokes Node to
+      // re-read and emit 'resize', which routes through our existing
+      // resize listener and triggers the full recovery path.
+      const stdout = process.stdout as (typeof process.stdout) & {
+        getWindowSize?: () => [number, number];
+        _refreshSize?: () => void;
+      };
+      try {
+        const [trueCols, trueRows] = stdout.getWindowSize?.() ?? [0, 0];
+        if (trueCols <= 0 || trueRows <= 0) return;
+        const cachedCols = stdout.columns ?? 0;
+        const cachedRows = stdout.rows ?? 0;
+        if (trueCols !== cachedCols || trueRows !== cachedRows) {
+          // Node's cache is stale — poke it to re-read so React reads the
+          // new dims on the next render.
+          stdout._refreshSize?.();
+        }
+        if (trueCols !== this.lastObservedCols || trueRows !== this.lastObservedRows) {
+          // We haven't recovered to this size yet. Run the full recovery
+          // path directly rather than relying on a 'resize' event from
+          // _refreshSize, which doesn't always propagate under tmux+ssh
+          // (or when Node's cache already happens to match the OS but
+          // Ink's frame buffer is still pinned to the previous layout).
+          this.recoverFrame(trueCols, trueRows);
+        }
+      } catch {
+        // ioctl can fail in edge cases (detached pty, etc.) — ignore.
+      }
+    }, 2000);
+  }
+
+  // Reset Ink's internal frame buffer (log-update line tracking) and wipe
+  // the alt-screen so a fresh render lands on a known-empty surface. Used
+  // by both the resize listener (SIGWINCH path) and the dim-poll fallback
+  // (tmux+ssh path where SIGWINCH is dropped). Idempotent: a redundant
+  // call is at worst a 1-frame flicker.
+  //
+  // Why: Ink's clear() only resets log-update's tracked line count; if the
+  // previous frame painted more rows than the new terminal height (or
+  // content shrunk past a layout tier), those rows linger in the
+  // alt-screen buffer and the new frame paints on top, leaving garbage
+  // visible at the bottom. \x1b[2J\x1b[H wipes the buffer first.
+  // Order: wipe → reset Ink's tracking → record dims → notify so React
+  // reads fresh dims and rerenders cleanly.
+  private recoverFrame(cols: number, rows: number): void {
+    tuiDebug("recoverFrame", {
+      cols,
+      rows,
+      prevCols: this.lastObservedCols,
+      prevRows: this.lastObservedRows,
+    });
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      try {
+        process.stdout.write("\x1b[2J\x1b[H");
+      } catch {
+        // Ignore — wipe is best-effort.
+      }
+    }
+    try {
+      this.inkInstance?.clear?.();
+    } catch {
+      // Ignore — clear is best-effort.
+    }
+    this.lastObservedCols = cols;
+    this.lastObservedRows = rows;
+    this.notify();
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+    this.isRunning = false;
+
+    if (this.uptimeTimer) {
+      clearInterval(this.uptimeTimer);
+      this.uptimeTimer = null;
+    }
+
+    if (this.systemStatsTimer) {
+      clearInterval(this.systemStatsTimer);
+      this.systemStatsTimer = null;
+    }
+
+    if (this.remoteStatusTimer) {
+      clearInterval(this.remoteStatusTimer);
+      this.remoteStatusTimer = null;
+    }
+
+    if (this.resizeListener && process.stdout && typeof process.stdout.off === "function") {
+      process.stdout.off("resize", this.resizeListener);
+      this.resizeListener = null;
+    }
+    if (this.resizeDebounceTimer) {
+      clearTimeout(this.resizeDebounceTimer);
+      this.resizeDebounceTimer = null;
+    }
+    if (this.clipboardFlashTimer) {
+      clearTimeout(this.clipboardFlashTimer);
+      this.clipboardFlashTimer = null;
+    }
+
+    if (this.inkInstance) {
+      this.inkInstance.unmount();
+      this.inkInstance = null;
+    }
+    // Leave the alt-screen buffer last so the user's shell scrollback
+    // is restored cleanly. \x1b[?1049l = leave alt-screen.
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      this.uninstallMouseListener();
+      // Disable mouse reporting before leaving the alt-screen so the
+      // user's shell isn't left with mouse mode active.
+      process.stdout.write("\x1b[?1006l\x1b[?1000l");
+      process.stdout.write("\x1b[?1049l");
+    }
+  }
+
+  /**
+   * Open a CLI-agent session as a full-screen passthrough (U14). Suspend-and-
+   * handoff: unmount Ink (releasing its raw-mode / stdin grip), let
+   * `attachTerminalSession` own the alt-screen + raw mode for the passthrough
+   * loop, then remount the same Ink app once the user detaches (Ctrl-]) or the
+   * session ends. Resolves after the TUI has been remounted.
+   *
+   * No-op (resolves immediately) when there's no session info / not running.
+   */
+  async openTerminalAttach(sessionId: string, projectId?: string): Promise<void> {
+    if (!this.isRunning || this.terminalAttachActive) return;
+    if (!this.renderApp || !this.inkRender) return;
+    const baseUrl = this.systemInfo?.baseUrl;
+    if (!baseUrl) return;
+    const token = this.systemInfo?.authToken;
+
+    const { attachTerminalSession } = await import("./terminal-attach.js");
+
+    this.terminalAttachActive = true;
+
+    // Unmount Ink so it relinquishes raw mode + the stdin 'data' grip; the
+    // passthrough loop installs its own listeners on the bare stdin/stdout.
+    // Also drop our mouse listener so wheel reports don't leak into the PTY.
+    this.uninstallMouseListener();
+    if (this.inkInstance) {
+      try {
+        this.inkInstance.unmount();
+      } catch {
+        /* ignore */
+      }
+      this.inkInstance = null;
+    }
+    // Leave Ink's alt-screen; the passthrough enters its own.
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      try {
+        process.stdout.write("\x1b[?1049l");
+      } catch {
+        /* ignore */
+      }
+    }
+
+    await new Promise<void>((resolve) => {
+      const handle = attachTerminalSession({
+        baseUrl,
+        token,
+        sessionId,
+        projectId,
+        stdin: process.stdin as unknown as import("./terminal-attach.js").AttachStdin,
+        stdout: process.stdout as unknown as import("./terminal-attach.js").AttachStdout,
+        onDetach: (error) => {
+          if (error) {
+            this.error(`Terminal session detached: ${error.message}`, "cli-agent");
+          }
+        },
+      });
+      void handle.done.finally(() => resolve());
+    });
+
+    // Remount Ink on a clean alt-screen.
+    this.terminalAttachActive = false;
+    if (!this.isRunning) return; // stopped while attached — leave the terminal as-is
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      try {
+        process.stdout.write("\x1b[?1049h\x1b[H");
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      this.inkInstance = this.inkRender(this.renderApp());
+    } catch {
+      /* ignore — remount best-effort */
+    }
+    this.notify();
+  }
+
+  // ── Private helpers ────────────────────────────────────────────────────────
+
+  // Attach a parallel `data` listener that decodes xterm SGR mouse
+  // sequences and dispatches wheel events. Ink's own listener is also
+  // attached; SGR sequences arrive as a single chunk that Ink's keypress
+  // parser silently ignores, so we don't need to (and shouldn't) strip
+  // them from the stream.
+  private installMouseListener(): void {
+    if (this.mouseStdinListener) return;
+    // eslint-disable-next-line no-control-regex -- ESC byte is intentional for SGR mouse parsing
+    const mouseRe = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
+    const listener = (chunk: Buffer | string): void => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (text.indexOf("\x1b[<") === -1) return;
+      mouseRe.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = mouseRe.exec(text)) !== null) {
+        const btn = Number.parseInt(m[1] ?? "", 10);
+        // Buttons 64/65 are wheel up/down. Higher codes (66/67) are
+        // wheel left/right on some terminals — ignored here.
+        if (btn === 64) this.dispatchWheel("up");
+        else if (btn === 65) this.dispatchWheel("down");
+      }
+    };
+    this.mouseStdinListener = listener;
+    process.stdin.on("data", listener);
+  }
+
+  private uninstallMouseListener(): void {
+    if (!this.mouseStdinListener) return;
+    process.stdin.off("data", this.mouseStdinListener);
+    this.mouseStdinListener = null;
+  }
+
+  private dispatchWheel(direction: "up" | "down"): void {
+    for (const handler of this.wheelHandlers) {
+      try {
+        handler(direction);
+      } catch (err) {
+        tuiDebug("wheel-handler-error", { err: String(err) });
+      }
+    }
+  }
+
+  private clampSelectedLogIndex(entries: LogEntry[]): void {
+    if (entries.length === 0) {
+      this.selectedLogIndex = 0;
+      this.logsExpandedMode = false;
+      return;
+    }
+    if (this.selectedLogIndex >= entries.length) {
+      this.selectedLogIndex = entries.length - 1;
+    }
+    if (this.selectedLogIndex < 0) {
+      this.selectedLogIndex = 0;
+    }
+  }
+
+  private clampIndex(index: number, length: number): number {
+    if (length === 0) return 0;
+    return Math.max(0, Math.min(index, length - 1));
+  }
+}

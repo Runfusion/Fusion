@@ -1,0 +1,2537 @@
+/* ── Chat View ─────────────────────────────────────────────────────────────── */
+
+.chat-view {
+  container: chat-view / inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-view__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Conversation list */
+.chat-sidebar {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  background: var(--bg-secondary);
+}
+
+.chat-sidebar--hidden {
+  display: none;
+}
+
+/*
+FNXC:ViewportChrome 2026-08-23-03:40:
+FN-9193 tablet-class touch devices can be 768 CSS pixels wide, so this scoped docked rule
+must override the mobile one-pane rule while phone mode remains unchanged.
+
+FNXC:ViewportChrome 2026-08-23-17:07:
+FN-9200 keeps the docked pane width exclusively in its inline width and min-width style because
+no docked-sidebar custom-property producer exists; the tablet cascade only restores its layout bounds.
+*/
+.chat-view--docked-list .chat-sidebar--docked {
+  flex: 0 0 auto;
+  position: relative;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+
+.chat-view--docked-list .chat-sidebar--docked .chat-sidebar-list {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.chat-sidebar__resize-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: calc(var(--space-xs) / -2);
+  width: var(--space-sm);
+  cursor: col-resize;
+  z-index: 1;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--duration-fast) var(--transition-default);
+}
+
+.chat-sidebar__resize-handle:hover,
+.chat-sidebar__resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--border), transparent 35%);
+  outline: none;
+}
+
+html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked {
+  min-width: 0;
+  max-width: none;
+  height: auto;
+}
+
+.chat-sidebar-scope-toggle {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+}
+
+/*
+FNXC:ChatHeader 2026-06-22-16:18:
+Direct/Rooms now lives in the Chat ViewHeader immediately before New Chat. The control must scale with available header width: bounded flex-basis, minmax grid columns, and truncating labels let it fit desktop, narrow pop-out, and mobile headers without forcing the title/actions to overlap.
+
+FNXC:ChatHeader 2026-06-22-18:44:
+Keep the Direct/Rooms segmented control height-aligned with ViewHeader's action row and collapse labels to icons when Chat is very narrow. Buttons use height:100% inside the padded track so they cannot grow taller than the background.
+
+FNXC:ChatHeader 2026-06-22-20:28:
+When the movable chat popup is resized narrow, collapse Direct/Rooms labels to icon-only from the ChatView container width so the Chat title remains visible even on a wide desktop viewport.
+*/
+.chat-view-header-scope-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 1 1 clamp(128px, 24vw, 220px);
+  width: clamp(128px, 24vw, 220px);
+  min-width: min(128px, 100%);
+  max-width: 220px;
+  height: var(--view-header-content-row, 28px);
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.chat-sidebar-scope-btn {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--space-md);
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.chat-view-header-scope-toggle .chat-sidebar-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0 clamp(var(--space-xs), 1.2vw, var(--space-sm));
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-md) - 2px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.chat-view-header-scope-toggle .chat-sidebar-scope-btn svg {
+  flex: 0 0 auto;
+}
+
+.chat-view-header-scope-toggle .chat-sidebar-scope-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-sidebar-scope-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.chat-sidebar-scope-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-sidebar-scope-btn--active {
+  background: var(--card);
+  color: var(--text);
+}
+
+.chat-view-header-scope-toggle .chat-sidebar-scope-btn--active {
+  border-color: var(--todo);
+}
+
+.chat-sidebar-rooms {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-sidebar-rooms-header {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.chat-sidebar-rooms-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--space-xl) var(--space-lg);
+  font-size: var(--space-md);
+}
+
+.chat-room-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  padding: var(--space-sm) var(--space-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-room-item:hover {
+  background: var(--card-hover);
+}
+
+.chat-room-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-room-item--active {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.chat-room-item-details {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.chat-room-item-name-row {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-room-item-name {
+  font-weight: 500;
+}
+
+.chat-unread-dot {
+  display: inline-block;
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: 50%;
+  background: var(--color-info);
+  flex-shrink: 0;
+  margin-inline-start: var(--space-xs);
+}
+
+.chat-room-item-meta {
+  color: var(--text-muted);
+  font-size: var(--space-sm);
+}
+
+.chat-room-item-delete {
+  color: var(--text-muted);
+}
+
+.chat-room-item-delete:hover,
+.chat-room-item-delete:focus-visible {
+  color: var(--color-error);
+}
+
+.chat-room-thread-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-room-thread-members {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-xs);
+  overflow-x: auto;
+}
+
+.chat-room-empty-pane {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: var(--space-2xl);
+}
+
+.chat-sidebar-search-container {
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.chat-session-preview--matched {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-sidebar-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.chat-sidebar-search-icon {
+  position: absolute;
+  left: var(--space-md);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.chat-sidebar-search {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md) var(--space-sm) calc(var(--space-2xl) + var(--space-xs));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.chat-session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.chat-empty-state {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chat-empty-state--padded {
+  padding: var(--space-md);
+}
+
+.chat-sidebar-list > .chat-empty-state--padded {
+  flex: 0 0 auto;
+  display: block;
+  text-align: left;
+}
+
+.chat-session-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: background 0.15s;
+  position: relative;
+}
+
+.chat-session-item:hover {
+  background: var(--card-hover);
+}
+
+.chat-session-item--active {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.chat-session-item--active:hover {
+  background: color-mix(in srgb, var(--todo) 16%, transparent);
+}
+
+.chat-session-title {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: calc((var(--space-md) * 2) + var(--space-sm));
+}
+
+.chat-session-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: calc((var(--space-md) * 2) + var(--space-sm));
+}
+
+.chat-session-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.chat-session-meta-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-session-meta-model .provider-icon {
+  flex-shrink: 0;
+}
+
+/*
+FNXC:ChatSidebar 2026-07-16-00:00:
+FN-8173 replaces the inline Pin/Rename/Delete cluster with one overflow trigger. Keep it outside row text flow and reserve only its tokenized width so long titles stay readable at desktop and mobile breakpoints.
+*/
+.chat-session-menu-btn {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  width: calc(var(--space-md) * 2);
+  min-width: calc(var(--space-md) * 2);
+  height: calc(var(--space-md) * 2);
+  min-height: calc(var(--space-md) * 2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.chat-session-menu-btn:hover,
+.chat-session-menu-btn:focus-visible {
+  color: var(--text);
+}
+
+.chat-session-pinned-indicator {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+}
+
+/*
+FNXC:ChatPinned 2026-07-19-00:00:
+Pinned and Recent conversation groups use the same divider treatment on desktop and mobile.
+A token-sized gap between populated groups makes their ownership visible without introducing a
+second sidebar-list component or leaving an empty section shell.
+*/
+.chat-session-section + .chat-session-section {
+  margin-top: var(--space-sm);
+}
+
+.chat-pinned-divider {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--space-md) * 2);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  border-bottom: 1px solid var(--border);
+}
+
+
+/*
+FNXC:ChatSidebar 2026-07-16-23:55:
+FN-8191 gives the conversation action menu a token-composed border-box width. ChatView measures that rendered width before clamping, so alternate themes keep the mobile menu's right edge aligned without raw CSS dimensions.
+*/
+/* Context menu for session items */
+.chat-session-context-menu {
+  position: fixed;
+  box-sizing: border-box;
+  width: calc(var(--space-xl) * 8 + var(--space-xs) * 2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs);
+  z-index: 100;
+}
+
+.chat-session-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.chat-session-context-menu button:hover {
+  background: var(--card-hover);
+}
+
+/* Main chat thread */
+.chat-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+/*
+FNXC:ChatComposer 2026-08-23-16:07:
+This clamp is class-gated rather than width-gated: iPhone landscape, iPad, compact dock, and
+narrow floating Chat can all have a visible keyboard outside a phone-width media query. The
+measured thread top accounts for host chrome above Chat instead of assuming only the app header.
+*/
+.chat-thread--keyboard-active {
+  height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--chat-thread-viewport-top, var(--header-height)));
+  max-height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--chat-thread-viewport-top, var(--header-height)));
+  /* NOTE: the translateY drift compensation is applied imperatively in
+     JS (see ChatView's vv `apply()`), NOT here. Declaring
+     `transform`/`will-change: transform` in CSS keeps a non-`none`
+     transform on .chat-thread for the entire keyboard-active window —
+     and since .chat-thread is an ancestor of the focused composer
+     textarea, iOS Safari treats establishing that containing block as a
+     reason to blur the input and collapse the keyboard the instant it
+     opens. JS only sets a transform when there is real viewport drift
+     (offsetTop > 0); at the focus moment offsetTop is 0, so the
+     ancestor stays `transform: none` and the keyboard stays up. */
+}
+
+.chat-thread--keyboard-active .chat-input-area {
+  padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--chat-keyboard-accessory-clearance, 0px));
+}
+
+.chat-thread-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+FNXC:Chat 2026-06-22-15:30:
+The active-chat pane header must give the title the full available line to the LEFT of the actions. The identity row grows (flex:1, min-width:0) and the title truncates with an ellipsis instead of being squeezed to one-word-per-line by the model badge, eye/preview toggle, and New Chat button. Those action controls stay flex-shrink:0 so they keep their size and the title absorbs all slack.
+*/
+.chat-thread-header-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-thread-header-title {
+  flex: 1 1 auto;
+  font-weight: 600;
+  font-size: 15px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Model badge keeps its intrinsic size next to the truncating title. */
+.chat-thread-header-identity .chat-model-tag {
+  flex-shrink: 0;
+}
+
+/*
+FNXC:ChatContextWindow 2026-06-27-00:00:
+The Direct-chat context budget indicator is a secondary desktop/tablet header affordance. Keep it badge-like and shrinkable so the thread title retains priority, and hide it at mobile widths where Back is the only detail-navigation control.
+*/
+.chat-thread-header-context {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(var(--space-xl) * 5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  padding: calc(var(--space-xs) / 4) calc(var(--space-sm) - (var(--space-xs) / 2));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+/*
+FNXC:ChatNavigation 2026-08-20-05:25:
+FN-068 puts the only Back action beside the selected conversation title. Do not override ViewHeader actions for detail mode: floating Open in Chat view and Close must retain ViewHeader's canonical right alignment.
+
+FNXC:ChatNavigation 2026-08-20-23:57:
+FN-096 keeps the shared-header New Chat action visible in selected detail as well as list mode. Its shrinkable token-based sizing preserves the floating Close and the thread-row Back action on narrow embedded, floating, and dock hosts.
+*/
+.chat-thread-header-back {
+  flex: 0 0 auto;
+}
+
+.chat-view-header-new-chat {
+  flex: 0 1 auto;
+  min-width: fit-content;
+}
+
+.chat-view-header-icon {
+  flex: 0 0 auto;
+}
+
+.chat-view .view-header__actions {
+  min-width: 0;
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .chat-view-header-scope-toggle {
+    flex-basis: clamp(112px, 42vw, 180px);
+    width: clamp(112px, 42vw, 180px);
+    max-width: 180px;
+  }
+}
+
+@container chat-view (max-width: 560px) {
+  .chat-view-header-scope-toggle {
+    flex: 0 0 72px;
+    width: 72px;
+    min-width: 72px;
+    max-width: 72px;
+  }
+
+  .chat-view-header-scope-toggle .chat-sidebar-scope-btn {
+    padding: 0;
+  }
+
+  .chat-view-header-scope-toggle .chat-sidebar-scope-btn span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 460px) {
+  .chat-view-header-scope-toggle {
+    flex: 0 0 72px;
+    width: 72px;
+    min-width: 72px;
+    max-width: 72px;
+  }
+
+  .chat-view-header-scope-toggle .chat-sidebar-scope-btn {
+    padding: 0;
+  }
+
+  .chat-view-header-scope-toggle .chat-sidebar-scope-btn span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/*
+FNXC:ChatModal 2026-08-20-05:25:
+FN-068 keeps the floating Chat ViewHeader as the only visible modal header and drag handle. Its action row contains Open in Chat view and Close only; Close remains available at narrow sizes while CSS hides only Open in Chat view when it cannot fit.
+*/
+.chat-view--floating .view-header {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.chat-view--floating .view-header:active {
+  cursor: grabbing;
+}
+
+/*
+FNXC:QuickChat 2026-07-24-00:00:
+Tablet Quick Chat keeps its delegated ViewHeader drag handle but needs a modestly taller touch target
+than canonical desktop chrome. Scope the token-based height to the movable tablet band so phone sheets,
+desktop geometry, and every other ViewHeader consumer remain unchanged.
+*/
+@media (min-width: 769px) and (max-width: 1024px) and (min-height: 481px) {
+  .chat-view--floating .view-header {
+    min-height: calc(var(--view-header-min-height) + var(--space-sm));
+    height: calc(var(--view-header-min-height) + var(--space-sm));
+  }
+}
+
+/*
+FNXC:ChatNavigation 2026-08-23-03:55:
+A narrow floating host keeps the one-pane list/detail flow. FN-9193 adds a docked list only for non-floating tablet-or-wider hosts, so this narrow layout must still hide selected detail through .chat-sidebar--hidden.
+*/
+.chat-view--narrow .chat-view__body {
+  flex-direction: column;
+}
+
+.chat-view--narrow .chat-sidebar {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: none;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+}
+
+.chat-view--narrow .chat-sidebar-header {
+  display: none;
+}
+
+.chat-view--narrow .chat-sidebar-search {
+  min-height: calc(var(--space-2xl) + var(--space-xs));
+}
+
+.chat-view--narrow .chat-sidebar-filter-row {
+  flex-wrap: wrap;
+}
+
+.chat-view--narrow .chat-sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+FNXC:ChatModal 2026-08-20-05:25:
+In the narrow/mobile chat layout there is no room for an Open in Chat view affordance in the header. Hide only the expand controls (main Chat pop-out and floating-modal maximize); keep Close visible so the user can still dismiss floating Chat.
+*/
+.chat-view--narrow [data-testid="chat-pop-out"],
+.chat-view--narrow [data-testid="chat-modal-maximize"] {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .chat-view [data-testid="chat-pop-out"],
+  .chat-view [data-testid="chat-modal-maximize"] {
+    display: none;
+  }
+}
+
+.chat-rename-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.chat-rename-input {
+  width: 100%;
+  margin-bottom: var(--space-md);
+}
+
+/*
+FNXC:ChatRenderToggle 2026-07-04-00:00:
+The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle*`, desktop + mobile floating variants) was removed per FN-7541. Chat always renders Markdown now; the button and its CSS shells no longer exist.
+*/
+
+/*
+FNXC:ChatFind 2026-08-21-16:29:
+FN-110 keeps the conversation-local Find row compact across Chat hosts and distinguishes a matching row from the currently navigated result using existing semantic tokens.
+*/
+.chat-conversation-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.chat-conversation-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-conversation-search-status {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chat-message--search-match {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 55%, transparent);
+}
+
+.chat-message--search-active {
+  box-shadow: inset 0 0 0 2px var(--color-warning);
+}
+
+@media (max-width: 768px) {
+  .chat-conversation-search {
+    flex-wrap: wrap;
+  }
+
+  .chat-conversation-search-input {
+    min-inline-size: 0;
+  }
+}
+
+/* Messages */
+.chat-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  /* Stop iOS rubber-band scroll from propagating to the parent /
+     document when the user swipes on the edge of the messages list
+     with the keyboard up. Without this, the bounce escapes the
+     scroll container, the page itself shifts, and the chat-thread
+     transform momentarily exposes the body background as a gray
+     box partially covering the messages. */
+  overscroll-behavior: contain;
+}
+
+.chat-messages > .chat-empty-state {
+  flex: 1 1 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-xl) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.chat-message {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/*
+FNXC:ChatMessageLayout 2026-08-18-20:27:
+Full-width conversation mode is scoped to the ChatView root so normal Chat, Rooms, CLI transcripts, Quick Chat, and dock hosts share one override while the default bubble selectors remain unchanged. Stretch the message blocks, not their shared StandardChatSurface markup, so streaming, failures, tools, thinking, and attachments retain their existing semantics.
+*/
+.chat-view--full-width .chat-message,
+.chat-view--full-width .chat-message--user,
+.chat-view--full-width .chat-message--assistant,
+.chat-view--full-width .chat-message--streaming,
+.chat-view--full-width .chat-message--failure {
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+}
+
+/* Keep the selected mode explicit in narrow hosts; container/mobile rules must not reintroduce side alignment or a cap. */
+@media (max-width: 768px) {
+  .chat-view--full-width .chat-message {
+    width: 100%;
+    max-width: 100%;
+    align-self: stretch;
+  }
+}
+
+/*
+FNXC:ChatView 2026-07-22-00:00:
+The Latest button is centered with transform: translateX(-50%), so the global .btn:active { transform: scale(0.97) } rule must not replace that transform wholesale — doing so shifted the button half its width sideways on mousedown, out from under the cursor mid-click. Compose both transforms on :active instead (same fix as .devserver-log-viewer__new-logs-button).
+
+FNXC:ChatView 2026-07-23-18:15:
+Compose-on-:active was still fragile: same specificity as `.btn:active` can lose the cascade war (SelectionCommentPopover regressed the same way), and the shared `.btn { transition: transform }` made any transform churn feel like the chip jumps when the cursor moves near/over it in Quick Chat and full Chat. Center with left/right + margin-inline auto + width: fit-content so positioning no longer owns `transform`. Global `.btn:active` scale then applies in place around the geometric center without a sideways teleport. Covers session + room jump buttons (shared class), floating Quick Chat, main Chat view, and mobile.
+*/
+.chat-jump-to-latest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin-inline: auto;
+  bottom: calc(var(--space-xl) * 3);
+  z-index: 2;
+}
+
+.chat-message--user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.chat-message--assistant {
+  align-self: flex-start;
+  background: var(--surface-1);
+  color: var(--text);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.chat-message--failure {
+  background: var(--status-error-bg);
+  border: var(--btn-border-width) solid var(--status-error-bg-deep);
+}
+
+/*
+FNXC:ChatView 2026-06-23-11:40:
+Tablet Chat View has enough message-pane width for assistant prose, markdown, tool output, failure details, and attachments, so agent-side bubbles need a wider reading measure than the shared desktop/user cap. Use the ChatView container width instead of the viewport so floating Quick Chat and other narrow hosts keep their bounded bubble layout.
+
+FNXC:ChatView 2026-07-15-00:00:
+FN-8028 widens the tablet agent-side cap from 88% to 92% for a slightly wider reading measure while keeping it container-keyed, so Quick Chat and the right dock remain bounded by their narrow-host rule.
+*/
+@container chat-view (min-width: 48.0625rem) and (max-width: 64rem) {
+  .chat-message--assistant,
+  .chat-message--streaming,
+  .chat-message--failure {
+    max-width: 92%;
+  }
+}
+
+/*
+FNXC:ChatView 2026-06-28-14:47:
+Narrow chat hosts need full-width bubbles for prose, code, tool output, failures, streams, and attachments in already-constrained columns. Key this to the ChatView container width, not the viewport, so Quick Chat popups and the right dock on desktop viewports match phone-width Chat View behavior.
+*/
+@container chat-view (max-width: 30rem) {
+  .chat-message {
+    max-width: 100%;
+  }
+}
+
+.chat-message-avatar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Model-only chats hide the per-message agent identity. The toggle still
+ * needs a place to live, so collapse the avatar row to just the toggle on
+ * the right edge instead of a full identity strip. */
+.chat-message-avatar.chat-message-avatar--toolbar-only {
+  margin-bottom: 0;
+  min-height: 0;
+  justify-content: flex-end;
+}
+
+.chat-message-render-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: calc(var(--space-md) * 3);
+  height: calc(var(--space-md) * 3);
+  min-width: calc(var(--space-md) * 3);
+  min-height: calc(var(--space-md) * 3);
+  padding: 0;
+  border: none;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.chat-message--assistant .chat-message-render-toggle {
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+
+.chat-message--assistant:hover .chat-message-render-toggle,
+.chat-message-render-toggle:focus-visible,
+.chat-message-render-toggle.chat-message-render-toggle--plain {
+  opacity: 1;
+}
+
+.chat-message-render-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.chat-message-render-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-message-render-toggle--plain {
+  color: var(--text);
+}
+
+.chat-model-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-muted);
+  margin-left: 6px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.chat-message-content {
+  white-space: pre-wrap;
+}
+
+.chat-message-content--plain {
+  white-space: pre-wrap;
+}
+
+.chat-message-content--markdown {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/*
+FNXC:ChatStreaming 2026-08-19-13:52:
+Shared Chat Markdown links need page-text contrast against assistant bubbles and a persistent affordance in desktop, compact, and mobile hosts. Scope the treatment here so terminal-only and unrelated Markdown renderers keep their own contracts.
+*/
+.chat-message-content--markdown a,
+.chat-message-content--markdown a:visited {
+  color: var(--text);
+  text-decoration-line: underline;
+  text-decoration-color: var(--text);
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+
+.chat-message-content--markdown a:hover,
+.chat-message-content--markdown a:focus-visible {
+  color: var(--text);
+  text-decoration-color: var(--text);
+}
+
+.chat-message-content--markdown a:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-message-content--failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.chat-message-failure-summary-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.chat-message-failure-label {
+  min-width: 0;
+}
+
+.chat-message-failure-summary {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.chat-message-failure-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.chat-message-failure-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(var(--space-lg) * 1.5);
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--status-error-bg-deep);
+  color: var(--color-error);
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.chat-message-failure-details {
+  border: var(--btn-border-width) solid var(--status-error-bg-deep);
+  border-radius: var(--radius-md);
+  background: var(--status-error-bg-deep);
+}
+
+.chat-message-failure-details summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-muted);
+}
+
+.chat-message-failure-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-message-failure-details summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-message-failure-detail {
+  margin: 0;
+  padding: 0 var(--space-md) var(--space-md);
+  color: var(--text);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.chat-message-failure-reference {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: 0 var(--space-md) var(--space-md);
+  color: var(--text-muted);
+}
+
+.chat-message-failure-reference-label {
+  font-weight: 600;
+}
+
+.chat-message-failure-reference-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-message-failure-reference-link {
+  margin-left: auto;
+  border-color: var(--status-error-bg-deep);
+  background: var(--status-error-bg-deep);
+  color: var(--color-error);
+  text-decoration: none;
+}
+
+.chat-message-failure-reference-link:hover,
+.chat-message-failure-reference-link:focus-visible {
+  border-color: var(--color-error);
+  background: var(--status-error-bg);
+  color: var(--color-error);
+}
+
+.chat-message-failure-reference-details {
+  margin-left: auto;
+}
+
+.chat-message-failure-reference-details summary {
+  list-style: none;
+}
+
+.chat-message-failure-reference-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-message-failure-reference-meta {
+  display: grid;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--status-error-bg-deep);
+  border-radius: var(--radius-md);
+  background: var(--status-error-bg);
+}
+
+.chat-message-failure-reference-meta div {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.chat-message-failure-reference-meta dt {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+}
+
+.chat-message-failure-reference-meta dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.chat-message-thinking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-thinking-row--collapsed {
+  display: none;
+}
+
+.chat-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.chat-message-copy-action,
+.chat-message-scroll-to-top-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--space-lg) * 2);
+  height: calc(var(--space-lg) * 2);
+  min-width: calc(var(--space-lg) * 2);
+  min-height: calc(var(--space-lg) * 2);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.chat-message-scroll-to-top-action--hidden {
+  display: none;
+}
+
+.chat-message-copy-action:hover,
+.chat-message-scroll-to-top-action:hover {
+  opacity: 1;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.chat-message-copy-action:focus-visible,
+.chat-message-scroll-to-top-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  opacity: 1;
+}
+
+.chat-message-copy-action--success {
+  color: var(--color-success);
+}
+
+.chat-message-copy-action--error {
+  color: var(--color-error);
+}
+
+/*
+FNXC:ChatMessageEdit 2026-07-12-23:13:
+User messages in direct (model-loop) chat carry a compact edit affordance inline with the timestamp footer instead of a standalone action row. Editing an earlier message still resumes the conversation from that point, forgetting everything after it; the footer placement keeps the affordance discoverable without adding vertical space. Rendered only for user messages on direct/model-loop sessions (never rooms, CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEditAction`.
+*/
+.chat-message-time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-time-row .chat-message-time {
+  margin-top: 0;
+}
+
+.chat-message-edit-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--space-lg) * 2);
+  height: calc(var(--space-lg) * 2);
+  min-width: calc(var(--space-lg) * 2);
+  min-height: calc(var(--space-lg) * 2);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-text) 15%, transparent);
+  color: var(--accent-text);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.chat-message-edit-action--inline {
+  width: calc(var(--space-lg) * 1.5);
+  height: calc(var(--space-lg) * 1.5);
+  min-width: calc(var(--space-lg) * 1.5);
+  min-height: calc(var(--space-lg) * 1.5);
+}
+
+.chat-message-edit-action:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent-text) 25%, transparent);
+}
+
+.chat-message-edit-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  opacity: 1;
+}
+
+.chat-message-edit-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  width: 100%;
+}
+
+.chat-message-edit-textarea {
+  width: 100%;
+  resize: none;
+  overflow-y: hidden;
+  max-height: none;
+  min-height: calc(var(--space-lg) * 4);
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.chat-message-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+}
+
+@media (max-width: 768px) {
+  .chat-message-time-row {
+    align-items: center;
+  }
+
+  .chat-message-edit-action--inline {
+    width: calc(var(--space-lg) * 1.75);
+    height: calc(var(--space-lg) * 1.75);
+    min-width: calc(var(--space-lg) * 1.75);
+    min-height: calc(var(--space-lg) * 1.75);
+  }
+
+  .chat-message-edit-textarea {
+    min-height: calc(var(--space-lg) * 5);
+  }
+}
+
+.chat-message-content--markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-message-content--markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-message-content--markdown p,
+.chat-message-content--markdown ul,
+.chat-message-content--markdown ol,
+.chat-message-content--markdown blockquote,
+.chat-message-content--markdown pre,
+.chat-message-content--markdown table {
+  margin: 0 0 var(--space-sm);
+}
+
+.chat-message-content--markdown ul,
+.chat-message-content--markdown ol {
+  padding-left: var(--space-lg);
+}
+
+.chat-message-content--markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.chat-message-content--markdown :not(pre) > code {
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.chat-markdown-pre {
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  overflow-x: auto;
+  white-space: pre;
+  max-width: 100%;
+}
+
+.chat-markdown-table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.chat-markdown-table th,
+.chat-markdown-table td {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.chat-message-time {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-thinking {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.chat-message-thinking summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chat-message-thinking-content {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  padding: var(--space-2);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-1);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  overflow-x: auto;
+}
+
+/* === Chat Tool Calls === */
+.chat-tool-calls {
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.chat-tool-calls-header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--space-md);
+}
+
+.chat-tool-calls-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--space-sm);
+  block-size: var(--space-sm);
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.chat-tool-calls-group {
+  border: var(--btn-border-width, 1px) solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+
+.chat-tool-calls-group-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-xs);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: var(--space-md);
+  min-width: 0;
+}
+
+.chat-tool-calls-group-summary::marker {
+  content: "";
+}
+
+.chat-tool-calls-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-tool-calls-group-summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-tool-calls-count {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.chat-tool-calls-names {
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.6875rem;
+}
+
+.chat-tool-calls-group-status {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.chat-tool-calls-group > .chat-tool-call {
+  margin: 0 var(--space-xs) var(--space-xs);
+}
+
+.chat-tool-calls-group > .chat-tool-call:last-child {
+  margin-bottom: var(--space-xs);
+}
+
+.chat-tool-call {
+  border: var(--btn-border-width, 1px) solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+
+.chat-tool-call summary,
+.chat-tool-call-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-xs);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: var(--space-md);
+  min-width: 0;
+}
+
+.chat-tool-call summary::marker {
+  content: "";
+}
+
+.chat-tool-call summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-tool-call summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-tool-call-status-dot {
+  width: calc((var(--space-xs) + var(--space-sm)) / 2);
+  height: calc((var(--space-xs) + var(--space-sm)) / 2);
+  border-radius: 50%;
+  background: var(--color-success);
+  flex-shrink: 0;
+}
+
+.chat-tool-call-name {
+  font-family: var(--font-mono, monospace);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tool-call-preview {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.6875rem;
+}
+
+.chat-tool-call-status-text {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  text-transform: lowercase;
+}
+
+.chat-tool-call-content {
+  margin: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--font-mono, monospace);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.chat-tool-call--running .chat-tool-call-status-dot {
+  background: var(--color-info);
+  animation: tool-call-pulse var(--transition-slow) infinite;
+}
+
+.chat-tool-call--error summary,
+.chat-tool-call--error .chat-tool-call-summary {
+  color: var(--color-error);
+}
+
+.chat-tool-call--error .chat-tool-call-status-dot {
+  background: var(--color-error);
+}
+
+.chat-tool-calls--compact .chat-tool-calls-header,
+.chat-tool-calls--compact .chat-tool-calls-group-summary,
+.chat-tool-calls--compact .chat-tool-calls-names,
+.chat-tool-calls--compact .chat-tool-calls-group-status,
+.chat-tool-calls--compact .chat-tool-call summary,
+.chat-tool-calls--compact .chat-tool-call-summary,
+.chat-tool-calls--compact .chat-tool-call-content,
+.chat-tool-calls--compact .chat-tool-call-preview,
+.chat-tool-calls-group--compact .chat-tool-calls-group-summary,
+.chat-tool-calls-group--compact .chat-tool-calls-names {
+  font-size: 0.6875rem;
+}
+
+@keyframes tool-call-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* Streaming indicator */
+.chat-message--streaming {
+  align-self: flex-start;
+  background: var(--surface-1);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+  opacity: 0.9;
+}
+
+.chat-typing-indicator {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.chat-typing-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: chat-typing-bounce 1.4s infinite ease-in-out;
+}
+
+.chat-typing-indicator span:nth-child(1) { animation-delay: 0s; }
+.chat-typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.chat-typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes chat-typing-bounce {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 1; }
+}
+
+/* Chat waiting/empty states */
+.chat-message-content--waiting,
+.chat-message-content--empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+}
+
+/* Input area */
+.chat-input-area {
+  position: relative;
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /* Stop iOS rubber-band escape when the user swipes on the composer
+     edge with the keyboard up. Without it the page momentarily shifts
+     and the body background peeks through above the messages. */
+  overscroll-behavior: contain;
+}
+
+.chat-input-row {
+  --chat-input-control-size: calc(var(--space-lg) * 2.5);
+
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+/* === Chat Skill Menu === */
+.chat-skill-menu {
+  position: absolute;
+  left: var(--space-lg);
+  bottom: calc(100% + var(--space-xs));
+  min-width: calc((var(--space-xl) * 10) + var(--space-2xl) + (var(--space-xs) * 2));
+  max-width: calc(100% - (var(--space-lg) * 2));
+  max-height: calc(var(--space-xl) * 10);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+.chat-skill-menu-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  transition: background var(--transition-fast);
+}
+
+.chat-skill-menu-item:hover,
+.chat-skill-menu-item--highlighted {
+  background: var(--card-hover);
+}
+
+.chat-skill-menu-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: var(--card-hover);
+}
+
+.chat-skill-menu-item-name {
+  font-size: 0.8125rem;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.chat-skill-menu-item-description {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc((var(--space-xl) * 10) + var(--space-lg) + var(--space-xs));
+}
+
+.chat-skill-menu-empty {
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+/*
+FNXC:ChatComposer 2026-08-20-19:25:
+FN-076 requires ChatView composers to use automatic-only sizing through five rendered lines. The controller owns capped overflow and shrink-to-minimum behavior, while this rule removes native mouse resizing at every breakpoint.
+*/
+.chat-input-textarea {
+  /* FN-5322: this textarea sits directly inside `.chat-input-wrapper`, which
+     is a column flex container (via AgentMentionPopup.css). Keep it out of
+     vertical flex sizing so the inline autosize height from ChatView.tsx is
+     honored instead of collapsing back toward the one-line minimum. */
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+  resize: none;
+  overflow-y: hidden;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  line-height: 1.4;
+  max-height: none;
+  min-height: calc(var(--space-2xl) + var(--space-sm));
+  /* touch-action: manipulation allows tap-to-focus (so iOS doesn't
+     auto-dismiss the keyboard between gesture frames) and blocks
+     double-tap zoom + pan/zoom gestures. We previously tried `none`
+     to lock the composer against pan, but that broke first-tap
+     focus on iOS. */
+  touch-action: manipulation;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 768px) {
+  .chat-input-textarea {
+    resize: none;
+  }
+}
+
+.chat-input-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.chat-input-send {
+  width: var(--chat-input-control-size);
+  min-height: var(--chat-input-control-size);
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.chat-input-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-input-stop {
+  width: var(--chat-input-control-size);
+  min-height: var(--chat-input-control-size);
+  border-radius: var(--radius-md);
+  border: none;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), transform var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-input-stop-icon {
+  display: block;
+  inline-size: var(--space-sm);
+  block-size: var(--space-sm);
+  border-radius: var(--radius-xs);
+  background: currentColor;
+}
+
+.chat-input-stop:hover {
+  background: color-mix(in srgb, var(--color-error) 25%, transparent);
+}
+
+.chat-input-stop:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-input-stop:active {
+  transform: scale(0.97);
+}
+
+/*
+FNXC:Chat-ComposerAlignment 2026-07-12-10:25:
+Composer attach + model/thinking icon controls must be vertically centered with the single-line text input box on all surfaces (desktop/tablet/mobile). Match their block-size to --chat-input-control-size (== send button == textarea min-height) so align-self: flex-end yields center alignment when single-line and keeps them at the row bottom when the textarea grows multi-line. (FN-7917)
+*/
+.chat-attach-btn {
+  min-inline-size: var(--chat-input-control-size);
+  min-block-size: var(--chat-input-control-size);
+  block-size: var(--chat-input-control-size);
+  align-self: flex-end;
+}
+
+/*
+FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+FN-7898 adds a Brain-icon trigger next to the attach button so an active model-loop session's
+thinking (reasoning-effort) level can be changed mid-conversation. The root wrapper needs
+position: relative so the popover (mirroring .chat-skill-menu's positioning/z-index) anchors to
+the trigger instead of the whole .chat-input-row.
+
+FNXC:Chat-ModelSwitch 2026-07-12-00:00:
+FN-7908 keeps model/agent retargeting inside the same brain popup. The widened panel uses token-based widths and bounded scroll regions so the CustomModelDropdown trigger and agent list remain usable on desktop and mobile without adding a second composer affordance.
+*/
+.chat-thinking-level-root {
+  position: relative;
+  min-block-size: var(--chat-input-control-size);
+  block-size: var(--chat-input-control-size);
+  align-self: flex-end;
+}
+
+.chat-thinking-btn {
+  min-inline-size: var(--chat-input-control-size);
+  min-block-size: var(--chat-input-control-size);
+  block-size: var(--chat-input-control-size);
+}
+
+.chat-thinking-btn--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-thinking-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--space-xs));
+  width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
+  max-width: calc(100vw - (var(--space-lg) * 2));
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+  max-height: min(calc(var(--space-xl) * 24), calc(100vh - (var(--space-xl) * 4)));
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+/*
+FNXC:Chat-ModelSwitch 2026-07-13-00:00:
+FN-7934: The brain popup must fit the containing chat surface, not only the browser viewport. Key the inset layout on .chat-view--narrow because it reflects surface width for floating Chat windows and compact docks; otherwise a narrow floating Chat window on a wide viewport clips the Model / Agent picker on the right.
+*/
+.chat-view--narrow .chat-thinking-level-root {
+  position: static;
+}
+
+.chat-view--narrow .chat-thinking-popover {
+  left: var(--space-md);
+  right: var(--space-md);
+  width: auto;
+  max-width: none;
+  max-inline-size: none;
+  max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
+}
+
+.chat-view--narrow .chat-thinking-agent-list,
+.chat-view--narrow .chat-thinking-popover-list {
+  max-height: calc(var(--space-xl) * 7);
+}
+
+.chat-thinking-target-section,
+.chat-thinking-level-section {
+  padding: var(--space-sm);
+}
+
+.chat-thinking-target-section {
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+FNXC:ChatViewTokens 2026-07-15-18:03:
+Thinking-section text uses the defined muted text token across all themes. The mobile token guard enforces this migration invariant for ChatView source files.
+*/
+.chat-thinking-section-title {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-xs);
+  text-transform: uppercase;
+}
+
+.chat-thinking-mode-toggle {
+  display: flex;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  padding: var(--space-xs);
+  background: var(--surface-secondary);
+  border-radius: var(--radius-md);
+}
+
+.chat-thinking-mode-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-thinking-mode-btn--active,
+.chat-thinking-mode-btn:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.chat-thinking-mode-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-thinking-model-picker .custom-model-dropdown {
+  width: 100%;
+}
+
+.chat-thinking-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: calc(var(--space-xl) * 8);
+  overflow-y: auto;
+}
+
+.chat-thinking-agent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-thinking-agent-item:hover,
+.chat-thinking-agent-item--selected {
+  background: var(--card-hover);
+  border-color: var(--accent);
+}
+
+.chat-thinking-agent-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-thinking-agent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thinking-agent-role,
+.chat-thinking-current-target,
+.chat-thinking-empty {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.chat-thinking-agent-role {
+  flex: none;
+  text-transform: capitalize;
+}
+
+.chat-thinking-current-target,
+.chat-thinking-empty {
+  margin-top: var(--space-xs);
+}
+
+.chat-thinking-popover-list {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--space-xl) * 8);
+  overflow-y: auto;
+}
+
+.chat-thinking-popover-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: background var(--transition-fast);
+}
+
+.chat-thinking-popover-option:hover,
+.chat-thinking-popover-option.active {
+  background: var(--card-hover);
+}
+
+.chat-thinking-popover-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: var(--card-hover);
+}
+
+.chat-input-wrapper {
+  flex: 1;
+}
+
+.chat-input-wrapper--dragover {
+  border: 1px dashed var(--todo);
+  border-radius: var(--radius-md);
+}
+
+.chat-attachment-previews {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  width: 100%;
+}
+
+.chat-attachment-preview {
+  width: calc(var(--space-xl) * 3);
+  height: calc(var(--space-xl) * 3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-attachment-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-attachment-preview-name {
+  font-size: 0.625rem;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  padding: var(--space-xs);
+}
+
+.chat-attachment-remove {
+  position: absolute;
+  top: calc(var(--space-xs) * -1);
+  right: calc(var(--space-xs) * -1);
+  background: color-mix(in srgb, var(--color-error) 80%, transparent);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius-pill);
+  width: calc(var(--space-md) * 2);
+  height: calc(var(--space-md) * 2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.chat-attachment-remove:hover {
+  background: color-mix(in srgb, var(--color-error) 90%, transparent);
+}
+
+.chat-attachment-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-attachment-remove:active {
+  transform: scale(0.97);
+}
+
+.chat-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-attachment-link {
+  display: inline-flex;
+  border-radius: var(--radius-sm);
+}
+
+.chat-message-attachment {
+  max-width: calc(var(--space-xl) * 12);
+  border-radius: var(--radius-sm);
+}
+
+.chat-message-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.chat-message-attachment-file:hover {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.chat-message-attachment-file:focus-visible,
+.chat-message-attachment-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Sidebar footer contains the primary chat-scope action on desktop and mobile. */
+.chat-sidebar-footer {
+  display: block;
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.chat-sidebar-footer .chat-sidebar-footer-btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 40px;
+}
+
+/* === Mobile: one pane at a time =========================================
+   Sidebar (session list) and thread are siblings of .chat-view. On mobile
+   we show whichever one is "active" full-width: when the sidebar is
+   visible, the thread is hidden; when the sidebar is hidden (a session is
+   open), the sidebar is collapsed via .chat-sidebar--hidden and the
+   thread takes the full viewport. The thread already renders a back
+   button (ArrowLeft) on mobile to flip back to the session list. */
+@media (max-width: 768px) {
+  html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-view__body {
+    flex-direction: row;
+  }
+
+  html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked {
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+  }
+
+  .chat-view__body {
+    flex-direction: column;
+  }
+
+  .chat-sidebar {
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%; /* FN-6210: mobile sidebar spans full viewport */
+    height: 100%;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+  }
+
+  .chat-sidebar-header {
+    display: none;
+  }
+
+  .chat-sidebar-search {
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+  }
+
+  .chat-sidebar-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* On mobile, the active scope affordance uses a full-width pinned footer. */
+  .chat-sidebar-footer {
+    display: block;
+    padding: var(--space-sm) var(--space-md);
+    padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom, 0));
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+
+  .chat-sidebar-footer .chat-sidebar-footer-btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 40px;
+  }
+
+  .chat-thread-header {
+    flex-wrap: nowrap;
+  }
+
+  .chat-messages {
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-lg) var(--space-sm);
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .chat-messages > .chat-empty-state {
+    padding: var(--space-xl) var(--space-sm);
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-sizing: border-box;
+  }
+
+  .chat-thread-header-identity {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: visible;
+  }
+  .chat-thread-header-identity .chat-thread-header-title,
+  .chat-thread-header-identity .chat-model-tag {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-thread-header-context {
+    display: none;
+  }
+
+  .chat-sidebar-scope-btn {
+    min-height: calc(var(--space-lg) * 2.25);
+  }
+
+  /* FNXC:ChatSidebar 2026-07-16-00:00: Match the shared sidebar row's one-button overflow gutter on mobile. */
+  .chat-session-title,
+  .chat-session-preview {
+    padding-right: calc((var(--space-md) * 2) + var(--space-sm));
+  }
+
+  .chat-message--assistant .chat-message-render-toggle {
+    opacity: 1;
+  }
+
+  /* FN-4352: secondary hover-revealed row action keeps base compact sizing (inflated by FN-3628). */
+  .chat-message-copy-action {
+    opacity: 1;
+  }
+
+  .chat-message-thinking-row {
+    gap: var(--space-xs);
+  }
+
+  .chat-message-scroll-to-top-action {
+    opacity: 1;
+  }
+
+  .chat-message-scroll-to-top-action--hidden {
+    display: none;
+  }
+
+  .chat-tool-calls-group-summary,
+  .chat-tool-call summary,
+  .chat-tool-call-summary {
+    flex-wrap: nowrap;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .chat-tool-calls-names,
+  .chat-tool-call-name,
+  .chat-tool-call-status-text,
+  .chat-tool-calls-group-status,
+  .chat-tool-calls-count {
+    white-space: nowrap;
+  }
+
+  .chat-tool-calls-group-status,
+  .chat-tool-call-status-text {
+    margin-left: auto;
+  }
+
+  /* primary touch targets per AGENTS.md convention; FN-7917 keeps the icon controls in parity with the send/input control size on mobile too. */
+  .chat-attach-btn,
+  .chat-thinking-btn {
+    min-inline-size: var(--chat-input-control-size);
+    min-block-size: var(--chat-input-control-size);
+    block-size: var(--chat-input-control-size);
+  }
+
+  /*
+  FNXC:Chat-ModelSwitch 2026-07-12-22:38:
+  FN-7916: mobile applies a global max-width clamp to every element, so a popover positioned from the small Brain-button wrapper collapsed into an unreadable strip. Let the chat input area own the mobile containing block and inset the panel with tokenized viewport gutters so the model picker, agent list, and thinking levels stay reachable.
+  */
+  .chat-thinking-level-root {
+    position: static;
+  }
+
+  .chat-thinking-popover {
+    left: var(--space-md);
+    right: var(--space-md);
+    width: auto;
+    max-width: none;
+    max-inline-size: none;
+    max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
+  }
+
+  .chat-thinking-agent-list,
+  .chat-thinking-popover-list {
+    max-height: calc(var(--space-xl) * 7);
+  }
+
+  .chat-input-send,
+  .chat-input-stop {
+    min-width: var(--chat-input-control-size);
+    min-height: var(--chat-input-control-size);
+  }
+
+  .chat-attachment-preview {
+    width: calc(var(--space-xl) * 2.5);
+    height: calc(var(--space-xl) * 2.5);
+  }
+
+  .chat-attachment-remove {
+    width: calc(var(--space-lg) * 2.25);
+    height: calc(var(--space-lg) * 2.25);
+  }
+
+  .chat-message {
+    max-width: 100%;
+  }
+
+  .chat-message-failure-details summary,
+  .chat-message-failure-reference {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .chat-message-failure-reference-link {
+    margin-left: 0;
+  }
+
+  .chat-new-dialog {
+    width: 95vw;
+    margin: var(--space-lg);
+  }
+
+  .chat-thread-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .chat-skill-menu {
+    left: var(--space-md);
+    right: calc(var(--space-md) + var(--mobile-nav-height));
+    min-width: 0;
+    max-width: none;
+  }
+
+  .chat-jump-to-latest {
+    bottom: calc(var(--space-xl) * 4);
+  }
+
+  .chat-sidebar-rooms-header .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .chat-room-thread-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .chat-room-thread-header .btn-icon {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  .chat-room-item {
+    padding: var(--space-sm);
+  }
+
+  .chat-room-item-delete {
+    flex-shrink: 0;
+  }
+
+  .chat-room-thread-members {
+    max-width: 50%;
+  }
+}
+
+.chat-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  margin: 0 var(--space-xs);
+  background: color-mix(in srgb, var(--todo) 14%, transparent);
+  color: var(--todo);
+  border: var(--btn-border-width, 1px) solid color-mix(in srgb, var(--todo) 30%, transparent);
+  border-radius: var(--radius-pill);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chat-mention-chip--non-member {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.chat-message--user .chat-mention-chip {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-text) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+}
+
+.chat-message--user .chat-mention-chip--non-member {
+  background: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
+}
+
+/*
+FNXC:ChatTags 2026-08-05-10:55:
+Shared ChatView hosts expose Direct-only tag filters and compact chips without introducing a second sidebar layout.
+
+FNXC:ChatTags 2026-08-23-15:51:
+The tag filter select must use the sibling sidebar search input's comfortable token-based inner padding so "All tags" is not flush against its border across desktop, narrow, and mobile hosts.
+
+FNXC:ChatArchived 2026-08-23-16:27:
+The compact Archived toggle shares the narrowed tag-filter line, with tokenized row padding separating the search input and session list. Narrow and mobile sidebars may wrap the controls rather than clipping or horizontally overflowing them.
+*/
+.chat-sidebar-filter-row { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) 0; min-width: 0; }
+.chat-tag-filter { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-xs); min-width: 0; overflow: hidden; color: var(--text-muted); }
+.chat-tag-filter > svg,
+.chat-tag-filter > .btn-icon { flex: 0 0 auto; }
+.chat-tag-filter select { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--text); padding: var(--space-sm) var(--space-md); }
+.chat-archived-toggle { flex: 0 0 auto; padding-inline: var(--space-sm); white-space: nowrap; }
+.chat-archived-toggle--active { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.chat-session-tags { display: flex; flex-wrap: wrap; gap: var(--space-xs); overflow: hidden; }
+.chat-session-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-muted); font-size: var(--font-size-xs); }
+/* FNXC:ChatTags 2026-08-05-12:15: direct-conversation tag controls keep assignment, rename, and deletion in the existing context menu so shared Chat hosts do not grow another sidebar action row. */
+.chat-session-tag-menu { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-xs); border-bottom: 1px solid var(--border); }
+.chat-tag-menu-item { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+.chat-session-context-menu .chat-tag-menu-item > [role="menuitemcheckbox"] { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-session-context-menu .chat-tag-menu-item > .btn-icon { flex: 0 0 auto; width: auto; padding: var(--space-xs); }
+.chat-tag-create-row { display: flex; gap: var(--space-xs); }
+.chat-tag-create-row .input { min-width: 0; }
+@media (max-width: 768px) {
+  .chat-sidebar-filter-row { flex-wrap: wrap; }
+  .chat-session-tags { max-height: calc(var(--space-lg) * 2); }
+  /*
+  FNXC:ChatTags 2026-07-24-23:05:
+  Compact mobile tag-menu gap must use a defined token. --space-2xs is intentionally
+  undefined (space-token-defined hygiene); half of --space-xs matches the prior intent.
+  */
+  .chat-tag-menu-item { gap: calc(var(--space-xs) / 2); }
+}

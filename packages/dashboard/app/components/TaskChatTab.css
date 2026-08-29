@@ -1,0 +1,748 @@
+.task-chat-tab {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  /* FNXC:TaskDetailChat 2026-06-13-19:55: Chat box should sit in the chat view without excess vertical spacing around the composer (FN-6418), so the transcript-to-composer gap is tighter than the default card stack. */
+  gap: var(--space-sm);
+  min-height: 0;
+  height: 100%;
+  /* FNXC:TaskDetailChat 2026-06-28-00:00: FN-7207 requires narrow task-detail chat hosts (right-side dock detail, narrow split, and floating hosts) to collapse the agent-header column and widen message bubbles based on the chat host width rather than the viewport. */
+  container-type: inline-size;
+  container-name: task-chat-tab;
+}
+
+.task-chat-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--space-2xl);
+  min-block-size: var(--space-2xl);
+  padding: 0;
+}
+
+/*
+FNXC:TaskChat 2026-06-13-00:00:
+FN-6425 requires the chat expand control to stay inside the chat view as an icon-only affordance while remaining reachable at every transcript scroll offset. Anchor it to the non-scrolling task-chat wrapper rather than the transcript content.
+*/
+.task-chat-expand-toggle--overlay {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 3;
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.task-chat-transcript {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--space-md) + var(--space-2xl)) var(--space-md) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.task-chat-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-height: calc(var(--space-2xl) * 3);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.task-chat-load-previous-row {
+  display: flex;
+  justify-content: center;
+  min-block-size: calc(var(--space-2xl) + var(--space-sm));
+}
+
+.task-chat-load-previous,
+.task-chat-load-previous-status {
+  min-block-size: calc(var(--space-2xl) + var(--space-sm));
+}
+
+.task-chat-load-previous-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+}
+
+.task-chat-jump-to-bottom {
+  position: sticky;
+  right: var(--space-md);
+  bottom: var(--space-md);
+  width: fit-content;
+  min-inline-size: var(--space-2xl);
+  min-block-size: var(--space-2xl);
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  z-index: 2;
+}
+
+.task-chat-jump-to-bottom:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.task-chat-jump-to-bottom:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.task-chat-group {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-sm);
+}
+
+.task-chat-group-header {
+  display: flex;
+  align-items: center;
+  align-self: start;
+  gap: var(--space-sm);
+  min-width: min(calc(var(--space-2xl) * 4), 32vw);
+  color: var(--text-muted);
+}
+
+.task-chat-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--provider-icon-color, currentColor) 8%, transparent);
+  color: var(--text-muted);
+}
+
+.task-chat-provider-icon--fallback {
+  color: var(--text-muted);
+}
+
+.task-chat-provider-icon .provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-chat-role-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.task-chat-group-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--space-md);
+}
+
+.task-chat-timestamp {
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) - (var(--space-xs) / 2));
+  white-space: nowrap;
+}
+
+/*
+FNXC:TaskDetailChat 2026-06-23-21:38:
+List View split-pane detail can be narrow while the global viewport is desktop-sized. Scope the compact/mobile agent-output group contract to that host so agent/provider headers stack above output blocks there without changing full-width modal, board main-panel, popped-out, or expanded chat desktop layouts.
+*/
+.list-split-detail-content .task-chat-group {
+  grid-template-columns: 1fr;
+}
+
+.list-split-detail-content .task-chat-group-header {
+  min-width: 0;
+}
+
+.task-chat-group-bubbles {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-chat-user-group {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xs);
+}
+
+.task-chat-user-header {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding-inline: var(--space-sm);
+  color: var(--text-muted);
+}
+
+/*
+FNXC:TaskDetailChat 2026-06-29-07:41:
+FN-7231 requires task-detail chat text, user, tool, and thinking blocks to keep tokenized inner padding so transcript content does not sit against bordered block edges. Include padding inside block sizing so user bubbles still honor the responsive max width. Keep the spacing scoped to TaskChatTab selectors so regular ChatView spacing is unchanged.
+*/
+.task-chat-entry {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/*
+FNXC:ProactiveChatStatus 2026-07-16-12:05:
+FN-8064 makes engine status rows a real-time task-progress report. Give complete status
+messages a tokenized warning-toned distinction and reuse the shared status-dot convention;
+the existing compact padding rule keeps the affordance usable below the mobile breakpoint.
+*/
+.task-chat-entry--status {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--surface));
+}
+
+/*
+FNXC:TaskChat-LogGap 2026-07-26-17:30:
+The reconnect gap marker must not read as ordinary chat or as a routine status update: it reports
+that output is MISSING. Reuse the `.task-chat-entry` block and error token, and mark the break with a
+dashed edge so the row scans as a discontinuity in the transcript rather than content in it.
+Tokens only — no forked entry variant, no hardcoded px/hex.
+*/
+.task-chat-entry--gap {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--color-error) 55%, var(--border));
+  background: color-mix(in srgb, var(--color-error) 8%, var(--surface));
+  color: var(--text-muted);
+}
+
+.task-chat-entry--gap .task-chat-entry-label-row,
+.task-chat-entry--status .task-chat-entry-label-row {
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+
+.task-chat-entry--user {
+  max-width: min(100%, calc(var(--space-2xl) * 18));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  box-shadow: var(--shadow-sm);
+}
+
+/*
+FNXC:TaskDetailChat 2026-06-28-00:00:
+FN-7207 makes the right-side dock and narrow desktop detail hosts use the same readable one-column chat layout as mobile without changing wide modal, board main-panel, or expanded chat layouts above this host-width breakpoint.
+*/
+@container task-chat-tab (max-width: 34rem) {
+  .task-chat-group {
+    grid-template-columns: 1fr;
+  }
+
+  .task-chat-group-header {
+    min-width: 0;
+  }
+
+  .task-chat-user-group {
+    align-items: stretch;
+  }
+
+  .task-chat-user-header {
+    align-self: flex-end;
+    justify-content: flex-end;
+  }
+
+  .task-chat-entry--user {
+    max-width: 100%;
+  }
+}
+
+.task-chat-tool-group {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/*
+FNXC:TaskChat 2026-07-15-11:00:
+FN-8029 keeps collapsed thinking blocks compact like tool-call summaries by using smaller container and summary padding. Preserve tokenized inner-body padding so expanded reasoning remains comfortably readable.
+*/
+.task-chat-thinking {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.task-chat-tool-group-summary,
+.task-chat-thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+/*
+FNXC:TaskChat 2026-06-28-00:00:
+FN-7215 aligns task-detail tool-call summaries with regular Chat's compact collapsed treatment. Keep the clickable row token-sized, single-line by default, and ellipsis-friendly so completed tool history does not dominate task transcripts while details remain available through native <details> expansion.
+
+FNXC:TaskChat 2026-06-29-14:00:
+FN-7240 raises the FN-7225 follow-up tool-call typography to the readable base spacing token while preserving FN-7215's compact collapsed summary treatment, so task-detail summaries, counts, names, and errors inherit consistent sizing without expanding their padding.
+*/
+.task-chat-tool-group-summary {
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: var(--space-md);
+}
+
+.task-chat-tool-group-summary::-webkit-details-marker,
+.task-chat-thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-chat-tool-group-summary::marker,
+.task-chat-thinking-summary::marker {
+  content: "";
+}
+
+.task-chat-tool-group-summary:focus-visible,
+.task-chat-thinking-summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.task-chat-tool-group-count {
+  flex: 0 0 auto;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.task-chat-tool-group-names {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  font-size: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-chat-tool-group-overflow {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.task-chat-tool-group-error-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--color-error);
+  font-size: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.task-chat-tool-group-entries,
+.task-chat-thinking-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-chat-tool-group-entries {
+  gap: var(--space-xs);
+  padding: 0 var(--space-xs) var(--space-xs);
+}
+
+.task-chat-thinking-body {
+  padding: 0 var(--space-sm) var(--space-sm);
+}
+
+.task-chat-tool-entry {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.task-chat-tool-entry--tool-error {
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--border));
+  background: color-mix(in srgb, var(--color-error) 8%, var(--surface));
+}
+
+.task-chat-thinking {
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--border));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--surface));
+}
+
+.task-chat-thinking-summary {
+  padding: var(--space-xs);
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+/*
+FNXC:TaskChatTimestamps 2026-06-29-14:47:
+FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep block-level timestamps visually quieter than content, token-sized, and flex-contained so text bubbles, tool rows, native details summaries, and thinking summaries remain readable in both wide and narrow hosts.
+*/
+.task-chat-entry-meta .task-chat-timestamp,
+.task-chat-entry-label-row .task-chat-timestamp,
+.task-chat-tool-group-summary .task-chat-timestamp,
+.task-chat-thinking-summary .task-chat-timestamp {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) - (var(--space-xs) / 2));
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.task-chat-entry-meta .task-chat-timestamp {
+  margin-left: auto;
+}
+
+.task-chat-entry-label-row .task-chat-timestamp,
+.task-chat-tool-group-summary .task-chat-timestamp,
+.task-chat-thinking-summary .task-chat-timestamp {
+  max-inline-size: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-chat-entry-label-row,
+.task-chat-entry-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-bottom: calc(var(--space-xs) / 2);
+}
+
+.task-chat-entry-meta {
+  justify-content: flex-end;
+}
+
+/* FNXC:AgentLogging 2026-07-04-09:52: Task chat tool groups surface completion duration inline with existing quiet metadata so collapsed/expanded transcripts show request processing time without adding a second timestamp concept. */
+.task-chat-timing-labels {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.task-chat-timing-label {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-xs);
+  background: var(--bg-secondary);
+}
+
+.task-chat-entry-kicker {
+  color: var(--text-muted);
+  font-size: var(--space-md);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.task-chat-tool-entry--tool-error .task-chat-entry-kicker {
+  color: var(--color-error);
+}
+
+/* FNXC:TaskChat-LogGap 2026-07-26-17:33: gap notice reuses the tool-error kicker tone so "output is missing" reads as a warning, not a status update. Declared after the base kicker rule so it overrides it. */
+.task-chat-entry--gap .task-chat-entry-kicker {
+  color: var(--color-error);
+}
+
+.task-chat-entry-text {
+  white-space: pre-wrap;
+}
+
+.task-chat-markdown > :first-child,
+.task-chat-markdown p:first-child {
+  margin-top: 0;
+}
+
+.task-chat-markdown > :last-child,
+.task-chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.task-chat-tool-detail-block {
+  margin-top: var(--space-xs);
+}
+
+.task-chat-composer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /*
+  FNXC:TaskDetailChat 2026-07-02-00:32:
+  Activity Live and Planner Chat composers should share the same plain input-row treatment. Do not wrap Activity steering in a card shell or add extra composer padding around the input; the surrounding chat surface already owns the spacing.
+  */
+  padding: 0;
+}
+
+.task-chat-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:TaskDetailChat 2026-07-21-23:42:
+FN-8473 requires the Activity Live steering input to share the transcript panel's --radius-lg so the composer does not look sharper than the panel above it.
+
+FNXC:ChatComposer 2026-08-20-19:25:
+FN-076 requires Activity Chat to grow automatically through five rendered lines, internally scroll excess content, and shrink after deletion. Native mouse resizing is disabled so the shared controller remains the only height authority.
+*/
+.task-chat-input {
+  min-height: calc(var(--space-2xl) + var(--space-sm));
+  max-height: none;
+  resize: none;
+  overflow-y: hidden;
+  flex: 1 1 auto;
+  border-radius: var(--radius-lg);
+}
+
+/*
+FNXC:TaskDetailChat 2026-06-16-19:45:
+FN-6507 requires the Task Detail chat send glyph to scale with the larger square touch target on desktop and mobile. Override only this button's global .btn-icon size so Send and Loader2 stay visually proportional without changing the tap box or sibling chat send buttons.
+
+FNXC:TaskDetailChat 2026-06-17-18:05:
+FN-6604 corrects the FN-6507 no-op where var(--space-lg) resolved to the same 16px value as the global --icon-size-md default. Use var(--space-xl) so the glyph resolves to 24px and fills the 40px desktop and mobile send button proportionally while preserving the tap box.
+
+FNXC:TaskDetailChat 2026-06-18-06:36:
+FN-6639 corrects the FN-6604 sizing because var(--space-xl) rendered a 24px glyph that filled only about 60% of the 40px button and still looked too small on mobile. Use var(--space-2xl) so Send and Loader2 render at 32px, about 80% fill, on desktop and mobile while preserving the tap box alignment.
+
+FNXC:TaskDetailChat 2026-06-18-12:00:
+FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN-6639: those passes only grew the glyph token inside a fixed 40px box, so the mobile affordance was never larger than desktop and still felt too small. Grow only the mobile box to calc(var(--space-2xl) + var(--space-lg)) and the mobile glyph to calc(var(--space-2xl) + var(--space-sm)), roughly 83% fill, while raising the mobile composer textarea min-height to the same 48px token sum for bottom alignment. Desktop stays intentionally unchanged.
+*/
+.task-chat-send {
+  --btn-icon-size: var(--space-2xl);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: calc(var(--space-2xl) + var(--space-sm));
+  min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+  block-size: calc(var(--space-2xl) + var(--space-sm));
+  min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  padding: 0;
+}
+
+@media (max-width: 768px) {
+  .task-chat-tab {
+    gap: var(--space-xs);
+  }
+
+  .task-chat-expand-toggle--overlay {
+    top: var(--space-sm);
+    right: var(--space-sm);
+    min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .task-chat-transcript {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: calc(var(--space-sm) + var(--space-2xl)) var(--space-sm) var(--space-sm);
+  }
+
+  .task-chat-jump-to-bottom {
+    right: var(--space-sm);
+    bottom: var(--space-sm);
+    min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .task-chat-load-previous-row {
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .task-chat-load-previous,
+  .task-chat-load-previous-status {
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .task-chat-group {
+    grid-template-columns: 1fr;
+  }
+
+  .task-chat-group-header {
+    min-width: 0;
+  }
+
+  .task-chat-user-group {
+    align-items: stretch;
+  }
+
+  .task-chat-user-header {
+    align-self: flex-end;
+    justify-content: flex-end;
+  }
+
+  .task-chat-timestamp,
+  .task-chat-timing-labels {
+    white-space: normal;
+  }
+
+  .task-chat-entry--user {
+    max-width: 100%;
+  }
+
+  .task-chat-entry,
+  .task-chat-tool-group {
+    padding: var(--space-sm);
+  }
+
+  .task-chat-thinking {
+    padding: var(--space-xs);
+  }
+
+  .task-chat-tool-group-summary {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+  }
+
+  .task-chat-thinking-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .task-chat-tool-group-names {
+    width: auto;
+  }
+
+  .task-chat-tool-group-error-count {
+    width: auto;
+    margin-left: auto;
+  }
+
+  .task-chat-tool-group-entries,
+  .task-chat-thinking-body {
+    padding-inline: var(--space-xs);
+  }
+
+  .task-chat-tool-entry {
+    padding: var(--space-xs);
+  }
+
+  .task-chat-composer {
+    padding: 0;
+  }
+
+  .task-chat-composer-row {
+    align-items: flex-end;
+    gap: var(--space-xs);
+  }
+
+  .task-chat-input {
+    min-height: calc(var(--space-2xl) + var(--space-lg));
+    resize: none;
+  }
+
+  .task-chat-send {
+    --btn-icon-size: calc(var(--space-2xl) + var(--space-sm));
+    inline-size: calc(var(--space-2xl) + var(--space-lg));
+    min-inline-size: calc(var(--space-2xl) + var(--space-lg));
+    block-size: calc(var(--space-2xl) + var(--space-lg));
+    min-block-size: calc(var(--space-2xl) + var(--space-lg));
+  }
+}
+
+/*
+FNXC:ChatMessageLayout 2026-08-18-20:27:
+Activity Live has an agent-header grid column and a right-aligned user group in its default transcript. Full-width mode deliberately stacks the header above one stretched transcript column, including user, status/gap, tool, and thinking blocks, while the context-free/default path keeps the existing task-chat bubbles.
+*/
+.task-chat-tab--full-width .task-chat-group {
+  grid-template-columns: 1fr;
+}
+
+.task-chat-tab--full-width .task-chat-group-header {
+  min-width: 0;
+}
+
+.task-chat-tab--full-width .task-chat-group-bubbles,
+.task-chat-tab--full-width .task-chat-user-group {
+  align-items: stretch;
+}
+
+.task-chat-tab--full-width .task-chat-user-header {
+  align-self: flex-start;
+  justify-content: flex-start;
+  padding-inline: 0;
+}
+
+.task-chat-tab--full-width .task-chat-entry,
+.task-chat-tab--full-width .task-chat-tool-group,
+.task-chat-tab--full-width .task-chat-thinking,
+.task-chat-tab--full-width .task-chat-tool-entry {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .task-chat-tab--full-width .task-chat-group,
+  .task-chat-tab--full-width .task-chat-entry,
+  .task-chat-tab--full-width .task-chat-tool-group,
+  .task-chat-tab--full-width .task-chat-thinking,
+  .task-chat-tab--full-width .task-chat-tool-entry {
+    width: 100%;
+    max-width: 100%;
+  }
+}

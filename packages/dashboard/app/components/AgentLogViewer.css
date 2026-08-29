@@ -1,0 +1,461 @@
+.agent-log-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.agent-log-viewer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  padding: var(--space-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.agent-log-viewer-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-log-viewer-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-log-viewer-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.agent-log-viewer-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.agent-log-empty-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-sm) var(--space-md) 0;
+}
+
+.agent-log-loading,
+.agent-log-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: calc(var(--space-2xl) + var(--space-lg));
+  padding: var(--space-lg);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.agent-log-model-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-log-model-icons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.agent-log-model-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.agent-log-model-expand-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.agent-log-model-expand-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-log-model-details {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  padding-top: var(--space-sm);
+  margin-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.agent-log-model-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-log-model-label {
+  font-weight: 600;
+}
+
+.agent-log-model-value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.agent-log-model-header-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+/*
+FNXC:TaskDetailChat 2026-06-23-23:55:
+Task-detail chat output blocks can be long enough that the executor/reviewer label scrolls out of view.
+Keep each block full-width and float the role/timestamp badge as a sticky overlay on the left so the visible content always has role context without reserving a permanent label column.
+*/
+.agent-log-badge-row {
+  position: sticky;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: calc(100% - var(--space-md));
+  margin: 0 0 var(--space-xs) var(--space-xs);
+  padding: 2px var(--space-xs);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  /* FNXC:DashboardThemeTokens 2026-06-25-13:15: Shadow base uses the repo #000000 color-mix convention; --shadow-color was never a defined token (token-validity guard). */
+  box-shadow: 0 1px 4px color-mix(in srgb, #000000 12%, transparent);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.agent-log-tool {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--accent);
+  margin: var(--space-xs) 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: var(--space-xs) solid var(--accent);
+  background: var(--log-tool-bg);
+}
+
+.agent-log-tool-result {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--color-success);
+  margin: calc(var(--space-xs) / 2) 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: var(--space-xs) solid var(--color-success);
+  background: var(--log-success-bg);
+  font-size: 12px;
+}
+
+.agent-log-tool-error {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--color-error);
+  margin: calc(var(--space-xs) / 2) 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: var(--space-xs) solid var(--color-error);
+  background: var(--log-error-bg);
+  font-size: 12px;
+}
+
+.agent-log-tool-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/*
+FNXC:AgentLogging 2026-07-04-09:49:
+Agent-log timing labels are metadata, not timestamps. Keep TTFT and duration compact, token-colored, and inline with the affected entry so operators can compare latency without disrupting grouped markdown/tool output.
+*/
+.agent-log-timing-labels {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-inline-start: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.agent-log-timing-label {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-xs);
+  background: var(--bg-secondary);
+}
+
+.agent-log-tool-detail-wrapper {
+  margin-top: var(--space-xs);
+}
+
+.agent-log-tool-detail-toggle {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  font-size: 12px;
+  text-align: left;
+}
+
+.agent-log-tool-detail-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.agent-log-tool-detail-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-log-tool-detail-content--collapsed {
+  display: none;
+}
+
+.agent-log-tool-detail {
+  margin: var(--space-xs) 0 0;
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.agent-log-plain-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+
+.agent-log-text {
+  display: block;
+  position: relative;
+  width: 100%;
+  color: var(--text);
+}
+
+.agent-log-thinking {
+  display: block;
+  position: relative;
+  width: 100%;
+  font-style: italic;
+  color: var(--text);
+}
+
+.agent-log-agent-badge {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-right: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.agent-log-timestamp {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 6px;
+  opacity: 0.7;
+}
+
+.agent-log-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--space-xl) + var(--space-xl) + var(--space-xs));
+  min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  line-height: 1;
+}
+
+.agent-log-mode-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.agent-log-mode-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.agent-log-mode-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-log-mode-toggle:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.agent-log-mode-toggle:disabled:hover {
+  background: var(--card);
+  color: var(--text-muted);
+}
+
+.agent-log-summary {
+  padding: var(--space-xs) var(--space-md);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+.agent-log-load-more {
+  padding: var(--space-md);
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-log-load-more .agent-log-mode-toggle {
+  min-width: 120px;
+}
+
+.agent-log-return-to-live {
+  position: sticky;
+  right: var(--space-md);
+  bottom: var(--space-md);
+  width: fit-content;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  z-index: 2;
+}
+
+.agent-log-return-to-live:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.agent-log-return-to-live:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-log-viewer--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0px))
+    max(var(--space-lg), env(safe-area-inset-right, 0px))
+    max(var(--space-lg), env(safe-area-inset-bottom, 0px))
+    max(var(--space-lg), env(safe-area-inset-left, 0px));
+}
+
+.agent-log-viewer--fullscreen .agent-log-model-header {
+  margin-bottom: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.agent-log-viewer--fullscreen .agent-log-viewer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .agent-log-loading,
+  .agent-log-empty {
+    align-items: flex-start;
+    min-height: calc(var(--space-2xl) + var(--space-xl));
+  }
+
+  .agent-log-return-to-live {
+    right: var(--space-sm);
+    bottom: var(--space-sm);
+  }
+
+  .agent-log-tool-detail-toggle {
+    min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+  }
+
+  .agent-log-timing-labels {
+    white-space: normal;
+  }
+}

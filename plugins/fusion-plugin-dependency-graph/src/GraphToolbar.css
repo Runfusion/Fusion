@@ -1,0 +1,35 @@
+.graph-toolbar {
+  position: absolute;
+  right: var(--space-md);
+  bottom: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+}
+
+.graph-toolbar__zoom-label {
+  min-width: 3.5ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .graph-toolbar {
+    right: var(--space-sm);
+    bottom: var(--space-sm);
+    padding: var(--space-md);
+  }
+
+  .graph-toolbar .btn-icon {
+    min-width: calc(var(--space-xs) * 11);
+    min-height: calc(var(--space-xs) * 11);
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "@fusion/plugin-sdk",
+  "version": "0.77.0-beta.8",
+  "license": "MIT",
+  "description": "Fusion plugin SDK: types and helpers for authoring third-party plugins that extend the Fusion dashboard and engine.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/plugin-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit --skipLibCheck",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "private": true
+}

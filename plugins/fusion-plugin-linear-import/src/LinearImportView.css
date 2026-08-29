@@ -1,0 +1,167 @@
+.linear-import-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  min-height: 0;
+}
+
+.linear-import-view__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+  align-items: flex-start;
+}
+
+.linear-import-view__eyebrow,
+.linear-import-view__meta,
+.linear-import-view__empty,
+.linear-import-view__helper {
+  color: var(--text-muted);
+}
+
+.linear-import-view__title {
+  margin: 0;
+}
+
+.linear-import-view__subtitle {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+}
+
+.linear-import-view__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  border: var(--border-width) solid var(--border-color);
+  border-radius: var(--radius-pill);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.linear-import-view__status--auth { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 40%, var(--border-color)); }
+.linear-import-view__status--warning { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 40%, var(--border-color)); }
+.linear-import-view__status--error { color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 40%, var(--border-color)); }
+.linear-import-view__status--info { color: var(--color-info); border-color: color-mix(in srgb, var(--color-info) 40%, var(--border-color)); }
+
+.linear-import-view__filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+  align-items: end;
+}
+
+.linear-import-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.linear-import-view__actions,
+.linear-import-view__issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.linear-import-view__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.75fr);
+  gap: var(--space-lg);
+  min-height: 0;
+}
+
+.linear-import-view__issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.linear-import-view__issue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-sm);
+  align-items: start;
+  text-align: left;
+  width: 100%;
+}
+
+.linear-import-view__issue-main {
+  min-width: 0;
+}
+
+.linear-import-view__issue-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  align-items: baseline;
+  margin: 0;
+}
+
+.linear-import-view__identifier {
+  color: var(--color-info);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.linear-import-view__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.linear-import-view__badge {
+  border: var(--border-width) solid var(--border-color);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.linear-import-view__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.linear-import-view__preview-body {
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 45vh;
+  color: var(--text-primary);
+}
+
+.linear-import-view__message {
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  border: var(--border-width) solid var(--border-color);
+}
+
+.linear-import-view__message--error { color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 45%, var(--border-color)); }
+.linear-import-view__message--success { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 45%, var(--border-color)); }
+.linear-import-view__message--info { color: var(--color-info); border-color: color-mix(in srgb, var(--color-info) 45%, var(--border-color)); }
+
+@media (max-width: 48rem) {
+  .linear-import-view {
+    padding: var(--space-md);
+  }
+
+  .linear-import-view__header,
+  .linear-import-view__content {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .linear-import-view__filters {
+    grid-template-columns: 1fr;
+  }
+
+  .linear-import-view__issue-list,
+  .linear-import-view__preview-body {
+    max-height: none;
+  }
+}

@@ -1,0 +1,55 @@
+.desktop-launch-gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text);
+  z-index: 9999;
+  padding: 1.5rem;
+}
+
+.desktop-launch-gate__panel {
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle, #2a2f3a);
+  border-radius: 12px;
+  padding: 2rem 1.75rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.desktop-launch-gate__panel h1,
+.desktop-launch-gate__panel h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.desktop-launch-gate__panel p {
+  margin: 0 0 1.25rem;
+  color: var(--text-muted, #9ca3af);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.desktop-launch-gate__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/*
+FNXC:MigrationHoldingPage 2026-07-17-13:35:
+Monospace progress line under the "Database migration in progress" gate copy —
+carries the migrator's structured "[3/12] project.tasks — 500/2000 rows" label.
+*/
+.desktop-launch-gate__detail {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-muted, #9ca3af);
+  overflow-wrap: anywhere;
+  margin: -0.75rem 0 1.25rem;
+}

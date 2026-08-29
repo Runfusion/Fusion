@@ -1,0 +1,235 @@
+.branch-group-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:BranchGroupDetails 2026-06-30-00:00:
+Collapsed branch-group details must consume less task-detail space with token-based typography and spacing while keeping the expand button large enough to remain usable.
+*/
+.branch-group-card--collapsed {
+  gap: calc(var(--space-xs) / 2);
+  padding: var(--space-sm);
+}
+
+.branch-group-card-error {
+  color: var(--color-error);
+}
+
+.branch-group-card-error-title {
+  font-weight: var(--font-weight-semibold);
+}
+
+.branch-group-card-error-copy {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.branch-group-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.branch-group-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.branch-group-card--collapsed .branch-group-card-title {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
+.branch-group-card-header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.branch-group-card--collapsed .branch-group-card-header,
+.branch-group-card--collapsed .branch-group-card-header-meta {
+  gap: calc(var(--space-xs) / 2);
+}
+
+.branch-group-card-badge {
+  background: var(--surface-1);
+}
+
+.branch-group-card-header-meta .btn {
+  flex-shrink: 0;
+}
+
+.branch-group-card-header-meta .btn-icon {
+  padding: calc(var(--space-xs) / 2);
+}
+
+.branch-group-card--collapsed .branch-group-card-header-meta .btn-icon {
+  padding: 0;
+}
+
+.branch-group-card-header-meta .btn-icon svg {
+  display: block;
+}
+
+.branch-group-card-progress-text {
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.875);
+}
+
+.branch-group-card--collapsed .branch-group-card-progress-text {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
+.branch-group-card-progress {
+  width: 100%;
+  height: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.branch-group-card--collapsed .branch-group-card-progress {
+  height: calc(var(--space-xs) / 2);
+}
+
+.branch-group-card-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-info);
+}
+
+.branch-group-card-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+}
+
+.branch-group-card-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.branch-group-card-member-title {
+  flex: 1;
+}
+
+.branch-group-card-member-status {
+  color: var(--text-muted);
+  display: inline-flex;
+}
+
+.branch-group-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/*
+FNXC:SharedBranchPromotionAdvisories 2026-08-08-03:03:
+FN-8823 manual promotion must expose every persisted advisory finding, not only
+review notes. Keep long advisory lists independently scrollable so the confirm
+and cancel controls remain reachable at the existing mobile breakpoint without
+adding another modal primitive.
+*/
+.branch-group-card-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  z-index: var(--z-modal);
+}
+
+.branch-group-card-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: 100%;
+  max-block-size: calc(100dvh - var(--space-lg));
+  overflow: hidden;
+}
+
+.branch-group-card-confirm h3,
+.branch-group-card-confirm p {
+  margin: 0;
+}
+
+.branch-group-card-advisories {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-block-size: 0;
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+  overflow-y: auto;
+}
+
+.branch-group-card-advisories > li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.branch-group-card-advisory-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.branch-group-card-advisory-notes,
+.branch-group-card-advisory-findings p {
+  margin: 0;
+}
+
+.branch-group-card-advisory-findings {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+}
+
+.branch-group-card-advisory-findings li {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+}
+
+.branch-group-card-advisory-findings span {
+  color: var(--text-muted);
+}
+
+.branch-group-card-review {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .branch-group-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .branch-group-card-header-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .branch-group-card--collapsed .branch-group-card-header {
+    gap: calc(var(--space-xs) / 2);
+  }
+}

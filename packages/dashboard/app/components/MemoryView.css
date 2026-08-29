@@ -1,0 +1,611 @@
+/* === MemoryView === */
+/*
+FNXC:Navigation 2026-06-22-01:10:
+The title row now comes from the shared .view-header (which supplies the --space-lg top/side padding). The root drops its uniform padding; the tab bar and content area carry their own horizontal inset so they align under the header.
+*/
+.memory-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  /*
+  FNXC:MemoryView 2026-07-10-23:30:
+  The view must always claim the full main-panel width. Without an explicit width the
+  Engines/Insights tabs (whose cards have no intrinsic width) let the whole view shrink
+  to content width, leaving the right half of the main panel as empty background.
+  */
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/*
+FNXC:Navigation 2026-06-22-02:30:
+After the header migrated to the shared .view-header (which is flex-shrink:0), the sibling tab bar must also be flex-shrink:0. Without it the tabs collapse under the flex column at constrained heights, letting .memory-view-content overlap the header/tabs. The scroll owner is the active tab pane (.memory-*-tab, flex:1 + min-height:0 + overflow-y:auto); the editor container keeps min-height:0 through the chain so CodeMirror bounds itself and never overruns the action bar.
+*/
+.memory-view-tabs {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-xs);
+  border-bottom: 1px solid var(--border);
+  margin: var(--space-md) 0 var(--space-lg);
+  padding: 0 var(--space-lg);
+  flex-shrink: 0;
+}
+
+.memory-view-tab {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.memory-view-tab:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.memory-view-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Active tab underline uses the shared --accent token (was --todo, the Todos view color)
+so Memory matches the accent language of the other main-content views.
+*/
+.memory-view-tab--active {
+  color: var(--text);
+  border-bottom: 2px solid var(--accent);
+  font-weight: 500;
+}
+
+.memory-view-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-lg) var(--space-lg);
+}
+
+/*
+FNXC:MemoryView 2026-07-10-14:30:
+First-run review on a wide desktop viewport: the Working Memory content hugged the left half of the view and the entire right half was empty background.
+
+FNXC:MemoryView 2026-07-10-18:45:
+Operator follow-up: the Memory tabs should use the FULL viewport width, not a centered 960px reading column — the editor benefits from every pixel. Each tab pane stretches to 100% and stays the scroll owner; the mobile breakpoint (max-width: 768px / max-height: 480px) is unaffected.
+*/
+.memory-working-tab,
+.memory-insights-tab,
+.memory-engines-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  width: 100%;
+}
+
+/*
+FNXC:Memory 2026-06-22-18:10:
+REAL ROOT CAUSE of the "Working Memory" overlap (char-count over the MEMORY FILE label, a line struck through the <select>, the section header on top of its card): a CSS cascade collision, NOT vertical flex compression.
+
+`.memory-editor-section`, `.memory-editor-form-group`, and `.memory-file-summary` are defined in THREE stylesheets — styles.css, SettingsModal.css, and this file — because the SettingsModal MemorySection reuses the same class names. MemoryView.tsx imports BOTH ./MemoryView.css AND ./SettingsModal.css (in that order), so SettingsModal.css's copies (single-class, equal specificity) are injected LAST and WIN. Its `.memory-editor-section { flex: 1 1 auto }` made the editor section greedily claim the tab height while its child `.memory-editor-container` carried a large fixed `min-height` (the CodeMirror floor). On a constrained viewport the section box shrank to its flex allotment but the fixed-min-height editor frame could NOT, so the frame overflowed the (overflow:visible) section and BLED downward, painting on top of the next siblings — that bleed is the overlap, not shrunken siblings. The earlier flex-shrink:0 patch failed because the siblings were never the ones shrinking; the editor frame was overflowing onto them.
+
+Fix: scope the working-tab layout under `.memory-working-tab` so these rules out-specify the SettingsModal.css copies regardless of import order, and let the editor block size to its content (flex:0 0 auto). The tab itself (`.memory-working-tab`, overflow-y:auto) is the sole scroll owner, so every block flows in a clean intrinsic-height vertical stack and the tab scrolls instead of any box overflowing onto the next.
+*/
+.memory-action-bar,
+.memory-config-section {
+  flex-shrink: 0;
+}
+
+.memory-working-tab .memory-editor-section {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+/*
+FNXC:Memory 2026-06-22-18:10:
+Inside the working-tab editor section every block keeps its intrinsic height (flex:0 0 auto) so the file <select>, its hint, the layer summary, and the editor each occupy their own row with no overlap. The CodeMirror frame holds a fixed visible floor via .memory-editor-container's min-height; the surrounding tab scrolls.
+*/
+.memory-working-tab .memory-editor-section > .form-group,
+.memory-working-tab .memory-editor-section > .memory-file-summary {
+  flex: 0 0 auto;
+}
+
+.memory-working-tab .memory-editor-form-group {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+/*
+FNXC:Memory 2026-06-23-00:20:
+The memory editor box is CAPPED to about a page (max-height: 60vh) so a long memory file does not push the page into endless scrolling — the box itself stays bounded and the CodeMirror editor SCROLLS INTERNALLY. cm-editor fills the capped container (height:100%) and cm-scroller owns the vertical scroll.
+*/
+.memory-editor-container {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: calc(var(--space-xl) * 13 + var(--space-xs) * 2);
+  max-height: 60vh;
+}
+
+.memory-editor-container .cm-editor {
+  height: 100%;
+  min-height: 0;
+}
+
+.memory-editor-container .cm-scroller {
+  overflow: auto;
+}
+
+.memory-insights-editor-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.memory-category-section {
+  margin-bottom: var(--space-lg);
+}
+
+.memory-category-header {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+  transition: opacity var(--transition-fast);
+}
+
+.memory-category-header:hover {
+  opacity: 0.8;
+}
+
+.memory-category-header h4 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--text);
+}
+
+.memory-category-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.memory-category-items {
+  padding-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Parsed insights render as quiet cards (surface background + accent hairline) instead of
+bare border-left text rows, matching the InsightsView card language.
+*/
+.memory-insight-item {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  /* Multiline insights keep their continuation-line breaks (PR #2003 review). */
+  white-space: pre-wrap;
+}
+
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Engines tab modernization: the status cards previously stacked in one full-width column
+with --space-xl padding, producing very wide, mostly-empty cards. The tab is now a
+two-column card grid (single column under 900px container width via the media fallback
+below); the Run Audit action bar and the settings note span the full row.
+*/
+.memory-engines-tab {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+  align-content: start;
+  /* Cards keep their intrinsic height instead of stretching to the tallest card in the row. */
+  align-items: start;
+}
+
+.memory-engines-tab > .memory-action-bar,
+.memory-engines-tab > .memory-settings-note,
+.memory-engines-tab > .memory-empty-state {
+  grid-column: 1 / -1;
+}
+
+.memory-engine-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: 0;
+}
+
+.memory-engine-card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--space-md) 0;
+  color: var(--text);
+}
+
+.memory-engine-status {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.memory-health-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+}
+
+.memory-health-badge--healthy {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+
+.memory-health-badge--warning {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.memory-health-badge--issues {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.memory-action-bar {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  align-items: center;
+}
+
+.memory-empty-extract-button {
+  margin-top: var(--space-md);
+}
+
+.memory-stat-value--updated {
+  font-size: 1.125rem;
+}
+
+.memory-capability-row {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.memory-emphasis-text {
+  font-weight: 500;
+}
+
+.memory-health-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-md);
+}
+
+.memory-health-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+These rules previously used spacing tokens (--space-md/--space-lg) as font sizes, so the
+label/detail text scaled with the spacing scale instead of the type scale. They now use
+explicit type sizes consistent with the stat-card labels.
+*/
+.memory-health-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--space-xs);
+}
+
+.memory-health-detail {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.memory-health-section {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+.memory-status-text--success {
+  color: var(--color-success);
+}
+
+.memory-status-text--error {
+  color: var(--color-error);
+}
+
+.memory-status-text--warning {
+  color: var(--color-warning);
+}
+
+.memory-status-text--muted {
+  color: var(--text-muted);
+}
+
+.memory-audit-check-content {
+  flex: 1;
+}
+
+.memory-settings-note {
+  margin-top: var(--space-sm);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.memory-settings-note-button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.memory-settings-note-button:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.memory-empty-state {
+  color: var(--text-muted);
+  padding: var(--space-2xl);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.memory-stats-row {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.memory-stat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  flex: 1;
+}
+
+.memory-stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-xs);
+}
+
+.memory-stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.memory-audit-check {
+  display: flex;
+  flex-direction: row;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+  gap: var(--space-sm);
+}
+
+.memory-audit-check:last-child {
+  border-bottom: none;
+}
+
+.memory-audit-check-passed {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.memory-audit-check-failed {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.memory-capability-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+  color: var(--text-muted);
+}
+
+.memory-readonly-banner {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  color: var(--color-warning);
+  font-size: 13px;
+  margin-bottom: var(--space-md);
+}
+
+.memory-char-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.memory-categories-list {
+  margin-top: var(--space-lg);
+}
+
+.memory-config-section {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.memory-settings-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-sm) 0;
+}
+
+/*
+FNXC:MemoryView 2026-07-10-14:30:
+Shared layout for the automation checkbox rows ("Process dreams from daily memory", "Auto-summarize memory").
+Both rows must render identically: checkbox and label on one line, and the hint text indented to start where the label text starts (checkbox width 16px + the .checkbox-label gap), instead of hanging at the form-group edge with row-dependent spacing.
+Scoped under .memory-working-tab so these rules out-specify same-name form rules from SettingsModal.css (imported after this file).
+*/
+.memory-working-tab .memory-toggle-row .checkbox-label {
+  align-items: center;
+}
+
+.memory-working-tab .memory-toggle-row > small {
+  display: block;
+  margin-top: var(--space-xs);
+  margin-left: calc(16px + var(--space-sm));
+  color: var(--text-muted);
+}
+
+.memory-flex-spacer {
+  flex: 1;
+}
+
+.memory-qmd-card {
+  border-style: solid;
+}
+
+.memory-retrieval-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.memory-retrieval-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.memory-retrieval-input-row .input {
+  flex: 1;
+}
+
+.memory-retrieval-card .memory-test-result {
+  margin-top: var(--space-sm);
+}
+
+/* === Memory View Styles === */
+
+/* Mobile responsive for memory view */
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Between 769px and 1100px the two-column engines grid gets cramped; collapse to one column.
+*/
+@media (max-width: 1100px) and (min-width: 769px) {
+  .memory-engines-tab {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  /* ViewHeader supplies its own responsive padding; the body blocks tighten their horizontal inset here. */
+  .memory-view-tabs {
+    padding-inline: var(--space-md);
+  }
+
+  .memory-view-content {
+    padding: 0 var(--space-md) var(--space-md);
+  }
+
+  .memory-editor-container {
+    min-height: calc(var(--space-xl) * 10);
+  }
+
+  .memory-stats-row {
+    flex-wrap: wrap;
+  }
+
+  .memory-stat-card {
+    min-width: calc(50% - var(--space-sm));
+  }
+
+  .memory-view-tab {
+    min-height: 36px;
+    padding: var(--space-sm);
+  }
+
+  .memory-engines-tab {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-engine-card {
+    padding: var(--space-md);
+  }
+
+  .memory-retrieval-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .memory-settings-group {
+    padding: var(--space-xs) 0;
+  }
+
+  .memory-health-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-config-section {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+  }
+}

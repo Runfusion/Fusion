@@ -1,0 +1,54 @@
+{
+  "id": "fusion-plugin-settings-demo",
+  "name": "Settings Demo Plugin",
+  "version": "0.1.0",
+  "description": "Example plugin demonstrating settings schema, hooks, and tools",
+  "author": "Fusion Team",
+  "homepage": "https://github.com/gsxdsm/fusion",
+  "settingsSchema": {
+    "webhookSecret": {
+      "type": "password",
+      "label": "Webhook Secret",
+      "description": "Secret for webhook signatures"
+    },
+    "customMessage": {
+      "type": "string",
+      "label": "Custom Message",
+      "description": "Multi-line message shown on load",
+      "multiline": true,
+      "defaultValue": "Hello from Settings Demo!"
+    },
+    "greetingMessage": {
+      "type": "string",
+      "label": "Greeting Message",
+      "description": "Custom greeting message shown when the plugin loads",
+      "defaultValue": "Hello from Settings Demo!"
+    },
+    "maxTags": {
+      "type": "number",
+      "label": "Max Tags",
+      "description": "Maximum number of tags to suggest per task",
+      "defaultValue": 3
+    },
+    "enableLogging": {
+      "type": "boolean",
+      "label": "Enable Logging",
+      "description": "Log plugin activity to the console",
+      "defaultValue": true
+    },
+    "logLevel": {
+      "type": "enum",
+      "label": "Log Level",
+      "description": "Minimum log level to output",
+      "enumValues": ["debug", "info", "warn", "error"],
+      "defaultValue": "info"
+    },
+    "priorityTags": {
+      "type": "array",
+      "label": "Priority Tags",
+      "description": "Tags to prioritize in suggestions",
+      "itemType": "string",
+      "defaultValue": ["bug", "feature"]
+    }
+  }
+}

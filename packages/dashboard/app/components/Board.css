@@ -1,0 +1,80 @@
+/*
+FNXC:BoardWorkflows 2026-06-20-09:02:
+The board needs a neutral first-paint shell whenever workflow lanes are enabled but metadata is not ready, so users never see the legacy single-lane board flash before workflow lanes load.
+*/
+.board.board-workflows-skeleton {
+  display: flex;
+  align-items: stretch;
+  gap: var(--column-gap, var(--space-md));
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--board-padding, var(--space-md));
+  background: var(--bg);
+}
+
+.board-workflows-skeleton__column {
+  flex: 1 0 min(24rem, 85vw);
+  min-width: min(24rem, 85vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.board-workflows-skeleton__header,
+.board-workflows-skeleton__card {
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--border) 70%, var(--surface));
+  animation: board-workflows-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.board-workflows-skeleton__header {
+  block-size: var(--space-lg);
+  inline-size: 55%;
+}
+
+.board-workflows-skeleton__card {
+  block-size: calc(var(--space-2xl) * 2);
+  inline-size: 100%;
+}
+
+.board-workflows-skeleton__card--short {
+  inline-size: 75%;
+}
+
+/*
+FNXC:BoardNavigation 2026-08-21-16:03:
+FN-109 shows grab feedback only after a desktop/tablet pan crosses horizontal intent from a safe
+surface or noninteractive task-card body/text. Controls, editing cards, the unbound skeleton, and
+the disabled mobile path never activate it; this gesture pans the viewport and never relocates a task.
+*/
+.board.board-workflow-columns.is-mouse-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+@keyframes board-workflows-skeleton-pulse {
+  0%, 100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .board.board-workflows-skeleton {
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    scroll-snap-type: x proximity;
+  }
+
+  .board-workflows-skeleton__column {
+    flex-basis: 86vw;
+    min-width: 86vw;
+    scroll-snap-align: center;
+  }
+}

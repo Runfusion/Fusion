@@ -1,0 +1,328 @@
+/**
+ * Pi extension entry point for pi-claude-cli.
+ *
+ * Registers a custom provider that routes LLM calls through the Claude Code CLI
+ * subprocess using stream-json NDJSON protocol.
+ */
+
+/*
+ * FNXC:ModelCatalog 2026-07-01-17:30:
+ * pi-ai 0.80 restructured its static catalog API: the top-level `getModels`
+ * export moved to the deprecated `/compat` shim, and the canonical accessor is
+ * `getBuiltinModels` from `@earendil-works/pi-ai/providers/all`. pi-claude-cli
+ * now pins `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` to
+ * `^0.80.3` (matching cli/engine) so the whole extension resolves one pi-ai
+ * version and the ExtensionAPI stream types stay compatible.
+ */
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { streamViaCli } from "./src/provider.js";
+import { streamViaAcp } from "./src/acp-driver.js";
+import {
+  validateCliPresenceAsync,
+  validateCliAuthAsync,
+  killAllProcesses,
+} from "./src/process-manager.js";
+import { createHash } from "node:crypto";
+import {
+  getCustomToolDefs,
+  toolsFromContext,
+  writeMcpConfig,
+  buildAcpMcpServers,
+  type McpToolDef,
+  type UserMcpServerSpec,
+} from "./src/mcp-config.js";
+
+/**
+ * FNXC:pi-claude-cli 2026-06-27-06:39:
+ * Route A drives Claude through the ACP bridge only when `FUSION_CLAUDE_ACP=1`
+ * AND a bridge binary path is injected via `FUSION_CLAUDE_ACP_BRIDGE`.
+ * OFF by default: the live `claude -p` path stays untouched until soak.
+ */
+function resolveAcpBridgePath(): string | undefined {
+  if (process.env.FUSION_CLAUDE_ACP !== "1") return undefined;
+  const p = process.env.FUSION_CLAUDE_ACP_BRIDGE;
+  return typeof p === "string" && p.length > 0 ? p : undefined;
+}
+
+/** Resolve custom tool defs the same way ensureMcpConfig does (context → registry). */
+function resolveToolDefs(
+  pi: ExtensionAPI,
+  contextTools?: ReadonlyArray<{ name: string; description: string; parameters: Record<string, unknown> }>,
+): McpToolDef[] {
+  let toolDefs = toolsFromContext(contextTools);
+  if (toolDefs.length === 0 && Array.isArray(pi.getAllTools())) toolDefs = getCustomToolDefs(pi);
+  return toolDefs;
+}
+
+// Kill all active Claude subprocesses on process exit to prevent orphans
+process.on("exit", killAllProcesses);
+
+const PROVIDER_ID = "pi-claude-cli";
+
+/**
+ * FNXC:pi-claude-cli 2026-06-27-06:39:
+ * The factory runs per `createFnAgent` call, which the dashboard does for each
+ * chat message. Synchronous `execSync` presence + auth probes froze the Node
+ * event loop while `claude` cold-started, so memoize the probes as an async
+ * Promise: the factory returns immediately, the result logs once, and later
+ * calls reuse it.
+ */
+let cliValidationPromise: Promise<void> | undefined;
+
+function runCliValidationOnce(): Promise<void> {
+  if (cliValidationPromise) return cliValidationPromise;
+  cliValidationPromise = (async () => {
+    const presence = await validateCliPresenceAsync();
+    if (!presence.ok) {
+      console.warn(`[pi-claude-cli] ${presence.error.message}`);
+      return;
+    }
+    await validateCliAuthAsync();
+  })();
+  return cliValidationPromise;
+}
+
+let cachedMcpConfig: { hash: string; configPath: string } | undefined;
+const DEBUG_MCP = process.env.PI_CLAUDE_CLI_DEBUG === "1";
+
+function debugMcp(message: string): void {
+  if (!DEBUG_MCP) return;
+  console.error(`[pi-claude-cli] ${message}`);
+}
+
+function getUserMcpServers(options: unknown): UserMcpServerSpec[] {
+  const servers = (options as { mcpServers?: unknown } | undefined)?.mcpServers;
+  return Array.isArray(servers) ? servers.filter((server): server is UserMcpServerSpec => Boolean(server && typeof server === "object" && "name" in server)) : [];
+}
+
+/**
+ * Resolve the MCP config path for the current request, regenerating it when
+ * the set of custom tools changes.
+ *
+ * Source of truth (in order of preference):
+ * 1. `context.tools` — the per-session tool list pi-ai actually hands to
+ *    `streamSimple`. This is what the session is asking the model to see, so
+ *    it includes session-scoped registrations (e.g. `fn_review_spec` and
+ *    `fn_spawn_agent` injected by the engine's triage/executor sessions).
+ * 2. `pi.getAllTools()` — fallback for older callers that don't supply
+ *    `context.tools`.
+ *
+ * Why not a single once-and-lock cache:
+ * - The engine spawns triage/executor sessions with session-scoped tools.
+ *   A locked-on-first-call cache silently drops them and the Claude CLI
+ *   subprocess refuses with "unknown tool fn_review_spec".
+ * - Hashing the tool defs lets us reuse temp files when the tool set is
+ *   unchanged across calls and produce fresh files (with the hash in the
+ *   filename to avoid races) when it changes.
+ *
+ * Uses warn-don't-block: failure logs a warning but does not prevent the
+ * provider from functioning (built-ins still work).
+ */
+function ensureMcpConfig(
+  pi: ExtensionAPI,
+  contextTools?: ReadonlyArray<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  }>,
+  userMcpServers: UserMcpServerSpec[] = [],
+): string | undefined {
+  try {
+    let toolDefs: McpToolDef[] = toolsFromContext(contextTools);
+    if (contextTools && contextTools.length > 0) {
+      debugMcp(
+        `MCP config from context.tools: ${contextTools.map((tool) => tool.name).join(", ")}`,
+      );
+    }
+
+    // Fallback to the pi runtime registry if the context didn't carry tools.
+    // (Older agent-loop versions don't populate Context.tools for streamSimple.)
+    if (toolDefs.length === 0) {
+      const allTools = pi.getAllTools();
+      if (!Array.isArray(allTools)) {
+        return cachedMcpConfig?.configPath;
+      }
+      toolDefs = getCustomToolDefs(pi);
+    }
+
+    if (toolDefs.length === 0 && userMcpServers.length === 0) {
+      cachedMcpConfig = undefined;
+      return undefined;
+    }
+
+    const hash = createHash("sha1")
+      .update(JSON.stringify({ toolDefs, userMcpServerNames: userMcpServers.map((server) => server.name) }))
+      .digest("hex")
+      .slice(0, 12);
+
+    if (cachedMcpConfig?.hash === hash) {
+      debugMcp(`MCP config cache hit (hash=${hash})`);
+      return cachedMcpConfig.configPath;
+    }
+
+    const configPath = writeMcpConfig(toolDefs, hash, userMcpServers);
+    cachedMcpConfig = { hash, configPath };
+    const toolNames = toolDefs.map((t) => t.name).join(", ");
+    debugMcp(
+      `MCP config refreshed with ${toolDefs.length} custom tool(s) [${toolNames}] (hash=${hash})`,
+    );
+    return configPath;
+  } catch (err) {
+    console.warn(
+      "[pi-claude-cli] MCP config generation failed, custom tools unavailable:",
+      err,
+    );
+    return cachedMcpConfig?.configPath;
+  }
+}
+
+export default function (pi: ExtensionAPI) {
+  try {
+    // Startup validation: kick off async, memoized presence + auth probes
+    // without blocking the factory. Failures surface via warnings; the actual
+    // `claude` subprocess in streamViaCli still reports hard errors on send.
+    void runCliValidationOnce();
+
+    const catalogModels = getBuiltinModels("anthropic").map((model) => ({
+      id: model.id,
+      name: model.name,
+      reasoning: model.reasoning,
+      input: model.input,
+      cost: model.cost,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+    }));
+
+    // Newer models released after the pinned @earendil-works/pi-ai catalog
+    // was generated. Dedupe by id so this list is harmless once the upstream
+    // catalog catches up.
+    // https://platform.claude.com/docs/en/about-claude/models/overview
+    const extraModels: typeof catalogModels = [
+      /*
+       * FNXC:ModelCatalog 2026-07-01-18:18:
+       * Keep Claude CLI supplemental metadata limited to models that Fusion can advertise without triggering the direct-Anthropic Sonnet 5 404 loop. `claude-sonnet-5` must come from the upstream/live registry before this provider shows it, because static metadata cannot prove the current account and CLI surface can call that model.
+       *
+       * FNXC:ModelCatalog 2026-07-01-20:37:
+       * Supersede the prior Claude CLI withholding only for `pi-claude-cli`: the local `claude` subprocess routes through the user's Claude subscription/login and its 2.1.197 `--model` help accepts latest aliases/full names, so the CLI picker should advertise Sonnet 5 and newer CLI-callable rows. Keep direct Anthropic supplemental metadata and static pricing withheld because FN-7374's per-account `404 not_found_error` applies to that API surface, not this subscription-authenticated CLI surface.
+       */
+      {
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        reasoning: true,
+        input: ["text", "image"],
+        // FNXC:ModelCatalog 2026-07-01-21:04: Fable 5 must use Anthropic's current $10/$50 per MTok row so Fusion's CLI picker does not understate supplemental model cost estimates.
+        cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-opus-4-8",
+        name: "Claude Opus 4.8",
+        reasoning: true,
+        input: ["text", "image"],
+        // FNXC:ModelCatalog 2026-07-01-20:37: The overview confirms Opus 4.8 context/output limits; mirror the closest current Opus CLI supplemental pricing until a precise per-model price row is pinned for this subscription surface.
+        cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-opus-4-7",
+        name: "Claude Opus 4.7",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        contextWindow: 1_000_000,
+        maxTokens: 64_000,
+      },
+      {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+      },
+      {
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+      },
+    ];
+
+    const seen = new Set(catalogModels.map((m) => m.id));
+    const models = [
+      ...catalogModels,
+      ...extraModels.filter((m) => !seen.has(m.id)),
+    ];
+
+    // Ensure all registered tools are active so pi can execute them.
+    // Some tools (find, grep, ls) are registered but not activated by default.
+    pi.on("session_start", async () => {
+      const allTools = pi.getAllTools();
+      if (Array.isArray(allTools)) {
+        pi.setActiveTools(allTools.map((t: { name: string }) => t.name));
+      }
+    });
+
+    pi.registerProvider(PROVIDER_ID, {
+      baseUrl: "pi-claude-cli",
+      apiKey: "unused",
+      api: "pi-claude-cli",
+      models,
+      streamSimple: (model, context, options) => {
+        const contextTools = (context as { tools?: ReadonlyArray<{
+          name: string;
+          description: string;
+          parameters: Record<string, unknown>;
+        }> }).tools;
+
+        // FNXC:pi-claude-cli 2026-06-27-06:39: Route A drives Claude through the ACP bridge only when the kill-switch is on AND a bridge path is injected. OFF by default → `-p` path below.
+        const bridgePath = resolveAcpBridgePath();
+        if (bridgePath) {
+          const toolDefs = resolveToolDefs(pi, contextTools);
+          const userMcpServers = getUserMcpServers(options);
+          const hash = createHash("sha1").update(JSON.stringify({ toolDefs, userMcpServerNames: userMcpServers.map((server) => server.name) })).digest("hex").slice(0, 12);
+          return streamViaAcp(model, context, {
+            ...options,
+            bridgePath,
+            mcpServers: buildAcpMcpServers(toolDefs, hash, userMcpServers),
+            // FNXC:pi-claude-cli 2026-06-27-06:39: Forward only HOME/PATH so the bridged `claude` authenticates from the login/keychain session (R17); never inherited process.env or API keys.
+            bridgeEnv: { HOME: process.env.HOME, PATH: process.env.PATH },
+          });
+        }
+
+        const configPath = ensureMcpConfig(pi, contextTools, getUserMcpServers(options));
+        return streamViaCli(model, context, {
+          ...options,
+          mcpConfigPath: configPath,
+        });
+      },
+    });
+  } catch (err) {
+    console.error(`[pi-claude-cli] Failed to register provider:`, err);
+  }
+}

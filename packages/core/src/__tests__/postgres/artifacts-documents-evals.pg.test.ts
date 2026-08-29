@@ -1,0 +1,339 @@
+/**
+ * FNXC:Artifacts FNXC:Documents FNXC:Evals 2026-06-27-12:50:
+ * PostgreSQL integration coverage for the three dashboard views that previously
+ * 500'd in PG backend mode because they hit the sync `store.db`:
+ *   - Artifacts (/api/artifacts → store.listArtifacts → listArtifactsImpl)
+ *   - Documents (/api/documents → store.getAllDocuments → getAllDocumentsImpl)
+ *   - Evals     (/api/evals → store.getEvalStore() → AsyncEvalStore)
+ *
+ * Each surface now branches on `store.backendMode` and delegates to an
+ * AsyncDataLayer helper / AsyncEvalStore. This drives the real wiring through
+ * the shared PG harness and asserts the create → list round-trip plus the
+ * joined parent-task fields. Runs in the blocking gate (test:pg-gate).
+ */
+
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
+import { AsyncEvalStore } from "../../async-stores/async-eval-store.js";
+import { runScheduledEvalBatch } from "../../eval/eval-automation.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import type { EvalRunStatus } from "../../eval/eval-types.js";
+
+const pgTest = pgDescribe;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * FNXC:ScheduledEvalsPostgres 2026-07-14-01:41:
+ * Eval lifecycle race tests coordinate at the transaction's advisory-lock query. The first updater pauses after acquiring the real PostgreSQL lock, while the second signals before its lock attempt blocks, proving terminal transition serialization without sleeps or polling.
+ */
+function controlledEvalUpdateLayer(
+  layer: AsyncDataLayer,
+  mode: "hold-after-first-query" | "signal-first-query",
+): { layer: AsyncDataLayer; reached: Promise<void>; release: () => void } {
+  const reached = deferred();
+  const release = deferred();
+  let firstTransaction = true;
+  const controlled = {
+    ...layer,
+    transactionImmediate: async <T>(
+      fn: Parameters<AsyncDataLayer["transactionImmediate"]>[0],
+      options?: Parameters<AsyncDataLayer["transactionImmediate"]>[1],
+    ): Promise<T> => layer.transactionImmediate(async (tx) => {
+      if (!firstTransaction) return fn(tx) as Promise<T>;
+      firstTransaction = false;
+      let firstQuery = true;
+      const proxy = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "execute")
+            return Reflect.get(target, property, receiver);
+          return async (...args: Parameters<typeof tx.execute>) => {
+            if (!firstQuery) return tx.execute(...args);
+            firstQuery = false;
+            if (mode === "signal-first-query") {
+              reached.resolve();
+              return tx.execute(...args);
+            }
+            const result = await tx.execute(...args);
+            reached.resolve();
+            await release.promise;
+            return result;
+          };
+        },
+      });
+      return fn(proxy) as Promise<T>;
+    }, options),
+  } as AsyncDataLayer;
+  return { layer: controlled, reached: reached.promise, release: release.resolve };
+}
+
+pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_artifacts_documents_evals",
+  });
+
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  it("listArtifacts returns a registered artifact with the joined task fields", async () => {
+    const store = h.store();
+    expect(store.backendMode).toBe(true);
+
+    const task = await store.createTask({ description: "Artifact parent task" });
+
+    const artifact = await store.registerArtifact({
+      type: "document",
+      title: "Design notes",
+      description: "An inline artifact body",
+      content: "hello world",
+      authorId: "agent-1",
+      authorType: "agent",
+      taskId: task.id,
+    });
+    expect(artifact.id).toBeTruthy();
+
+    const listed = await store.listArtifacts();
+    const mine = listed.find((a) => a.id === artifact.id);
+    expect(mine).toBeTruthy();
+    expect(mine?.title).toBe("Design notes");
+    expect(mine?.taskId).toBe(task.id);
+    expect(mine?.taskColumn).toBe(task.column);
+    if (task.title) expect(mine?.taskTitle).toBe(task.title);
+
+    // search filter (ILIKE over title/description) finds it…
+    expect((await store.listArtifacts({ search: "Design" })).some((a) => a.id === artifact.id)).toBe(true);
+    // …and excludes non-matches.
+    expect((await store.listArtifacts({ search: "no-such-token-zzz" })).some((a) => a.id === artifact.id)).toBe(false);
+    // type filter parity.
+    expect((await store.listArtifacts({ type: "document" })).some((a) => a.id === artifact.id)).toBe(true);
+  });
+
+  it("updateArtifact edits inline content in place, rejects binary-content edits, and emits artifact:updated", async () => {
+    /*
+    FNXC:ArtifactRegistry 2026-07-11 (merge port from main):
+    Backend-mode coverage for the dashboard Artifacts view's in-place editor:
+    title/description/content edits persist for inline artifacts; a uri-backed
+    (binary) artifact keeps its content non-editable; unknown ids throw; the
+    store emits artifact:updated so open lists live-refresh.
+    */
+    const store = h.store();
+    const task = await store.createTask({ description: "Artifact edit parent" });
+
+    const doc = await store.registerArtifact({
+      type: "document",
+      title: "Editable doc",
+      content: "before",
+      authorId: "agent-1",
+      authorType: "agent",
+      taskId: task.id,
+    });
+
+    const events: string[] = [];
+    store.on("artifact:updated", (a) => events.push(a.id));
+
+    const updated = await store.updateArtifact(doc.id, { title: "Edited doc", content: "after" });
+    expect(updated.title).toBe("Edited doc");
+    expect(updated.content).toBe("after");
+    expect(events).toContain(doc.id);
+
+    const fresh = await store.getArtifact(doc.id);
+    expect(fresh?.title).toBe("Edited doc");
+    expect(fresh?.content).toBe("after");
+
+    const binary = await store.registerArtifact({
+      type: "image",
+      title: "Binary artifact",
+      uri: "attachments/some-image.png",
+      mimeType: "image/png",
+      authorId: "agent-1",
+      authorType: "agent",
+      taskId: task.id,
+    });
+    // Metadata edits are allowed on binary artifacts…
+    const renamed = await store.updateArtifact(binary.id, { title: "Renamed binary" });
+    expect(renamed.title).toBe("Renamed binary");
+    // …but content edits are rejected (the payload lives on disk).
+    await expect(store.updateArtifact(binary.id, { content: "nope" })).rejects.toThrow(/binary payload/);
+
+    await expect(store.updateArtifact("no-such-artifact", { title: "x" })).rejects.toThrow(/not found/);
+  });
+
+  it("getAllDocuments returns an upserted document joined to its live task", async () => {
+    const store = h.store();
+
+    const task = await store.createTask({ description: "Document parent task" });
+
+    const doc = await store.upsertTaskDocument(task.id, {
+      key: "plan",
+      content: "the document body content",
+      author: "user",
+    });
+    expect(doc.id).toBeTruthy();
+
+    const all = await store.getAllDocuments();
+    const mine = all.find((d) => d.id === doc.id);
+    expect(mine).toBeTruthy();
+    expect(mine?.key).toBe("plan");
+    expect(mine?.content).toBe("the document body content");
+    expect(mine?.taskId).toBe(task.id);
+    expect(mine?.taskColumn).toBe(task.column);
+    expect(mine?.taskDescription).toBe("Document parent task");
+    if (task.title) expect(mine?.taskTitle).toBe(task.title);
+
+    // searchQuery matches the document key/content or the task title.
+    expect((await store.getAllDocuments({ searchQuery: "document body" })).some((d) => d.id === doc.id)).toBe(true);
+    expect((await store.getAllDocuments({ searchQuery: "no-such-token-zzz" })).some((d) => d.id === doc.id)).toBe(false);
+  });
+
+  it("getEvalStore() returns AsyncEvalStore and round-trips an eval run", async () => {
+    const store = h.store();
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect(evalStore).toBeInstanceOf(AsyncEvalStore);
+
+    const run = await evalStore.createRun({
+      projectId: "P-EVAL",
+      scope: "all",
+      trigger: "manual",
+      window: { since: undefined, until: new Date().toISOString() },
+      requestedTaskIds: ["T1", "T2"],
+    });
+    expect(run.id).toMatch(/^ER-/);
+    expect(run.status).toBe("pending");
+    expect(run.counts.totalTasks).toBe(2);
+
+    // listRuns surfaces it (the dashboard /api/evals/runs path).
+    const runs = await evalStore.listRuns();
+    expect(runs.map((r) => r.id)).toContain(run.id);
+
+    const fetched = await evalStore.getRun(run.id);
+    expect(fetched?.scope).toBe("all");
+    expect(fetched?.requestedTaskIds).toEqual(["T1", "T2"]);
+
+    // create → get/list a task result (the dashboard /api/evals + /:id paths).
+    const result = await evalStore.createTaskResult(run.id, {
+      taskId: "T1",
+      taskSnapshot: { taskId: "T1", title: "Snapshot title" },
+      status: "scored",
+      overallScore: 87,
+      maxScore: 100,
+    });
+    expect(result.id).toMatch(/^ETR-/);
+
+    const results = await evalStore.listTaskResults({ runId: run.id });
+    expect(results.map((r) => r.id)).toContain(result.id);
+    const got = await evalStore.getTaskResult(result.id);
+    expect(got?.overallScore).toBe(87);
+    expect(got?.taskSnapshot.title).toBe("Snapshot title");
+  });
+
+  it.each<[EvalRunStatus, EvalRunStatus]>([
+    ["completed", "failed"],
+    ["failed", "cancelled"],
+    ["cancelled", "completed"],
+  ])(
+    "serializes concurrent terminal transitions after %s wins",
+    async (winningStatus, losingStatus) => {
+      const setup = new AsyncEvalStore(h.layer());
+      const run = await setup.createRun({
+        projectId: "P-EVAL-CONCURRENCY",
+        scope: "all",
+        trigger: "manual",
+      });
+      const firstControl = controlledEvalUpdateLayer(
+        h.layer(),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledEvalUpdateLayer(
+        h.layer(),
+        "signal-first-query",
+      );
+      const first = new AsyncEvalStore(firstControl.layer);
+      const second = new AsyncEvalStore(secondControl.layer);
+
+      const winningUpdate = first.updateRun(run.id, { status: winningStatus });
+      await firstControl.reached;
+      const losingUpdate = second.updateRun(run.id, { status: losingStatus });
+      await secondControl.reached;
+      firstControl.release();
+
+      await expect(winningUpdate).resolves.toMatchObject({
+        status: winningStatus,
+      });
+      await expect(losingUpdate).rejects.toMatchObject({
+        name: "EvalLifecycleError",
+        code: "invalid_transition",
+      });
+      expect(await setup.getRun(run.id)).toMatchObject({ status: winningStatus });
+    },
+  );
+
+  /*
+  FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
+  Scheduled evaluation must use the same lifecycle on PostgreSQL as manual dashboard runs. This integration proof drives the real TaskStore and AsyncEvalStore through selection, scoring, event persistence, and terminal completion.
+  */
+  it("runs a scheduled evaluation batch through AsyncEvalStore", async () => {
+    const store = h.store();
+    const completedAt = "2026-07-13T20:00:00.000Z";
+    /*
+    FNXC:MergeAuthority 2026-08-23-16:50:
+    A merge door now refuses a card whose ENABLED pre-merge optional groups produced no result
+    (b47fb70b81 / 038f802ba4). This case only needs a completed card to evaluate, so it declares no
+    pre-merge gates rather than depending on the default-on groups the door legitimately blocks on.
+    */
+    const task = await store.createTask({ description: "Scheduled evaluation candidate", enabledWorkflowSteps: [] });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    await store.moveTask(task.id, "in-review");
+    await store.moveTask(task.id, "done");
+    await store.updateTask(task.id, { executionCompletedAt: completedAt });
+
+    const result = await runScheduledEvalBatch({
+      store,
+      projectId: "P-EVAL-SCHEDULED",
+      startedAt: "2026-07-13T21:00:00.000Z",
+      evaluator: async () => ({ status: "scored", overallScore: 91, maxScore: 100 }),
+    });
+
+    expect(result).toMatchObject({ status: "completed", selectedTaskIds: [task.id], tasksSelected: 1 });
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect((await evalStore.getRun(result.runId))?.status).toBe("completed");
+    expect(await evalStore.listTaskResults({ runId: result.runId })).toHaveLength(1);
+    expect((await evalStore.listRunEvents(result.runId)).map((event) => event.status)).toContain("completed");
+  });
+
+  it("persists a failed lifecycle when scheduled task selection fails", async () => {
+    const store = h.store();
+    const result = await runScheduledEvalBatch({
+      store: {
+        getEvalStore: () => store.getEvalStore(),
+        listTasks: async () => { throw new Error("selection unavailable"); },
+      },
+      projectId: "P-EVAL-FAILURE",
+      startedAt: "2026-07-13T22:00:00.000Z",
+      evaluator: async () => ({ status: "scored", overallScore: 100, maxScore: 100 }),
+    });
+
+    expect(result.status).toBe("failed");
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect(await evalStore.getRun(result.runId)).toMatchObject({
+      status: "failed",
+      error: "selection unavailable",
+    });
+    expect(await evalStore.listRunEvents(result.runId)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "failed", type: "error" })]),
+    );
+  });
+});

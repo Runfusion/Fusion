@@ -1,0 +1,6 @@
+.setup-warning-banner__item { display: flex; flex-direction: column; gap: var(--space-xs); }
+.setup-warning-banner__description { margin: 0; }
+.setup-warning-banner__actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+.setup-warning-banner--compact { flex-direction: row; align-items: flex-start; justify-content: space-between; }
+.setup-warning-banner__compact-text { margin: 0; flex: 1; }
+@media (max-width: 768px) { .setup-warning-banner__actions .btn { width: 100%; } }

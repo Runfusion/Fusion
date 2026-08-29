@@ -1,0 +1,106 @@
+/*
+FNXC:CommandCenterStyling 2026-06-17-18:46:
+Mission-control muted labels and inactive badges use --text-muted so the live panel follows the canonical command-center text-token contract.
+
+FNXC:CommandCenterStyling 2026-06-18-00:00:
+Raw rgba fallbacks are replaced with byte-equivalent concrete-hex color-mix fallbacks in the same var() slots so undefined surface/border tokens preserve the current light and dark rendering while satisfying tokenized styling hygiene.
+*/
+
+/*
+ * Mission-Control live panel (U6b). Component-local styles.
+ * Animation durations use --duration-* tokens only (never --transition-*).
+ */
+
+.cc-mission-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.cc-mc-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+}
+
+.cc-mc-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.cc-mc-muted {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.cc-mc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.cc-mc-session,
+.cc-mc-node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle, color-mix(in srgb, #ffffff 8%, transparent));
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-1, color-mix(in srgb, #ffffff 2%, transparent));
+  min-width: 0;
+}
+
+.cc-mc-node.inactive {
+  opacity: 0.55;
+}
+
+.cc-mc-session-purpose,
+.cc-mc-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cc-mc-session-meta,
+.cc-mc-node-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.cc-mc-badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-2, color-mix(in srgb, #3b82f6 15%, transparent));
+  color: var(--text);
+}
+
+.cc-mc-badge.inactive {
+  background: var(--surface-2, color-mix(in srgb, #ffffff 6%, transparent));
+  color: var(--text-muted);
+}
+
+.cc-mc-task,
+.cc-mc-node-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .cc-mc-columns {
+    grid-template-columns: 1fr;
+  }
+}

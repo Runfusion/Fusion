@@ -1,0 +1,3 @@
+.oauth-relogin-banner__content { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.oauth-relogin-banner__message { margin: 0; line-height: 1.4; }
+.oauth-relogin-banner__actions { flex-shrink: 0; }

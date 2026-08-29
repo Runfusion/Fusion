@@ -1,0 +1,244 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { ProjectInfo } from "../api";
+import {
+  fetchProjectsAcrossNodes,
+  hasNodeMappingsSupport,
+  registerProject,
+  unregisterProject,
+  updateProject,
+  type ProjectCreateInput,
+  type ProjectInfoWithSource,
+  type ProjectNodeAvailability,
+} from "../api";
+import { SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, clearCache, readCache, writeCache } from "../utils/swrCache";
+import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
+
+export interface UseProjectsResult {
+  /** List of all registered projects (local + remote) */
+  projects: ProjectInfoWithSource[];
+  /** Loading state for initial fetch */
+  loading: boolean;
+  /** Error message if fetch failed */
+  error: string | null;
+  /** Manually refresh projects list */
+  refresh: () => Promise<void>;
+  /** Register a new project */
+  register: (input: ProjectCreateInput) => Promise<ProjectInfo>;
+  /** Update an existing project */
+  update: (id: string, updates: Partial<ProjectInfo>) => Promise<ProjectInfo>;
+  /** Unregister a project */
+  unregister: (id: string) => Promise<void>;
+}
+
+const POLL_INTERVAL_MS = 5000; // 5 seconds
+const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
+
+function normalizeNodeMappings(project: ProjectInfoWithSource): ProjectNodeAvailability[] {
+  const mappingSource = hasNodeMappingsSupport(project)
+    ? (project.nodeMappings ?? project.projectNodeMappings ?? project.pathMappings ?? [])
+    : [];
+
+  const normalizedMappings = mappingSource
+    .filter((mapping) => Boolean(mapping?.nodeId) && Boolean(mapping?.path))
+    .map((mapping) => ({
+      nodeId: mapping.nodeId,
+      nodeName: mapping.nodeName,
+      path: mapping.path,
+      available: mapping.available !== false,
+    }));
+
+  if (normalizedMappings.length > 0) {
+    return normalizedMappings;
+  }
+
+  if (project.nodeId && project.path) {
+    return [{
+      nodeId: project.nodeId,
+      nodeName: project._sourceNodeName,
+      path: project.path,
+      available: true,
+    }];
+  }
+
+  return [];
+}
+
+function normalizeProjects(projects: ProjectInfoWithSource[]): ProjectInfoWithSource[] {
+  return projects.map((project) => ({
+    ...project,
+    nodeMappings: normalizeNodeMappings(project),
+  }));
+}
+
+/**
+ * Hook for fetching and managing projects.
+ * Automatically polls for updates every 5 seconds.
+ * Refetches when the tab becomes visible again.
+ * Provides optimistic updates for UI responsiveness.
+ */
+export function useProjects(): UseProjectsResult {
+  const [projects, setProjects] = useState<ProjectInfoWithSource[]>(() => {
+    const cached = readCache<ProjectInfoWithSource[]>(SWR_CACHE_KEYS.PROJECTS, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
+    if (!Array.isArray(cached)) {
+      return [];
+    }
+    if (cached.length > 0) {
+      console.info("[swr-cache] hit projects=", cached.length);
+    }
+    return normalizeProjects(cached);
+  });
+  const [loading, setLoading] = useState(() => projects.length === 0);
+  const [error, setError] = useState<string | null>(null);
+  const lastVisibilityRefreshRef = useRef<number>(0);
+  const projectsRef = useRef(projects);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return projectsRef.current.length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      const data = await fetchProjectsAcrossNodes();
+      const normalizedData = normalizeProjects(data);
+      setProjects(normalizedData);
+      writeCache(SWR_CACHE_KEYS.PROJECTS, normalizedData);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch projects";
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
+      // Don't clear existing projects on error - keep showing stale data
+    }
+  }, [shouldSuppressVisibilityResumeError]);
+
+  // Initial fetch and visibility change handler
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      const hadCachedProjects = projects.length > 0;
+      if (!hadCachedProjects) {
+        setLoading(true);
+      }
+      const t0 = performance.now();
+      try {
+        const data = await fetchProjectsAcrossNodes();
+        const normalizedData = normalizeProjects(data);
+        const elapsed = Math.round(performance.now() - t0);
+        console.log(`[useProjects] initial fetchProjectsAcrossNodes took ${elapsed}ms (${normalizedData.length} projects)`);
+        if (!cancelled) {
+          setProjects(normalizedData);
+          setError(null);
+          writeCache(SWR_CACHE_KEYS.PROJECTS, normalizedData);
+        }
+      } catch (err) {
+        const elapsed = Math.round(performance.now() - t0);
+        const errorMessage = err instanceof Error ? err.message : "Failed to fetch projects";
+        console.warn(`[useProjects] initial fetch failed after ${elapsed}ms: ${errorMessage}`);
+        if (!cancelled && !shouldSuppressVisibilityResumeError(errorMessage)) {
+          setError(errorMessage);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      const now = Date.now();
+      const timeSinceLastRefresh = now - lastVisibilityRefreshRef.current;
+      if (timeSinceLastRefresh < VISIBILITY_REFRESH_DEBOUNCE_MS) {
+        recordResumeEvent({
+          view: "useProjects",
+          trigger: "visibility",
+          projectId: undefined,
+          replayAttempted: false,
+          reason: "debounce-skipped",
+          detail: { timeSinceLastRefreshMs: timeSinceLastRefresh },
+        });
+        return;
+      }
+
+      lastVisibilityRefreshRef.current = now;
+      recordResumeEvent({
+        view: "useProjects",
+        trigger: "visibility",
+        projectId: undefined,
+        replayAttempted: false,
+        reason: "debounced-refresh",
+      });
+      void refresh();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [projects.length, refresh, shouldSuppressVisibilityResumeError]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-16:05:
+  This 5s poll was NOT visibility-gated, despite the mobile tab-retention work claiming every polling loop
+  was. The `visibilitychange` listener above only ADDS a refresh on the visible edge; it never cleared the
+  interval, so a backgrounded tab kept issuing a project-list fetch every 5 seconds. `useProjects` is mounted
+  unconditionally for the whole session (App.tsx), so this single loop was enough to keep the page permanently
+  non-idle — the exact signal iOS Safari / iOS PWA / Chrome Android use to discard the tab and force the
+  white-splash reload the whole effort was fixing.
+
+  `refreshOnVisible: false` because the debounced, instrumented listener above already owns the visible-edge
+  refresh; letting the helper refresh too would fetch twice on one edge.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: !loading, refreshOnVisible: false });
+
+  const register = useCallback(async (input: ProjectCreateInput): Promise<ProjectInfo> => {
+    const project = await registerProject(input);
+    // Optimistically add to list
+    setProjects((prev) => [...prev, project]);
+    return project;
+  }, []);
+
+  const update = useCallback(async (id: string, updates: Partial<ProjectInfo>): Promise<ProjectInfo> => {
+    const project = await updateProject(id, updates);
+    // Optimistically update in list
+    setProjects((prev) =>
+      prev.map((p) => (p.id === id ? project : p))
+    );
+    return project;
+  }, []);
+
+  const unregister = useCallback(async (id: string): Promise<void> => {
+    await unregisterProject(id);
+    // Optimistically remove from list
+    setProjects((prev) => {
+      const nextProjects = prev.filter((p) => p.id !== id);
+      writeCache(SWR_CACHE_KEYS.PROJECTS, nextProjects);
+      return nextProjects;
+    });
+    clearCache(`${SWR_CACHE_KEYS.TASKS_PREFIX}${id}`);
+  }, []);
+
+  return {
+    projects,
+    loading,
+    error,
+    refresh,
+    register,
+    update,
+    unregister,
+  };
+}

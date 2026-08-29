@@ -1,0 +1,48 @@
+/*
+FNXC:VoiceInput 2026-07-28-12:00:
+Voice model controls use the existing SettingsFieldRow slots. These styles only
+arrange status and standard buttons within those slots, preserving shared settings
+spacing and responsive touch targets without creating a parallel panel.
+*/
+.voice-input-section {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.voice-input-section__message {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+}
+
+.voice-input-section__status {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.voice-input-section__status--installed {
+  color: var(--color-success);
+}
+
+.voice-input-section__status--error,
+.voice-input-section__status--unknown {
+  color: var(--color-error);
+}
+
+.voice-input-section__status--downloading,
+.voice-input-section__status--queued {
+  color: var(--color-warning);
+}
+
+.voice-input-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .voice-input-section__actions .btn {
+    inline-size: 100%;
+    justify-content: center;
+  }
+}

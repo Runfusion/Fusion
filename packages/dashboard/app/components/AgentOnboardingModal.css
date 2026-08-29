@@ -1,0 +1,29 @@
+.agent-onboarding-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.agent-onboarding-summary {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+#agent-onboarding-intent,
+#agent-onboarding-answer {
+  min-height: 120px;
+  max-height: calc(var(--space-2xl) * 20);
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .agent-onboarding-modal {
+    width: 100%;
+    max-width: 100%;
+  }
+}

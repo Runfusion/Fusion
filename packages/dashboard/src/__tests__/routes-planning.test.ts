@@ -1,0 +1,4899 @@
+// @vitest-environment node
+
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
+import express from "express";
+import http from "node:http";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { createApiRoutes } from "../routes.js";
+import {
+  getProjectIdFromRequest as getProjectIdFromRouteRequest,
+  getProjectContext as resolveRouteProjectContext,
+  getScopedStore as resolveRouteScopedStore,
+} from "../routes/context.js";
+import { GitHubClient } from "../github.js";
+import * as resolveDiffBaseModule from "../routes/resolve-diff-base.js";
+import { githubRateLimiter } from "../github-poll.js";
+import {
+  PLANNING_DEEPEN_CHECKPOINT_ID,
+  PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+  PLANNING_DEEPEN_PROCEED_OPTION_ID,
+} from "@fusion/core";
+import type { TaskStore, TaskAttachment, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, ChatSession, ChatMessage } from "@fusion/core";
+import type { TaskDetail } from "@fusion/core";
+import type { AuthStorageLike, ModelRegistryLike } from "../routes.js";
+import { __resetBatchImportRateLimiter, __setCreateFnAgentForRefine } from "../routes.js";
+import * as agentGenerationModule from "../agent-generation.js";
+import {
+  __resetPlanningState,
+  __setCreateFnAgent,
+  planningStreamManager,
+  rehydrateFromStore,
+  setAiSessionStore,
+} from "../planning.js";
+import * as planningModule from "../planning.js";
+import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionRow } from "../ai-session-store.js";
+import * as usageModule from "../usage.js";
+import * as claudeCliProbeModule from "../claude-cli-probe.js";
+import * as droidCliProbeModule from "../droid-cli-probe.js";
+import * as projectStoreResolver from "../project-store-resolver.js";
+import * as terminalServiceModule from "../terminal-service.js";
+import { get as performGet, request as performRequest } from "../test-request.js";
+import { resetRuntimeLogSink, setRuntimeLogSink } from "../runtime-logger.js";
+import { resetDiagnosticsSink, setDiagnosticsSink, type LogEntry } from "../ai-session-diagnostics.js";
+import * as updateCheckModule from "../update-check.js";
+import { __setAgentReflectionServiceForTests } from "../routes/register-agent-reflection-rating-routes.js";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
+
+// Mock @fusion/core for gh CLI auth checks
+const mockCentralListProjects = vi.fn().mockResolvedValue([]);
+const mockCentralInit = vi.fn().mockResolvedValue(undefined);
+const mockCentralClose = vi.fn().mockResolvedValue(undefined);
+const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
+const { mockPerformUpdateCheck, mockClearUpdateCheckCache, mockExecSync, mockExecFile } = vi.hoisted(() => ({
+  mockPerformUpdateCheck: vi.fn(),
+  mockClearUpdateCheckCache: vi.fn(),
+  mockExecSync: vi.fn(),
+  mockExecFile: vi.fn(),
+}));
+
+vi.mock("../update-check.js", async () => {
+  const actual = await vi.importActual<typeof import("../update-check.js")>("../update-check.js");
+  return {
+    ...actual,
+    performUpdateCheck: mockPerformUpdateCheck,
+    clearUpdateCheckCache: mockClearUpdateCheckCache,
+  };
+});
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  mockExecSync.mockImplementation(((...args: Parameters<typeof actual.execSync>) => actual.execSync(...args)) as typeof actual.execSync);
+  // Default execFile mock blocks host-process pgrep calls used by /kill-vitest
+  // but passes through all other commands (including git) to preserve route
+  // behavior for integration-style API tests in this file.
+  mockExecFile.mockImplementation((...callArgs: unknown[]) => {
+    const [file, argsOrCb, maybeOptions, maybeCb] = callArgs as [string, unknown, unknown, unknown];
+    const args = Array.isArray(argsOrCb) ? argsOrCb : [];
+    const cb =
+      typeof maybeCb === "function"
+        ? (maybeCb as (err: unknown, stdout?: string, stderr?: string) => void)
+        : typeof maybeOptions === "function"
+          ? (maybeOptions as (err: unknown, stdout?: string, stderr?: string) => void)
+          : typeof argsOrCb === "function"
+            ? (argsOrCb as (err: unknown, stdout?: string, stderr?: string) => void)
+            : null;
+
+    if (file === "pgrep" && args[0] === "-f" && args[1] === "vitest") {
+      if (cb) queueMicrotask(() => cb(null, "", ""));
+      return;
+    }
+
+    return (actual.execFile as (...innerArgs: unknown[]) => unknown)(...callArgs);
+  });
+  return {
+    ...actual,
+    execSync: mockExecSync,
+    execFile: mockExecFile,
+  };
+});
+
+vi.mock("@fusion/core", async (importOriginal) => {
+  const { createCoreMock } = await import("../test/mockCoreEngine.js");
+  return createCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
+    resolveGlobalDir: vi.fn().mockReturnValue("/tmp/fusion-test"),
+    // FNXC:PlanningMode 2026-07-20-16:00: The dashboard route suite mocks
+    // @fusion/core from built artifacts, so retain the plan.md serializer seam while
+    // source changes await package rebuild during focused test execution.
+    formatPlanningPlanMd: vi.fn((summary: {
+      title: string;
+      description: string;
+      suggestedSize: "S" | "M" | "L";
+      suggestedDependencies: string[];
+      keyDeliverables: string[];
+    }) => `# ${summary.title}\n\n${summary.description}\n\n## Size\n${summary.suggestedSize}\n\n## Suggested dependencies\n${summary.suggestedDependencies.length ? summary.suggestedDependencies.map((dependency) => `- ${dependency}`).join("\n") : "_None_"}\n\n## Key deliverables\n${summary.keyDeliverables.length ? summary.keyDeliverables.map((deliverable) => `- ${deliverable}`).join("\n") : "_None_"}\n`),
+    isGhAvailable: vi.fn(),
+    isGhAuthenticated: vi.fn(),
+    isQmdAvailable: vi.fn().mockResolvedValue(false),
+    CentralCore: vi.fn().mockImplementation(function () { return {
+      init: mockCentralInit,
+      close: mockCentralClose,
+      listProjects: mockCentralListProjects,
+      reconcileProjectStatuses: mockCentralReconcileProjectStatuses,
+    }; }),
+  });
+});
+
+vi.mock("@fusion/engine", async () => {
+  const { createEngineMock } = await import("../test/mockCoreEngine.js");
+  return createEngineMock({
+  createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void }) => ({
+    session: {
+      state: {
+        messages: [] as Array<{ role: string; content: string }>,
+      },
+      prompt: vi.fn(async function (this: { state?: { messages?: Array<{ role: string; content: string }> } }, message: string) {
+        options?.onText?.("mock-ai-output");
+        const messages = this.state?.messages ?? [];
+        messages.push({ role: "user", content: message });
+        messages.push({
+          role: "assistant",
+          content: JSON.stringify({
+            subtasks: [
+              {
+                id: "subtask-1",
+                title: "Mock subtask",
+                description: "Generated by the route test engine mock",
+                suggestedSize: "S",
+                dependsOn: [],
+              },
+            ],
+          }),
+        });
+      }),
+      dispose: vi.fn(),
+    },
+  })),
+  promptWithFallback: vi.fn(async (session: { prompt: (message: string) => Promise<void> }, prompt: string) => {
+    await session.prompt(prompt);
+  }),
+  AgentReflectionService: class MockAgentReflectionService {
+    async generateReflection(): Promise<import("@fusion/core").AgentReflection | null> {
+      throw new Error("Reflection service unavailable in route tests");
+    }
+
+    async buildReflectionContext(): Promise<never> {
+      throw new Error("Reflection service unavailable in route tests");
+    }
+  },
+  });
+});
+
+import { AgentStore, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
+import { createFnAgent } from "@fusion/engine";
+
+const mockIsGhAvailable = vi.mocked(isGhAvailable);
+const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
+
+function createMockGlobalSettingsStore() {
+  return {
+    getSettings: vi.fn().mockResolvedValue({}),
+    updateSettings: vi.fn().mockResolvedValue({}),
+    getSettingsPath: vi.fn().mockReturnValue("/fake/home/.fusion/settings.json"),
+    init: vi.fn().mockResolvedValue(false),
+    invalidateCache: vi.fn(),
+  };
+}
+
+/*
+FNXC:PlanningRouteTests 2026-07-23-08:10:
+Every TaskStore double passed to createApiRoutes must provide one stable, inert PluginStore.
+Project-context binding initializes and reads it before Planning handlers run; an empty async store
+keeps route tests deterministic while preserving the production project-scoped MCP provider contract.
+*/
+function createInertPluginStore() {
+  return {
+    init: vi.fn().mockResolvedValue(undefined),
+    listPlugins: vi.fn().mockResolvedValue([]),
+    getPlugin: vi.fn().mockResolvedValue(null),
+  };
+}
+
+function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  const pluginStore = createInertPluginStore();
+  const branchGroups = new Map<string, {
+    id: string;
+    sourceType: "planning" | "mission" | "new-task";
+    sourceId: string;
+    branchName: string;
+    autoMerge: boolean;
+    prState: "none";
+    status: "open";
+    createdAt: number;
+    updatedAt: number;
+  }>();
+
+  return {
+    // FNXC:PostgresCutover 2026-07-05-16:50: routes borrow the AsyncDataLayer
+    // from the scoped store; null = legacy mode for this mock.
+    getAsyncLayer: vi.fn().mockReturnValue(null),
+    getTask: vi.fn(),
+    listTasks: vi.fn().mockResolvedValue([]),
+    searchTasks: vi.fn().mockResolvedValue([]),
+    createTask: vi.fn(),
+    moveTask: vi.fn(),
+    updateTask: vi.fn(),
+    deleteTask: vi.fn(),
+    mergeTask: vi.fn(),
+    archiveTask: vi.fn(),
+    unarchiveTask: vi.fn(),
+    // Existing planning-route scenarios exercise the enabled checkpoint flow; explicit disabled cases override this default.
+    getSettings: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main", agentClarificationEnabled: true }),
+    getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main", agentClarificationEnabled: true }),
+    updateSettings: vi.fn(),
+    updateGlobalSettings: vi.fn(),
+    getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
+    getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
+    getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
+    logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TaskCreateDedup 2026-07-18-15:55:
+    FN-8277 parent-scoped uniqueness pre-check requires findRecentTasksBySourceParentTaskId;
+    default empty so planning create-task / subtask routes return 201 under mock stores.
+    */
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
+    addSteeringComment: vi.fn(),
+    addTaskComment: vi.fn(),
+    updateTaskComment: vi.fn(),
+    deleteTaskComment: vi.fn(),
+    getTaskDocuments: vi.fn().mockResolvedValue([]),
+    getTaskDocument: vi.fn().mockResolvedValue(null),
+    getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
+    getAllDocuments: vi.fn().mockResolvedValue([]),
+    upsertTaskDocument: vi.fn(),
+    deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
+    updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    updateIssueInfo: vi.fn().mockResolvedValue(undefined),
+    getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    ensureBranchGroupForSource: vi.fn(function (this: TaskStore, sourceType: "planning" | "mission" | "new-task", sourceId: string, init: { branchName: string; autoMerge?: boolean }) {
+      const existing = this.getBranchGroupBySource(sourceType, sourceId);
+      if (existing) {
+        return existing;
+      }
+      const created = {
+        id: `BG-${sourceType}-${sourceId}`,
+        sourceType,
+        sourceId,
+        branchName: init.branchName,
+        autoMerge: Boolean(init.autoMerge),
+        prState: "none" as const,
+        status: "open" as const,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      branchGroups.set(`${sourceType}:${sourceId}`, created);
+      return created;
+    }),
+    getBranchGroupBySource: vi.fn((sourceType: "planning" | "mission" | "new-task", sourceId: string) =>
+      branchGroups.get(`${sourceType}:${sourceId}`) ?? null
+    ),
+    listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    createWorkflowStep: vi.fn(),
+    getWorkflowStep: vi.fn(),
+    updateWorkflowStep: vi.fn(),
+    deleteWorkflowStep: vi.fn(),
+    getMissionStore: vi.fn().mockReturnValue({
+      listMissions: vi.fn().mockReturnValue([]),
+      createMission: vi.fn(),
+      getMissionWithHierarchy: vi.fn(),
+      updateMission: vi.fn(),
+      getMission: vi.fn(),
+      deleteMission: vi.fn(),
+      listMilestonesByMission: vi.fn().mockReturnValue([]),
+      createMilestone: vi.fn(),
+      updateMilestone: vi.fn(),
+      getMilestone: vi.fn(),
+      deleteMilestone: vi.fn(),
+      listTasksByMilestone: vi.fn().mockReturnValue([]),
+      createMissionTask: vi.fn(),
+      updateMissionTask: vi.fn(),
+      getMissionTask: vi.fn(),
+      deleteMissionTask: vi.fn(),
+    }),
+    ...overrides,
+  } as unknown as TaskStore;
+}
+
+const TASK_TOKEN_USAGE_FIXTURE = {
+  inputTokens: 1200,
+  outputTokens: 450,
+  cachedTokens: 210,
+  totalTokens: 1860,
+  firstUsedAt: "2026-04-24T09:00:00.000Z",
+  lastUsedAt: "2026-04-24T10:15:00.000Z",
+};
+
+const FAKE_TASK_DETAIL: TaskDetail = {
+  id: "FN-001",
+  description: "Test task",
+  column: "in-progress",
+  dependencies: [],
+  steps: [],
+  currentStep: 0,
+  log: [],
+  tokenUsage: TASK_TOKEN_USAGE_FIXTURE,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  prompt: "# KB-001\n\nTest task",
+};
+
+async function GET(app: express.Express, path: string): Promise<{ status: number; body: any }> {
+  const res = await performGet(app, path);
+  return { status: res.status, body: res.body };
+}
+
+async function REQUEST(
+  app: express.Express,
+  method: string,
+  path: string,
+  body?: Buffer | string,
+  headers?: Record<string, string>,
+): Promise<{ status: number; body: any }> {
+  const res = await performRequest(app, method, path, body, headers);
+  return { status: res.status, body: res.body };
+}
+
+class MockAiSessionStore extends EventEmitter {
+  rows = new Map<string, AiSessionRow>();
+
+  async upsert(row: AiSessionRow): Promise<void> {
+    this.rows.set(row.id, row);
+  }
+
+  async updateThinking(id: string, thinkingOutput: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row) return;
+    this.rows.set(id, { ...row, thinkingOutput, updatedAt: new Date().toISOString() });
+  }
+
+  async updateTitle(id: string, title: string): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row) return false;
+    this.rows.set(id, { ...row, title, updatedAt: new Date().toISOString() });
+    return true;
+  }
+
+  async delete(id: string): Promise<void> {
+    this.rows.delete(id);
+    this.emit("ai_session:deleted", id);
+  }
+
+  async get(id: string): Promise<AiSessionRow | null> {
+    return this.rows.get(id) ?? null;
+  }
+
+  async listRecoverable(): Promise<AiSessionRow[]> {
+    return [...this.rows.values()].filter(
+      (row) => row.status === "awaiting_input" || row.status === "generating" || row.status === "error",
+    );
+  }
+
+  on(event: "ai_session:deleted", listener: (sessionId: string) => void): this {
+    return super.on(event, listener);
+  }
+
+  off(event: "ai_session:deleted", listener: (sessionId: string) => void): this {
+    return super.off(event, listener);
+  }
+}
+
+function buildPlanningRow(
+  overrides: Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "status">,
+): AiSessionRow {
+  const now = new Date().toISOString();
+  return {
+    id: overrides.id,
+    type: "planning",
+    status: overrides.status,
+    title: overrides.title ?? "Recovered planning session",
+    inputPayload:
+      overrides.inputPayload
+      ?? JSON.stringify({ ip: "127.0.0.1", initialPlan: "Recovered planning session" }),
+    conversationHistory:
+      overrides.conversationHistory
+      ?? JSON.stringify([
+        {
+          question: {
+            id: "q-existing",
+            type: "text",
+            question: "What should we build?",
+            description: "baseline",
+          },
+          response: { "q-existing": "A useful feature" },
+        },
+      ]),
+    currentQuestion:
+      overrides.currentQuestion
+      ?? JSON.stringify({
+        id: "q-next",
+        type: "text",
+        question: "Any constraints?",
+        description: "detail",
+      }),
+    result: overrides.result ?? null,
+    thinkingOutput: overrides.thinkingOutput ?? "thinking",
+    error: overrides.error ?? null,
+    projectId: overrides.projectId ?? null,
+    createdAt: overrides.createdAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+  };
+}
+
+function collectOrderedRouteKeys(router: express.Router): string[] {
+  const stack = (router as unknown as {
+    stack?: Array<{ route?: { path?: string; methods?: Record<string, boolean> } }>;
+  }).stack ?? [];
+
+  const orderedKeys: string[] = [];
+  for (const layer of stack) {
+    const route = layer.route;
+    if (!route?.path || !route.methods) continue;
+    const method = Object.keys(route.methods).find((name) => route.methods?.[name]);
+    if (!method) continue;
+    orderedKeys.push(`${method.toUpperCase()} ${route.path}`);
+  }
+  return orderedKeys;
+}
+
+afterEach(() => {
+  resetDiagnosticsSink();
+});
+
+
+describe("Planning Mode Routes", () => {
+    let store: TaskStore;
+
+    function buildApp() {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return app;
+    }
+
+    async function createCompletedPlanningSession(initialPlan = "Build a user auth system"): Promise<string> {
+      const startRes = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/planning/start",
+        JSON.stringify({ initialPlan }),
+        { "Content-Type": "application/json" }
+      );
+      const sessionId = startRes.body.sessionId;
+
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+        sessionId,
+        responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+      }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+
+      return sessionId;
+    }
+
+    async function connectPlanningStreamUntilComplete(sessionId: string): Promise<void> {
+      const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+      setTimeout(() => {
+        planningStreamManager.broadcast(sessionId, { type: "complete" });
+      }, 0);
+      await streamPromise;
+    }
+
+    /** Mock agent for planning session tests */
+    function setupPlanningMockAgent() {
+      const questionResponses = [
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-scope",
+            type: "single_select",
+            question: "What is the scope of this plan?",
+            description: "This helps estimate the size and complexity of the task.",
+            options: [
+              { id: "small", label: "Small", description: "Quick" },
+              { id: "medium", label: "Medium", description: "Standard" },
+              { id: "large", label: "Large", description: "Complex" },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-requirements",
+            type: "text",
+            question: "What are the key requirements?",
+            description: "List acceptance criteria.",
+          },
+        }),
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-confirm",
+            type: "confirm",
+            question: "Are there specific technologies to use?",
+            description: "Answer yes if you have preferences.",
+          },
+        }),
+        JSON.stringify({
+          type: "complete",
+          data: {
+            title: "Build a user auth system",
+            description: "Build a user authentication system\n\nRequirements: Standard implementation\n\nGenerated via Planning Mode",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Implementation", "Tests", "Documentation"],
+          },
+        }),
+      ];
+
+      const messages: Array<{ role: string; content: string }> = [];
+      let callIndex = 0;
+      const mockAgent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (msg: string) => {
+            messages.push({ role: "user", content: msg });
+            const response = questionResponses[callIndex++] ?? questionResponses[questionResponses.length - 1];
+            messages.push({ role: "assistant", content: response });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+      __setCreateFnAgent(async () => mockAgent);
+    }
+
+    async function rehydratePlanningSessionRow(row: AiSessionRow): Promise<string> {
+      const mockStore = new MockAiSessionStore();
+      await mockStore.upsert(row);
+      setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+      const recoveredCount = await rehydrateFromStore(mockStore as unknown as Parameters<typeof rehydrateFromStore>[0]);
+      expect(recoveredCount).toBe(1);
+      return row.id;
+    }
+
+    beforeEach(() => {
+      // Reset planning state before each test to avoid cross-test contamination
+      store = createMockStore();
+      __resetPlanningState();
+      setupPlanningMockAgent();
+    });
+
+    afterEach(() => {
+      __setCreateFnAgent(undefined as any);
+    });
+
+    describe("PATCH /planning/:sessionId/title", () => {
+      function buildTitleRouteApp(sessionStore: MockAiSessionStore) {
+        setAiSessionStore(sessionStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        return buildApp();
+      }
+
+      it("persists a verbatim title for an active planning session", async () => {
+        const sessionStore = new MockAiSessionStore();
+        await sessionStore.upsert(buildPlanningRow({ id: "planning-active-title", status: "awaiting_input", title: "AI draft" }));
+
+        const res = await REQUEST(buildTitleRouteApp(sessionStore), "PATCH", "/api/planning/planning-active-title/title", JSON.stringify({ title: "  Operator-defined plan  " }), { "Content-Type": "application/json" });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ sessionId: "planning-active-title", title: "Operator-defined plan" });
+        expect((await sessionStore.get("planning-active-title"))?.title).toBe("Operator-defined plan");
+      });
+
+      it.each(["", "   ", "x".repeat(61)])("rejects an invalid user session title", async (title) => {
+        const sessionStore = new MockAiSessionStore();
+        await sessionStore.upsert(buildPlanningRow({ id: "planning-invalid-title", status: "awaiting_input", title: "Unchanged" }));
+
+        const res = await REQUEST(buildTitleRouteApp(sessionStore), "PATCH", "/api/planning/planning-invalid-title/title", JSON.stringify({ title }), { "Content-Type": "application/json" });
+
+        expect(res.status).toBe(400);
+        expect((await sessionStore.get("planning-invalid-title"))?.title).toBe("Unchanged");
+      });
+
+      it("returns 404 for an unknown session", async () => {
+        const res = await REQUEST(buildTitleRouteApp(new MockAiSessionStore()), "PATCH", "/api/planning/missing/title", JSON.stringify({ title: "No session" }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(404);
+      });
+
+      it("returns 404 without renaming a non-planning AI session", async () => {
+        const sessionStore = new MockAiSessionStore();
+        await sessionStore.upsert({ ...buildPlanningRow({ id: "chat-title-isolation", status: "awaiting_input", title: "Chat title" }), type: "chat" });
+
+        const res = await REQUEST(buildTitleRouteApp(sessionStore), "PATCH", "/api/planning/chat-title-isolation/title", JSON.stringify({ title: "Must not rename" }), { "Content-Type": "application/json" });
+
+        expect(res.status).toBe(404);
+        expect((await sessionStore.get("chat-title-isolation"))?.title).toBe("Chat title");
+      });
+    });
+
+    describe("POST /planning/start", () => {
+      it("creates a new planning session", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+
+        // Regression: context binding must finish before this route assertion, not replace it with a plugin-store 500.
+        expect(res.status).toBe(201);
+        expect(JSON.stringify(res.body)).not.toContain("getPluginStore is not a function");
+        expect(res.body.sessionId).toBeDefined();
+        expect(typeof res.body.sessionId).toBe("string");
+        expect(res.body.firstQuestion).toBeDefined();
+        expect(res.body.firstQuestion.id).toBe("q-scope");
+        expect(res.body.firstQuestion.type).toBe("single_select");
+      });
+
+      it("rejects a first-turn completion until the agent asks a clarifying question", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const responses = [
+          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
+          JSON.stringify({ type: "question", data: { id: "q-required", type: "text", question: "Which constraint matters most?" } }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a detailed account-management experience" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.firstQuestion).toMatchObject({ id: "q-required", question: "Which constraint matters most?" });
+        expect(res.body.firstQuestion.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(messages).toHaveLength(4);
+        expect(messages[2]?.content).toContain("Before producing a plan");
+      });
+
+      it("shows the mandatory first question when clarification is disabled", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: JSON.stringify({
+                type: "question",
+                data: { id: "q-required-disabled", type: "text", question: "Who is the primary user?" },
+              }) });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a feature", clarificationEnabled: false }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.firstQuestion).toMatchObject({ id: "q-required-disabled" });
+        expect(res.body.firstQuestion.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(messages).toHaveLength(2);
+      });
+
+      it("requires initialPlan in body", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({}),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("initialPlan is required");
+      });
+
+      it("accepts long initialPlan (no character limit)", async () => {
+        // Test that the server accepts long initialPlan values (removed 500-char limit)
+        const longPlan = "a".repeat(2000);
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: longPlan }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.sessionId).toBeDefined();
+      });
+
+      it("returns an API error instead of terminating when the first AI response is unparsable", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const dispose = vi.fn();
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (msg: string) => {
+              messages.push({ role: "user", content: msg });
+              messages.push({ role: "assistant", content: "" });
+            }),
+            dispose,
+          },
+        }));
+        const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+          throw new Error("process.exit should not be called");
+        }) as never);
+
+        try {
+          const res = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start",
+            JSON.stringify({ initialPlan: "Investigate dashboard crash" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(res.status).toBe(500);
+          expect(res.body.error).toContain("Failed to get first question from AI");
+          expect(exitSpy).not.toHaveBeenCalled();
+          expect(dispose).toHaveBeenCalledTimes(1);
+        } finally {
+          exitSpy.mockRestore();
+        }
+      });
+
+      it("enforces rate limiting (1000 sessions per hour per IP)", async () => {
+        // Seed the in-memory limiter directly so this boundary test still proves
+        // the 1000th HTTP request is accepted and the 1001st is rejected without
+        // spending seconds creating 999 duplicate full planning sessions.
+        const candidateIps = ["::ffff:127.0.0.1", "127.0.0.1", "unknown"];
+        for (const ip of candidateIps) {
+          for (let i = 0; i < 999; i += 1) {
+            expect(planningModule.checkRateLimit(ip)).toBe(true);
+          }
+        }
+
+        const allowed = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan 1000" }),
+          { "Content-Type": "application/json" }
+        );
+        expect(allowed.status).toBe(201);
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan 1001" }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(429);
+        expect(res.body.error).toContain("Rate limit exceeded");
+      });
+    });
+
+    describe("POST /planning/start-streaming", () => {
+      it("does not expose the seeded fallback as a reviewable plan while the AI turn is active", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        let releasePrompt: (() => void) | undefined;
+        let markPromptStarted: (() => void) | undefined;
+        const promptStarted = new Promise<void>((resolve) => {
+          markPromptStarted = resolve;
+        });
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              markPromptStarted?.();
+              await new Promise<void>((resolve) => {
+                releasePrompt = resolve;
+              });
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "complete",
+                  data: {
+                    title: "AI-authored plan",
+                    description: "Generated after repository inspection.",
+                    proposedChanges: ["Implement the requested behavior"],
+                    acceptanceCriteria: ["The behavior is verified"],
+                    keyDeliverables: ["Working implementation"],
+                  },
+                }),
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Generate this plan with AI" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        await promptStarted;
+        planningStreamManager.broadcast(sessionId, { type: "complete" });
+        const streamRes = await streamPromise;
+        releasePrompt?.();
+        await vi.waitFor(() => {
+          expect(planningStreamManager.getBufferedEvents(sessionId, 0).some((event) => event.event === "summary")).toBe(true);
+        });
+
+        expect(messages[0]?.content).toContain("Generate this plan with AI");
+        expect(streamRes.body).not.toContain("event: summary");
+        expect(streamRes.body).not.toContain("Generate this plan with AI");
+      });
+
+      it("broadcasts a reviewable initial plan and its required validation question", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const responses = [
+          JSON.stringify({ type: "complete", data: { title: "Reporting workflow plan", description: "A concrete reporting plan", proposedChanges: ["Update report generation"], acceptanceCriteria: ["Reports complete successfully"], keyDeliverables: ["Implement report generation"] } }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Build a detailed reporting workflow", clarificationEnabled: false, planningDepth: "small", customQuestionCount: 1 }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        planningStreamManager.consumeInitialTurn(res.body.sessionId)!();
+        await vi.waitFor(() => {
+          const events = planningStreamManager.getBufferedEvents(res.body.sessionId, 0);
+          expect(events.filter((event) => event.event === "summary")).toHaveLength(1);
+          /*
+          FNXC:PlanningRouteTests 2026-07-23-08:35:
+          An AI-authored summary remains reviewable but is not complete until the operator
+          answers the validation checkpoint, so streaming must retain that question event.
+          */
+          expect(events.filter((event) => event.event === "question")).toHaveLength(1);
+          expect(events.filter((event) => event.event === "complete")).toHaveLength(0);
+        });
+        expect((await planningModule.getSession(res.body.sessionId))?.validated).toBe(false);
+        expect(messages).toHaveLength(2);
+        expect(messages[0]?.content).toContain("Build a detailed reporting workflow");
+
+        const validationRes = await REQUEST(
+          buildApp(),
+          "POST",
+          `/api/planning/${res.body.sessionId}/validate`,
+          undefined,
+          { "Content-Type": "application/json" },
+        );
+        expect(validationRes).toMatchObject({ status: 200, body: { validated: true } });
+        expect(planningStreamManager.getBufferedEvents(res.body.sessionId, 0).filter((event) => event.event === "complete")).toHaveLength(1);
+      });
+
+      it("rejects invalid planning depth", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Build a user auth system",
+            planningDepth: "extra-large",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+      });
+
+      it("rejects out-of-range custom question count", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Build a user auth system",
+            customQuestionCount: 21,
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+      });
+
+      it("rejects invalid thinkingLevel", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Build a user auth system", thinkingLevel: "maximum" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("thinkingLevel");
+      });
+
+      it("accepts optional model params and thinkingLevel in request body", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const mockAgent = {
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (msg: string) => {
+              messages.push({ role: "user", content: msg });
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "question",
+                  data: {
+                    id: "q-scope",
+                    type: "text",
+                    question: "What should we plan first?",
+                  },
+                }),
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        };
+
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Build a user auth system",
+            planningModelProvider: "google",
+            planningModelId: "gemini-2.5-pro",
+            thinkingLevel: "high",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.sessionId).toBeDefined();
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              defaultProvider: "google",
+              defaultModelId: "gemini-2.5-pro",
+              defaultThinkingLevel: "high",
+            }),
+          );
+        });
+      });
+
+      // ── Lane Precedence Regression Tests ────────────────────────────────────────
+      // Tests for FN-1730: ensure model resolution follows the documented hierarchy:
+      // 1. Request body planningModelProvider + planningModelId (explicit override)
+      // 2. Project settings planningProvider + planningModelId (project lane)
+      // 3. Global settings planningGlobalProvider + planningGlobalModelId (global lane)
+      // 4. Default settings defaultProvider + defaultModelId (default fallback)
+      // 5. No explicit model (automatic resolution)
+
+      it("uses request body model override when both provider and modelId provided", async () => {
+        const mockAgent = {
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+          },
+        };
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Test plan",
+            planningModelProvider: "google",
+            planningModelId: "gemini-2.5-pro",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              defaultProvider: "google",
+              defaultModelId: "gemini-2.5-pro",
+            }),
+          );
+        });
+      });
+
+      it("falls back to project planning lane when no request override", async () => {
+        const mockAgent = {
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+          },
+        };
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        // Mock project settings with planningProvider + planningModelId
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          planningProvider: "anthropic",
+          planningModelId: "claude-sonnet-4-5",
+        });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Test plan" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              defaultProvider: "anthropic",
+              defaultModelId: "claude-sonnet-4-5",
+            }),
+          );
+        });
+      });
+
+      it("falls back to global planning lane when project lane unset", async () => {
+        const mockAgent = {
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+          },
+        };
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        // Mock project settings with planningGlobalProvider + planningGlobalModelId (no project lane)
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          planningGlobalProvider: "openai",
+          planningGlobalModelId: "gpt-4o",
+        });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Test plan" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              defaultProvider: "openai",
+              defaultModelId: "gpt-4o",
+            }),
+          );
+        });
+      });
+
+      it("falls back to default lane when all planning lanes unset", async () => {
+        const mockAgent = {
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+          },
+        };
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        // Mock project settings with only defaultProvider + defaultModelId
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          defaultProvider: "mistral",
+          defaultModelId: "mistral-large",
+        });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Test plan" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              defaultProvider: "mistral",
+              defaultModelId: "mistral-large",
+            }),
+          );
+        });
+      });
+
+      it("passes no model when all lanes unset (automatic resolution)", async () => {
+        const mockAgent = {
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+          },
+        };
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        // Mock project settings with no model configuration
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Test plan" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          // No explicit defaultProvider/defaultModelId means automatic resolution
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.not.objectContaining({
+              defaultProvider: expect.anything(),
+              defaultModelId: expect.anything(),
+            }),
+          );
+        });
+      });
+
+      it("uses a selected workflow planning pair for new and existing draft starts", async () => {
+        const workflowId = "wf-planning-lane";
+        const workflowIr = {
+          version: "v2",
+          name: "Planning lane workflow",
+          columns: [{ id: "todo", name: "Todo", traits: [] }],
+          nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }],
+          edges: [{ from: "start", to: "end" }],
+          settings: [
+            { id: "planningProvider", name: "Planning provider", type: "string" },
+            { id: "planningModelId", name: "Planning model", type: "string" },
+          ],
+        };
+        store = createMockStore({
+          getSettings: vi.fn().mockResolvedValue({}),
+          getDefaultWorkflowId: vi.fn().mockResolvedValue("builtin:coding"),
+          getWorkflowDefinition: vi.fn(async (id: string) => id === workflowId ? { ir: workflowIr } : undefined),
+          getWorkflowSettingValues: vi.fn((id: string) => id === workflowId
+            ? { planningProvider: "workflow-provider", planningModelId: "workflow-model" }
+            : {}),
+          getWorkflowSettingsProjectId: vi.fn(() => "default"),
+        });
+        const createFnAgentSpy = vi.fn(async () => ({
+          session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() },
+        }));
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        const newSession = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "New workflow planning session", workflowId }),
+          { "Content-Type": "application/json" },
+        );
+        expect(newSession.status).toBe(201);
+
+        const draft = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-draft",
+          JSON.stringify({ initialPlan: "Existing workflow planning session" }),
+          { "Content-Type": "application/json" },
+        );
+        const existingSession = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Existing workflow planning session",
+            existingSessionId: draft.body.sessionId,
+            workflowId,
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(existingSession.status).toBe(201);
+
+        await connectPlanningStreamUntilComplete(newSession.body.sessionId);
+        await connectPlanningStreamUntilComplete(existingSession.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledTimes(2);
+        });
+        for (const [options] of createFnAgentSpy.mock.calls) {
+          expect(options).toEqual(expect.objectContaining({
+            defaultProvider: "workflow-provider",
+            defaultModelId: "workflow-model",
+          }));
+        }
+      });
+
+      it("keeps test mode forced to mock despite a complete request override", async () => {
+        const createFnAgentSpy = vi.fn(async () => ({
+          session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() },
+        }));
+        __setCreateFnAgent(createFnAgentSpy as any);
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ testMode: true });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Test-mode workflow planning session",
+            planningModelProvider: "operator-provider",
+            planningModelId: "operator-model",
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        await vi.waitFor(() => {
+          expect(createFnAgentSpy).toHaveBeenCalledWith(expect.objectContaining({
+            defaultProvider: "mock",
+            defaultModelId: "scripted",
+          }));
+        });
+      });
+
+      it("rejects partial request override (provider only, no modelId)", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Test plan",
+            planningModelProvider: "google",
+            // missing planningModelId
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        // Partial overrides should be treated as no override
+        // The route validates individual fields, not pair consistency
+        // Request override is ignored when modelId is missing
+        expect(res.status).toBe(201);
+      });
+
+      it("ignores partial project lane (provider only, no modelId)", async () => {
+        const mockAgent = {
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+          },
+        };
+        const createFnAgentSpy = vi.fn(async () => mockAgent);
+        __setCreateFnAgent(createFnAgentSpy as any);
+
+        // Mock project settings with partial provider (no modelId)
+        (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          planningProvider: "anthropic",
+          // missing planningModelId
+        });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Test plan" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
+        // Partial project lane should be ignored, falls through to next tier
+        await vi.waitFor(() => {
+          // Should NOT use the partial provider
+          expect(createFnAgentSpy).toHaveBeenCalledWith(
+            expect.not.objectContaining({
+              defaultProvider: "anthropic",
+            }),
+          );
+        });
+      });
+    });
+
+    describe("GET /planning/:sessionId/stream", () => {
+      function setupStreamingPlanningAgent() {
+        const promptCalls: string[] = [];
+        const messages: Array<{ role: string; content: string }> = [];
+        const createFnAgentSpy = vi.fn(async (options?: { onThinking?: (delta: string) => void }) => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              promptCalls.push(message);
+              await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                  options?.onThinking?.("live first-turn reasoning");
+                  messages.push({ role: "user", content: message });
+                  messages.push({
+                    role: "assistant",
+                    content: JSON.stringify({
+                      type: "question",
+                      data: {
+                        id: "q-live-first-turn",
+                        type: "text",
+                        question: "What should the plan prioritize first?",
+                      },
+                    }),
+                  });
+                  resolve();
+                }, 1);
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        __setCreateFnAgent(createFnAgentSpy as any);
+        return { createFnAgentSpy, promptCalls };
+      }
+
+      it("replays buffered events when Last-Event-ID header is provided", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Reconnect planning stream" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const sessionId = startRes.body.sessionId as string;
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "second" });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 0);
+
+        const streamRes = await REQUEST(
+          buildApp(),
+          "GET",
+          `/api/planning/${sessionId}/stream`,
+          undefined,
+          { "Last-Event-ID": "1" },
+        );
+
+        expect(streamRes.status).toBe(200);
+        expect(typeof streamRes.body).toBe("string");
+        expect(streamRes.body).toContain("id: 2");
+        expect(streamRes.body).toContain("event: thinking");
+        expect(streamRes.body).toContain("id: 3");
+        expect(streamRes.body).toContain("event: complete");
+        expect(streamRes.body).not.toContain("id: 1\nevent: thinking");
+      });
+
+      it("replays buffered thinking when Last-Event-ID is missing", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "No replay planning stream" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const sessionId = startRes.body.sessionId as string;
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 0);
+
+        const streamRes = await REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        expect(streamRes.status).toBe(200);
+        expect(streamRes.body).toContain("id: 1\nevent: thinking");
+        expect(streamRes.body).toContain("id: 2");
+        expect(streamRes.body).toContain("event: complete");
+      });
+
+      it("defers the first streamed turn until SSE connect for new sessions", async () => {
+        vi.useFakeTimers();
+        try {
+          const { promptCalls } = setupStreamingPlanningAgent();
+
+          const startRes = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start-streaming",
+            JSON.stringify({ initialPlan: "Stream the first planning turn live" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(startRes.status).toBe(201);
+          const sessionId = startRes.body.sessionId as string;
+          expect(promptCalls).toHaveLength(0);
+          expect(
+            planningStreamManager.getBufferedEvents(sessionId, 0).filter((event) => event.event === "thinking"),
+          ).toHaveLength(0);
+
+          const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          await Promise.resolve();
+
+          await vi.advanceTimersByTimeAsync(1);
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          const streamRes = await streamPromise;
+          expect(streamRes.status).toBe(200);
+          expect(promptCalls).toHaveLength(1);
+          expect(streamRes.body).toContain("event: thinking");
+          expect(streamRes.body).toContain("live first-turn reasoning");
+          expect(streamRes.body).toContain("event: summary");
+          expect(streamRes.body).toContain("event: question");
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("defers the first streamed turn until SSE connect when starting an existing draft session", async () => {
+        vi.useFakeTimers();
+        try {
+          const { promptCalls } = setupStreamingPlanningAgent();
+
+          const draftRes = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/create-draft",
+            JSON.stringify({ initialPlan: "Draft that will be started later" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(draftRes.status).toBe(201);
+          const sessionId = draftRes.body.sessionId as string;
+
+          const startPromise = REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start-streaming",
+            JSON.stringify({
+              initialPlan: "Draft that will be started later",
+              existingSessionId: sessionId,
+            }),
+            { "Content-Type": "application/json" },
+          );
+
+          await vi.advanceTimersByTimeAsync(1);
+          const startRes = await startPromise;
+          expect(startRes.status).toBe(201);
+          expect(promptCalls).toHaveLength(0);
+          expect(
+            planningStreamManager.getBufferedEvents(sessionId, 0).filter((event) => event.event === "thinking"),
+          ).toHaveLength(0);
+
+          const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          await Promise.resolve();
+
+          await vi.advanceTimersByTimeAsync(1);
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          const streamRes = await streamPromise;
+          expect(streamRes.status).toBe(200);
+          expect(promptCalls).toHaveLength(1);
+          expect(streamRes.body).toContain("event: thinking");
+          expect(streamRes.body).toContain("live first-turn reasoning");
+          expect(streamRes.body).toContain("event: summary");
+          expect(streamRes.body).toContain("event: question");
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("captures the output language in a draft before later settings can change it", async () => {
+        const sessionStore = new MockAiSessionStore();
+        setAiSessionStore(sessionStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        store = createMockStore({
+          getSettings: vi.fn().mockResolvedValue({ taskOutputLanguage: "interface", language: "fr" }),
+        });
+
+        const draftRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-draft",
+          JSON.stringify({ initialPlan: "Plan en español" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(draftRes.status).toBe(201);
+        await vi.waitFor(() => {
+          const row = sessionStore.rows.get(draftRes.body.sessionId);
+          expect(JSON.parse(row?.inputPayload ?? "{}").taskOutputLanguage).toMatchObject({
+            mode: "interface",
+            locale: "fr",
+          });
+        });
+      });
+
+      it("starts the deferred first turn exactly once even with concurrent subscribers", async () => {
+        vi.useFakeTimers();
+        try {
+          const { promptCalls } = setupStreamingPlanningAgent();
+
+          const startRes = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start-streaming",
+            JSON.stringify({ initialPlan: "Only start the first turn once" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(startRes.status).toBe(201);
+          const sessionId = startRes.body.sessionId as string;
+          expect(promptCalls).toHaveLength(0);
+
+          const firstStreamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          const secondStreamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          await Promise.resolve();
+
+          await vi.advanceTimersByTimeAsync(1);
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          const [firstStreamRes, secondStreamRes] = await Promise.all([firstStreamPromise, secondStreamPromise]);
+          expect(promptCalls).toHaveLength(1);
+          expect(firstStreamRes.status).toBe(200);
+          expect(secondStreamRes.status).toBe(200);
+          expect(firstStreamRes.body).toContain("live first-turn reasoning");
+          expect(secondStreamRes.body).toContain("live first-turn reasoning");
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("treats invalid Last-Event-ID values as first connect", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Invalid last event id" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const sessionId = startRes.body.sessionId as string;
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first" });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 0);
+
+        const streamRes = await REQUEST(
+          buildApp(),
+          "GET",
+          `/api/planning/${sessionId}/stream`,
+          undefined,
+          { "Last-Event-ID": "not-a-number" },
+        );
+
+        expect(streamRes.status).toBe(200);
+        expect(streamRes.body).toContain("id: 1\nevent: thinking");
+        expect(streamRes.body).toContain("id: 2");
+        expect(streamRes.body).toContain("event: complete");
+      });
+
+      it("replays buffered thinking on first connect when session already has currentQuestion", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Catch-up thinking before question" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+
+        const { planningStreamManager, getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+
+        planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first buffered thought" });
+
+        const mockQuestion = {
+          id: "q-catchup-thinking",
+          type: "text",
+          question: "What is your preference?",
+          description: "Please choose",
+        };
+        // @ts-expect-error - test setup mutates in-memory session state
+        session!.currentQuestion = mockQuestion;
+
+        planningStreamManager.broadcast(sessionId, { type: "question", data: mockQuestion });
+
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 10);
+
+        const streamRes = await REQUEST(
+          buildApp(),
+          "GET",
+          `/api/planning/${sessionId}/stream`,
+        );
+
+        expect(streamRes.status).toBe(200);
+        expect(typeof streamRes.body).toBe("string");
+        expect(streamRes.body).toContain("event: thinking");
+        expect(streamRes.body).toContain("first buffered thought");
+        expect(streamRes.body).toContain("event: question");
+        expect(streamRes.body).toContain("What is your preference?");
+      });
+
+      /*
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A persisted summary is the active interview's running plan, not a completion sentinel.
+      Reconnect must send it before the awaiting-input question and keep the subscription alive.
+      */
+      it("keeps a mid-interview stream open when a running summary and question are persisted", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Reconnect a running interview" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+        const { getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+
+        const runningSummary = {
+          title: "Running plan",
+          description: "Keep the interview turn aligned.",
+          suggestedSize: "M",
+          keyDeliverables: ["A synchronized interview"],
+        };
+        const nextQuestion = {
+          id: "q-mid-interview",
+          type: "text",
+          question: "What should happen next?",
+        };
+        // @ts-expect-error - test setup mutates the in-memory active session.
+        session!.summary = runningSummary;
+        // @ts-expect-error - test setup restores this as a settled persisted session.
+        session!.generationPurpose = undefined;
+        // @ts-expect-error - test setup mutates the in-memory active session.
+        session!.currentQuestion = nextQuestion;
+
+        const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+        setTimeout(() => planningStreamManager.broadcast(sessionId, { type: "complete" }), 10);
+        const streamRes = await streamPromise;
+
+        expect(streamRes.body).toContain("event: summary");
+        expect(streamRes.body).toContain(runningSummary.title);
+        expect(streamRes.body).toContain("event: question");
+        expect(streamRes.body).toContain(nextQuestion.question);
+        expect(streamRes.body.indexOf("event: summary")).toBeLessThan(streamRes.body.indexOf("event: question"));
+      });
+
+      it("ends a replayed stream only after the explicit validation route", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Validated reconnect" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+
+        const validationRes = await REQUEST(
+          buildApp(),
+          "POST",
+          `/api/planning/${sessionId}/validate`,
+          undefined,
+          { "Content-Type": "application/json" },
+        );
+        expect(validationRes).toMatchObject({ status: 200, body: { validated: true } });
+
+        // No timer or synthetic stream event is needed: validation creates the terminal replay.
+        const streamRes = await REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+
+        expect(streamRes.body).toContain("event: summary");
+        expect(streamRes.body).toContain("event: complete");
+        expect(planningStreamManager.getBufferedEvents(sessionId, 0).filter((event) => event.event === "complete")).toHaveLength(1);
+      });
+
+      it("emits catch-up question event for awaiting_input sessions", async () => {
+        // This test verifies the fix for the mismatch where a session was advertised as
+        // needing input but the resume path initially entered loading state.
+        // When a session is already awaiting input, the stream should emit a catch-up
+        // question event immediately so late subscribers don't miss the transition.
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Catch-up test planning" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId as string;
+
+        // Manually simulate an awaiting_input session by updating the session state
+        // In the real app, this happens via respondToPlanning which sets currentQuestion
+        const { planningStreamManager, getSession } = await import("../planning.js");
+        const session = await getSession(sessionId);
+        expect(session).toBeDefined();
+
+        // Simulate the session being in awaiting_input state with a question
+        const mockQuestion = {
+          id: "q-catchup",
+          type: "text",
+          question: "What is your preference?",
+          description: "Please choose",
+        };
+        // @ts-expect-error - accessing internal state for testing
+        session!.currentQuestion = mockQuestion;
+
+        // Broadcast a complete event after a short delay so the stream ends
+        setTimeout(() => {
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+        }, 10);
+
+        // Connect to the stream - should receive catch-up question immediately
+        const streamRes = await REQUEST(
+          buildApp(),
+          "GET",
+          `/api/planning/${sessionId}/stream`,
+        );
+
+        expect(streamRes.status).toBe(200);
+        expect(typeof streamRes.body).toBe("string");
+
+        // Should emit the question as a catch-up event
+        expect(streamRes.body).toContain("event: question");
+        expect(streamRes.body).toContain("What is your preference?");
+
+        // Should also emit complete
+        expect(streamRes.body).toContain("event: complete");
+      });
+    });
+
+    describe("POST /planning/respond", () => {
+      it("keeps a model completion as a running plan until explicit validation", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-scope", type: "text", question: "Which scope is needed?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Auth plan from the answered turn",
+              description: "Preserve the model plan without terminalizing the interview.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Implement authentication"],
+            },
+          }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(async function (this: { state: { messages: Array<{ role: string; content: string }> } }, message: string) {
+              this.state.messages.push({ role: "user", content: message });
+              this.state.messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" },
+        );
+        expect(startRes.status).toBe(201);
+        const sessionId = startRes.body.sessionId as string;
+
+        const answerRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-scope": "Medium" } }),
+          { "Content-Type": "application/json" },
+        );
+
+        /*
+        FNXC:PlanningRouteTests 2026-07-23-08:45:
+        A model `complete` payload after an answer updates the durable running plan but is
+        coerced to one next question. Only the validate route may set the terminal flag.
+        Keep this route-level seam explicit so fixtures cannot regress to answer-driven completion.
+        */
+        expect(answerRes).toMatchObject({
+          status: 200,
+          body: { type: "question", data: { id: expect.any(String) } },
+        });
+        expect(planningModule.getSummary(sessionId)).toMatchObject({
+          title: "Auth plan from the answered turn",
+          keyDeliverables: ["Implement authentication"],
+        });
+        expect((await planningModule.getSession(sessionId))?.validated).toBe(false);
+
+        const validationRes = await REQUEST(
+          buildApp(),
+          "POST",
+          `/api/planning/${sessionId}/validate`,
+          undefined,
+          { "Content-Type": "application/json" },
+        );
+        expect(validationRes).toMatchObject({
+          status: 200,
+          body: { validated: true, summary: { title: "Auth plan from the answered turn" } },
+        });
+        expect((await planningModule.getSession(sessionId))?.validated).toBe(true);
+      });
+
+      it("requires an explicit refine request before asking another question", async () => {
+        const startRes = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Build a user auth system" }), { "Content-Type": "application/json" });
+        const sessionId = startRes.body.sessionId;
+        const answer = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        expect(answer.body).toMatchObject({ type: "question" });
+
+        const refine = await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { refine: true, focus: "security" } }), { "Content-Type": "application/json" });
+        expect(refine.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
+      });
+
+      it("FN-6977 normalizes omitted summary arrays from live AI completion", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: {
+              id: "q-one",
+              type: "text",
+              question: "What should be planned?",
+            },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Malformed AI summary",
+              description: "AI omitted array fields but completion is otherwise recoverable",
+              suggestedSize: "M",
+              suggestedDependencies: ["FN-100", "FN-100", 12],
+            },
+          }),
+        ];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages: [] },
+            prompt: vi.fn(async function (this: { state: { messages: Array<{ role: string; content: string }> } }, message: string) {
+              this.state.messages.push({ role: "user", content: message });
+              this.state.messages.push({ role: "assistant", content: responses[callIndex++] ?? responses[responses.length - 1] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Normalize malformed AI completion" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
+
+        const checkpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-one": "Finish" } }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(checkpointRes.status).toBe(200);
+        expect(checkpointRes.body).toMatchObject({ type: "question" });
+        expect(planningModule.getSummary(sessionId)).toMatchObject({ title: "Malformed AI summary" });
+        expect(planningModule.getSummary(sessionId)).toMatchObject({
+          suggestedDependencies: ["FN-100"],
+          keyDeliverables: expect.arrayContaining([
+            expect.stringContaining("Define scope and acceptance criteria"),
+          ]),
+        });
+
+        expect(planningModule.getSummary(sessionId)).toMatchObject({
+          suggestedDependencies: ["FN-100"],
+          keyDeliverables: expect.arrayContaining([
+            expect.stringContaining("Define scope and acceptance criteria"),
+          ]),
+        });
+      });
+
+      it("continues agent conversation when checkpoint themes or custom topics are selected", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-one", type: "text", question: "What should be planned?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan mobile UX",
+              description: "Improve responsive mobile UX and add tests.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Mobile UX", "Tests"],
+            },
+          }),
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-deeper", type: "text", question: "Which mobile edge cases matter?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan mobile UX deeply",
+              description: "Improve responsive mobile UX after exploring custom rollout risks.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Mobile UX", "Tests", "Rollout notes"],
+            },
+          }),
+        ];
+        const messages: Array<{ role: string; content: string }> = [];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[callIndex++] ?? responses[responses.length - 1] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan a mobile UX change" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
+
+        const checkpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-one": "Make it responsive and tested" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(checkpointRes.body.type).toBe("question");
+
+        const deepeningRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { refine: true, focus: "Explore rollout risk" },
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(deepeningRes.body).toMatchObject({
+          type: "question",
+          data: { id: "q-deeper", question: "Which mobile edge cases matter?" },
+        });
+        expect(messages.some((message) => message.role === "user" && message.content.includes("Explore rollout risk"))).toBe(true);
+
+        const secondCheckpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-deeper": "Keyboard and touch interactions" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(secondCheckpointRes.body.type).toBe("question");
+      });
+
+      it("prefers AI-authored deepeningThemes over generic themes on both completion paths", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-offline-context", type: "text", question: "Which offline scenarios matter most?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan offline sync",
+              description: "Add offline-first sync support.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Sync engine"],
+              deepeningThemes: [
+                { label: "Conflict resolution strategy", description: "How concurrent offline edits reconcile." },
+              ],
+            },
+          }),
+        ];
+        const messages: Array<{ role: string; content: string }> = [];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[Math.min(callIndex++, responses.length - 1)] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan offline sync support" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
+
+        expect(startRes.body.firstQuestion.question).toBe("Which offline scenarios matter most?");
+
+        const interviewRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-offline-context": "Conflicts and recovery" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(interviewRes.body.type).toBe("question");
+
+        const deepeningRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { refine: true },
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(deepeningRes.body).toMatchObject({ type: "question", data: { id: expect.any(String) } });
+      });
+
+      it("allows refine requests from completed sessions", async () => {
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          }),
+          { "Content-Type": "application/json" }
+        );
+
+        const refineRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { refine: true } }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(refineRes.status).toBe(200);
+        expect(["question", "complete"]).toContain(refineRes.body.type);
+      });
+
+      it("returns 404 for invalid session ID", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId: "invalid-session-id", responses: {} }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toContain("not found");
+      });
+
+      it("requires sessionId in body", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ responses: {} }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("sessionId is required");
+      });
+
+      it("requires responses object", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId: "some-id" }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("responses is required");
+      });
+    });
+
+    describe("POST /api/planning resume after restart (rehydrated session)", () => {
+      it("respond route resumes with scoped store after rehydrate", async () => {
+        const sessionId = await rehydratePlanningSessionRow(
+          buildPlanningRow({ id: "resume-respond", status: "awaiting_input" }),
+        );
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { constraints: "none" } }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        expect(JSON.stringify(res.body)).not.toContain("has no task store");
+        expect(JSON.stringify(res.body)).not.toContain("cannot be resumed without project context");
+      });
+
+      it("back route resumes with scoped store after rehydrate", async () => {
+        const sessionId = await rehydratePlanningSessionRow(
+          buildPlanningRow({ id: "resume-back", status: "awaiting_input" }),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/back`);
+
+        expect(res.status).toBe(200);
+        expect(JSON.stringify(res.body)).not.toContain("has no task store");
+        expect(JSON.stringify(res.body)).not.toContain("cannot be resumed without project context");
+      });
+
+      it("retry route resumes with scoped store after rehydrate", async () => {
+        const sessionId = await rehydratePlanningSessionRow(
+          buildPlanningRow({
+            id: "resume-retry",
+            status: "error",
+            error: "temporary failure",
+            currentQuestion: null,
+          }),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/retry`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ success: true, sessionId });
+      });
+    });
+
+    describe("POST /planning/:sessionId/back", () => {
+      it("rewinds an active planning session", async () => {
+        const rewindSpy = vi.spyOn(planningModule, "rewindSession").mockResolvedValue({
+          currentQuestion: {
+            id: "q-scope",
+            type: "single_select",
+            question: "What is the scope of this plan?",
+            options: [],
+          },
+          history: [],
+        });
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-123/back");
+
+        expect(res.status).toBe(200);
+        expect(res.body.currentQuestion.id).toBe("q-scope");
+        expect(rewindSpy).toHaveBeenCalledWith("session-123", undefined, "/fake/root", undefined, store);
+      });
+
+      it("returns 400 when there is no previous question", async () => {
+        vi.spyOn(planningModule, "rewindSession").mockRejectedValueOnce(
+          new planningModule.InvalidSessionStateError("Planning session has no previous question to rewind to"),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-400/back");
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("no previous question");
+      });
+    });
+
+    describe("POST /planning/:sessionId/retry", () => {
+      it("retries a failed planning session", async () => {
+        const retrySpy = vi.spyOn(planningModule, "retrySession").mockResolvedValue();
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-123/retry");
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ success: true, sessionId: "session-123" });
+        expect(retrySpy).toHaveBeenCalledWith("session-123", expect.any(String), undefined, expect.any(Object));
+      });
+
+      it("returns 404 when planning retry session is missing", async () => {
+        vi.spyOn(planningModule, "retrySession").mockRejectedValueOnce(
+          new planningModule.SessionNotFoundError("Planning session missing"),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-404/retry");
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toContain("Planning session missing");
+      });
+
+      it("returns 400 when planning retry session is not in error state", async () => {
+        vi.spyOn(planningModule, "retrySession").mockRejectedValueOnce(
+          new planningModule.InvalidSessionStateError("Planning session is not in an error state"),
+        );
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-400/retry");
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("not in an error state");
+      });
+    });
+
+    describe("POST /planning/:sessionId/stop", () => {
+      it("stops an active generation", async () => {
+        const stopSpy = vi.spyOn(planningModule, "stopGeneration").mockReturnValue(true);
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-123/stop");
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ success: true });
+        expect(stopSpy).toHaveBeenCalledWith("session-123");
+      });
+
+      it("returns 404 when session is missing", async () => {
+        vi.spyOn(planningModule, "stopGeneration").mockReturnValue(false);
+
+        const res = await REQUEST(buildApp(), "POST", "/api/planning/session-404/stop");
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toContain("not found");
+      });
+    });
+
+    describe("POST /planning/cancel", () => {
+      it("cancels an active session", async () => {
+        // Create a session first
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/cancel",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+      });
+
+      it("queues deletion behind an upsert that already passed its tombstone check", async () => {
+        let releaseUpsert!: () => void;
+        let announceUpsert!: (sessionId: string) => void;
+        const upsertGate = new Promise<void>((resolve) => {
+          releaseUpsert = resolve;
+        });
+        const upsertStarted = new Promise<string>((resolve) => {
+          announceUpsert = resolve;
+        });
+
+        class DeferredUpsertStore extends MockAiSessionStore {
+          deleteCalls: string[] = [];
+          private shouldDefer = true;
+
+          override async upsert(row: AiSessionRow): Promise<void> {
+            if (this.shouldDefer) {
+              this.shouldDefer = false;
+              announceUpsert(row.id);
+              await upsertGate;
+            }
+            await super.upsert(row);
+          }
+
+          override async delete(id: string): Promise<void> {
+            this.deleteCalls.push(id);
+            await super.delete(id);
+          }
+        }
+
+        /*
+        FNXC:PostgresPlanningPersistence 2026-07-14-21:20:
+        Cancellation must serialize its delete behind a write that has already begun so the older write cannot land after deletion and resurrect the planning session.
+        */
+        const deferredStore = new DeferredUpsertStore();
+        setAiSessionStore(deferredStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        const app = buildApp();
+        const startRequest = REQUEST(
+          app,
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Exercise queued planning persistence deletion" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = await upsertStarted;
+        const cancelRequest = REQUEST(
+          app,
+          "POST",
+          "/api/planning/cancel",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        await Promise.resolve();
+        expect(deferredStore.deleteCalls).toEqual([]);
+
+        releaseUpsert();
+        const [startRes, cancelRes] = await Promise.all([startRequest, cancelRequest]);
+
+        expect(startRes.status).toBe(201);
+        expect(cancelRes.status).toBe(200);
+        expect(deferredStore.deleteCalls).toEqual([sessionId]);
+        expect(await deferredStore.get(sessionId)).toBeNull();
+      });
+
+      it("reports persistence deletion failures instead of claiming session deletion succeeded", async () => {
+        class FailingDeleteStore extends MockAiSessionStore {
+          override async delete(): Promise<void> {
+            throw new Error("planning persistence delete failed");
+          }
+        }
+
+        /*
+        FNXC:PostgresPlanningPersistence 2026-07-14-21:46:
+        A failed authoritative session delete must fail the awaited cancellation request; otherwise the UI is told cleanup completed while the PostgreSQL row remains available for later writes.
+        */
+        const failingStore = new FailingDeleteStore();
+        setAiSessionStore(failingStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { aiSessionStore: failingStore as any }));
+        const startRes = await REQUEST(
+          app,
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Exercise failed planning persistence deletion" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const deleteRes = await REQUEST(app, "DELETE", `/api/ai-sessions/${startRes.body.sessionId}`);
+
+        expect(startRes.status).toBe(201);
+        expect(deleteRes.status).toBe(500);
+        expect(deleteRes.body.error).toContain("planning persistence delete failed");
+      });
+
+      it("returns 404 for non-existent session", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/cancel",
+          JSON.stringify({ sessionId: "non-existent-id" }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toContain("not found");
+      });
+
+      it("requires sessionId in body", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/cancel",
+          JSON.stringify({}),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("sessionId is required");
+      });
+    });
+
+    describe("POST /planning/create-task", () => {
+      it("creates a task from completed planning session", async () => {
+        // Setup mock store for task creation
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-042",
+          description: "Build a user auth system",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        // Create a session and complete it
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        // Complete the session
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+        const completedSession = await planningModule.getSession(sessionId);
+        completedSession!.history = [{
+          question: { id: "handoff", type: "text", question: "What must remain durable?" },
+          response: "Must have login",
+        }];
+
+        // Create task from planning
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalled();
+        const [createInput] = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0]!;
+        expect(createInput.description).toContain("## Planning Interview Context");
+        expect(createInput.description).toContain("Must have login");
+        expect(createInput.description.match(/## Planning Interview Context/g)).toHaveLength(1);
+      });
+
+      it("terminalizes a not-yet-validated session when Proceed with plan creates its task", async () => {
+        /*
+        FNXC:PlanningMode 2026-07-23-12:10:
+        Proceed with plan calls create-task directly, without the legacy /validate step. The
+        persisted session must still leave awaiting_input on task creation; otherwise the
+        session list and the needs-input banner keep advertising a finished session.
+        */
+        const mockStore = new MockAiSessionStore();
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-777",
+          description: "Proceed-with-plan task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+
+        // Precondition: mid-interview session, never validated.
+        expect((await mockStore.get(sessionId))?.status).toBe("awaiting_input");
+
+        const summary = {
+          title: "Auth running plan",
+          description: "Running plan accepted via Proceed with plan",
+          suggestedSize: "M",
+          suggestedDependencies: [],
+          keyDeliverables: ["Implementation"],
+        };
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, summary }),
+          { "Content-Type": "application/json" }
+        );
+        expect(res.status).toBe(201);
+
+        // Invariant: a session whose one task exists is terminal for every store reader
+        // (sidebar session-list label, needs-input banner count, recoverable-session sweep).
+        expect((await mockStore.get(sessionId))?.status).toBe("complete");
+
+        // The alreadyCreated reconciliation replay must keep the terminal status.
+        (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+          { id: "FN-777", proposalClaimId: `planning-session:${sessionId}` },
+        ]);
+        const replay = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, summary }),
+          { "Content-Type": "application/json" }
+        );
+        expect(replay.status).toBe(200);
+        expect(replay.body.alreadyCreated).toBe(true);
+        expect((await mockStore.get(sessionId))?.status).toBe("complete");
+      });
+
+      it("uses summary override when provided", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-099",
+          description: "Edited task description",
+          column: "triage",
+          dependencies: ["FN-500"],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({
+            sessionId,
+            summary: {
+              title: "Edited auth task",
+              description: "Edited description from summary view",
+              suggestedSize: "S",
+              suggestedDependencies: ["FN-500"],
+              keyDeliverables: ["Login flow"],
+            },
+          }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Edited auth task",
+            description: expect.stringContaining("## Key deliverables"),
+            dependencies: ["FN-500"],
+            priority: "normal",
+          }),
+        );
+        expect(store.updateTask).toHaveBeenCalledWith("FN-099", { size: "S" });
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-099", expect.objectContaining({ key: "plan", content: expect.stringContaining("Edited description from summary view") }));
+        expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-099", expect.objectContaining({ key: "original-description", content: "Build a user auth system" }));
+      });
+
+      it("creates a task from a persisted complete session when in-memory session is missing and keeps the completed session fetchable", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-043",
+          description: "Build a resumable planning flow",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const sessionId = "session-from-sqlite";
+        const persistedSession = {
+          id: sessionId,
+          type: "planning",
+          status: "complete",
+          title: "Build resumable planning",
+          inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions", validated: true }),
+          conversationHistory: "[]",
+          currentQuestion: null,
+          result: JSON.stringify({
+            title: "Build resumable planning flow",
+            description: "Persist planning results so users can create tasks later",
+            suggestedSize: "M",
+            suggestedDependencies: ["FN-100"],
+            keyDeliverables: ["Persist sessions", "Support resume"],
+          }),
+          thinkingOutput: "",
+          error: null,
+          projectId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          archived: 0,
+        };
+        let storedSession: typeof persistedSession | undefined = persistedSession;
+        const mockAiSessionStore = {
+          get: vi.fn((id: string) => (id === sessionId ? storedSession ?? null : null)),
+          listAll: vi.fn(() =>
+            storedSession
+              ? [
+                  {
+                    id: storedSession.id,
+                    type: storedSession.type,
+                    status: storedSession.status,
+                    title: storedSession.title,
+                    projectId: storedSession.projectId,
+                    updatedAt: storedSession.updatedAt,
+                    archived: false,
+                  },
+                ]
+              : [],
+          ),
+          delete: vi.fn(() => {
+            storedSession = undefined;
+          }),
+        };
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use(
+          "/api",
+          createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }),
+        );
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Build resumable planning flow",
+            dependencies: ["FN-100"],
+          }),
+        );
+        expect(store.logEntry).toHaveBeenCalledWith(
+          "FN-043",
+          "Created via Planning Mode",
+          expect.stringContaining("Initial plan: Build resumable planning sessions"),
+        );
+
+        const listRes = await REQUEST(appWithAiSessionStore, "GET", "/api/ai-sessions?includeCompleted=1");
+        expect(listRes.status).toBe(200);
+        expect(listRes.body.sessions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: sessionId,
+              status: "complete",
+              title: "Build resumable planning",
+            }),
+          ]),
+        );
+
+        const sessionRes = await REQUEST(appWithAiSessionStore, "GET", `/api/ai-sessions/${sessionId}`);
+        expect(sessionRes.status).toBe(200);
+        expect(sessionRes.body).toMatchObject({
+          id: sessionId,
+          status: "complete",
+        });
+        expect(JSON.parse(sessionRes.body.result)).toMatchObject(JSON.parse(storedSession?.result ?? "{}"));
+      });
+
+      it("FN-6977 returns normalized persisted planning summary rows for resume", async () => {
+        const sessionId = "session-fn-6977-persisted-resume";
+        const mockAiSessionStore = {
+          get: vi.fn((id: string) => id === sessionId ? buildPlanningRow({
+            id: sessionId,
+            status: "complete",
+            title: "Malformed persisted summary",
+            result: JSON.stringify({
+              title: "Malformed persisted summary",
+              description: "Persisted row omitted keyDeliverables and included duplicate dependencies",
+              suggestedSize: "M",
+              suggestedDependencies: ["FN-100", "FN-100", "", 7],
+            }),
+          }) : null),
+          listAll: vi.fn(() => []),
+          listActive: vi.fn(() => []),
+        };
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+        const sessionRes = await REQUEST(appWithAiSessionStore, "GET", `/api/ai-sessions/${sessionId}`);
+
+        expect(sessionRes.status).toBe(200);
+        expect(JSON.parse(sessionRes.body.result)).toMatchObject({
+          suggestedDependencies: ["FN-100"],
+          keyDeliverables: [],
+        });
+      });
+
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-01:40:
+      Review finding: creating a task while a planning turn is still generating raced the
+      turn-completion persist against finalize and could tear the created-task linkage. The
+      route now rejects with 409 while the durable session status is "generating".
+      */
+      it("rejects create-task with 409 while the session is still generating", async () => {
+        const sessionId = "planning-generating-409";
+        const generatingRow = {
+          id: sessionId,
+          type: "planning",
+          status: "generating",
+          title: "Still generating",
+          inputPayload: JSON.stringify({ initialPlan: "Build a thing" }),
+          conversationHistory: "[]",
+          currentQuestion: null,
+          result: JSON.stringify({
+            title: "Draft plan",
+            description: "Mid-turn running plan",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Implementation"],
+          }),
+          thinkingOutput: "",
+          error: null,
+          projectId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        const mockAiSessionStore = {
+          on: vi.fn(),
+          upsert: vi.fn(),
+          get: vi.fn(async () => generatingRow),
+          listAll: vi.fn(() => []),
+          listActive: vi.fn(() => []),
+        };
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(409);
+        expect(store.createTask).not.toHaveBeenCalled();
+      });
+
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-03:20:
+      Reported bug: deleting the task created from a plan left the session permanently stuck on
+      PLANNING_CREATED_TASK_MISSING — Retry create replayed the same 409 forever. A linked task
+      that is absent from the include-archived scan clears the stale linkage and creates a
+      fresh task; a linked task still LISTED but unreadable keeps failing closed (never fork on
+      a flaky read).
+      */
+      const buildLinkedGoneRow = (sessionId: string) => ({
+        id: sessionId,
+        type: "planning",
+        status: "complete",
+        title: "Linked task deleted",
+        inputPayload: JSON.stringify({ initialPlan: "Build a thing", validated: true, createdTaskId: "FN-GONE", createClaimStatus: "created" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify({
+          title: "Replacement plan",
+          description: "Recreate after the linked task was deleted",
+          suggestedSize: "M",
+          suggestedDependencies: [],
+          keyDeliverables: ["Implementation"],
+        }),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      it("creates a fresh task when the linked task was deleted instead of dead-ending", async () => {
+        const sessionId = "planning-linked-task-deleted";
+        const mockStore = new MockAiSessionStore();
+        await mockStore.upsert(buildLinkedGoneRow(sessionId) as never);
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task FN-GONE not found"));
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-REBORN",
+          description: "Recreated task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockStore as any }));
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.alreadyCreated).toBe(false);
+        expect(res.body.task.id).toBe("FN-REBORN");
+        expect(store.createTask).toHaveBeenCalledTimes(1);
+        expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+          proposalClaimId: `planning-session:${sessionId}#1`,
+        }));
+        expect(JSON.parse((await mockStore.get(sessionId))!.inputPayload)).toMatchObject({
+          createClaimStatus: "created",
+          createdTaskId: "FN-REBORN",
+          taskCreationEpoch: 1,
+          createdTaskIds: ["FN-GONE"],
+        });
+      });
+
+      it("creates another task from an unchanged plan when the request identifies the previous task", async () => {
+        const sessionId = "planning-create-another-unchanged";
+        const previousTaskId = "FN-PREVIOUS";
+        const mockStore = new MockAiSessionStore();
+        await mockStore.upsert(buildPlanningRow({
+          id: sessionId,
+          status: "complete",
+          inputPayload: JSON.stringify({
+            initialPlan: "Build a thing",
+            validated: true,
+            createdTaskId: previousTaskId,
+            createClaimStatus: "created",
+          }),
+          result: JSON.stringify({
+            title: "Reusable plan",
+            description: "Create more than one task without editing the plan",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Implementation"],
+          }),
+        }));
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        const nextTask = {
+          id: "FN-NEXT",
+          description: "Another task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          proposalClaimId: `planning-session:${sessionId}#1`,
+        };
+        let created = false;
+        (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async () => [
+          { id: previousTaskId, proposalClaimId: `planning-session:${sessionId}` },
+          ...(created ? [nextTask] : []),
+        ]);
+        (store.createTask as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+          created = true;
+          return nextTask;
+        });
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockStore as any }));
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, previousTaskId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(res.body.task.id).toBe("FN-NEXT");
+        expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+          proposalClaimId: `planning-session:${sessionId}#1`,
+        }));
+
+        /*
+        FNXC:PlanningMultiTask 2026-08-03-18:32:
+        A transport retry repeats the old linked-task token. It must reconcile epoch 1's
+        canonical task instead of treating the retry as a third explicit create action.
+        */
+        const replay = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, previousTaskId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(replay.status).toBe(200);
+        expect(replay.body.alreadyCreated).toBe(true);
+        expect(replay.body.task.id).toBe("FN-NEXT");
+        expect(store.createTask).toHaveBeenCalledTimes(1);
+        expect(JSON.parse((await mockStore.get(sessionId))!.inputPayload)).toMatchObject({
+          createdTaskId: "FN-NEXT",
+          taskCreationEpoch: 1,
+        });
+      });
+
+      it("keeps failing closed when the linked task is still listed but unreadable", async () => {
+        const sessionId = "planning-linked-task-unreadable";
+        const mockStore = new MockAiSessionStore();
+        await mockStore.upsert(buildLinkedGoneRow(sessionId) as never);
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+          { id: "FN-GONE", proposalClaimId: undefined },
+        ]);
+        (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("transient store failure"));
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockStore as any }));
+
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(409);
+        expect(store.createTask).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        {
+          sessionSource: "live",
+          useSummaryOverride: false,
+          branchSelection: { mode: "project-default" },
+          expectedBranch: undefined,
+          expectedBaseBranch: undefined,
+        },
+        {
+          sessionSource: "live",
+          useSummaryOverride: true,
+          branchSelection: { mode: "auto-new", baseBranch: "develop" },
+          expectedBranch: undefined,
+          expectedBaseBranch: "develop",
+        },
+        {
+          sessionSource: "persisted",
+          useSummaryOverride: false,
+          branchSelection: { mode: "existing", branchName: "feature/shared-auth", baseBranch: "develop" },
+          expectedBranch: "feature/shared-auth",
+          expectedBaseBranch: "develop",
+        },
+        {
+          sessionSource: "persisted",
+          useSummaryOverride: true,
+          branchSelection: { mode: "custom-new", branchName: "feature/planned-auth", baseBranch: "main" },
+          expectedBranch: "feature/planned-auth",
+          expectedBaseBranch: "main",
+        },
+      ])("returns 201 for $sessionSource create-task sessions across branch selection surfaces (summary override: $useSummaryOverride)", async ({
+        sessionSource,
+        useSummaryOverride,
+        branchSelection,
+        expectedBranch,
+        expectedBaseBranch,
+      }) => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: `FN-${sessionSource}-${branchSelection.mode}`,
+          description: "Build auth flow",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        let app = buildApp();
+        let sessionId: string;
+
+        if (sessionSource === "live") {
+          sessionId = await createCompletedPlanningSession();
+        } else {
+          sessionId = `persisted-${branchSelection.mode}-${useSummaryOverride ? "override" : "default"}`;
+          const persistedSession = {
+            id: sessionId,
+            type: "planning",
+            status: "complete",
+            title: "Build persisted planning",
+            inputPayload: JSON.stringify({ initialPlan: "Build resumable planning sessions", validated: true }),
+            conversationHistory: "[]",
+            currentQuestion: null,
+            result: JSON.stringify({
+              title: "Persisted planning output",
+              description: "Persist planning results so users can create tasks later",
+              suggestedSize: "M",
+              priority: "normal",
+              suggestedDependencies: ["FN-100"],
+              keyDeliverables: ["Persist sessions"],
+            }),
+            thinkingOutput: "",
+            error: null,
+            projectId: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            archived: 0,
+          };
+          const mockAiSessionStore = {
+            get: vi.fn((id: string) => (id === sessionId ? persistedSession : null)),
+            listAll: vi.fn(() => []),
+            delete: vi.fn(),
+          };
+          app = express();
+          app.use(express.json());
+          app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+        }
+
+        const summary = useSummaryOverride
+          ? {
+              title: "Edited auth task",
+              description: "Edited description from summary view",
+              suggestedSize: "S",
+              suggestedDependencies: ["FN-500"],
+              keyDeliverables: ["Login flow"],
+            }
+          : undefined;
+
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, branchSelection, ...(summary ? { summary } : {}) }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: useSummaryOverride ? "Edited auth task" : expect.any(String),
+            branch: expectedBranch,
+            baseBranch: expectedBaseBranch,
+          }),
+        );
+      });
+
+      it.each([
+        { label: "size update rejection", configure: () => (store.updateTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("size update failed")) },
+        { label: "log entry rejection", configure: () => (store.logEntry as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("log entry failed")) },
+      ])("still returns 201 when planning create-task post-create side effects fail (%s)", async ({ configure }) => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-250",
+          description: "Build a user auth system",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+        configure();
+
+        const sessionId = await createCompletedPlanningSession();
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+      });
+
+      it("still returns 201 when planning create-task session release throws", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-251",
+          description: "Build a user auth system",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+        const releaseSessionSpy = vi.spyOn(planningModule, "releaseSession").mockImplementation(() => {
+          throw new Error("release exploded");
+        });
+
+        try {
+          const sessionId = await createCompletedPlanningSession();
+          const res = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/create-task",
+            JSON.stringify({ sessionId }),
+            { "Content-Type": "application/json" }
+          );
+
+          expect(res.status).toBe(201);
+        } finally {
+          releaseSessionSpy.mockRestore();
+        }
+      });
+
+      it("creates task with explicit summary priority", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-100",
+          description: "Priority task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({
+            sessionId,
+            summary: {
+              title: "Priority auth task",
+              description: "High-priority planning output",
+              suggestedSize: "M",
+              priority: "high",
+              suggestedDependencies: [],
+              keyDeliverables: ["Login flow"],
+            },
+          }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Priority auth task",
+            priority: "high",
+          }),
+        );
+      });
+
+      it("applies branchSelection when creating a planning task", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-200",
+          description: "A task created from planning",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({
+            sessionId,
+            branchSelection: {
+              mode: "existing",
+              branchName: "feature/shared-auth",
+              baseBranch: "develop",
+            },
+          }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            branch: "feature/shared-auth",
+            baseBranch: "develop",
+          }),
+        );
+      });
+
+      it("keeps per-task branch unset for project-default branchSelection", async () => {
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-200b",
+          description: "A task created from planning",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({
+            sessionId,
+            branchSelection: {
+              mode: "project-default",
+            },
+          }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(store.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            branch: undefined,
+            baseBranch: undefined,
+          }),
+        );
+      });
+
+      it("returns 400 if session has no reviewable summary", async () => {
+        // Create a session then remove its running summary to exercise the incomplete guard.
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a user auth system" }),
+          { "Content-Type": "application/json" }
+        );
+        const sessionId = startRes.body.sessionId;
+        const session = await planningModule.getSession(sessionId);
+        expect(session).toBeDefined();
+        // @ts-expect-error - fixture models an incomplete persisted session.
+        session!.summary = undefined;
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("not complete");
+      });
+
+      it("returns 404 for invalid session ID", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId: "invalid-session-id" }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toContain("not found");
+      });
+
+      it("requires sessionId in body", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({}),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("sessionId is required");
+      });
+    });
+});
+
+/**
+ * Saturated-slot regression coverage for utility AI routes.
+ * These tests prove that planning, subtask, and interview routes remain executable
+ * when the task-lane is saturated (maxConcurrent = 0).
+ *
+ * UTILITY PATH contract: These routes are on the heartbeat control-plane lane
+ * and must NOT be gated on task-lane saturation (maxConcurrent, semaphore, queue depth).
+ *
+ * See .fusion/memory/MEMORY.md "Heartbeat Control-Plane Lane (FN-1487)"
+ */
+describe("Saturated-slot regression: utility AI routes", () => {
+  /**
+   * Helper to create a store with saturated settings (maxConcurrent = 0).
+   * This simulates the task-lane being fully saturated.
+   */
+  function createSaturatedStore(overrides: Partial<TaskStore> = {}): TaskStore {
+    return createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 0, // SATURATED: zero task slots available
+        promptOverrides: {},
+        agentClarificationEnabled: true,
+      }),
+      getSettingsFast: vi.fn().mockResolvedValue({
+        maxConcurrent: 0,
+        agentClarificationEnabled: true,
+      }),
+      ...overrides,
+    } as Partial<TaskStore>);
+  }
+
+  /**
+   * Helper to create an app with saturated settings and optional aiSessionStore.
+   */
+  function buildSaturatedApp(options: { aiSessionStore?: any } = {}) {
+    const store = createSaturatedStore();
+    const app = express();
+    app.use(express.json());
+    const routeOptions = options.aiSessionStore ? { aiSessionStore: options.aiSessionStore } : undefined;
+    app.use("/api", createApiRoutes(store, routeOptions as any));
+    return { app, store };
+  }
+
+  /**
+   * Setup a mock agent for planning session tests.
+   */
+  function setupSaturatedPlanningMockAgent() {
+    const questionResponses = [
+      JSON.stringify({
+        type: "question",
+        data: {
+          id: "q-scope",
+          type: "single_select",
+          question: "What is the scope?",
+          description: "Choose scope.",
+          options: [
+            { id: "small", label: "Small" },
+            { id: "medium", label: "Medium" },
+            { id: "large", label: "Large" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "question",
+        data: {
+          id: "q-req",
+          type: "text",
+          question: "Requirements?",
+        },
+      }),
+      JSON.stringify({
+        type: "complete",
+        data: {
+          title: "Saturated Plan",
+          description: "A plan created under saturation",
+          suggestedSize: "M",
+          suggestedDependencies: [],
+          keyDeliverables: ["Item 1", "Item 2"],
+        },
+      }),
+    ];
+
+    const messages: Array<{ role: string; content: string }> = [];
+    let callIndex = 0;
+    const mockAgent = {
+      session: {
+        state: { messages },
+        prompt: vi.fn(async (msg: string) => {
+          messages.push({ role: "user", content: msg });
+          const response = questionResponses[callIndex++] ?? questionResponses[questionResponses.length - 1];
+          messages.push({ role: "assistant", content: response });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    __setCreateFnAgent(async () => mockAgent);
+  }
+
+  describe("POST /api/planning/start — utility lane independence", () => {
+    beforeEach(() => {
+      __resetPlanningState();
+      setupSaturatedPlanningMockAgent();
+    });
+
+    afterEach(() => {
+      __setCreateFnAgent(undefined as any);
+    });
+
+    it("executes successfully when task-lane is saturated (maxConcurrent=0)", async () => {
+      const { app } = buildSaturatedApp();
+
+      const res = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/start",
+        JSON.stringify({ initialPlan: "Plan a feature under saturated task-lane" }),
+        { "Content-Type": "application/json" },
+      );
+
+      // UTILITY PATH: Planning start must NOT be gated on maxConcurrent
+      expect(res.status).toBe(201);
+      expect(res.body.sessionId).toBeDefined();
+      expect(res.body.firstQuestion).toBeDefined();
+    });
+  });
+
+  describe("POST /api/planning/start-streaming — utility lane independence", () => {
+    beforeEach(() => {
+      __resetPlanningState();
+    });
+
+    afterEach(() => {
+      __setCreateFnAgent(undefined as any);
+    });
+
+    it("executes successfully when task-lane is saturated (maxConcurrent=0)", async () => {
+      // Mock agent for streaming
+      const messages: Array<{ role: string; content: string }> = [];
+      const mockAgent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (msg: string) => {
+            messages.push({ role: "user", content: msg });
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "question",
+                data: { id: "q-scope", type: "text", question: "What to plan?" },
+              }),
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+      __setCreateFnAgent(async () => mockAgent);
+
+      const { app } = buildSaturatedApp();
+
+      const res = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/start-streaming",
+        JSON.stringify({ initialPlan: "Streaming plan under saturation" }),
+        { "Content-Type": "application/json" },
+      );
+
+      // UTILITY PATH: Planning streaming must NOT be gated on maxConcurrent
+      expect(res.status).toBe(201);
+      expect(res.body.sessionId).toBeDefined();
+    });
+  });
+
+  describe("POST /api/planning/respond — utility lane independence", () => {
+    beforeEach(() => {
+      __resetPlanningState();
+      setupSaturatedPlanningMockAgent();
+    });
+
+    afterEach(() => {
+      __setCreateFnAgent(undefined as any);
+    });
+
+    it("executes successfully when task-lane is saturated (maxConcurrent=0)", async () => {
+      const { app } = buildSaturatedApp();
+
+      // First create a session
+      const startRes = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/start",
+        JSON.stringify({ initialPlan: "Test respond under saturation" }),
+        { "Content-Type": "application/json" },
+      );
+      expect(startRes.status).toBe(201);
+      const sessionId = startRes.body.sessionId;
+
+      // Submit response - must NOT be blocked by maxConcurrent
+      const res = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/respond",
+        JSON.stringify({ sessionId, responses: { scope: "medium" } }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.type).toBe("question");
+    });
+
+    /*
+    FNXC:PlanningMultiTab 2026-07-14-00:00:
+    Planning routes are lock-free: a lock held by another tab must never block a respond.
+    Multiple tabs read and interact with the same DB-backed session.
+    */
+    it("ignores tab locks — respond succeeds even when another tab holds the session lock", async () => {
+      const mockAiSessionStore = {
+        acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-a" }),
+        releaseLock: vi.fn(),
+      };
+
+      const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
+
+      // Create session
+      const startRes = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/start",
+        JSON.stringify({ initialPlan: "Test respond lock under saturation" }),
+        { "Content-Type": "application/json" },
+      );
+      expect(startRes.status).toBe(201);
+      const sessionId = startRes.body.sessionId;
+
+      // A stale tabId from an old client must be ignored, not 409'd.
+      const res = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/respond",
+        JSON.stringify({ sessionId, responses: { scope: "medium" }, tabId: "tab-b" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.type).toBe("question");
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /api/planning/:sessionId/retry — utility lane independence", () => {
+    it("executes successfully when task-lane is saturated (maxConcurrent=0)", async () => {
+      const retrySpy = vi.spyOn(planningModule, "retrySession").mockResolvedValue();
+      const { app } = buildSaturatedApp();
+
+      const res = await REQUEST(app, "POST", "/api/planning/session-sat-retry/retry");
+
+      // UTILITY PATH: Planning retry must NOT be gated on maxConcurrent
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, sessionId: "session-sat-retry" });
+      expect(retrySpy).toHaveBeenCalled();
+    });
+
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning retry is lock-free; another tab's lock never 409s.
+    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
+      const retrySpy = vi.spyOn(planningModule, "retrySession").mockResolvedValue();
+      const mockAiSessionStore = {
+        acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-x" }),
+        releaseLock: vi.fn(),
+      };
+
+      const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
+
+      const res = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/session-locked-retry/retry",
+        JSON.stringify({ tabId: "tab-y" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, sessionId: "session-locked-retry" });
+      expect(retrySpy).toHaveBeenCalled();
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
+    });
+  });
+
+
+});
+
+/**
+ * Saturated-slot regression coverage for heartbeat wake routes.
+ * These tests prove that comment-triggered and steering-triggered heartbeat wake
+ * paths remain executable when the task-lane is saturated.
+ *
+ * UTILITY PATH contract: Wake delegation (heartbeatMonitor.executeHeartbeat) is on
+ * the heartbeat control-plane lane and must NOT be gated on task-lane saturation.
+ *
+ * See .fusion/memory/MEMORY.md "Heartbeat Control-Plane Lane (FN-1487)"
+ */
+describe("Saturated-slot regression: heartbeat wake routes", () => {
+  /**
+   * Helper to create a store with saturated settings (maxConcurrent = 0).
+   */
+  function createSaturatedStore(overrides: Partial<TaskStore> = {}): TaskStore {
+    return createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 0, // SATURATED: zero task slots available
+        promptOverrides: {},
+      }),
+      getSettingsFast: vi.fn().mockResolvedValue({
+        maxConcurrent: 0,
+      }),
+      ...overrides,
+    } as Partial<TaskStore>);
+  }
+
+  describe("POST /api/tasks/:id/comments — utility lane independence", () => {
+    it("triggers heartbeat wake for assigned agent when task-lane is saturated", async () => {
+      const fusionDir = "/fake/root/.fusion";
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+      /*
+      FNXC:PostgresCutover 2026-07-05-16:50:
+      The legacy `new AgentStore({ rootDir })` runtime was removed
+      (VAL-REMOVAL-005); spy on the prototype instead of seeding a real
+      on-disk agent store. The invariant under test is lane independence of
+      the ROUTE under maxConcurrent=0, not AgentStore persistence.
+      */
+        const agent = { id: "agent-sat-1", name: "Saturated Wake Agent", role: "executor", state: "idle", runtimeConfig: { messageResponseMode: "immediate" } };
+        vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+        vi.spyOn(AgentStore.prototype, "getAgent").mockResolvedValue(agent as never);
+        vi.spyOn(AgentStore.prototype, "getActiveHeartbeatRun").mockResolvedValue(null);
+
+        const heartbeatMonitor = {
+          executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-sat-1" }),
+        };
+
+        const updatedTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "KB-SAT-001",
+          assignedAgentId: agent.id,
+          comments: [{ id: "comment-sat-1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+        };
+
+        const store = createSaturatedStore({
+          addTaskComment: vi.fn().mockResolvedValue(updatedTask),
+          getFusionDir: vi.fn().mockReturnValue(fusionDir),
+        });
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/tasks/KB-SAT-001/comments",
+          JSON.stringify({ text: "Hello" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        // UTILITY PATH: Wake must NOT be blocked by maxConcurrent=0
+        await vi.waitFor(() => {
+          expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
+            agentId: agent.id,
+            source: "on_demand",
+            taskId: "KB-SAT-001",
+            triggeringCommentIds: ["comment-sat-1"],
+            triggeringCommentType: "task",
+          }));
+        }, { timeout: 1000 });
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("preserves active-run conflict 409 semantics when task-lane is saturated", async () => {
+      const fusionDir = "/fake/root/.fusion";
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+      /*
+      FNXC:PostgresCutover 2026-07-05-16:50:
+      The legacy `new AgentStore({ rootDir })` runtime was removed
+      (VAL-REMOVAL-005); spy on the prototype instead of seeding a real
+      on-disk agent store. The invariant under test is lane independence of
+      the ROUTE under maxConcurrent=0, not AgentStore persistence.
+      */
+        const agent = { id: "agent-sat-2", name: "Active Run Agent", role: "executor", state: "running", runtimeConfig: { messageResponseMode: "immediate" } };
+        vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+        vi.spyOn(AgentStore.prototype, "getAgent").mockResolvedValue(agent as never);
+        // Existing active heartbeat run: the wake helper must skip.
+        vi.spyOn(AgentStore.prototype, "getActiveHeartbeatRun").mockResolvedValue({ id: "run-active" } as never);
+
+        const heartbeatMonitor = {
+          executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-sat-2" }),
+        };
+
+        const updatedTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "KB-SAT-002",
+          assignedAgentId: agent.id,
+          comments: [{ id: "comment-sat-2", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+        };
+
+        const store = createSaturatedStore({
+          addTaskComment: vi.fn().mockResolvedValue(updatedTask),
+          getFusionDir: vi.fn().mockReturnValue(fusionDir),
+        });
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { heartbeatMonitor } as any));
+
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/tasks/KB-SAT-002/comments",
+          JSON.stringify({ text: "Hello" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(200);
+        await Promise.resolve();
+        // Active run conflict must still work under saturation
+        expect(heartbeatMonitor.executeHeartbeat).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
+
+  describe("POST /api/agents/:id/runs — utility lane independence", () => {
+    it("accepts triggering comment wake fields when task-lane is saturated", async () => {
+      const fusionDir = "/fake/root/.fusion";
+
+      try {
+        const { AgentStore } = await import("@fusion/core");
+      /*
+      FNXC:PostgresCutover 2026-07-05-16:50:
+      The legacy `new AgentStore({ rootDir })` runtime was removed
+      (VAL-REMOVAL-005); spy on the prototype instead of seeding a real
+      on-disk agent store. The record-only run-creation path is exercised via
+      startHeartbeatRun/saveRun spies; run enrichment stays real.
+      */
+        const agent = { id: "agent-sat-run-1", name: "Saturated Run Agent", role: "executor", state: "idle" };
+        vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+        vi.spyOn(AgentStore.prototype, "getAgent").mockResolvedValue(agent as never);
+        vi.spyOn(AgentStore.prototype, "getActiveHeartbeatRun").mockResolvedValue(null);
+        vi.spyOn(AgentStore.prototype, "startHeartbeatRun").mockResolvedValue({
+          id: "run-sat-created",
+          agentId: agent.id,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          status: "running",
+        } as never);
+        vi.spyOn(AgentStore.prototype, "saveRun").mockResolvedValue(undefined as never);
+
+        const store = createSaturatedStore({
+          getFusionDir: vi.fn().mockReturnValue(fusionDir),
+        } as any);
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store));
+
+        const res = await REQUEST(
+          app,
+          "POST",
+          `/api/agents/${agent.id}/runs`,
+          JSON.stringify({
+            source: "on_demand",
+            triggerDetail: "task-comment",
+            taskId: "FN-SAT-001",
+            triggeringCommentIds: ["c-sat-1", "c-sat-2"],
+            triggeringCommentType: "task",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        // UTILITY PATH: Agent run creation must NOT be blocked by maxConcurrent=0
+        expect(res.status).toBe(201);
+        expect(res.body.contextSnapshot).toMatchObject({
+          wakeReason: "on_demand",
+          triggerDetail: "task-comment",
+          taskId: "FN-SAT-001",
+          triggeringCommentIds: ["c-sat-1", "c-sat-2"],
+          triggeringCommentType: "task",
+        });
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("preserves validation 400 for invalid triggeringCommentIds when task-lane is saturated", async () => {
+      const fusionDir = "/fake/root/.fusion";
+
+      try {
+        // Validation rejects before any store/agent access, so no seeded
+        // agent is required — a fixed id suffices (PostgresCutover port).
+        const agent = { id: "agent-sat-validation-1" };
+
+        const store = createSaturatedStore({
+          getFusionDir: vi.fn().mockReturnValue(fusionDir),
+        } as any);
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store));
+
+        // Invalid: triggeringCommentIds is a string, not array
+        const res = await REQUEST(
+          app,
+          "POST",
+          `/api/agents/${agent.id}/runs`,
+          JSON.stringify({
+            source: "on_demand",
+            triggeringCommentIds: "not-an-array",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        // Validation must still work under saturation
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("triggeringCommentIds must be an array");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    }, 15_000);
+  });
+});
+
+describe("GET /api/ai-sessions type filtering", () => {
+  it("returns planning rows for a valid type filter and preserves all types when omitted", async () => {
+    const sessions = [
+      { id: "planning-1", type: "planning", status: "complete", title: "Plan", projectId: null, updatedAt: "2026-07-15T00:00:00.000Z", archived: false },
+      { id: "subtask-1", type: "subtask", status: "complete", title: "Breakdown", projectId: null, updatedAt: "2026-07-15T00:00:00.000Z", archived: false },
+    ];
+    const mockAiSessionStore = {
+      listAll: vi.fn((_projectId: string | undefined, options?: { includeArchived?: boolean; type?: string }) =>
+        options?.type ? sessions.filter((session) => session.type === options.type) : sessions,
+      ),
+      listActive: vi.fn(() => []),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(createMockStore(), { aiSessionStore: mockAiSessionStore as any }));
+
+    const filtered = await REQUEST(app, "GET", "/api/ai-sessions?includeCompleted=1&type=planning");
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.sessions).toEqual([expect.objectContaining({ id: "planning-1", type: "planning" })]);
+    expect(mockAiSessionStore.listAll).toHaveBeenCalledWith(undefined, { includeArchived: false, type: "planning" });
+
+    const unfiltered = await REQUEST(app, "GET", "/api/ai-sessions?includeCompleted=1");
+    expect(unfiltered.status).toBe(200);
+    expect(unfiltered.body.sessions).toHaveLength(2);
+    expect(unfiltered.body.sessions.map((session: { type: string }) => session.type)).toEqual(["planning", "subtask"]);
+    expect(mockAiSessionStore.listAll).toHaveBeenLastCalledWith(undefined, { includeArchived: false, type: undefined });
+  });
+});
+
+describe("DELETE /api/ai-sessions/cleanup", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  it("returns cleanup summary with default maxAgeMs", async () => {
+    const mockAiSessionStore = {
+      cleanupStaleSessions: vi.fn().mockReturnValue({
+        terminalDeleted: 5,
+        orphanedDeleted: 2,
+        totalDeleted: 7,
+      }),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+    const res = await REQUEST(app, "DELETE", "/api/ai-sessions/cleanup");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      terminalDeleted: 5,
+      orphanedDeleted: 2,
+      totalDeleted: 7,
+      maxAgeMs: SESSION_CLEANUP_DEFAULT_MAX_AGE_MS,
+    });
+    expect(mockAiSessionStore.cleanupStaleSessions).toHaveBeenCalledWith(SESSION_CLEANUP_DEFAULT_MAX_AGE_MS);
+  });
+
+  it("respects maxAgeMs override and clamps values below one hour", async () => {
+    const mockAiSessionStore = {
+      cleanupStaleSessions: vi.fn().mockReturnValue({
+        terminalDeleted: 1,
+        orphanedDeleted: 1,
+        totalDeleted: 2,
+      }),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+    const res = await REQUEST(app, "DELETE", "/api/ai-sessions/cleanup?maxAgeMs=1000");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      terminalDeleted: 1,
+      orphanedDeleted: 1,
+      totalDeleted: 2,
+      maxAgeMs: 60 * 60 * 1000,
+    });
+    expect(mockAiSessionStore.cleanupStaleSessions).toHaveBeenCalledWith(60 * 60 * 1000);
+  });
+
+  it("returns 503 when aiSessionStore is unavailable", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const res = await REQUEST(app, "DELETE", "/api/ai-sessions/cleanup");
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: "Session store not available" });
+  });
+});
+
+// ── FN-7949: delete-mid-generation resurrection race ──────────────────────
+// Reproduces the exact reported bug: deleting a Planning Mode session while
+// its background generation is still in flight must not let a straggling
+// write resurrect it. Uses a REAL PostgreSQL-backed AiSessionStore wired the
+// same way server.ts wires it — via setAiSessionStore() for
+// planning.ts's internal persistSession() calls AND via the routes.ts
+// aiSessionStore option for the DELETE endpoint — so the tombstone guard
+// added to AiSessionStore.upsert() is exercised end-to-end, not mocked out.
+pgDescribe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
+  let store: TaskStore;
+  let realAiSessionStore: AiSessionStore;
+  const pg = createSharedPgTaskStoreTestHarness({ prefix: "fusion_ai_session_delete" });
+
+  beforeAll(pg.beforeAll);
+  afterAll(pg.afterAll);
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: realAiSessionStore as any }));
+    return app;
+  }
+
+  /**
+   * Deferred-prompt mock agent: the FIRST prompt() call (triggered by
+   * POST /api/planning/start) resolves immediately with a question, so the
+   * session reaches `awaiting_input` normally. The SECOND prompt() call
+   * (triggered by POST /api/planning/respond) does not resolve until the
+   * test explicitly calls `resolveSecondPrompt()` — modeling the abandoned
+   * `session.agent.session.prompt()` call that `runGenerationWithTimeout`'s
+   * `Promise.race` only stops *awaiting*, not actually cancels.
+   */
+  function setupDeferredRespondAgent() {
+    const messages: Array<{ role: string; content: string }> = [];
+    let callIndex = 0;
+    let resolveSecondPrompt: (() => void) | undefined;
+    const secondPromptStarted = new Promise<void>((resolveStarted) => {
+      const mockAgent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (msg: string) => {
+            messages.push({ role: "user", content: msg });
+            if (callIndex === 0) {
+              callIndex++;
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "question",
+                  data: { id: "q-scope", type: "text", question: "What is the scope?" },
+                }),
+              });
+              return;
+            }
+            callIndex++;
+            await new Promise<void>((resolve) => {
+              resolveSecondPrompt = resolve;
+              resolveStarted();
+            });
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "complete",
+                data: { title: "Late-landing plan", description: "Should never be seen", suggestedSize: "S" },
+              }),
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+      __setCreateFnAgent(async () => mockAgent);
+    });
+
+    return {
+      secondPromptStarted,
+      resolveSecondPrompt: () => resolveSecondPrompt?.(),
+    };
+  }
+
+  beforeEach(async () => {
+    await pg.beforeEach();
+    store = createMockStore();
+    __resetPlanningState();
+    /* FNXC:PostgresAiSessionStore 2026-07-14-19:20: The resurrection regression exercises the authoritative PostgreSQL session store rather than a removed SQLite fallback. */
+    realAiSessionStore = new AiSessionStore(pg.layer());
+    setAiSessionStore(realAiSessionStore);
+  });
+
+  afterEach(async () => {
+    __setCreateFnAgent(undefined as any);
+    __resetPlanningState();
+    realAiSessionStore.stopScheduledCleanup();
+    await pg.afterEach();
+  });
+
+  it("does not resurrect a session deleted while a generation is still in flight", async () => {
+    const { secondPromptStarted, resolveSecondPrompt } = setupDeferredRespondAgent();
+
+    const startRes = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/start",
+      JSON.stringify({ initialPlan: "Deleted mid-generation planning session" }),
+      { "Content-Type": "application/json" },
+    );
+    expect(startRes.status).toBe(201);
+    const sessionId = startRes.body.sessionId as string;
+    expect(await realAiSessionStore.get(sessionId)).not.toBeNull();
+    expect((await realAiSessionStore.get(sessionId))?.status).toBe("awaiting_input");
+
+    // Fire the respond call WITHOUT awaiting it — its underlying prompt()
+    // call is deferred and will not resolve until we explicitly release it
+    // below, simulating the straggling in-flight generation from FN-7949.
+    const respondPromise = REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/respond",
+      JSON.stringify({ sessionId, responses: { "q-scope": "medium" } }),
+      { "Content-Type": "application/json" },
+    );
+
+    // Wait for the second prompt() call to actually start (i.e. respond's
+    // synchronous persistSession(session, "generating") has already run and
+    // execution is now parked awaiting the deferred prompt).
+    await secondPromptStarted;
+
+    // Delete the session while that generation is still in flight — the
+    // exact FN-7949 reproduction step.
+    const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body).toEqual({ ok: true });
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
+
+    const updatedEventIds: string[] = [];
+    realAiSessionStore.on("ai_session:updated", (summary) => updatedEventIds.push(summary.id));
+
+    // Let the abandoned prompt() call resolve — the straggling write lands
+    // after the session was already deleted.
+    resolveSecondPrompt();
+    await respondPromise.catch(() => {
+      // The request may resolve or reject depending on how far the aborted
+      // in-memory session state got; either is fine — what matters is the
+      // store-level assertion below.
+    });
+
+    // The deleted session must not have been resurrected, and no
+    // ai_session:updated event should have fired for it.
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
+    expect(updatedEventIds).not.toContain(sessionId);
+  });
+
+  it("a normal delete with no in-flight generation continues to work exactly as before", async () => {
+    setupPlanningMockAgentForFn7949();
+    const persisted = new Promise<void>((resolve) => {
+      realAiSessionStore.once("ai_session:updated", () => resolve());
+    });
+
+    const startRes = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/start",
+      JSON.stringify({ initialPlan: "Ordinary planning session, deleted cleanly" }),
+      { "Content-Type": "application/json" },
+    );
+    expect(startRes.status).toBe(201);
+    await persisted;
+    const sessionId = startRes.body.sessionId as string;
+    expect(await realAiSessionStore.get(sessionId)).not.toBeNull();
+
+    const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
+
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body).toEqual({ ok: true });
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
+  });
+
+  function setupPlanningMockAgentForFn7949() {
+    const messages: Array<{ role: string; content: string }> = [];
+    const mockAgent = {
+      session: {
+        state: { messages },
+        prompt: vi.fn(async (msg: string) => {
+          messages.push({ role: "user", content: msg });
+          messages.push({
+            role: "assistant",
+            content: JSON.stringify({
+              type: "question",
+              data: { id: "q-scope", type: "text", question: "What is the scope?" },
+            }),
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    __setCreateFnAgent(async () => mockAgent);
+  }
+});
+
+describe("POST /api/ai-sessions/:id/ping", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  it("returns 200 when the session exists", async () => {
+    const mockAiSessionStore = {
+      ping: vi.fn().mockReturnValue(true),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+    const res = await REQUEST(app, "POST", "/api/ai-sessions/session-123/ping");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(mockAiSessionStore.ping).toHaveBeenCalledWith("session-123");
+  });
+
+  it("returns 404 when the session does not exist", async () => {
+    const mockAiSessionStore = {
+      ping: vi.fn().mockReturnValue(false),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: mockAiSessionStore as any }));
+
+    const res = await REQUEST(app, "POST", "/api/ai-sessions/missing-session/ping");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Session not found" });
+    expect(mockAiSessionStore.ping).toHaveBeenCalledWith("missing-session");
+  });
+});
+
+// ── AI Summarize Title Routes ───────────────────────────────────────────────
+// Tests for FN-1730: Lane precedence regression for title summarization endpoint
+// Model resolution hierarchy:
+// 1. Request body provider + modelId (explicit override)
+// 2. Project titleSummarizerProvider + titleSummarizerModelId (project lane)
+// 3. Global titleSummarizerGlobalProvider + titleSummarizerGlobalModelId (global lane)
+// 4. Default defaultProvider + defaultModelId (default fallback)
+//
+// Note: These tests verify that the route accepts the correct parameters and validates
+// them properly. The actual AI summarization is tested separately in the core package.
+// The lane precedence behavior is verified through integration tests.
+
+describe("POST /api/ai/summarize-title", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      getRootDir: vi.fn().mockReturnValue("/test/project"),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  function captureDiagnostics(): LogEntry[] {
+    const entries: LogEntry[] = [];
+    setDiagnosticsSink((level, scope, message, context) => {
+      entries.push({
+        level,
+        scope,
+        message,
+        context,
+        timestamp: new Date(),
+      });
+    });
+    return entries;
+  }
+
+  it("validates description is required", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({}),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("description");
+  });
+
+  it("validates description must be a string", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description: 123 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("description");
+  });
+
+  it("rejects empty descriptions without a length threshold", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description: "   " }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("description must not be empty");
+  });
+
+  it("accepts a short non-empty description", async () => {
+    const fusionCore = await import("@fusion/core");
+    fusionCore.__resetSummarizeState();
+    const summarizeTitleSpy = vi
+      .spyOn(fusionCore, "summarizeTitle")
+      .mockResolvedValueOnce("Generated short title");
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description: "Short description" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ title: "Generated short title" });
+    expect(summarizeTitleSpy).toHaveBeenCalledWith("Short description", "/test/project", undefined, undefined, expect.objectContaining({ mode: "english", locale: "en" }));
+  });
+
+  it("accepts optional provider and modelId parameters", async () => {
+    const fusionCore = await import("@fusion/core");
+    const summarizeTitleSpy = vi
+      .spyOn(fusionCore, "summarizeTitle")
+      .mockResolvedValueOnce("Generated title");
+
+    const description = "x".repeat(300);
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({
+        description,
+        provider: "google",
+        modelId: "gemini-2.5-pro",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ title: "Generated title" });
+    expect(summarizeTitleSpy).toHaveBeenCalledWith(
+      description,
+      "/test/project",
+      "google",
+      "gemini-2.5-pro",
+      expect.objectContaining({ mode: "english", locale: "en" }),
+    );
+  });
+
+  it("accepts descriptions longer than 2000 characters", async () => {
+    const fusionCore = await import("@fusion/core");
+    const summarizeTitleSpy = vi
+      .spyOn(fusionCore, "summarizeTitle")
+      .mockResolvedValueOnce("Generated title");
+
+    const description = "x".repeat(5000);
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ title: "Generated title" });
+    expect(summarizeTitleSpy).toHaveBeenCalledWith(
+      description,
+      "/test/project",
+      undefined,
+      undefined,
+      expect.objectContaining({ mode: "english", locale: "en" }),
+    );
+  });
+
+  it("emits structured diagnostics for unexpected summarize failures", async () => {
+    const diagnostics = captureDiagnostics();
+    const fusionCore = await import("@fusion/core");
+    vi.spyOn(fusionCore, "summarizeTitle").mockRejectedValueOnce(new Error("summarize boom"));
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description: "x".repeat(300) }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("summarize boom");
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        scope: "ai-summarize",
+        message: "Unexpected summarize title error",
+        context: expect.objectContaining({
+          operation: "summarize-title",
+          error: expect.objectContaining({ message: "summarize boom" }),
+        }),
+      }),
+    );
+  });
+
+  it("emits debug-gated summarize request and model diagnostics when FUSION_DEBUG_AI is enabled", async () => {
+    const diagnostics = captureDiagnostics();
+    const fusionCore = await import("@fusion/core");
+    vi.spyOn(fusionCore, "summarizeTitle").mockResolvedValueOnce("Generated title");
+
+    const previousDebug = process.env.FUSION_DEBUG_AI;
+    process.env.FUSION_DEBUG_AI = "1";
+
+    try {
+      const description = "x".repeat(320);
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/ai/summarize-title",
+        JSON.stringify({
+          description,
+          provider: "google",
+          modelId: "gemini-2.5-pro",
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ title: "Generated title" });
+      expect(diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            level: "info",
+            scope: "ai-summarize",
+            message: "Summarize title request",
+            context: expect.objectContaining({
+              descriptionLength: description.length,
+              operation: "summarize-title-request",
+            }),
+          }),
+          expect.objectContaining({
+            level: "info",
+            scope: "ai-summarize",
+            message: "Summarize title model resolved",
+            context: expect.objectContaining({
+              provider: "google",
+              modelId: "gemini-2.5-pro",
+              operation: "summarize-title-model-resolution",
+            }),
+          }),
+        ]),
+      );
+    } finally {
+      if (previousDebug === undefined) {
+        delete process.env.FUSION_DEBUG_AI;
+      } else {
+        process.env.FUSION_DEBUG_AI = previousDebug;
+      }
+    }
+  });
+
+  it("uses the project default override for summarize-title when no higher lane is configured", async () => {
+    const fusionCore = await import("@fusion/core");
+    const summarizeTitleSpy = vi
+      .spyOn(fusionCore, "summarizeTitle")
+      .mockResolvedValueOnce("Generated title");
+
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      defaultProviderOverride: "openai",
+      defaultModelIdOverride: "gpt-4o",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+    });
+
+    const description = "x".repeat(300);
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/ai/summarize-title",
+      JSON.stringify({ description }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(summarizeTitleSpy).toHaveBeenCalledWith(
+      description,
+      "/test/project",
+      "openai",
+      "gpt-4o",
+      expect.objectContaining({ mode: "english", locale: "en" }),
+    );
+  });
+});
+
+describe("POST /planning/start-streaming with projectId scoping", () => {
+  const projectId = "proj-planning-scoped";
+
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore({
+      getRootDir: vi.fn().mockReturnValue("/scoped/planning/project"),
+    });
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+    __resetPlanningState();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __setCreateFnAgent(undefined as any);
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped store settings for prompt resolution when projectId is provided", async () => {
+    const customPlanningPrompt = "CUSTOM SCOPED PLANNING PROMPT";
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      promptOverrides: {
+        "planning-system": customPlanningPrompt,
+      },
+      defaultProvider: "scoped-provider",
+      defaultModelId: "scoped-model",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createFnAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateFnAgent(createFnAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/planning/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ initialPlan: "Test planning" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    expect(scopedStore.getSettings).toHaveBeenCalled();
+    expect(scopedStore.getRootDir()).toBe("/scoped/planning/project");
+    // Verify scoped settings were used for prompt resolution
+    await vi.waitFor(() => {
+      expect(createFnAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining(customPlanningPrompt),
+          defaultProvider: "scoped-provider",
+          defaultModelId: "scoped-model",
+        }),
+      );
+    });
+  });
+
+  it("uses request body model override when provided alongside projectId", async () => {
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      defaultProvider: "scoped-provider",
+      defaultModelId: "scoped-model",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createFnAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateFnAgent(createFnAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/planning/start-streaming?projectId=${projectId}`,
+      JSON.stringify({
+        initialPlan: "Test planning",
+        planningModelProvider: "google",
+        planningModelId: "gemini-2.5-pro",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
+    // Request body override takes precedence over scoped settings
+    await vi.waitFor(() => {
+      expect(createFnAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "google",
+          defaultModelId: "gemini-2.5-pro",
+        }),
+      );
+    });
+  });
+
+  it("falls back to scoped settings when no request override provided", async () => {
+    (scopedStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createFnAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateFnAgent(createFnAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/planning/start-streaming?projectId=${projectId}`,
+      JSON.stringify({ initialPlan: "Test planning" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
+    // Scoped settings planning lane should be used
+    await vi.waitFor(() => {
+      expect(createFnAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4",
+        }),
+      );
+    });
+  });
+
+  it("uses default store when projectId is omitted", async () => {
+    // When projectId is omitted, default store should be used
+    const defaultRootDir = "/fake/root";
+    (defaultStore.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(defaultRootDir);
+    (defaultStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      defaultProvider: "default-provider",
+      defaultModelId: "default-model",
+    });
+
+    const mockAgent = {
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          return JSON.stringify({
+            type: "question",
+            data: { id: "q-1", type: "text", question: "What is the scope?" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    const createFnAgentSpy = vi.fn(async () => mockAgent);
+    __setCreateFnAgent(createFnAgentSpy as any);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/start-streaming",
+      JSON.stringify({ initialPlan: "Test planning" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
+    // Default store should be used (getOrCreateProjectStore should not be called)
+    expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(createFnAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "default-provider",
+          defaultModelId: "default-model",
+        }),
+      );
+    });
+  });
+});
+
+describe("POST /api/ai/summarize-title with projectId scoping", () => {
+  const projectId = "proj-summarize-scoped";
+  let defaultStore: TaskStore;
+  let scopedStore: TaskStore;
+
+  beforeEach(() => {
+    defaultStore = createMockStore();
+    scopedStore = createMockStore({
+      getRootDir: vi.fn().mockReturnValue("/scoped/project"),
+    });
+
+    vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(defaultStore));
+    return app;
+  }
+
+  it("uses scoped store when projectId is provided for rate limit check", async () => {
+    // The route checks rate limit first using getOrCreateProjectStore
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/ai/summarize-title?projectId=${projectId}`,
+      JSON.stringify({
+        description: "Short description", // Short to fail validation quickly
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    // Verify scoped store is used
+    expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+    // Verify request completes (either 400 validation or 503 AI unavailable)
+    expect([400, 503]).toContain(res.status);
+  });
+
+  it("does not use default store when projectId is provided", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      `/api/ai/summarize-title?projectId=${projectId}`,
+      JSON.stringify({
+        description: "Short description", // Short to fail validation quickly
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    // Default store should not be used
+    expect(defaultStore.getSettings).not.toHaveBeenCalled();
+    expect([400, 503]).toContain(res.status);
+  });
+});

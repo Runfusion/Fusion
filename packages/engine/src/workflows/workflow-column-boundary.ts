@@ -1,0 +1,480 @@
+/*
+FNXC:WorkflowColumnBoundary 2026-07-18-20:35:
+U1 — the graph is the sole lifecycle driver. As traversal crosses from a node in
+column A into a node in column B, the card MOVES to column B through the store's
+trait-hook `moveTask` path. This controller is the seam the graph executor calls
+on every real-node entry; it owns the trait decision (move vs. park), the audit
+emission (KTD-12), and the durable IR pin / drift guard (KTD-3).
+
+Rules encoded here:
+  - KTD-1: `end` and failure-terminal arrivals never move — the executor never
+    calls `onNodeEntry` for a node without a column, and failure edges in the
+    benchmark terminate at `end` (columnless), so the card stays put and parks in
+    place. Only column-bearing node entries move.
+  - KTD-2: a hold→wip boundary is NEVER graph-moved. The graph parks the card at
+    the ready-for-release seam and the scheduler's capacity sweep (U4) is the sole
+    actor that performs the hold→wip move. This controller records the seam and
+    performs no move on that boundary.
+  - KTD-3: each node entry pins the resolved IR (version/content hash) durably on
+    the run state; `detectDrift` compares the stored pin against the current IR at
+    run start and parks with `task:reconcile-workflow-drift` on mismatch instead
+    of traversing a mutated graph.
+  - KTD-12: `task:column-transition` and `task:reconcile-workflow-drift` carry
+    ids/counts/outcomes-only metadata — no prose, no model ids.
+
+Idempotency (U1 scenario 4 — kill/restart mid-transition settles exactly once):
+the controller tracks the card's current column and only moves when the entered
+node's column differs. A re-entered node (rework loop) or a re-run after restart
+in the same column is a no-op, so exactly one move + one audit event is produced
+per real boundary crossing. The crash-safe `transitionPending` marker written
+in-txn by `moveTaskInternal` is the store-level half of that guarantee.
+*/
+
+import {
+  type WorkflowIr,
+  type WorkflowIrNode,
+  type WorkflowIrPin,
+  computeWorkflowIrPin,
+  detectWorkflowDrift,
+  findWorkflowColumn,
+  isHoldToWipBoundary,
+  resolveColumnFlags,
+  TransitionRejectionError,
+  emitWorkflowLifecycleEvent,
+} from "@fusion/core";
+
+/** Run-audit event emitted by the boundary controller (KTD-12, ids/counts only). */
+export type WorkflowColumnBoundaryAuditEvent =
+  | {
+      type: "task:column-transition";
+      taskId: string;
+      workflowId: string;
+      fromColumn: string;
+      toColumn: string;
+      irHash: string;
+      nodeId: string;
+    }
+  | {
+      type: "task:reconcile-workflow-drift";
+      taskId: string;
+      workflowId: string;
+      pinnedNodeId: string;
+      reason: string;
+    };
+
+/** The single store move seam. Wired to `store.moveTask(id, toColumn, {
+ *  moveSource: "engine", workflowMoveSource: "workflow-graph" })`. */
+export type WorkflowColumnMove = (
+  toColumn: string,
+  ctx: { fromColumn: string; nodeId: string },
+) => Promise<void>;
+
+export interface WorkflowColumnBoundaryDeps {
+  taskId: string;
+  workflowId: string;
+  ir: WorkflowIr;
+  /** The card's lifecycle column at run start (task.column). */
+  initialColumn: string;
+  /** The store move seam. Absent → the controller records intent but performs no
+   *  move (byte-inert; used by unit tests that assert decisions only). */
+  moveTask?: WorkflowColumnMove;
+  /** Emit an ids/counts/outcomes-only run-audit event (KTD-12). */
+  emitAudit?: (event: WorkflowColumnBoundaryAuditEvent) => void | Promise<void>;
+  /** KTD-3: persist the per-node-entry IR pin (wired to the task row's
+   *  `workflowIrPin*` fields via `createStoreIrPinPersistence` in production). */
+  pinNodeEntry?: (pin: WorkflowIrPin) => void | Promise<void>;
+  /*
+  FNXC:WorkflowIrPin 2026-07-19-21:10 (KTD-3 drift-park loop fix, PR #2342):
+  Clear the durable pin the moment drift is DETECTED. The pin that fired the drift
+  guard is by definition stale (its node/column/hash no longer exists in the current
+  IR); leaving it on the row made the park permanent — every requeue re-loaded the
+  same pin, re-fired detectDrift, and re-failed until an operator manually nulled
+  the fields. Clearing at drift-park time makes the park self-correcting: the next
+  ordinary requeue loads no prior pin, re-resolves the CURRENT IR fresh, and
+  proceeds — adopting the changed workflow is exactly the desired outcome.
+  Wired to `createStoreIrPinPersistence().clearPin` in production; absent → the
+  pre-fix posture (pin left in place) for minimal test harnesses.
+  */
+  clearPin?: () => void | Promise<void>;
+  /** KTD-3: the pin recorded by a prior (possibly crashed) run, for drift check. */
+  priorPin?: WorkflowIrPin;
+  /** Optional diagnostics sink; never throws into the run. */
+  onWarn?: (message: string, detail: Record<string, unknown>) => void;
+  /** Persist a durable continuation before control returns to the scheduler. */
+  onSuspend?: (suspension: Extract<WorkflowColumnBoundaryEntryResult, { kind: "suspended" }>) => void | Promise<void>;
+  /*
+  FNXC:EnginePause 2026-08-01-00:20 (Stop AI Engine did not stop the graph):
+  Operator-observed regression: with `globalPause: true` the graph runner kept crossing node
+  boundaries — a live run started a NEW Plan Review step (fresh model session) two minutes after
+  Stop AI Engine, and the plan-review→replan loop kept cycling "attempt N/unbounded". The legacy
+  executor loop re-read settings between steps; the graph interpreter never did, and the
+  event-driven abort listeners cannot be the only line of defense (they depend on
+  `settings:updated` reaching this store instance). This probe is polled at EVERY node entry, so
+  a pause takes effect at the next boundary even if no event ever fires.
+  */
+  isPaused?: () => boolean | Promise<boolean>;
+}
+
+/** The seam the graph executor consumes. */
+export interface WorkflowColumnBoundary {
+  /** The card's current lifecycle column (updated after each successful move). */
+  currentColumn(): string;
+  /** Cross into `node.column` when it differs from the current column. */
+  onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult | void>;
+  /** KTD-3 drift guard — run once at graph start. Returns true when the pinned
+   *  node/column is gone from the current IR (run must park, not traverse). */
+  detectDrift(): Promise<boolean>;
+}
+
+export type WorkflowColumnBoundaryEntryResult =
+  | { kind: "entered" }
+  | {
+      kind: "suspended";
+      reason: "capacity" | "pause";
+      nodeId: string;
+      fromColumn: string;
+      toColumn: string;
+      irHash: string;
+    };
+
+/*
+FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
+Store-backed KTD-3 pin persistence. The U9b schema landed the durable pin as three
+task-row fields (`workflowIrPin` = content hash, `workflowIrPinNodeId`,
+`workflowIrPinColumnId` — migration 0026), threaded through updateTask /
+serialization / slim projections in core. This factory binds that row surface to
+the boundary's `pinNodeEntry` / `loadPriorPin` seams:
+  - pinNodeEntry writes via `updateTask` ONLY when the pin actually changed
+    (same node re-entry / rework loops and same-hash chains are free — one row
+    write per real node entry, not per traversal step);
+  - loadPriorPin reads the fields back off the task row at run start so a
+    restart/re-entry compares the crashed run's pin against the CURRENT IR and
+    takes the drift-park path (`task:reconcile-workflow-drift`) on mismatch.
+Degradation: a store lacking `updateTask`/`getTask`, or whose rows do not carry
+the pin fields (in-memory fakes, pre-U9b DBs), yields no prior pin and no-op
+writes — exactly the pre-wiring inert posture, so legacy harnesses are untouched.
+*/
+
+/** The minimal task-row surface the pin persistence needs. Structural on purpose
+ *  so real stores and test fakes both fit without importing the full TaskStore. */
+export interface WorkflowIrPinStoreSurface {
+  updateTask?: (
+    id: string,
+    updates: {
+      workflowIrPin?: string | null;
+      workflowIrPinNodeId?: string | null;
+      workflowIrPinColumnId?: string | null;
+    },
+  ) => unknown;
+  getTask?: (id: string) => Promise<{
+    workflowIrPin?: string;
+    workflowIrPinNodeId?: string;
+    workflowIrPinColumnId?: string;
+  }>;
+}
+
+/** Build the store-backed `pinNodeEntry`/`loadPriorPin` pair for one task. */
+export function createStoreIrPinPersistence(
+  store: WorkflowIrPinStoreSurface,
+  taskId: string,
+): {
+  pinNodeEntry: (pin: WorkflowIrPin) => Promise<void>;
+  loadPriorPin: () => Promise<WorkflowIrPin | undefined>;
+  clearPin: () => Promise<void>;
+} {
+  // Last pin known to be on the row (loaded or written) — the change-only gate.
+  let lastPin: WorkflowIrPin | undefined;
+  const samePin = (a: WorkflowIrPin, b: WorkflowIrPin): boolean =>
+    a.nodeId === b.nodeId && a.irHash === b.irHash && a.columnId === b.columnId;
+
+  return {
+    pinNodeEntry: async (pin) => {
+      if (typeof store.updateTask !== "function") return; // no-op degradation
+      if (lastPin && samePin(lastPin, pin)) return; // unchanged → no row write
+      await store.updateTask(taskId, {
+        workflowIrPin: pin.irHash,
+        workflowIrPinNodeId: pin.nodeId,
+        workflowIrPinColumnId: pin.columnId ?? null,
+      });
+      lastPin = pin;
+    },
+    loadPriorPin: async () => {
+      if (typeof store.getTask !== "function") return undefined;
+      try {
+        const row = await store.getTask(taskId);
+        if (!row?.workflowIrPin || !row.workflowIrPinNodeId) return undefined;
+        const pin: WorkflowIrPin = {
+          nodeId: row.workflowIrPinNodeId,
+          irHash: row.workflowIrPin,
+          columnId: row.workflowIrPinColumnId ?? undefined,
+        };
+        lastPin = pin;
+        return pin;
+      } catch {
+        // A store that cannot read the row degrades to "no prior pin" — the
+        // drift guard stays inert rather than failing the run on bookkeeping.
+        return undefined;
+      }
+    },
+    // FNXC:WorkflowIrPin 2026-07-19-21:10: null all three row fields (production
+    // task-update.ts treats null as clear-to-undefined) so a requeued run loads
+    // NO prior pin and re-resolves the current IR instead of re-firing drift.
+    clearPin: async () => {
+      if (typeof store.updateTask !== "function") return; // no-op degradation
+      await store.updateTask(taskId, {
+        workflowIrPin: null,
+        workflowIrPinNodeId: null,
+        workflowIrPinColumnId: null,
+      });
+      lastPin = undefined;
+    },
+  };
+}
+
+/**
+ * Build the boundary controller for one graph run. Additive: when the executor
+ * has no `columnBoundary` dep wired it performs no lifecycle moves at all, so
+ * every legacy runner/executor test stays byte-identical.
+ */
+export function createWorkflowColumnBoundary(
+  deps: WorkflowColumnBoundaryDeps,
+): WorkflowColumnBoundary {
+  let column = deps.initialColumn;
+
+  const warn = (message: string, detail: Record<string, unknown>): void => {
+    try {
+      deps.onWarn?.(message, detail);
+    } catch {
+      /* diagnostics must never affect the run */
+    }
+  };
+
+  const flagsFor = (columnId: string) => {
+    const col = findWorkflowColumn(deps.ir, columnId);
+    return col ? resolveColumnFlags(col) : {};
+  };
+
+  return {
+    currentColumn: () => column,
+
+    async detectDrift(): Promise<boolean> {
+      const pin = deps.priorPin;
+      if (!pin) return false;
+      const reason = detectWorkflowDrift(deps.ir, pin);
+      if (!reason) return false;
+      try {
+        await deps.emitAudit?.({
+          type: "task:reconcile-workflow-drift",
+          taskId: deps.taskId,
+          workflowId: deps.workflowId,
+          pinnedNodeId: pin.nodeId,
+          reason,
+        });
+      } catch (err) {
+        warn("drift audit emit failed", { error: err instanceof Error ? err.message : String(err) });
+      }
+      // FNXC:WorkflowIrPin 2026-07-19-21:10 (drift-park loop fix): the pin that
+      // fired the guard is stale — clear it NOW so the park self-corrects on the
+      // next requeue (fresh IR resolution) instead of looping forever. Fail-soft:
+      // a failed clear merely re-fires drift next run (the pre-fix behavior),
+      // never fails this run's bookkeeping.
+      try {
+        await deps.clearPin?.();
+      } catch (err) {
+        warn("stale drift pin clear failed", { error: err instanceof Error ? err.message : String(err) });
+      }
+      return true;
+    },
+
+    async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
+      const toColumn = node.column;
+
+      /*
+      FNXC:EnginePause 2026-08-01-00:20:
+      Pause gates EVERY node entry — columnless and same-column nodes included, because each node
+      can start a real AI session regardless of whether the card moves. Suspend with the same
+      durable-continuation mechanism capacity uses, so unpause resumes at exactly this node; the
+      drain refuses to dispatch continuations while paused, which closes the resume loop.
+      */
+      if (await deps.isPaused?.()) {
+        const pauseSuspension = {
+          kind: "suspended",
+          reason: "pause",
+          nodeId: node.id,
+          fromColumn: column,
+          toColumn: toColumn ?? column,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+        } as const;
+        await deps.onSuspend?.(pauseSuspension);
+        emitWorkflowLifecycleEvent({
+          type: "RunSuspended",
+          taskId: deps.taskId,
+          at: new Date().toISOString(),
+          workflowId: deps.workflowId,
+          nodeId: node.id,
+          reason: "pause",
+          fromColumn: column,
+          toColumn: toColumn ?? column,
+        });
+        return pauseSuspension;
+      }
+
+      /*
+      FNXC:WorkflowEvents 2026-07-27-15:20 (U3 / R5, PR #2467 review):
+      Announce the NODE ENTRY, not the column crossing — so this fires BEFORE the
+      columnless short-circuit and before the same-column no-op below. Traversal
+      genuinely entered the node in all three cases, and a subscriber tracking
+      graph progress must see rework loops and terminal `end` arrivals, which a
+      crossing-only signal hides. `column` is omitted for a columnless node,
+      which is exactly why `NodeEnteredEvent.column` is optional.
+
+      The paired `TaskTransitioned` comes from the store's own post-commit point,
+      so a real crossing produces both and every other entry produces only this
+      one. Neither is authoritative for any lifecycle decision.
+      */
+      emitWorkflowLifecycleEvent({
+        type: "NodeEntered",
+        taskId: deps.taskId,
+        at: new Date().toISOString(),
+        workflowId: deps.workflowId,
+        nodeId: node.id,
+        ...(toColumn ? { column: toColumn } : {}),
+      });
+
+      // KTD-1: a columnless node (e.g. `end`) never moves the card.
+      if (!toColumn) return { kind: "entered" };
+
+      // KTD-3: pin the resolved IR for this node-entry (durable seam).
+      try {
+        await deps.pinNodeEntry?.(computeWorkflowIrPin(deps.ir, node.id));
+      } catch (err) {
+        warn("ir pin write failed", { nodeId: node.id, error: err instanceof Error ? err.message : String(err) });
+      }
+
+      // Idempotent: a re-entered/rework node or a same-column node chain no-ops.
+      if (toColumn === column) return { kind: "entered" };
+
+      const fromColumn = column;
+
+      // KTD-2: never graph-move a hold→wip boundary — the scheduler is the sole
+      // mover there; the card parks at the ready-for-release seam (U4 performs the
+      // actual release). Record the seam but perform no move here.
+      if (isHoldToWipBoundary(flagsFor(fromColumn), flagsFor(toColumn))) {
+        warn("hold→wip boundary parked at ready-for-release seam (scheduler-owned)", {
+          fromColumn,
+          toColumn,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+          nodeId: node.id,
+        });
+        const suspension = {
+          kind: "suspended",
+          reason: "capacity",
+          nodeId: node.id,
+          fromColumn,
+          toColumn,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+        } as const;
+        await deps.onSuspend?.(suspension);
+        /*
+        FNXC:WorkflowEvents 2026-07-27-12:05 (U3 / R5):
+        Emitted AFTER `onSuspend` has persisted the durable continuation, so an
+        observed `RunSuspended` implies the continuation exists. The continuation
+        — not this event — is what the scheduler resumes from; dropping the event
+        costs a notification, never a stranded run.
+        */
+        emitWorkflowLifecycleEvent({
+          type: "RunSuspended",
+          taskId: deps.taskId,
+          at: new Date().toISOString(),
+          workflowId: deps.workflowId,
+          nodeId: node.id,
+          reason: "capacity",
+          fromColumn,
+          toColumn,
+        });
+        return suspension;
+      }
+
+      // The single mover: the store's trait-hook moveTask path.
+      if (deps.moveTask) {
+        try {
+          await deps.moveTask(toColumn, { fromColumn, nodeId: node.id });
+        } catch (err) {
+          /*
+          FNXC:WorkflowReviewGates 2026-07-26-13:40:
+          A CAPACITY rejection on a real (non-hold→wip) boundary is transient, not a graph failure.
+          This became reachable once the pre-merge review gates moved into `in-review`: the paired
+          remediation node crosses in-review → in-progress, and that crossing re-enters a
+          capacity-bearing column. Capacity is enforced in-transaction and is never bypassable, so
+          if the pool filled while the gate ran, the move is rejected — and rethrowing here killed
+          the run at the remediation node, stranding the card in `in-review` behind a failed
+          pre-merge step with nothing scheduled to fix it.
+          Park it the same way the hold→wip seam parks instead: a `suspended` result unwinds to a
+          clean `outcome: "success"` with a suspension marker (no failure recorded, worktree/branch
+          and the durable failed gate result preserved), so the next graph re-run retries the
+          remediation move once a slot frees. Non-capacity rejections (invariant violations) are
+          real errors and still propagate.
+          */
+          if (err instanceof TransitionRejectionError && err.rejection.code === "capacity-exhausted") {
+            warn("graph column move parked — column at capacity (will retry on next run)", {
+              fromColumn,
+              toColumn,
+              nodeId: node.id,
+            });
+            const suspension = {
+              kind: "suspended",
+              reason: "capacity",
+              nodeId: node.id,
+              fromColumn,
+              toColumn,
+              irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+            } as const;
+            await deps.onSuspend?.(suspension);
+            // FNXC:WorkflowEvents 2026-07-27-12:06 (U3): see the hold→wip seam above.
+            emitWorkflowLifecycleEvent({
+              type: "RunSuspended",
+              taskId: deps.taskId,
+              at: new Date().toISOString(),
+              workflowId: deps.workflowId,
+              nodeId: node.id,
+              reason: "capacity",
+              fromColumn,
+              toColumn,
+            });
+            return suspension;
+          }
+          // A rejected move (invariant) leaves the card in its current column;
+          // routing/parking is U4/U5. Do not advance `column` and do not emit a
+          // transition audit for a move that did not happen.
+          warn("graph column move rejected", {
+            fromColumn,
+            toColumn,
+            nodeId: node.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
+      }
+
+      column = toColumn;
+      try {
+        await deps.emitAudit?.({
+          type: "task:column-transition",
+          taskId: deps.taskId,
+          workflowId: deps.workflowId,
+          fromColumn,
+          toColumn,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+          nodeId: node.id,
+        });
+      } catch (err) {
+        warn("column-transition audit emit failed", {
+          fromColumn,
+          toColumn,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return { kind: "entered" };
+    },
+  };
+}

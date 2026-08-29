@@ -1,0 +1,40 @@
+.oauth-manual-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.oauth-manual-code__prompt,
+.oauth-manual-code__help {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.oauth-manual-code__prompt {
+  color: var(--text-muted);
+}
+
+.oauth-manual-code__help {
+  color: var(--text-dim);
+}
+
+.oauth-manual-code__input {
+  min-height: 84px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  scroll-margin-block: var(--space-xl);
+}
+
+.oauth-manual-code__input:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.oauth-manual-code__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}

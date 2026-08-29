@@ -1,0 +1,7 @@
+.migration-in-progress-banner-progress {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}

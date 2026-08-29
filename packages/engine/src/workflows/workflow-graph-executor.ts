@@ -1,0 +1,2288 @@
+import type {
+  Settings,
+  TaskDetail,
+  TaskStep,
+  WorkflowIr,
+  WorkflowIrEdge,
+  WorkflowIrNode,
+  WorkflowIrNodeKind,
+  WorkflowNodeExtensionResult,
+  WorkflowStepResult,
+} from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker } from "@fusion/core";
+import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
+import { isSessionContentionError } from "../errors/transient-error-patterns.js";
+import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
+
+import {
+  createDefaultNodeHandlers,
+  createNoopLegacySeams,
+  SPLIT_ACTIVE_CONTEXT_KEY,
+  WORKFLOW_ID_CONTEXT_KEY,
+  WORKFLOW_RUN_ID_CONTEXT_KEY,
+  type CodeNodeRunner,
+  type DefaultNodeHandlerDeps,
+  type ForeachActiveContext,
+  type ParseStepsHandlerDeps,
+  type WorkflowNotifyDispatch,
+  type WorkflowCustomNodeRunner,
+  type WorkflowLegacySeams,
+} from "./workflow-node-handlers.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import type { PrNodeDeps } from "../merge/pr-nodes.js";
+import {
+  runSplitJoin,
+  type BranchEnvironment,
+  type WorkflowBranchPersistence,
+  type WorkflowBranchProgress,
+  type WorkflowBranchRunState,
+  type WorkflowBranchSemaphore,
+} from "./workflow-graph-branches.js";
+import {
+  runForeach,
+  type ForeachEnvironment,
+  type WorkflowStepInstancePersistence,
+} from "./workflow-graph-foreach.js";
+import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
+import type { WorkflowNodeRunnerRegistry } from "./workflow-node-runner.js";
+import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
+import type { WorkflowColumnBoundary } from "./workflow-column-boundary.js";
+import { BranchWriteProvenanceError } from "@fusion/core";
+import { WorktreeBaseRefreshError, WorkspacePreparationError } from "../worktree/worktree-acquisition.js";
+
+export type WorkflowNodeOutcome = "success" | "failure";
+
+type WorkflowNodeSettings = Pick<Settings, "experimentalFeatures"> & {
+  reviewerInlineFixes?: boolean;
+};
+
+/** A classified Plan Review provider outage terminates the graph without replan traversal. */
+export const PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE = "plan-review-provider-failure-hold";
+/** Deterministic task-row validation; it must never enter provider retry handling. */
+export const BRANCH_WRITE_PROVENANCE_FAILURE_VALUE = "branch-write-provenance-failure";
+/** Workspace Git/base-ref preparation failed before any provider session could start. */
+export const WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE = "workspace-preparation-failure-hold";
+
+/*
+FNXC:PlanReviewLease 2026-07-18-23:45:
+U3 / KTD-4/R5 — a live Plan Review LEASE held by another (or a crashed) run within
+the staleness floor makes the graph HOLD in place instead of dispatching a second
+reviewer. Mirrors the provider-failure hold: the run terminates without traversing
+to plan-replan; the next poll re-checks the lease and reclaims once it goes stale.
+This is what makes the FN-1315 duplicate "Starting workflow step: Plan Review"
+interleaving impossible by construction (exactly one reviewer per gate per attempt).
+*/
+export const PLAN_REVIEW_LEASE_HELD_VALUE = "plan-review-lease-held";
+
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-07-05:37:
+ * Template sessions need a materialized node identity, not their reusable
+ * template ID. This keeps reviewer overrides and durable principal fences scoped
+ * to the exact foreach iteration, loop iteration, or optional-group invocation.
+ */
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-10-08:20:
+ * Materialization must be IDEMPOTENT, because a resume seeds `workflow:node-instance-id` from the persisted
+ * continuation — which holds this node's OWN materialized id, not its enclosing container's.
+ *
+ * Read raw, that self-instance was treated as the parent container and re-wrapped on every dispatch:
+ * `steps#4:step-execute` -> `steps#4:step-execute#4:step-execute` -> ... FN-8869 accumulated ~30 repetitions
+ * (a ~1.8 KB run_id on a hot indexed column) because it re-dispatched every ~15 minutes for hours, and each
+ * retry looked like a distinct run to anything grouping by run id.
+ *
+ * Peeling the self-instance suffix recovers the ENCLOSING container, so re-materializing iteration 4 yields
+ * `steps#4:step-execute` again while advancing to iteration 5 correctly yields `steps#5:step-execute`. Simply
+ * returning the seeded id unchanged would be idempotent but would freeze the card on a stale iteration.
+ */
+function enclosingContainerInstanceId(parent: string | undefined, nodeId: string): string | undefined {
+  if (!parent || parent === nodeId) return undefined;
+  if (parent.endsWith(`::${nodeId}`)) {
+    const container = parent.slice(0, -(nodeId.length + 2));
+    return container.length > 0 ? container : undefined;
+  }
+  // `<container>#<iteration>:<nodeId>` — peel the iteration marker together with the node id it wraps.
+  if (!parent.endsWith(`:${nodeId}`)) return parent;
+  const head = parent.slice(0, -(nodeId.length + 1));
+  const marker = head.lastIndexOf("#");
+  if (marker < 0 || !/^\d+$/.test(head.slice(marker + 1))) return parent;
+  const container = head.slice(0, marker);
+  return container.length > 0 ? container : undefined;
+}
+
+export function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string, unknown>): string {
+  const parent = enclosingContainerInstanceId(
+    typeof context["workflow:node-instance-id"] === "string" ? context["workflow:node-instance-id"] : undefined,
+    node.id,
+  );
+  const foreach = context["foreach:active"] as { foreachNodeId?: unknown; stepIndex?: unknown } | undefined;
+  if (typeof foreach?.foreachNodeId === "string" && typeof foreach.stepIndex === "number") {
+    const containerId = parent && parent !== foreach.foreachNodeId ? parent : foreach.foreachNodeId;
+    return instanceNodeId(containerId, foreach.stepIndex, node.id);
+  }
+  const loop = context["loop:active"] as { loopNodeId?: unknown; iteration?: unknown } | undefined;
+  if (typeof loop?.loopNodeId === "string" && typeof loop.iteration === "number") {
+    const containerId = parent && parent !== loop.loopNodeId ? parent : loop.loopNodeId;
+    return `${containerId}#${loop.iteration}:${node.id}`;
+  }
+  /*
+   * FNXC:WorkflowAgentRouting 2026-08-10-08:35:
+   * `optional-group:active` needs the SAME peel as `parent`, because it is seeded from the same accreting
+   * value: workflow-graph-loop.ts copies `workflow:node-instance-id` into it verbatim, and on resume that key
+   * already holds the CHILD's materialized id. Peeling only `parent` left optional groups still growing one
+   * `::<node>` segment per dispatch — the exact accretion this fix exists to stop, on the branch the first
+   * round of tests happened to pin with a hand-written container id instead of a resume-shaped one.
+   */
+  const optionalGroup = context["optional-group:active"];
+  if (typeof optionalGroup === "string") {
+    return `${enclosingContainerInstanceId(optionalGroup, node.id) ?? optionalGroup}::${node.id}`;
+  }
+  return node.id;
+}
+
+/*
+FNXC:SessionContention 2026-07-25-21:30:
+A node that failed because another task holds the session path / sub-repo lease it needs is CONTENDED,
+not broken. It gets its own failure value so the executor can route it to a backoff hold that waits for
+the holder, instead of falling into the generic `exception` bucket — where Plan Review's classifier read
+it as a PROVIDER failure, retried twice with no delay, and parked the task once that budget was spent
+(the reported FN-1398/FN-1403 collision). Applies to EVERY node, not just Plan Review.
+*/
+export const SESSION_CONTENTION_HOLD_VALUE = "session-contention-hold";
+
+export type WorkflowNodeAbortKind = "engine-pause";
+
+export const WORKFLOW_INTERRUPTED_NODE_ID_CONTEXT_KEY = "workflow:interruptedNodeId";
+export const WORKFLOW_INTERRUPTED_NODE_ABORT_KIND_CONTEXT_KEY = "workflow:interruptedNodeAbortKind";
+export const WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY = "workflow:optionalGroupActive";
+/** Explicit parent marker for template execution; never inferred from template labels or output. */
+export const WORKFLOW_REVIEW_KIND_CONTEXT_KEY = "workflow:reviewKind";
+export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
+
+export interface WorkflowNodeResult {
+  outcome: WorkflowNodeOutcome;
+  value?: string;
+  contextPatch?: Record<string, unknown>;
+}
+
+interface PreMergeOptionalStepFailureContext {
+  stepName: string;
+  feedback: string;
+  phase: WorkflowStepResult["phase"];
+  status: WorkflowStepResult["status"];
+  verdict?: string;
+  nodeId?: string;
+  maxRevisions?: unknown;
+}
+
+export interface WorkflowTaskProjection {
+  modifiedFiles?: string[];
+  mergeDetails?: {
+    filesChanged?: number;
+    insertions?: number;
+    deletions?: number;
+  };
+  summary?: string;
+}
+
+export interface WorkflowNodeExecutionContext {
+  task: TaskDetail;
+  settings: WorkflowNodeSettings | undefined;
+  context: Record<string, unknown>;
+  /** Set during concurrent branch execution; fail-fast aborts via this signal.
+   *  Undefined on the sequential path (zero behavior change for linear graphs). */
+  signal?: AbortSignal;
+}
+
+export type WorkflowNodeHandler = (node: WorkflowIrNode, context: WorkflowNodeExecutionContext) => Promise<WorkflowNodeResult>;
+
+export interface WorkflowNodePreparationRequirement {
+  requiresWorktree: boolean;
+  reason?: string;
+}
+
+export interface WorkflowGraphExecutorDeps {
+  /*
+   * FNXC:PlanReviewLease 2026-07-26-20:18:
+   * Cluster node id stamped onto review-gate leases (`WorkflowStepResult.leaseNodeId`). It lets a
+   * node later recognize a lease its OWN previous process left behind and reclaim it without
+   * waiting out the staleness floor; peer-owned leases stay protected by the floor. Optional —
+   * when unset the lease is written unattributed and keeps pure floor semantics, which is the
+   * pre-existing behavior.
+   */
+  localNodeId?: string;
+  handlers?: Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>>;
+  /*
+   * FNXC:WorkflowNodeRunners 2026-07-01-00:00:
+   * Node runners are the new ownership boundary for workflow node behavior. During migration the graph accepts a registry and adapts it into handlers, while explicit handlers remain the highest-precedence test/plugin override so existing graph semantics do not drift.
+   */
+  runnerRegistry?: WorkflowNodeRunnerRegistry;
+  /** Workflow-native runtime primitives. When present, default nodes call these
+   *  directly instead of legacy executor/reviewer/merge seams. */
+  primitives?: WorkflowRuntimePrimitives;
+  seams?: WorkflowLegacySeams;
+  /** Executes custom (non-seam) prompt/script/gate nodes. */
+  runCustomNode?: WorkflowCustomNodeRunner;
+  /*
+   * FNXC:WorkflowExecution 2026-06-29-09:43:
+   * Workflow nodes own lifecycle prerequisites. The graph classifies a node's execution requirements (for example a coding/script node needing a task worktree) before dispatching the handler; executor adapters only fulfill that request with concrete git/session mechanics.
+   */
+  prepareNodeExecution?: (
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    requirement: WorkflowNodePreparationRequirement,
+  ) => void | Promise<void>;
+  /**
+   * Invoked immediately before an agent-executed node handler. Implementations
+   * may fence a durable workflow principal or fail closed before any session is
+   * constructed; control nodes remain untouched when the callback is absent.
+   */
+  beforeNodeExecution?: (
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    context: Record<string, unknown>,
+  ) => void | WorkflowNodeResult | Promise<void | WorkflowNodeResult>;
+  /** Step-inversion (U12, KTD-12): dependencies for the `parse-steps` node
+   *  handler (artifact read, projection write, pin-protection probe, audit).
+   *  Absent → a parse-steps node fails cleanly. */
+  parseStepsDeps?: ParseStepsHandlerDeps;
+  /** Step-inversion (U14, KTD-15): runner for the `code` node (esbuild compile +
+   *  child-process execution). Absent → a code node fails cleanly. */
+  runCode?: CodeNodeRunner;
+  /** notify node dispatch callback. Absent → notify nodes succeed with notify-skipped. */
+  notifyDispatch?: WorkflowNotifyDispatch;
+  /** PR-entity nodes (U3): deps for `pr-create`/`pr-respond`/`pr-merge` (injected
+   *  GitHub callbacks + store accessor). Absent → the pr-* kinds fail cleanly. */
+  prNodes?: PrNodeDeps;
+  /** Resolves the live intermediate-group exemption for a merge-gate node. */
+  isLiveSharedBranchMember?: DefaultNodeHandlerDeps["isLiveSharedBranchMember"];
+  maxRetriesPerNode?: number;
+  /** Per-branch run-state persistence (U13). Optional — fully in-memory without it. */
+  branchPersistence?: WorkflowBranchPersistence;
+  /** Bounds concurrent branch-node execution. Omit when the semaphore is
+   *  enforced beneath runCustomNode (the session layer) to avoid double-acquire. */
+  branchSemaphore?: WorkflowBranchSemaphore;
+  /** Live per-branch progress (dashboard badges). */
+  onBranchProgress?: (progress: WorkflowBranchProgress) => void;
+  /** Stable identifier for this run, used to key persisted branch state. */
+  runId?: string;
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+   * Durable continuation fields supplied by a direct graph resume are copied
+   * into the fresh graph context before node admission. The shared router must
+   * revalidate the already-fenced principal rather than pool-route recovery.
+   */
+  initialContext?: Record<string, unknown>;
+  /** Test seam for bounded loop timeout checks. Defaults to Date.now. */
+  runLoopNowForTests?: () => number;
+  /**
+   * Step-inversion (KTD-3, U3): fresh `Task.steps[]` accessor used by a `foreach`
+   * node at expansion time. Defaults to reading `task.steps` off the run's task.
+   * A production caller may inject a fresh store fetch so the count reflects the
+   * planning seam's latest write; tests inject a fixed list.
+   */
+  getTaskSteps?: (task: TaskDetail) => Promise<TaskStep[]> | TaskStep[];
+  /**
+   * Step-inversion (KTD-6, U3 stub): per-instance run-state persistence for
+   * foreach instances. Optional with no-op default — the real SQLite adapter is
+   * U4's executor-half wiring; the sub-walk already calls into this so that
+   * wiring is purely additive.
+   */
+  stepInstancePersistence?: WorkflowStepInstancePersistence;
+  /**
+   * Step-inversion (KTD-4, U5): RETHINK reset-on-rework hook passed through to the
+   * foreach sub-walk. Invoked before re-entering step-execute when a rework edge
+   * was triggered by an `outcome:rethink` verdict. Optional with a no-op default
+   * (REVISE-driven rework never calls it).
+   */
+  onReworkReset?: (
+    active: ForeachActiveContext,
+    reason: string,
+  ) => void | Promise<void>;
+  /**
+   * Step-inversion (U3): top-level abort signal honored between foreach instance
+   * nodes (existing posture, mirrors the branch path's per-branch signal). When a
+   * run is cancelled (pause/abort), the in-flight instance stops cleanly between
+   * nodes and the foreach fails with `value: "aborted"`. Undefined on normal
+   * runs (zero behavior change for non-foreach graphs).
+   */
+  signal?: AbortSignal;
+  /** Step-inversion (KTD-11, U10): per-instance worktree/branch allocation off the
+   *  integration base, for `isolation: "worktree"`. Absent → worktree isolation
+   *  fails cleanly (shared isolation is unaffected). */
+  allocateInstanceWorktree?: ForeachEnvironment["allocateInstanceWorktree"];
+  /** Step-inversion (KTD-11, U10): resolve the current integration base (main tip)
+   *  so reworks land on the updated base. */
+  resolveIntegrationBase?: ForeachEnvironment["resolveIntegrationBase"];
+  /** Fail-fast workspace gate for per-instance worktree isolation. */
+  resolveWorktreeIsolationBlock?: ForeachEnvironment["resolveWorktreeIsolationBlock"];
+  /** Step-inversion (KTD-11, U10): ordered-integration git mechanics (rebase /
+   *  cherry-pick + conflict detection via merger helpers). */
+  integrationGitOps?: ForeachEnvironment["integrationGitOps"];
+  /** Step-inversion (KTD-11, U10): projection-first integration writes
+   *  (updateStep done, then instance row). */
+  integrationProjection?: ForeachEnvironment["integrationProjection"];
+  /** Step-inversion (KTD-11, U10): non-blocking free-semaphore-slot accessor for
+   *  parallel scheduling (clamps concurrency without hold-and-wait). */
+  semaphoreAvailability?: ForeachEnvironment["semaphoreAvailability"];
+  /** Step-inversion (KTD-11, U10): crash-resume reconciliation hook. */
+  resumeReconcile?: ForeachEnvironment["resumeReconcile"];
+  /** FIX 4 (context gap): task-level log sink for integration-conflict rework. */
+  logTaskEntry?: ForeachEnvironment["logTaskEntry"];
+  /*
+   * FNXC:WorkflowStepResults 2026-06-25-12:00:
+   * Fail-soft persistence sink for an ENABLED optional-group node's outcome
+   * (plan U2, KTD-1/KTD-2). The graph upserts each enabled group's result into the
+   * EXISTING `task.workflowStepResults` field keyed by `node.id` so the unified
+   * progress bar (`getUnifiedTaskProgress`) reflects graph-run steps. Optional: when
+   * absent the executor records NOTHING (keeps in-memory tests byte-inert), so a
+   * disabled group and an unwired store both record nothing. The upsert-by-id +
+   * `store.updateTask({workflowStepResults})` wiring lives in the executor adapter;
+   * this seam only forwards the terminal/pending entry.
+   */
+  /** Returns false only when a repository-scope CAS supersedes a review result before edge admission. */
+  recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => boolean | void | Promise<boolean | void>;
+  /** Atomically-adjacent admission check for Code Review edges after terminal result persistence. */
+  isRepositoryScopeReviewEdgeCurrent?: (taskId: string, workflowStepId: string, revision: number) => boolean | Promise<boolean>;
+  /*
+   * FNXC:WorkflowOptionalStepFix 2026-06-26-16:20:
+   * Enabled PRE-merge optional workflow steps that return REVISE must offer the executor one remediation path before normal advisory/gate fall-through. The graph forwards the optional-group node id and per-step `maxRevisions` override so the executor can resolve the budget against workflow-value caps, `maxPostReviewFixes`, or `"unbounded"`; absent or false preserves prior byte-inert behavior for in-memory tests and exhausted budgets.
+   *
+   * FNXC:WorkflowRevisionBudget 2026-06-30-20:46:
+   * Forward the optional-group id for every failure context because Plan Review/spec and Code Review budget resolution is keyed by that id. The graph does not read workflow setting values directly; live execution and self-healing share the core resolver at the remediation boundary.
+   */
+  /** Completes an accepted Plan Review close through the authoritative task lifecycle. */
+  completePlanReviewNoOp?: (task: TaskDetail, marker: { kind: string; reason: string; canonicalId?: string }) => Promise<boolean> | boolean;
+  /** Persists a resumable Plan Review hold before an invalid or unroutable close returns control. */
+  holdPlanReviewNoOp?: (task: TaskDetail, suspension: {
+    nodeId: string;
+    fromColumn: string;
+    toColumn: string;
+    irHash: string;
+    reason: "invalid" | "terminal-route-unavailable" | "terminalization-failed";
+  }) => Promise<void> | void;
+  requestPreMergeOptionalStepFix?: (taskId: string, info: {
+    stepName: string;
+    feedback: string;
+    phase: WorkflowStepResult["phase"];
+    status: WorkflowStepResult["status"];
+    verdict?: string;
+    /** Raw node result retained for non-verdict provider-failure classification. */
+    failureValue?: string;
+    nodeId?: string;
+    maxRevisions?: unknown;
+  }) => Promise<boolean> | boolean;
+  /** Project node-published task metadata onto the task row for dispatcher/UI. */
+  publishTaskProjection?: (taskId: string, patch: WorkflowTaskProjection, source: { nodeId: string; nodeKind: WorkflowIrNode["kind"] }) => void | Promise<void>;
+  /** @deprecated use publishTaskProjection. Kept for older callers. */
+  publishTouchedFiles?: (taskId: string, files: string[], source: { nodeId: string; nodeKind: WorkflowIrNode["kind"] }) => void | Promise<void>;
+  /*
+   * FNXC:WorkflowColumnBoundary 2026-07-18-20:45:
+   * U1 (KTD-1/2/3) — the lifecycle column-boundary controller. Invoked on entry
+   * to each real (non-start/end) node BEFORE it executes: when the node's column
+   * differs from the card's current column the controller performs the trait-hook
+   * moveTask (or parks at the ready-for-release seam on a hold→wip boundary), pins
+   * the resolved IR, and emits `task:column-transition`. Its `detectDrift` runs
+   * once at graph start and parks with `task:reconcile-workflow-drift` on a stale
+   * pin. Absent → the graph performs NO lifecycle moves, so every legacy
+   * executor/runner test stays byte-identical.
+   */
+  columnBoundary?: WorkflowColumnBoundary;
+}
+
+/** Context key set when a run is aborted before traversal by an IR-drift park
+ *  (KTD-3). The runner surfaces this as a terminal (failed) disposition. */
+export const WORKFLOW_DRIFT_PARK_CONTEXT_KEY = "workflow:driftPark";
+
+export interface WorkflowGraphExecutorResult {
+  executed: boolean;
+  outcome: WorkflowNodeOutcome;
+  context: Record<string, unknown>;
+  visitedNodeIds: string[];
+  suspended?: {
+    reason: "capacity" | "pause" | "hold";
+    nodeId: string;
+    fromColumn: string;
+    toColumn: string;
+    irHash: string;
+  };
+}
+
+class WorkflowGraphSuspended extends Error {
+  public constructor(public readonly suspension: NonNullable<WorkflowGraphExecutorResult["suspended"]>) {
+    super(`Workflow suspended before node ${suspension.nodeId}`);
+  }
+}
+
+/**
+ * Engine-local mirror of core's workflow-owned merge/retry/recovery primitive
+ * region. Until the workflow interpreter owns merge policy end-to-end, graph
+ * execution treats any entry into this region as the terminal legacy `merge`
+ * seam so observable lifecycle behavior stays byte-identical with the legacy
+ * executor. Consolidate with a core export when one exists.
+ */
+export const MERGE_REGION_KINDS = new Set<WorkflowIrNodeKind>([
+  "merge-gate",
+  "merge-attempt",
+  "manual-merge-hold",
+  "retry-backoff",
+  "recovery-router",
+  "branch-group-member-integration",
+  "branch-group-promotion",
+]);
+
+function isMergeRegionKind(kind: WorkflowIrNodeKind): boolean {
+  return MERGE_REGION_KINDS.has(kind);
+}
+
+function optionalStepFailureContextKey(stepId: string): string {
+  return `workflow:optional-step-failure:${stepId}`;
+}
+
+function normalizeTouchedFile(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim().replaceAll("\\", "/").replace(/^\.\//, "");
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (value && typeof value === "object" && "path" in value) {
+    return normalizeTouchedFile((value as { path?: unknown }).path);
+  }
+  return undefined;
+}
+
+function extractTouchedFiles(contextPatch: Record<string, unknown> | undefined): string[] {
+  if (!contextPatch) return [];
+  const raw = contextPatch.modifiedFiles ?? contextPatch.touchedFiles ?? contextPatch.changedFiles;
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.map(normalizeTouchedFile).filter((file): file is string => file !== undefined))].sort();
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function finiteCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+function extractTaskProjection(contextPatch: Record<string, unknown> | undefined): WorkflowTaskProjection {
+  if (!contextPatch) return {};
+  const patch: WorkflowTaskProjection = {};
+  const files = extractTouchedFiles(contextPatch);
+  if (files.length > 0) patch.modifiedFiles = files;
+
+  const mergeDetails = objectRecord(contextPatch.mergeDetails);
+  const safeMergeDetails = {
+    filesChanged: finiteCount(contextPatch.filesChanged ?? mergeDetails?.filesChanged),
+    insertions: finiteCount(mergeDetails?.insertions),
+    deletions: finiteCount(mergeDetails?.deletions),
+  };
+  if (
+    safeMergeDetails.filesChanged !== undefined
+    || safeMergeDetails.insertions !== undefined
+    || safeMergeDetails.deletions !== undefined
+  ) {
+    patch.mergeDetails = Object.fromEntries(
+      Object.entries(safeMergeDetails).filter(([, value]) => value !== undefined),
+    ) as NonNullable<WorkflowTaskProjection["mergeDetails"]>;
+  }
+
+  if (typeof contextPatch.summary === "string") patch.summary = contextPatch.summary;
+  return patch;
+}
+
+function hasTaskProjection(patch: WorkflowTaskProjection): boolean {
+  return Object.keys(patch).length > 0;
+}
+
+/*
+FNXC:WorkflowGraphEntry 2026-07-26-17:10:
+THE GRAPH ENTRY CONTRACT: a run with no durable continuation resumes at the card's OWN COLUMN, not
+at `start`.
+
+Post-cutover a node's column IS the card's lifecycle position, so replaying from `start` contradicted
+that invariant: any run without a continuation (self-healing's graph re-entry, a fresh dispatch, an
+operator drag into a processing column) re-entered at the first node of the FIRST column and dragged
+the card backward through columns it had already left — firing `abort-on-exit` on its live session,
+and stranding it in any pre-wip column that has no releaser. That backward drag is what previously
+forced planning nodes to live in the implementation column.
+
+The rule: enter at the first node, in pipeline order from `start`, whose column is not BEHIND the
+card's current column (`ir.columns` is ordered, and that order is the lifecycle order). A card in the
+planning lane still runs the planning prologue; a card already in implementation resumes at the first
+implementation node instead of re-planning; a card in review re-enters at the first review node, so
+review gates are never skipped.
+
+Traversal follows the forward pipeline only — `rework` back-edges and failure edges are excluded — so
+the entry point is the main path, never a remediation node that merely happens to sit in the column.
+*/
+export function resolveColumnResumeNode(ir: WorkflowIr, column: string | undefined): WorkflowIrNode | undefined {
+  if (!column || ir.version !== "v2") return undefined;
+  const columnOrder = new Map(ir.columns.map((entry, index) => [entry.id, index]));
+  const taskColumnIndex = columnOrder.get(column);
+  if (taskColumnIndex === undefined) return undefined;
+
+  const startNode = ir.nodes.find((node) => node.kind === "start");
+  if (!startNode) return undefined;
+  const nodeById = new Map(ir.nodes.map((node) => [node.id, node]));
+
+  const queue: string[] = [startNode.id];
+  const seen = new Set<string>([startNode.id]);
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const node = nodeById.get(id);
+    if (!node) continue;
+    const nodeColumnIndex = node.column ? columnOrder.get(node.column) : undefined;
+    // `>=` and not `===`: a card can rest in a column the pipeline has no node for
+    // (a pure hold column in some workflows), and must then resume at the next node forward.
+    if (nodeColumnIndex !== undefined && nodeColumnIndex >= taskColumnIndex) return node;
+    for (const edge of ir.edges) {
+      if (edge.from !== id || edge.kind === "rework") continue;
+      if (edge.condition && edge.condition !== "success") continue;
+      if (seen.has(edge.to)) continue;
+      seen.add(edge.to);
+      queue.push(edge.to);
+    }
+  }
+  return undefined;
+}
+
+export class WorkflowGraphExecutor {
+  private readonly maxRetriesPerNode: number;
+
+  private readonly handlers: Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>>;
+
+  public constructor(private readonly deps: WorkflowGraphExecutorDeps) {
+    this.maxRetriesPerNode = Math.max(1, Math.floor(deps.maxRetriesPerNode ?? 2));
+    this.handlers = {
+      ...createDefaultNodeHandlers(deps.seams ?? createNoopLegacySeams(), deps.runCustomNode, {
+        primitives: deps.primitives,
+        parseSteps: deps.parseStepsDeps,
+        runCode: deps.runCode,
+        notifyDispatch: deps.notifyDispatch,
+        prNodes: deps.prNodes,
+        isLiveSharedBranchMember: deps.isLiveSharedBranchMember,
+      }),
+      ...(deps.runnerRegistry?.toHandlers() ?? {}),
+      ...(deps.handlers ?? {}),
+    };
+  }
+
+  public async run(
+    task: TaskDetail,
+    settings: (WorkflowNodeSettings & Partial<Pick<Settings, "autoMerge">>) | undefined,
+    /*
+    FNXC:WorkflowBuiltins 2026-07-31-23:59 (LEGACY ON PURPOSE — allow-listed, measured):
+    This default stays the LEGACY IR, and the reason is the parity suite. Both production callers
+    (`workflow-graph-task-runner.ts`, `workflow-task-runtime.ts`) pass `ir` explicitly, so the default
+    is unreachable in production — but `workflow-graph-executor-parity.test.ts` in the `engine-core`
+    GATE suite drives this method without it, asserting the historical seam sequence. Switching to the
+    catalog default rewrites what "parity" means: measured, 6 gate tests fail with
+    `expected 'failure' to be 'success'`.
+
+    I tried the change first and reverted it. The entry in
+    `legacy-workflow-ir-callsite-allowlist.test.ts` records this so the next person does not repeat
+    the experiment — the constant is the right answer HERE, which is the distinction that allow-list
+    exists to preserve.
+    */
+    ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR,
+    startNodeId?: string,
+  ): Promise<WorkflowGraphExecutorResult> {
+    const startNode = startNodeId
+      ? ir.nodes.find((node) => node.id === startNodeId)
+      : resolveColumnResumeNode(ir, task.column) ?? ir.nodes.find((node) => node.kind === "start");
+    /*
+     * FNXC:WorkflowExecution 2026-08-08-01:40:
+     * Name WHICH lookup failed. One message covered two unrelated causes: a genuinely
+     * malformed IR with no `start` node, and a caller asking to resume at a node id this IR
+     * does not contain — most often a foreach TEMPLATE node id, which lives under the
+     * foreach's `config.template` rather than in `ir.nodes`. Reporting the second as "missing
+     * start node" sends the reader to inspect a workflow definition that is perfectly fine.
+     */
+    if (!startNode) {
+      throw new WorkflowIrError(
+        startNodeId
+          ? `Workflow IR has no top-level node '${startNodeId}' to resume at`
+          + " (a foreach template node is not a resumable graph node)"
+          : "Workflow IR missing start node",
+      );
+    }
+
+    const nodeMap = new Map(ir.nodes.map((node) => [node.id, node]));
+    const outgoingMap = new Map<string, WorkflowIrEdge[]>();
+    for (const edge of ir.edges) {
+      if (!nodeMap.has(edge.from) || !nodeMap.has(edge.to)) {
+        throw new WorkflowIrError(`Workflow IR edge references unknown node: ${edge.from} -> ${edge.to}`);
+      }
+      const list = outgoingMap.get(edge.from) ?? [];
+      list.push(edge);
+      outgoingMap.set(edge.from, list);
+    }
+
+    const runId = this.deps.runId ?? `${task.id}:run`;
+    const context: Record<string, unknown> = {
+      ...this.deps.initialContext,
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+       * The caller restores only durable continuation metadata; this live
+       * interpreter invocation always owns its run and workflow identities.
+       */
+      [WORKFLOW_RUN_ID_CONTEXT_KEY]: runId,
+      [WORKFLOW_ID_CONTEXT_KEY]: ir.name || "unknown",
+    };
+    /*
+     * FNXC:WorkflowPostMerge 2026-06-26-15:30:
+     * Graph-native post-merge steps, gated by the DEFAULT-ON `graphNativePostMerge`
+     * experimental flag (in DEFAULT_ON_EXPERIMENTAL_FEATURES; an explicit `false`
+     * opts out). The merge-policy region is collapsed into ONE legacy merge
+     * seam (see `runLegacyMergeSeam` + the `isMergeRegionKind` branch in
+     * `traverseChildren`), so a node wired off `merge-attempt` success is normally
+     * never traversed. With the flag ON (the default) we let traversal continue past a
+     * SUCCESSFUL merge to those post-merge entry nodes; an explicit opt-out (`false`)
+     * leaves the set empty and skips the post-merge hop.
+     *
+     * `postMergeEntryNodeIds` = the (deterministic, id-sorted) set of edge targets `t`
+     * such that an edge leaves a merge-region node to `t`, where `t` is itself NOT a
+     * merge-region node and NOT `end`, the edge is not a rework back-edge, and the edge
+     * routes on success (no condition or `condition: "success"`). Full built-ins can now
+     * expose the default-off `post-merge-verification` optional group here, so workflow
+     * definitions own the post-merge verification policy while the merge seam still
+     * provides proof before the hop. When the flag is OFF the set is left empty and
+     * post-merge nodes are skipped for compatibility; normal merge failure/manual/retry
+     * routing remains unchanged.
+     */
+    const postMergeEnabled = isExperimentalFeatureEnabled(settings, GRAPH_NATIVE_POST_MERGE_FLAG);
+    const postMergeEntryNodeIds: string[] = (() => {
+      if (!postMergeEnabled) return [];
+      const ids = new Set<string>();
+      for (const [from, edges] of outgoingMap) {
+        const fromNode = nodeMap.get(from);
+        if (!fromNode || !isMergeRegionKind(fromNode.kind)) continue;
+        for (const edge of edges) {
+          if (edge.kind === "rework") continue;
+          if (edge.condition && edge.condition !== "success") continue;
+          const target = nodeMap.get(edge.to);
+          if (!target || target.kind === "end" || isMergeRegionKind(target.kind)) continue;
+          ids.add(edge.to);
+        }
+      }
+      return [...ids].sort();
+    })();
+    const visitedNodeIds: string[] = [];
+    const inStack = new Set<string>();
+    /*
+    FNXC:WorkflowMerge 2026-07-19-21:05 (U11 / R1 / KTD-1):
+    The merge region collapses into ONE seam invocation recorded under the stable legacy node id
+    `merge`. Its COLUMN, however, must come from the merge-region node actually being entered —
+    not a literal. `column: "in-review"` was hardcoded here, which is precisely R1's motivating
+    defect ("the merge boundary always calls moveTask(id, 'in-review')"): a user-authored
+    workflow that places its merge nodes in a `Merging` column had the card moved to `in-review`
+    instead — a column such a workflow need not even declare. Caught by the 6-column benchmark
+    (U11), whose Merging column never received the card.
+    `in-review` remains the fallback so builtin:coding — whose merge nodes ARE in `in-review` —
+    stays byte-identical (KTD-7 parity oracle).
+    */
+    const syntheticMergeNodeFor = (regionNode?: WorkflowIrNode): WorkflowIrNode => ({
+      id: "merge",
+      kind: "prompt",
+      column: regionNode?.column ?? "in-review",
+      config: { seam: "merge" },
+    });
+
+    // Bounded-rework generalization (U6). A `kind: "rework"` edge is the only
+    // legal cycle: it loops back to a "rework region head" (the edge's `to` node).
+    // The same mechanism the foreach sub-walk uses (bounded budget, exhaustion
+    // routes `outcome:rework-exhausted`) is lifted to the top-level walk so the PR
+    // review loop (await-review → pr-respond → rework → await-review) is legal and
+    // bounded. Every NON-rework back-edge still throws "Cycle detected" below.
+    //
+    //  - reworkHeads: every node that is the target of a rework edge.
+    //  - reworkBudget: per-head remaining traversals, seeded lazily from the head
+    //    node's `config.maxReworkCycles` (shared default + clamp from core).
+    //  - The loop is iterative at the head frame: when a downstream node takes its
+    //    rework edge back to a head currently on the stack, the head's walk frame
+    //    catches a REWORK_SIGNAL sentinel and re-iterates (under budget) instead of
+    //    recursing — so `inStack` never sees the head re-entered as a cycle.
+    const reworkHeads = new Set<string>();
+    for (const edge of ir.edges) {
+      if (edge.kind === "rework") reworkHeads.add(edge.to);
+    }
+    const reworkBudget = new Map<string, number>();
+    const reworkBudgetFor = (headId: string): number => {
+      const existing = reworkBudget.get(headId);
+      if (existing !== undefined) return existing;
+      const head = nodeMap.get(headId);
+      const seeded = resolveMaxReworkCycles(head?.config?.maxReworkCycles);
+      reworkBudget.set(headId, seeded);
+      return seeded;
+    };
+    // Sentinel a downstream rework edge returns up the recursion to its loop head.
+    interface ReworkSignal {
+      readonly __rework: true;
+      readonly headId: string;
+      /** The source node's result, carried so the head re-runs against fresh state. */
+      readonly source: WorkflowNodeResult;
+    }
+    const isReworkSignal = (r: WorkflowNodeResult | ReworkSignal): r is ReworkSignal =>
+      (r as ReworkSignal).__rework === true;
+
+    // On resume, completed branch nodes (from a prior crashed run) are skipped
+    // so their handlers do not re-fire (idempotency).
+    let completedNodeIds: Set<string> | undefined;
+    const persisted = await this.deps.branchPersistence?.loadBranchStates?.(task.id, runId);
+    if (persisted && persisted.length > 0) {
+      completedNodeIds = new Set(
+        persisted
+          .filter((s: WorkflowBranchRunState) => s.status === "completed")
+          .map((s) => s.currentNodeId),
+      );
+    }
+
+    // Prune prior-run branch rows on run start (#1412). Done after the resume
+    // load so this run's own (taskId, runId) rows survive while every stale run
+    // is removed. Never throws into the run.
+    await this.pruneStaleBranches(task.id, runId);
+    // Same posture for foreach step-instance rows (KTD-6, U4): prune every stale
+    // run's instance rows, keeping only this run's, so the table does not
+    // accumulate historical runs for a long-lived task. The resume reconcile path
+    // (foreach worktree scheduler) loads THIS run's rows, which survive.
+    await this.pruneStaleInstances(task.id, runId);
+
+    // Shared branch environment: built lazily so the sequential path pays nothing.
+    const branchEnv = (): BranchEnvironment => ({
+      task,
+      settings,
+      runId,
+      nodeMap,
+      outgoingMap,
+      runBranchNode: (node, signal) => this.executeNodeWithRetries(node, task, settings, context, ir, signal),
+      shouldTraverseEdge: (edge, source) => this.shouldTraverseEdge(edge, source),
+      persistence: this.deps.branchPersistence,
+      semaphore: this.deps.branchSemaphore,
+      onBranchProgress: this.deps.onBranchProgress,
+      completedNodeIds,
+    });
+
+    // Execute one node and traverse its outgoing edges. May return a ReworkSignal
+    // (a rework back-edge fired); the caller frame propagates or consumes it.
+    const runNodeAndTraverse = async (
+      node: WorkflowIrNode,
+    ): Promise<WorkflowNodeResult | ReworkSignal> => {
+        if (node.kind === "start") {
+          return await traverseChildren(node, { outcome: "success" });
+        }
+        if (node.kind === "end") {
+          // KTD-1: `end` is a graph terminal, not a column destination — the card
+          // never moves here. A failure edge terminating at `end` parks the card
+          // in place (its current wip/merge column), which is exactly the
+          // no-onNodeEntry behavior.
+          return { outcome: "success" };
+        }
+
+        // U1: cross the lifecycle column boundary on node entry (KTD-1/2/3). A
+        // columnless node, a same-column node, or a hold→wip boundary produces no
+        // move; the controller owns that decision. Runs BEFORE the node executes,
+        // so an execute failure parks the card in the column it just entered.
+        const boundary = await this.deps.columnBoundary?.onNodeEntry(node);
+        if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+
+        if (node.kind === "split") {
+          // Concurrent fan-out: branches run in parallel up to their join, which
+          // synchronizes per its config. The card stays in the split's column for
+          // the whole window (no handler-driven move happens in here). Execution
+          // then continues sequentially from the join node.
+          //
+          // Single-writer rule (KTD-4, U5): mark the shared context "inside a
+          // split" for the branch window so a step-review node inside a branch is
+          // advisory-only (no projection write, no authoritative verdict). The
+          // marker is set before launching branches and cleared at the join;
+          // step-execute is validator-forbidden in splits, so only step-review
+          // consults it. Restore the prior value to support balanced nesting.
+          const priorSplitActive = context[SPLIT_ACTIVE_CONTEXT_KEY];
+          context[SPLIT_ACTIVE_CONTEXT_KEY] = true;
+          let splitResult: Awaited<ReturnType<typeof runSplitJoin>>;
+          try {
+            splitResult = await runSplitJoin(node, branchEnv());
+          } finally {
+            if (priorSplitActive === undefined) delete context[SPLIT_ACTIVE_CONTEXT_KEY];
+            else context[SPLIT_ACTIVE_CONTEXT_KEY] = priorSplitActive;
+          }
+          visitedNodeIds.push(...splitResult.visitedNodeIds);
+          context[`node:${node.id}:outcome`] = splitResult.outcome;
+          context[`node:${splitResult.joinNodeId}:outcome`] = splitResult.outcome;
+          context[`node:${splitResult.joinNodeId}:branchOutcomes`] = splitResult.branchOutcomes;
+          if (!inStack.has(splitResult.joinNodeId)) visitedNodeIds.push(splitResult.joinNodeId);
+          return await traverseChildren(
+            nodeMap.get(splitResult.joinNodeId)!,
+            { outcome: splitResult.outcome },
+          );
+        }
+
+        if (node.kind === "foreach") {
+          // Step-inversion (KTD-3/KTD-5, U3): expand the foreach into per-step
+          // instances run through an iterative region sub-walk. The recursive
+          // walk's inStack cycle detector is untouched — rework loops are
+          // expressed inside the sub-walk only. The foreach node's own outcome
+          // routes its outgoing edges (success / outcome:rework-exhausted / ...).
+          const steps = await this.resolveTaskSteps(task);
+          const foreachResult = await runForeach(node, {
+            task,
+            runId,
+            steps,
+            getLiveSteps: () => this.resolveTaskSteps(task),
+            context,
+            runTemplateNode: (tNode, sig, contextOverride) =>
+              this.executeMaterializedTemplateNode(tNode, task, settings, contextOverride ?? context, ir, sig),
+            shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
+            persistence: this.deps.stepInstancePersistence,
+            onReworkReset: this.deps.onReworkReset,
+            signal: this.deps.signal,
+            // Worktree isolation + parallel scheduling (KTD-11, U10).
+            allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
+            resolveIntegrationBase: this.deps.resolveIntegrationBase,
+            resolveWorktreeIsolationBlock: this.deps.resolveWorktreeIsolationBlock,
+            integrationGitOps: this.deps.integrationGitOps,
+            integrationProjection: this.deps.integrationProjection,
+            semaphoreAvailability: this.deps.semaphoreAvailability,
+            resumeReconcile: this.deps.resumeReconcile,
+            logTaskEntry: this.deps.logTaskEntry,
+          });
+          visitedNodeIds.push(...foreachResult.visitedNodeIds);
+          const result: WorkflowNodeResult = {
+            outcome: foreachResult.outcome,
+            value: foreachResult.value,
+          };
+          context[`node:${node.id}:outcome`] = result.outcome;
+          if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+          return await traverseChildren(node, result);
+        }
+
+        if (node.kind === "loop") {
+          const loopResult = await runLoop(node, {
+            context,
+            runTemplateNode: (tNode, sig, contextOverride) =>
+              this.executeMaterializedTemplateNode(tNode, task, settings, contextOverride ?? context, ir, sig),
+            shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
+            signal: this.deps.signal,
+            now: this.deps.runLoopNowForTests,
+          });
+          visitedNodeIds.push(...loopResult.visitedNodeIds);
+          const result: WorkflowNodeResult = {
+            outcome: loopResult.outcome,
+            value: loopResult.value,
+          };
+          context[`node:${node.id}:outcome`] = result.outcome;
+          if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+          return await traverseChildren(node, result);
+        }
+
+        if (node.kind === "optional-group") {
+          /*
+           * FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
+           * Run-once-or-bypass dispatch. The enable decision is read from the
+           * per-task `enabledWorkflowSteps` facet, keyed by THIS group node's id
+           * (KTD-2). Enabled → walk the template subgraph EXACTLY ONCE via
+           * `runOptionalGroup` (single pass, no iteration/rework). Disabled →
+           * pass through: traverse the group's children with a synthetic
+           * success result WITHOUT executing any template node, so a disabled
+           * group is byte-inert vs the group not being there. Two tasks
+           * identical except `enabledWorkflowSteps` therefore diverge here:
+           * the enabled one runs the body, the disabled one runs none and
+           * still reaches the same downstream node.
+           */
+          /*
+           * FNXC:WorkflowOptionalSteps 2026-06-29-03:43:
+           * Distinguish an explicit empty toggle list from a missing one. Quick Add
+           * and task forms persist `[]` when an operator unchecks Plan/Code Review,
+           * so that must keep bypassing the group. Imported/legacy/resumed tasks may
+           * have no `enabledWorkflowSteps` field at all; for those, honor the
+           * workflow-authored `defaultOn` so default Coding still runs Plan Review
+           * before execution and Code Review before merge.
+           */
+          const enabled = isWorkflowOptionalGroupEnabled(
+            task.enabledWorkflowSteps,
+            node.id,
+            node.config?.defaultOn === true,
+          );
+          const requiresAutoMergeOff = node.config?.requiresAutoMergeOff === true;
+          const autoMergeOff = task.autoMerge === false || (settings?.autoMerge === false && task.autoMerge !== true);
+          /*
+           * FNXC:WorkflowPrPolicy 2026-06-29-16:42:
+           * Manual PR review lanes are operator-selected workflow branches, not the default CE/automerge path. An optional-group with `requiresAutoMergeOff` is inert unless the task explicitly enables the group and effective auto-merge is off, so selected manual PR creation cannot hijack the normal Fusion auto-merge route.
+           */
+          if (!enabled || (requiresAutoMergeOff && !autoMergeOff)) {
+            // FNXC:WorkflowOptionalGroup 2026-06-21-16:30: record the group's own
+            // outcome on bypass too (mirrors the enabled path + every other node
+            // kind), so a downstream node reading `node:<id>:outcome` from context
+            // sees "success" rather than undefined — disabled is fully inert, not
+            // just edge-routing-inert.
+            context[`node:${node.id}:outcome`] = "success";
+            // FNXC:WorkflowOptionalGroup 2026-06-22-09:00: route a disabled group
+            // as a plain success with NO distinguishing value — a non-empty value
+            // could let an `outcome:*` edge preempt the success edge in
+            // traverseChildren, breaking the "disabled == node absent" inertness
+            // invariant. (Code review: CodeRabbit.)
+            return await traverseChildren(node, { outcome: "success" });
+          }
+          /*
+           * FNXC:WorkflowStepResults 2026-06-25-12:00:
+           * Record an enabled optional-group's outcome into the EXISTING
+           * `task.workflowStepResults` field keyed by `node.id` (plan U2,
+           * KTD-1/KTD-2/KTD-3) + emit `[pre-merge]` logs at parity with the legacy
+           * `runWorkflowSteps`. A `pending` entry (with `startedAt`) is written when
+           * the enabled group STARTS so the dashboard can show live status; after
+           * `runOptionalGroup` returns, the entry is UPSERT-replaced by the terminal
+           * record (same `startedAt`, plus `completedAt`). Disabled groups take the
+           * bypass branch above and record NOTHING (byte-inert). Recording is
+           * fail-soft via the optional `recordWorkflowStepResult` dep — absent → no
+           * record (in-memory tests unchanged).
+           */
+          const groupName = typeof node.config?.name === "string" && node.config.name.trim()
+            ? node.config.name.trim()
+            : node.id;
+          /*
+          FNXC:PlanReview 2026-08-04-06:35:
+          Triage runs Plan Review before releasing a task to execution so the task stays in the triage column during review. When the execution graph later reaches the same optional group, only an unsuperseded projection may satisfy, repair, or hold the gate; old-episode evidence must never suppress the current reviewer session.
+          */
+          if (
+            node.id === PLAN_REVIEW_GROUP_ID
+            && task.workflowStepResults?.some(isPlanReviewSatisfied)
+          ) {
+            context[`node:${node.id}:outcome`] = "success";
+            this.deps.logTaskEntry?.("[pre-merge] Workflow step already satisfied: Plan Review");
+            return await traverseChildren(node, { outcome: "success", value: "already-passed" });
+          }
+          const hasPlanReviewProjection = task.workflowStepResults?.some(
+            (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID,
+          ) === true;
+          const repairedPlanReview = node.id === PLAN_REVIEW_GROUP_ID && !hasPlanReviewProjection
+            ? recoverPassedPlanReviewFromLatestLog(task)
+            : undefined;
+          if (repairedPlanReview) {
+            await this.recordOptionalGroupStepResult(task.id, repairedPlanReview);
+            context[`node:${node.id}:outcome`] = "success";
+            this.deps.logTaskEntry?.("[pre-merge] Workflow step already passed: Plan Review");
+            return await traverseChildren(node, { outcome: "success", value: "already-passed" });
+          }
+          /*
+           * FNXC:PlanReviewLease 2026-07-18-23:50:
+           * U3 / KTD-4/R5 — the graph is now the SOLE Plan Review owner (triage's
+           * out-of-graph gate is deleted). A `pending` Plan Review result is a LEASE:
+           * if a live lease (within the staleness floor) is already held — by a
+           * concurrent run or one that crashed mid-review — ADOPT it and hold in
+           * place rather than dispatching a second reviewer. Only a stale/absent
+           * lease is (re)claimed below, where a fresh lease record is written. This
+           * closes the FN-1315 duplicate-reviewer interleaving by construction.
+           */
+          if (node.id === PLAN_REVIEW_GROUP_ID) {
+            /*
+            FNXC:PlanReviewLease 2026-07-19-01:00:
+            Loud regression lock for the @fusion/core gate-barrel export drift: the `engine-core` vitest project builds @fusion/core from `packages/core/src/index.gate.ts`, so a lease export present in the main barrel but missing from the gate barrel resolves to `undefined` ONLY there (how U3's classifyReviewLease broke every defaultOn Plan Review run under engine-core). Fail loud with a named, diagnostic error instead of the opaque "is not a function" TypeError so the cause — a stale gate barrel — is unmistakable.
+            */
+            if (typeof classifyReviewLease !== "function") {
+              throw new Error(
+                "classifyReviewLease import resolved undefined — @fusion/core gate barrel (packages/core/src/index.gate.ts) is missing the workflow-step-results lease exports; keep it in sync with index.ts",
+              );
+            }
+            const lease = classifyReviewLease(
+              task.workflowStepResults?.filter((result) => result.supersededAt == null),
+              node.id,
+              this.deps.runLoopNowForTests?.() ?? Date.now(),
+            );
+            if (lease.kind === "adopt") {
+              this.deps.logTaskEntry?.(
+                "[pre-merge] Plan Review already in progress (lease held) — not dispatching a second reviewer",
+              );
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = PLAN_REVIEW_LEASE_HELD_VALUE;
+              return { outcome: "failure", value: PLAN_REVIEW_LEASE_HELD_VALUE };
+            }
+          }
+          /*
+           * FNXC:WorkflowPostMerge 2026-06-26-09:00:
+           * Phase is read from the optional-group node's `config.phase` (defaults to
+           * "pre-merge", so every existing group is byte-identical). A
+           * `postMergeOptionalGroupNode` carries `phase: "post-merge"`; recorded
+           * `WorkflowStepResult.phase` + the `[pre-merge]`/`[post-merge]` log prefix
+           * both follow it. Post-merge groups only become reachable via the
+           * flag-gated post-merge hop below; the recording/log shape is otherwise
+           * identical to the pre-merge path.
+           */
+          const stepPhase: WorkflowStepResult["phase"] =
+            node.config?.phase === "post-merge" ? "post-merge" : "pre-merge";
+          const logPrefix = stepPhase === "post-merge" ? "[post-merge]" : "[pre-merge]";
+          const stepStartedAt = new Date().toISOString();
+          await this.recordOptionalGroupStepResult(task.id, {
+            workflowStepId: node.id,
+            workflowStepName: groupName,
+            phase: stepPhase,
+            status: "pending",
+            source: "optional-group",
+            ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
+            startedAt: stepStartedAt,
+            // U3/KTD-4: stamp the lease owner so a concurrent/crashed re-entry
+            // adopts this pending gate instead of dispatching a second reviewer.
+            leaseOwner: runId,
+            /*
+            FNXC:PlanReviewLease 2026-07-26-20:20:
+            Stamp WHERE the lease runs, not just which run holds it. `runId` cannot distinguish
+            "this node's dead previous process" from "a peer node running right now", so without
+            this every restart-orphaned gate had to wait out the full staleness floor. Omitted when
+            the node id is unknown, which preserves the previous floor-only behavior.
+            */
+            ...(this.deps.localNodeId ? { leaseNodeId: this.deps.localNodeId } : {}),
+          });
+          this.deps.logTaskEntry?.(`${logPrefix} Starting workflow step: ${groupName}`);
+
+          const groupResult = await runOptionalGroup(node, {
+            context,
+            runTemplateNode: (tNode, sig, contextOverride) => {
+              /*
+              FNXC:FastOptionalSteps 2026-06-30-09:12:
+              Optional-group template execution carries the parent group id in context so fast mode can skip only top-level review/validation gates. Once an operator explicitly enables an optional group, that selection is stronger than the fast default and its prompt/script/gate body must run.
+              */
+              const optionalGroupContext = {
+                ...(contextOverride ?? context),
+                [WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]: node.id,
+                ...(this.workflowReviewKind(node) ? { [WORKFLOW_REVIEW_KIND_CONTEXT_KEY]: this.workflowReviewKind(node) } : {}),
+              };
+              return this.executeMaterializedTemplateNode(tNode, task, settings, optionalGroupContext, ir, sig);
+            },
+            shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
+            signal: this.deps.signal,
+          });
+          // Map the group outcome → a WorkflowStepResult status (mirrors
+          // `mapWorkflowStatus` in taskProgress.ts): a `failure` outcome (gate REVISE
+          // or hard failure) → "failed"; an advisory REVISE (success outcome, REVISE
+          // verdict) → "advisory_failure" (non-blocking); otherwise → "passed".
+          const exitResult = groupResult.exitStepRecord;
+          const verdictRaw = typeof (exitResult?.value ?? groupResult.value) === "string"
+            ? (exitResult?.value ?? groupResult.value) as string
+            : undefined;
+          const verdict =
+            verdictRaw === "APPROVE" || verdictRaw === "APPROVE_WITH_NOTES" || verdictRaw === "REVISE"
+              || (node.id === PLAN_REVIEW_GROUP_ID && verdictRaw === "CLOSE_NO_OP")
+              ? verdictRaw
+              : undefined;
+          let stepStatus: WorkflowStepResult["status"];
+          if (groupResult.outcome === "failure") stepStatus = "failed";
+          else if (groupResult.value === "advisory_failure") stepStatus = "advisory_failure";
+          else if (verdict === "REVISE") stepStatus = "advisory_failure";
+          else stepStatus = "passed";
+          const exitContextPatch = exitResult?.contextPatch;
+          let stepOutput = typeof exitContextPatch?.output === "string" ? exitContextPatch.output : undefined;
+          const stepNotes = typeof exitContextPatch?.notes === "string" ? exitContextPatch.notes : undefined;
+          const closeMarker = verdict === "CLOSE_NO_OP" ? parseNoOpCompletionMarker(stepNotes) : null;
+          if (verdict === "CLOSE_NO_OP" && !closeMarker) {
+            stepStatus = "failed";
+            stepOutput = "Plan Review CLOSE_NO_OP requires notes beginning with a no-op completion sentinel.";
+          }
+          const stepFindings = this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.findings)
+            ? exitContextPatch.findings as WorkflowStepResult["findings"]
+            : undefined;
+          const repositoryReviewOutcomes = this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.repositoryReviewOutcomes)
+            ? exitContextPatch.repositoryReviewOutcomes as WorkflowStepResult["repositoryReviewOutcomes"]
+            : undefined;
+          const repositoryScopeRevision = this.workflowReviewKind(node) && typeof exitContextPatch?.repositoryScopeRevision === "number"
+            ? exitContextPatch.repositoryScopeRevision
+            : undefined;
+          const reviewInputFingerprint = this.workflowReviewKind(node) && typeof exitContextPatch?.reviewInputFingerprint === "string"
+            ? exitContextPatch.reviewInputFingerprint
+            : undefined;
+          const supersededFindingSourceWorkflowStepId = this.workflowReviewKind(node) && typeof exitContextPatch?.supersededFindingSourceWorkflowStepId === "string"
+            ? exitContextPatch.supersededFindingSourceWorkflowStepId
+            : undefined;
+          const supersededFindingIds = supersededFindingSourceWorkflowStepId && this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.supersededFindingIds)
+            ? exitContextPatch.supersededFindingIds.filter((id): id is string => typeof id === "string")
+            : undefined;
+          /*
+           * FNXC:WorkflowStepResults 2026-07-07-00:00:
+           * A non-verdict `stepStatus === "failed"` (dispatch/infra exception, not a
+           * reviewer verdict) with no `output`/`notes` recovered from the exit
+           * context-patch must never be recorded field-absent — that is the
+           * `(no feedback captured)` signature from Runfusion/Fusion#1946. Synthesize
+           * a diagnostic from the template node's `node:<id>:error` context-patch key
+           * (derived from the last visited template node id) with a fallback to the
+           * failure `value` (e.g. "exception", "aborted"). Genuine REVISE/APPROVE
+           * records already carry `stepOutput`/`stepNotes` and are unaffected.
+           */
+          if (stepStatus === "failed" && !verdict && stepOutput === undefined && stepNotes === undefined) {
+            const lastVisited = groupResult.visitedNodeIds[groupResult.visitedNodeIds.length - 1];
+            const templateNodeId = lastVisited?.includes("::") ? lastVisited.slice(lastVisited.indexOf("::") + 2) : undefined;
+            stepOutput = this.synthesizeNonVerdictFailureOutput({
+              stepLabel: groupName,
+              contextPatch: exitContextPatch,
+              templateNodeId,
+              failureValue: verdictRaw,
+              fallbackText: node.id === PLAN_REVIEW_GROUP_ID
+                ? "Plan Review failed before execution. Re-run triage to revise PROMPT.md before implementation continues."
+                : undefined,
+            });
+          }
+          const scopeCurrent = await this.recordOptionalGroupStepResult(task.id, {
+            workflowStepId: node.id,
+            workflowStepName: groupName,
+            phase: stepPhase,
+            source: "optional-group",
+            status: stepStatus,
+            ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
+            ...(verdict ? { verdict } : {}),
+            ...(stepOutput !== undefined ? { output: stepOutput } : {}),
+            ...(stepNotes !== undefined ? { notes: stepNotes } : {}),
+            ...(stepFindings?.length ? { findings: stepFindings } : {}),
+            ...(repositoryReviewOutcomes?.length ? { repositoryReviewOutcomes } : {}),
+            ...(repositoryScopeRevision !== undefined ? { repositoryScopeRevision } : {}),
+            ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
+            ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
+            startedAt: stepStartedAt,
+            completedAt: new Date().toISOString(),
+          });
+          if (!scopeCurrent) {
+            /* FNXC:RepositoryScope 2026-08-21-02:48: Optional-group Code Review cannot route an approval once its terminal scope CAS is superseded. */
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = "workspace-review-superseded";
+            return { outcome: "failure", value: "workspace-review-superseded" };
+          }
+          // `[pre-merge]`/`[post-merge]` terminal logs at parity with the legacy path
+          // (executor.ts runWorkflowSteps: "completed" / "requested revision" /
+          // "failed" + the advisory variant).
+          if (stepStatus === "passed") {
+            this.deps.logTaskEntry?.(`${logPrefix} Workflow step completed: ${groupName}`);
+          } else if (stepStatus === "advisory_failure") {
+            this.deps.logTaskEntry?.(`${logPrefix} Workflow step requested revision: ${groupName}`, stepOutput);
+            this.deps.logTaskEntry?.(`${logPrefix} Advisory workflow step failed: ${groupName}`);
+          } else if (verdict === "REVISE") {
+            this.deps.logTaskEntry?.(`${logPrefix} Workflow step requested revision: ${groupName}`, stepOutput);
+          } else {
+            this.deps.logTaskEntry?.(`${logPrefix} Workflow step failed: ${groupName}`, stepOutput);
+          }
+          if (repositoryScopeRevision !== undefined) context[`node:${node.id}:repositoryScopeRevision`] = repositoryScopeRevision;
+          visitedNodeIds.push(...groupResult.visitedNodeIds);
+          const result: WorkflowNodeResult = {
+            outcome: groupResult.outcome,
+            value: groupResult.value,
+          };
+          context[`node:${node.id}:outcome`] = result.outcome;
+          if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+          /*
+           * FNXC:PlanReviewReplan 2026-06-29-00:41:
+           * Plan Review sits between specification and execution. A REVISE verdict
+           * means PROMPT.md needs another planning pass, not executor remediation.
+           */
+          /*
+           * FNXC:PlanReviewReplan 2026-07-15-12:00:
+           * FN-7977 / issue #2124: do not fabricate REVISE from a hard Plan Review
+           * provider failure. Transport, rate-limit, model-selection, abort, and
+           * operator-actionable errors must remain visible in place so completed
+           * execution work cannot bounce back to the planner column.
+           */
+          /*
+           * FNXC:SessionContention 2026-07-25-21:30:
+           * Classified FIRST, and for EVERY optional group — not just Plan Review. A gate that could
+           * not start because another task holds its session path must neither traverse the failure
+           * edge to plan-replan (nothing about the plan is wrong) nor be labeled a provider failure
+           * (nothing about the provider is wrong). It becomes a contention hold the executor waits out.
+           */
+          /*
+           * FNXC:PlanReviewNoOp 2026-08-09-01:17:
+           * A close is valid only with the shared leading sentinel. Invalid requests retain
+           * auditable failed evidence and suspend; they never enter remediation or execution.
+           */
+          if (verdict === "CLOSE_NO_OP") {
+            const holdClose = async (reason: "invalid" | "terminal-route-unavailable" | "terminalization-failed"): Promise<never> => {
+              const column = this.deps.columnBoundary?.currentColumn() ?? task.column;
+              const suspension = {
+                reason: "hold" as const,
+                nodeId: node.id,
+                fromColumn: column,
+                toColumn: column,
+                irHash: computeWorkflowIrPin(ir, node.id).irHash,
+              };
+              await this.deps.holdPlanReviewNoOp?.(task, { ...suspension, reason });
+              throw new WorkflowGraphSuspended(suspension);
+            };
+            if (!closeMarker) {
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "plan-review-close-invalid";
+              return await holdClose("invalid");
+            }
+            const hasTerminalRoute = (outgoingMap.get(node.id) ?? []).some((edge) =>
+              edge.condition === "outcome:close-no-op"
+              && nodeMap.get(edge.to)?.config?.workflowAction === "plan-review-no-op",
+            );
+            if (!hasTerminalRoute) {
+              await this.recordOptionalGroupStepResult(task.id, {
+                workflowStepId: node.id, workflowStepName: groupName, phase: stepPhase, source: "optional-group",
+                status: "failed", reviewKind: "plan", verdict, notes: stepNotes,
+                output: "Plan Review CLOSE_NO_OP terminal route unavailable.", startedAt: stepStartedAt, completedAt: new Date().toISOString(),
+              });
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "plan-review-close-route-unavailable";
+              return await holdClose("terminal-route-unavailable");
+            }
+            context.noOpMarker = closeMarker;
+            context.noOpCloseNotes = stepNotes;
+            return await traverseChildren(node, { outcome: "success", value: "close-no-op" });
+          }
+          const sessionContentionFailure =
+            stepStatus === "failed"
+            && (
+              verdictRaw === SESSION_CONTENTION_HOLD_VALUE
+              || isSessionContentionError(stepOutput ?? stepNotes ?? "")
+            );
+          if (sessionContentionFailure) {
+            this.deps.logTaskEntry?.(
+              `${logPrefix} ${groupName} is waiting on another task to release its session path — holding in place`,
+            );
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = SESSION_CONTENTION_HOLD_VALUE;
+            return { outcome: "failure", value: SESSION_CONTENTION_HOLD_VALUE };
+          }
+          const nonPlanDefectPlanReviewFailure =
+            node.id === PLAN_REVIEW_GROUP_ID
+            && stepStatus === "failed"
+            && (
+              isRequiredArtifactReadFailedValue(verdictRaw)
+              || isNonPlanDefectPlanReviewFailure({
+                verdict,
+                errorMessage: stepOutput ?? stepNotes,
+                failureValue: verdictRaw,
+              })
+            );
+          /*
+           * FNXC:PlanReview 2026-06-29-02:05:
+           * Plan Review should send a task back to triage only for an actual
+           * REVISE verdict or a hard step failure. A malformed advisory result is
+           * visible as `advisory_failure`, but it must not fabricate a plan-rewrite
+           * request after the reviewer already approved or failed to emit JSON.
+           */
+          const shouldRequestPreMergeFix =
+            stepPhase === "pre-merge"
+            && (stepStatus === "advisory_failure" || stepStatus === "failed")
+            && (verdict === "REVISE" || parseRequiredArtifactMissingValue(verdictRaw) !== null || (
+              node.id === PLAN_REVIEW_GROUP_ID
+              && stepStatus === "failed"
+              && !nonPlanDefectPlanReviewFailure
+            ));
+          if (nonPlanDefectPlanReviewFailure) {
+            /*
+             * FNXC:PlanReviewReplan 2026-07-15-16:35:
+             * FN-7977: a classified provider/model/transport failure is a retryable
+             * hold, not a Plan Review REVISE. Do not traverse the built-in failure
+             * edge to plan-replan without remediation context; the executor retries
+             * this explicit hold in place and preserves advanced execution state.
+             */
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE;
+            return { outcome: "failure", value: PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE };
+          }
+          if (shouldRequestPreMergeFix) {
+            const feedback = stepOutput?.trim()
+              || stepNotes?.trim()
+              || (node.id === PLAN_REVIEW_GROUP_ID
+                ? "Plan Review failed before execution. Re-run triage to revise PROMPT.md before implementation continues."
+                : "(no feedback captured)");
+            const failureContext: PreMergeOptionalStepFailureContext = {
+              stepName: groupName,
+              feedback,
+              phase: stepPhase,
+              status: stepStatus,
+              verdict: verdict ?? (node.id === PLAN_REVIEW_GROUP_ID ? "REVISE" : undefined),
+              ...(parseRequiredArtifactMissingValue(verdictRaw) ? { failureValue: verdictRaw } : {}),
+              nodeId: node.id,
+              maxRevisions: node.config?.maxRevisions,
+              /*
+               * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+               * Carry the structured findings into remediation so PROMPT.md can present them grouped by
+               * priority. Without this the implementer only ever saw `feedback` prose and could not tell
+               * a blocking defect from an optional note.
+               */
+              ...(stepFindings?.length ? { findings: stepFindings } : {}),
+            };
+            context[optionalStepFailureContextKey(node.id)] = failureContext;
+            /*
+             * FNXC:WorkflowRemediation 2026-06-29-16:22:
+             * New built-in and custom workflows can author an explicit failure edge
+             * from an optional review gate to a remediation/replan node. When such a
+             * node exists, traversal owns the handoff so the workflow definition shows
+             * the lifecycle policy. Older stored specs without that node keep the
+             * compatibility scheduler here.
+             */
+            const remediationRouteSource: WorkflowNodeResult = { outcome: "failure", value: result.value };
+            const explicitWorkflowRemediationRoute = (outgoingMap.get(node.id) ?? []).some((edge) => {
+              if (!this.shouldTraverseEdge(edge, remediationRouteSource)) return false;
+              const target = nodeMap.get(edge.to);
+              const action = target?.config?.workflowAction;
+              return action === "plan-replan" || action === "pre-merge-remediation";
+            });
+            if (explicitWorkflowRemediationRoute) {
+              return await traverseChildren(node, remediationRouteSource);
+            }
+            const fixScheduled = await this.deps.requestPreMergeOptionalStepFix?.(task.id, failureContext);
+            if (fixScheduled) {
+              context[`node:${node.id}:fixScheduled`] = true;
+              return { outcome: "success", value: "pre-merge-optional-step-fix-scheduled" };
+            }
+          }
+          return await traverseChildren(node, result);
+        }
+
+        const workflowAction = node.config?.workflowAction;
+        if (workflowAction === "plan-replan" || workflowAction === "pre-merge-remediation") {
+          const stepId = typeof node.config?.forWorkflowStepId === "string"
+            ? node.config.forWorkflowStepId
+            : undefined;
+          const failureContext = stepId
+            ? context[optionalStepFailureContextKey(stepId)] as PreMergeOptionalStepFailureContext | undefined
+            : undefined;
+          if (!failureContext) {
+            return { outcome: "failure", value: "missing-remediation-context" };
+          }
+          const scheduled = await this.deps.requestPreMergeOptionalStepFix?.(task.id, failureContext);
+          if (!scheduled) {
+            return { outcome: "failure", value: "remediation-not-scheduled" };
+          }
+          /*
+           * FNXC:WorkflowRemediation 2026-06-29-16:27:
+           * A remediation/replan node schedules asynchronous task work rather than
+           * fixing the branch inside this graph call. Stop traversal after a successful
+           * handoff so the rerun starts from fresh task state instead of immediately
+           * re-reviewing unchanged PROMPT.md or unchanged code.
+           */
+          if (failureContext.nodeId) context[`node:${failureContext.nodeId}:fixScheduled`] = true;
+          context[`node:${node.id}:outcome`] = "success";
+          context[`node:${node.id}:value`] = "remediation-scheduled";
+          return { outcome: "success", value: "remediation-scheduled" };
+        }
+
+        if (workflowAction === "plan-review-no-op") {
+          const marker = context.noOpMarker as { kind?: unknown; reason?: unknown; canonicalId?: unknown } | undefined;
+          if (!marker || typeof marker.kind !== "string" || typeof marker.reason !== "string") {
+            return { outcome: "failure", value: "plan-review-close-marker-missing" };
+          }
+          const completed = await this.deps.completePlanReviewNoOp?.(task, {
+            kind: marker.kind,
+            reason: marker.reason,
+            ...(typeof marker.canonicalId === "string" ? { canonicalId: marker.canonicalId } : {}),
+          });
+          if (completed) return await traverseChildren(node, { outcome: "success", value: "close-no-op-completed" });
+          /*
+           * FNXC:PlanReviewNoOp 2026-08-09-02:24:
+           * A lifecycle handoff failure must replace the optimistic passed close evidence.
+           * Leaving that result passed would let a held, non-terminal task look completed even
+           * though its accepted no-op mutation never committed.
+           */
+          await this.recordOptionalGroupStepResult(task.id, {
+            workflowStepId: PLAN_REVIEW_GROUP_ID,
+            workflowStepName: "Plan Review",
+            phase: "pre-merge",
+            source: "optional-group",
+            status: "failed",
+            reviewKind: "plan",
+            verdict: "CLOSE_NO_OP",
+            notes: typeof context.noOpCloseNotes === "string" ? context.noOpCloseNotes : marker.reason,
+            output: "Plan Review CLOSE_NO_OP terminalization failed.",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+          });
+          const column = this.deps.columnBoundary?.currentColumn() ?? task.column;
+          const suspension = {
+            reason: "hold" as const,
+            nodeId: PLAN_REVIEW_GROUP_ID,
+            fromColumn: column,
+            toColumn: column,
+            irHash: computeWorkflowIrPin(ir, PLAN_REVIEW_GROUP_ID).irHash,
+          };
+          await this.deps.holdPlanReviewNoOp?.(task, { ...suspension, reason: "terminalization-failed" });
+          throw new WorkflowGraphSuspended(suspension);
+        }
+
+        const result = await this.executeNodeWithRetries(node, task, settings, context, ir, this.deps.signal);
+        if (result.contextPatch) Object.assign(context, result.contextPatch);
+        context[`node:${node.id}:outcome`] = result.outcome;
+        if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+
+        return await traverseChildren(node, result);
+    };
+
+    // Recursive walk into a node. A rework region head (target of a `kind:
+    // "rework"` edge) is wrapped in an iterative loop: while a downstream rework
+    // edge fires back to it (returned as a ReworkSignal under budget) the head
+    // re-runs; budget exhaustion re-routes the head with an
+    // `outcome:rework-exhausted` source so its forward edge carries the flow out.
+    // Every NON-rework back-edge still hits the cycle detector and throws.
+    const walk = async (nodeId: string): Promise<WorkflowNodeResult | ReworkSignal> => {
+      const node = nodeMap.get(nodeId);
+      if (!node) throw new WorkflowIrError(`Unknown workflow node: ${nodeId}`);
+      if (inStack.has(nodeId)) throw new WorkflowIrError(`Cycle detected at node: ${nodeId}`);
+      inStack.add(nodeId);
+      visitedNodeIds.push(nodeId);
+
+      try {
+        const isReworkHead = reworkHeads.has(nodeId);
+        for (;;) {
+          const outcome = await runNodeAndTraverse(node);
+          if (!isReworkSignal(outcome)) return outcome;
+          // A rework back-edge fired. It must target THIS head (the deepest
+          // enclosing rework head); a signal for an outer head propagates up.
+          if (!isReworkHead || outcome.headId !== nodeId) return outcome;
+          const remaining = reworkBudgetFor(nodeId);
+          if (remaining > 0) {
+            reworkBudget.set(nodeId, remaining - 1);
+            continue; // re-run the head node fresh (await-review re-evaluates)
+          }
+          // Budget exhausted: route the head's `outcome:rework-exhausted` forward
+          // edge (mirrors the foreach node's `{outcome:"failure", value:
+          // "rework-exhausted"}`). The `failure` outcome is deliberate so the
+          // exhausted re-route does NOT also satisfy the head's generic
+          // `condition:"success"` forward edge (which would re-enter the loop body
+          // and never terminate). Never loops forever; never throws "Cycle
+          // detected" for the legal rework edge.
+          const exhausted = await traverseChildren(node, { outcome: "failure", value: "rework-exhausted" });
+          // If no `outcome:rework-exhausted` edge exists the source bubbles back
+          // (a failure outcome) — a finite, routable terminal, never an infinite loop.
+          return exhausted;
+        }
+      } finally {
+        inStack.delete(nodeId);
+      }
+    };
+
+    const runLegacyMergeSeam = async (regionNode?: WorkflowIrNode): Promise<WorkflowNodeResult> => {
+      // The merge-policy primitive region is interpreter-owned policy. While the
+      // legacy lifecycle remains authoritative, reaching any of its node kinds is
+      // the terminal merge boundary: dispatch the same prompt/seam handler a
+      // legacy `config.seam: "merge"` node used, but record it under the stable
+      // legacy node id `merge` and never expose raw merge-region primitive ids.
+      const mergeNode = syntheticMergeNodeFor(regionNode);
+      visitedNodeIds.push(mergeNode.id);
+      // U1: the synthetic merge seam carries the merge-region's column; cross the
+      // boundary on entry so a custom "Merging" column receives the card (KTD-1).
+      const boundary = await this.deps.columnBoundary?.onNodeEntry(mergeNode);
+      if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+      const result = await this.executeNodeWithRetries(
+        mergeNode,
+        task,
+        settings,
+        context,
+        ir,
+        this.deps.signal,
+      );
+      if (result.contextPatch) Object.assign(context, result.contextPatch);
+      context[`node:${mergeNode.id}:outcome`] = result.outcome;
+      if (result.value !== undefined) context[`node:${mergeNode.id}:value`] = result.value;
+      return result;
+    };
+
+    const traverseChildren = async (
+      node: WorkflowIrNode,
+      sourceResult: WorkflowNodeResult,
+    ): Promise<WorkflowNodeResult | ReworkSignal> => {
+      const reviewRevision = context[`node:${node.id}:repositoryScopeRevision`];
+      if (this.workflowReviewKind(node) === "code" && typeof reviewRevision === "number"
+        && this.deps.isRepositoryScopeReviewEdgeCurrent
+        && !await this.deps.isRepositoryScopeReviewEdgeCurrent(task.id, node.id, reviewRevision)) {
+        /*
+        FNXC:RepositoryScope 2026-08-21-03:05:
+        Terminal-result persistence and graph traversal are separate operations. Re-check the
+        durable review record at edge admission so a scope change in that interval cannot let an
+        obsolete approval traverse an advisory or success edge.
+        */
+        return { outcome: "failure", value: "workspace-review-superseded" };
+      }
+      const edges = outgoingMap.get(node.id) ?? [];
+      if (edges.length === 0) {
+        return sourceResult;
+      }
+
+      const outcomeMatching = edges.filter((edge) =>
+        edge.condition?.startsWith("outcome:") && this.shouldTraverseEdge(edge, sourceResult)
+      );
+      const matching = outcomeMatching.length > 0
+        ? outcomeMatching
+        : edges.filter((edge) => this.shouldTraverseEdge(edge, sourceResult));
+      if (matching.length === 0) {
+        return sourceResult;
+      }
+
+      let aggregate: WorkflowNodeResult = sourceResult;
+      // Forward edges first, deterministic by target id (matches prior ordering);
+      // a rework edge is a loop-back and is handled distinctly below.
+      for (const edge of matching.sort((a, b) => a.to.localeCompare(b.to))) {
+        // Rework back-edge: do NOT recurse (the head is on the stack — that would
+        // be a cycle). Bubble a ReworkSignal up to the head's iterative loop.
+        if (edge.kind === "rework" && inStack.has(edge.to)) {
+          return { __rework: true, headId: edge.to, source: sourceResult } satisfies ReworkSignal;
+        }
+        const target = nodeMap.get(edge.to);
+        if (target?.kind === "end") {
+          aggregate = sourceResult;
+          continue;
+        }
+        if (target && isMergeRegionKind(target.kind)) {
+          aggregate = await runLegacyMergeSeam(target);
+          if (aggregate.outcome === "failure") break;
+          /*
+           * FNXC:WorkflowPostMerge 2026-06-26-09:00:
+           * Flag-gated post-merge hop. The merge already finished (the seam awaited the
+           * merge Promise), so this runs strictly AFTER a successful merge. Walk each
+           * post-merge entry node via the normal `walk` path (optional-group recording
+           * with phase:"post-merge"). Advisory post-merge failures are NON-BLOCKING —
+           * they record a result but DO NOT mutate `aggregate`, so the merged task still
+           * completes with the merge-success outcome (matching legacy post-merge
+           * semantics). Explicit gate-mode post-merge failures do block final graph
+           * success so configured post-merge verification can prevent final done. When
+           * the flag is OFF, `postMergeEntryNodeIds` is empty and this loop is inert, so
+           * the merge region stays exactly as collapsed before.
+           */
+          for (const entryId of postMergeEntryNodeIds) {
+            /*
+             * FNXC:WorkflowPostMerge 2026-06-29-11:47:
+             * Post-merge verification has two policies: advisory checks keep the
+             * legacy non-blocking behavior, while explicit gate-mode checks are allowed
+             * to block final workflow success after merge proof. Traversal errors remain
+             * logged/non-blocking because a malformed post-merge authoring path should
+             * not overwrite already-proven merge state.
+             */
+            try {
+              const postMerge = await walk(entryId);
+              // A post-merge entry node is never an enclosing rework head, so a
+              // ReworkSignal here would be malformed IR; ignore it rather than bubble a
+              // rework loop out of the merge boundary.
+              if (!isReworkSignal(postMerge) && postMerge.outcome === "failure") {
+                aggregate = postMerge;
+                break;
+              }
+            } catch (err) {
+              if (err instanceof WorkflowGraphSuspended) throw err;
+              this.deps.logTaskEntry?.(
+                `[post-merge] traversal error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+          if (aggregate.outcome === "failure") break;
+          // A deliberately minimal merge workflow may route success straight
+          // to end with no post-merge work node to enter the complete column.
+          // Preserve end's handler-free terminal semantics while still entering
+          // its authored column after merge proof.
+          if (postMergeEntryNodeIds.length === 0) {
+            const terminalEdge = [...outgoingMap.entries()].flatMap(([from, outgoing]) => {
+              const fromNode = nodeMap.get(from);
+              if (!fromNode || !isMergeRegionKind(fromNode.kind)) return [];
+              return outgoing.filter((candidate) => {
+                const terminal = nodeMap.get(candidate.to);
+                return terminal?.kind === "end" && (!candidate.condition || candidate.condition === "success");
+              });
+            })[0];
+            const terminalNode = terminalEdge ? nodeMap.get(terminalEdge.to) : undefined;
+            if (terminalNode) {
+              const boundary = await this.deps.columnBoundary?.onNodeEntry(terminalNode);
+              if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+            }
+          }
+          continue;
+        }
+        const child = await walk(edge.to);
+        // A ReworkSignal propagated from deeper: bubble it further up unchanged.
+        if (isReworkSignal(child)) return child;
+        if (child.outcome === "failure") {
+          aggregate = child;
+          break;
+        }
+        aggregate = child;
+      }
+      return aggregate;
+    };
+
+    // U1 (KTD-3): IR-pin drift guard. If a prior run pinned a node the current IR
+    // has since dropped (or whose column was deleted), park with
+    // `task:reconcile-workflow-drift` and do NOT traverse the mutated graph. The
+    // controller has already emitted the reconcile audit; surface a terminal
+    // failure carrying the drift marker so the runner parks the card.
+    if (this.deps.columnBoundary && (await this.deps.columnBoundary.detectDrift())) {
+      context[WORKFLOW_DRIFT_PARK_CONTEXT_KEY] = true;
+      return { executed: true, outcome: "failure", context, visitedNodeIds };
+    }
+
+    let terminal: WorkflowNodeResult | ReworkSignal;
+    try {
+      terminal = await walk(startNode.id);
+    } catch (error) {
+      if (!(error instanceof WorkflowGraphSuspended)) throw error;
+      return {
+        executed: true,
+        outcome: "success",
+        context,
+        visitedNodeIds,
+        suspended: error.suspension,
+      };
+    }
+    if (isReworkSignal(terminal)) {
+      // A rework edge whose target is not an enclosing head on the stack — i.e. a
+      // rework edge pointing at a node never entered as a loop head. Malformed IR.
+      throw new WorkflowIrError(`Rework edge targets a node that is not a region head: ${terminal.headId}`);
+    }
+    // Prune again on run completion (#1412): keeps only this run's rows so the
+    // table does not accumulate historical runs for a long-lived task.
+    await this.pruneStaleBranches(task.id, runId);
+    await this.pruneStaleInstances(task.id, runId);
+    return {
+      executed: true,
+      outcome: terminal.outcome,
+      context,
+      visitedNodeIds,
+    };
+  }
+
+  /**
+   * Resolve the task's step list for a foreach expansion (KTD-3). Defaults to
+   * the steps already on the run's task; a caller may inject `getTaskSteps` to
+   * fetch fresh state (e.g. after the planning seam populated steps).
+   */
+  private async resolveTaskSteps(task: TaskDetail): Promise<TaskStep[]> {
+    if (this.deps.getTaskSteps) {
+      return await this.deps.getTaskSteps(task);
+    }
+    return task.steps ?? [];
+  }
+
+  /** Best-effort prune of stale-run branch rows; never throws into the run. */
+  private async pruneStaleBranches(taskId: string, keepRunId: string): Promise<void> {
+    try {
+      await this.deps.branchPersistence?.clearStaleBranchStates?.(taskId, keepRunId);
+    } catch {
+      // Pruning is additive bookkeeping — a failure must not affect the run.
+    }
+  }
+
+  /** Best-effort prune of stale-run foreach instance rows (KTD-6, U4); identical
+   *  keepRunId posture as {@link pruneStaleBranches}. Never throws into the run. */
+  private async pruneStaleInstances(taskId: string, keepRunId: string): Promise<void> {
+    try {
+      await this.deps.stepInstancePersistence?.clearStaleInstanceStates?.(taskId, keepRunId);
+    } catch {
+      // Pruning is additive bookkeeping — a failure must not affect the run.
+    }
+  }
+
+  /*
+   * FNXC:WorkflowStepResults 2026-07-07-00:00:
+   * A hard optional-group / node-gate failure that originates from a dispatch or
+   * infra exception (rather than a reviewer verdict) must never be persisted as a
+   * `WorkflowStepResult` with `verdict`/`output`/`notes` entirely absent — that is
+   * the field-absent `(no feedback captured)` signature reported in
+   * Runfusion/Fusion#1946 (3 confirmed instances: card stranded in `in-review`,
+   * ~3s duration from `executeNodeWithRetries` exhausting fast dispatch retries,
+   * no reviewer-agent error). `executeNodeWithRetries` stores the underlying error
+   * text under a `node:<templateNodeId>:error` context-patch key (see the
+   * `plugin-node-handler-error`/`exception` failure branches ~line 1140/1238), but
+   * the terminal recorder previously derived `output`/`notes` only from
+   * `contextPatch.output`/`.notes`, silently dropping that diagnostic. This helper
+   * synthesizes a non-blank diagnostic `output` from the `:error`-suffixed patch
+   * key (preferring the exact `node:<templateNodeId>:error` key when the template
+   * node id is known) with a fallback to the failure `value` (e.g. `"exception"`,
+   * `"aborted"`, `"plugin-node-handler-error"`) and finally a stable non-blank
+   * fallback sentence — never an empty string. Shared by the optional-group
+   * terminal recorder and `recordNodeProgressFinish` (CE `source:"node"` skill
+   * gates) so both surfaces carry the identical guarantee. `status` (`"failed"`),
+   * verdict extraction, edge routing, and `self-healing.ts`'s
+   * `latestFailedPreMergeStep` (which filters on `status === "failed"`) are
+   * untouched — this only adds `output` to an already-failed record.
+   */
+  private synthesizeNonVerdictFailureOutput(params: {
+    stepLabel: string;
+    contextPatch?: Record<string, unknown>;
+    templateNodeId?: string;
+    failureValue?: string;
+    /**
+     * FNXC:WorkflowStepResults 2026-07-07-00:00:
+     * `PLAN_REVIEW_GROUP_ID`'s existing hard-failure handoff (~line 802) already
+     * has a dedicated, non-blank sentinel ("Plan Review failed before execution...")
+     * for the fully-unrecoverable case (no `:error` key, no failure `value`). Pass
+     * it through so the recorded `output` and the pre-merge fix `feedback` stay
+     * byte-identical for that path when no real diagnostic exists to surface;
+     * every other caller keeps the generic fallback sentence.
+     */
+    fallbackText?: string;
+  }): string {
+    const { stepLabel, contextPatch, templateNodeId, failureValue, fallbackText } = params;
+    let errorText: string | undefined;
+    if (contextPatch) {
+      if (templateNodeId) {
+        const exact = contextPatch[`node:${templateNodeId}:error`];
+        if (typeof exact === "string" && exact.trim()) errorText = exact.trim();
+      }
+      if (!errorText) {
+        for (const [key, value] of Object.entries(contextPatch)) {
+          if (key.endsWith(":error") && typeof value === "string" && value.trim()) {
+            errorText = value.trim();
+            break;
+          }
+        }
+      }
+    }
+    const detail = errorText || (typeof failureValue === "string" && failureValue.trim() ? failureValue.trim() : undefined);
+    if (detail) return `${stepLabel} failed before producing a verdict: ${detail}`;
+    return fallbackText || "Workflow step failed before producing a verdict (no reviewer output captured).";
+  }
+
+  /*
+   * FNXC:WorkflowStepResults 2026-06-25-12:00:
+   * Fail-soft forward to the `recordWorkflowStepResult` persistence sink (plan U2).
+   * Recording is additive visibility bookkeeping — a sink failure (or absent sink)
+   * must NEVER affect graph execution, so swallow errors and no-op when unwired.
+   */
+  private async recordOptionalGroupStepResult(taskId: string, result: WorkflowStepResult): Promise<boolean> {
+    if (!this.deps.recordWorkflowStepResult) return true;
+    try {
+      return (await this.deps.recordWorkflowStepResult(taskId, result)) !== false;
+    } catch {
+      // Result recording is additive — a sink failure must not affect the run.
+      return true;
+    }
+  }
+
+  private shouldTraverseEdge(edge: WorkflowIrEdge, sourceResult: WorkflowNodeResult): boolean {
+    if (!edge.condition) return sourceResult.outcome === "success";
+    if (edge.condition === "success") return sourceResult.outcome === "success";
+    if (edge.condition === "failure") return sourceResult.outcome === "failure";
+    if (edge.condition.startsWith("outcome:")) {
+      return sourceResult.value === edge.condition.slice("outcome:".length);
+    }
+    throw new WorkflowIrError(`Unsupported edge condition: ${edge.condition}`);
+  }
+
+  private normalizePluginNodeResult(result: WorkflowNodeExtensionResult): WorkflowNodeResult {
+    if (result.outcome === "success" || result.outcome === "failure") {
+      return result;
+    }
+    return {
+      outcome: "success",
+      value: result.value ?? result.outcome.slice("outcome:".length),
+      contextPatch: result.contextPatch,
+    };
+  }
+
+  private async executePluginNodeHandler(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    workflow: WorkflowIr,
+    context: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<WorkflowNodeResult | undefined> {
+    const extensionIds = Object.keys(node.extensions ?? {});
+    if (extensionIds.length === 0) return undefined;
+
+    const registry = getWorkflowExtensionRegistry();
+    for (const extensionId of extensionIds) {
+      const definition = registry.get(extensionId);
+      const extension = definition?.extension;
+      if (!definition || definition.degraded || extension?.kind !== "node-handler" || !extension.handle) continue;
+      if (extension.nodeKind && extension.nodeKind !== node.kind) continue;
+      try {
+        const result = await extension.handle({
+          task,
+          workflow,
+          node,
+          context,
+          signal,
+        });
+        return this.normalizePluginNodeResult(result);
+      } catch (error) {
+        if (extension.fallback === "degradeToDefault") {
+          try {
+            registry.degrade(
+              [definition.id],
+              "runtime-fault",
+              error instanceof Error ? error.message : String(error),
+            );
+          } catch {
+            // Degradation is best-effort; falling through to the default node
+            // handler is still the correct fallback for this invocation.
+          }
+          continue;
+        }
+        return {
+          outcome: "failure",
+          value: "plugin-node-handler-error",
+          contextPatch: {
+            [`node:${node.id}:error`]: error instanceof Error ? error.message : String(error),
+            [`node:${node.id}:extensionId`]: extensionId,
+          },
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  /** Execute a reusable template node under its one concrete runtime identity. */
+  private async executeMaterializedTemplateNode(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    settings: WorkflowNodeSettings | undefined,
+    context: Record<string, unknown>,
+    workflow: WorkflowIr,
+    signal?: AbortSignal,
+  ): Promise<WorkflowNodeResult> {
+    const priorInstanceId = context["workflow:node-instance-id"];
+    context["workflow:node-instance-id"] = materializedTemplateNodeId(node, context);
+    try {
+      return await this.executeNodeWithRetries(node, task, settings, context, workflow, signal, false);
+    } finally {
+      if (priorInstanceId === undefined) delete context["workflow:node-instance-id"];
+      else context["workflow:node-instance-id"] = priorInstanceId;
+    }
+  }
+
+  private async executeNodeWithRetries(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    settings: WorkflowNodeSettings | undefined,
+    context: Record<string, unknown>,
+    workflow: WorkflowIr,
+    signal?: AbortSignal,
+    recordProgress = true,
+  ): Promise<WorkflowNodeResult> {
+    const handler = this.handlers[node.kind];
+
+    // Per-node override: config.maxRetries beats the executor-wide default.
+    const configured = Number(node.config?.maxRetries);
+    const maxAttempts = Number.isFinite(configured) && configured >= 1
+      ? Math.min(10, Math.floor(configured))
+      : this.maxRetriesPerNode;
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Fail-fast cancellation: a branch or top-level graph abort mid-retry stops re-trying.
+      if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
+      let releasePrincipal: (() => void) | undefined;
+      try {
+        await this.prepareNodeExecution(node, task, context, settings);
+        const preflight = await this.deps.beforeNodeExecution?.(node, task, context);
+        releasePrincipal = typeof context["workflow:release-principal"] === "function"
+          ? context["workflow:release-principal"] as () => void
+          : undefined;
+        if (preflight) {
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-07-06:53:
+           * Agent routing and capacity refusals have already persisted a durable
+           * held work item. Suspend traversal rather than following a failure
+           * edge, because temporary principal unavailability must not terminalize
+           * the task or convert an operator-visible hold into graph failure.
+           */
+          if (preflight.outcome === "failure" && typeof preflight.value === "string" && preflight.value.startsWith("workflow-principal-")) {
+            /*
+             * FNXC:WorkflowAgentRouting 2026-08-07-23:05:
+             * Carry the refusal REASON out on the shared context. The suspension marker
+             * itself has no field for it, so throwing alone reduced every distinct routing
+             * refusal — unavailable owner, exhausted pool, missing agent store — to an
+             * indistinguishable `capacity` suspend at the caller. Context survives the
+             * unwind (see the catch below), which is what lets the executor recognise this
+             * as a principal hold, park the continuation `held` instead of leaving it
+             * `running` forever, and name the reason in the task log.
+             */
+            context[`node:${node.id}:principal-hold`] = preflight.value;
+            throw new WorkflowGraphSuspended({
+              reason: "capacity",
+              nodeId: node.id,
+              fromColumn: task.column,
+              toColumn: task.column,
+              irHash: "workflow-principal-hold",
+            });
+          }
+          return preflight;
+        }
+        const progressRecord = recordProgress && this.shouldRecordNodeProgress(node)
+          ? await this.recordNodeProgressStart(task.id, node)
+          : null;
+        const pluginResult = await this.executePluginNodeHandler(node, task, workflow, context, signal);
+        if (pluginResult) {
+          const projected = await this.publishTaskProjectionFromResult(task.id, node, pluginResult);
+          if (signal?.aborted || this.isAbortNodeResult(projected)) {
+            return this.withEnginePauseAbortContext(node, projected);
+          }
+          if (progressRecord && !await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)) {
+            /*
+            FNXC:RepositoryScope 2026-08-21-02:48:
+            A terminal review record rejected by the scope-generation CAS cannot
+            traverse its APPROVE edge. Return an unavailable outcome instead.
+            */
+            return { outcome: "failure", value: "workspace-review-superseded" };
+          }
+          return projected;
+        }
+        if (!handler) {
+          throw new WorkflowIrError(`No handler registered for node kind: ${node.kind}`);
+        }
+        const result = await handler(node, { task, settings, context, signal });
+        const projected = await this.publishTaskProjectionFromResult(task.id, node, result);
+        if (signal?.aborted || this.isAbortNodeResult(projected)) {
+          return this.withEnginePauseAbortContext(node, projected);
+        }
+        if (progressRecord && !await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)) {
+          /* FNXC:RepositoryScope 2026-08-21-02:48: See the plugin-node path above; both graph dispatch routes share this edge fence. */
+          return { outcome: "failure", value: "workspace-review-superseded" };
+        }
+        return projected;
+      } catch (error) {
+        if (error instanceof WorkflowGraphSuspended) throw error;
+        if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
+        /*
+        FNXC:WorktreeBaseRefresh 2026-08-01-16:33:
+        A code-node refresh refusal is a pre-session, typed non-execution result, not a handler
+        exception. Do not spend immediate node retries or erase its actionable reason: returning
+        the refresh kind lets the graph route/park it while preserving the checkout for a later,
+        independently verified acquisition.
+        */
+        if (error instanceof WorkspacePreparationError) {
+          /*
+           * FNXC:WorkspacePreparation 2026-08-21-19:39:
+           * Preparation errors are emitted as a typed graph value before generic exception handling.
+           * Plan Review must not relabel a failed `git worktree add` as a provider outage or invoke
+           * its model-retry lane when no reviewer session was created.
+           */
+          const failureResult: WorkflowNodeResult = {
+            outcome: "failure",
+            value: WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE,
+            contextPatch: {
+              [`node:${node.id}:error`]: error.message,
+              [`node:${node.id}:workspacePreparation`]: {
+                repository: error.repoRelPath,
+                stage: error.stage,
+                cause: error.causeMessage,
+              },
+            },
+          };
+          if (recordProgress && this.shouldRecordNodeProgress(node)) {
+            await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+          }
+          return failureResult;
+        }
+        if (error instanceof WorktreeBaseRefreshError) {
+          const failureResult: WorkflowNodeResult = {
+            outcome: "failure",
+            value: error.refresh.kind,
+            contextPatch: {
+              [`node:${node.id}:error`]: error.message,
+              [`node:${node.id}:baseRefresh`]: error.refresh.kind,
+            },
+          };
+          if (recordProgress && this.shouldRecordNodeProgress(node)) {
+            await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+          }
+          return failureResult;
+        }
+        lastError = error;
+        /*
+        FNXC:SessionContention 2026-07-25-21:30:
+        Immediate in-loop retries cannot clear a lease another task holds — they just burn the node's
+        attempt budget in milliseconds and erase the diagnostic behind a generic `exception`. Stop
+        retrying here and hand the executor a typed contention failure it can back off on.
+        */
+        if (isSessionContentionError(error instanceof Error ? error.message : String(error))) break;
+      } finally {
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-04:13:
+         * A workflow reservation lasts for one handler attempt, not the entire
+         * graph. Releasing here covers success, handler errors, cancellation,
+         * and retry paths while the executor's outer finally remains crash-safe.
+         */
+        releasePrincipal?.();
+        delete context["workflow:release-principal"];
+      }
+    }
+
+    if (signal?.aborted) {
+      return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
+    }
+
+    /*
+     * FNXC:WorkflowCompletion 2026-07-01-16:24:
+     * A thrown handler exception (missing/pruned worktree, model/provider error,
+     * etc.) bypasses `runGraphCustomNode`'s advisory `!blocking → success`
+     * coercion and lands here as a hard `exception` failure. For the best-effort
+     * completion-summary node that failure has nowhere to go (success-only edge),
+     * so it terminates the graph and loops the in-review task back to todo forever
+     * (issue #1863). Degrade the summary node's exhausted-retry failure to success
+     * — the deterministic `ensureWorkflowCompletionSummary` fallback still fills
+     * `task.summary` — so the graph always advances past it.
+     */
+    if (isCompletionSummaryNode(node)) {
+      const degraded: WorkflowNodeResult = {
+        outcome: "success",
+        value: "summary-unavailable",
+        contextPatch: {
+          [`node:${node.id}:error`]: lastError instanceof Error ? lastError.message : String(lastError),
+        },
+      };
+      if (recordProgress && this.shouldRecordNodeProgress(node)) {
+        await this.recordNodeProgressFinish(task.id, node, null, degraded);
+      }
+      return degraded;
+    }
+    const lastErrorText = lastError instanceof Error ? lastError.message : String(lastError);
+    const failureResult: WorkflowNodeResult = {
+      outcome: "failure",
+      // FNXC:SessionContention 2026-07-25-21:30: contention is a retryable hold, not an exception.
+      value: lastError instanceof BranchWriteProvenanceError
+        ? BRANCH_WRITE_PROVENANCE_FAILURE_VALUE
+        : isSessionContentionError(lastErrorText) ? SESSION_CONTENTION_HOLD_VALUE : "exception",
+      contextPatch: {
+        [`node:${node.id}:error`]: lastErrorText,
+      },
+    };
+    if (recordProgress && this.shouldRecordNodeProgress(node)) {
+      await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+    }
+    return failureResult;
+  }
+
+  /** FNXC:WorkflowReviewKind 2026-08-05-02:31: Persist only the declared closed
+   * marker; execution never derives review semantics from a label, verdict, or gate mode. */
+  private workflowReviewKind(node: WorkflowIrNode): WorkflowStepResult["reviewKind"] | undefined {
+    return node.config?.reviewKind === "plan" || node.config?.reviewKind === "code"
+      ? node.config.reviewKind
+      : undefined;
+  }
+
+  private shouldRecordNodeProgress(node: WorkflowIrNode): boolean {
+    const skillName = typeof node.config?.skillName === "string" ? node.config.skillName.trim() : "";
+    const markedReview = this.workflowReviewKind(node) !== undefined;
+    return (markedReview && (node.kind === "prompt" || node.kind === "gate" || node.kind === "script"))
+      || (skillName.length > 0 && (node.kind === "prompt" || node.kind === "gate"));
+  }
+
+  private workflowNodeProgressName(node: WorkflowIrNode): string {
+    const configuredName = typeof node.config?.name === "string" ? node.config.name.trim() : "";
+    return configuredName || node.id;
+  }
+
+  private async recordNodeProgressStart(taskId: string, node: WorkflowIrNode): Promise<WorkflowStepResult | null> {
+    const startedAt = new Date().toISOString();
+    const result: WorkflowStepResult = {
+      workflowStepId: node.id,
+      workflowStepName: this.workflowNodeProgressName(node),
+      phase: node.config?.phase === "post-merge" ? "post-merge" : "pre-merge",
+      source: "node",
+      status: "pending",
+      ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
+      startedAt,
+    };
+    await this.recordOptionalGroupStepResult(taskId, result);
+    return result;
+  }
+
+  private async recordNodeProgressFinish(
+    taskId: string,
+    node: WorkflowIrNode,
+    started: WorkflowStepResult | null,
+    nodeResult: WorkflowNodeResult,
+  ): Promise<boolean> {
+    const status: WorkflowStepResult["status"] = nodeResult.outcome === "success" ? "passed" : "failed";
+    const contextPatch = nodeResult.contextPatch ?? {};
+    let output = typeof contextPatch.output === "string" ? contextPatch.output : undefined;
+    const notes = typeof contextPatch.notes === "string" ? contextPatch.notes : undefined;
+    const findings = this.workflowReviewKind(node) && Array.isArray(contextPatch.findings)
+      ? contextPatch.findings as WorkflowStepResult["findings"]
+      : undefined;
+    /*
+    FNXC:RepositoryScope 2026-08-21-02:17:
+    Graph custom review nodes must persist the same structured repository outcomes as step-review seams. The remediation and Review-tab readers cannot recover scope revision or clean-peer state from formatted output.
+    */
+    const repositoryReviewOutcomes = this.workflowReviewKind(node) && Array.isArray(contextPatch.repositoryReviewOutcomes)
+      ? contextPatch.repositoryReviewOutcomes as WorkflowStepResult["repositoryReviewOutcomes"]
+      : undefined;
+    const repositoryScopeRevision = this.workflowReviewKind(node) && typeof contextPatch.repositoryScopeRevision === "number"
+      ? contextPatch.repositoryScopeRevision
+      : undefined;
+    const reviewInputFingerprint = this.workflowReviewKind(node) && typeof contextPatch.reviewInputFingerprint === "string"
+      ? contextPatch.reviewInputFingerprint
+      : undefined;
+    /* FNXC:WorkflowReviewFindings 2026-08-11-19:39: This ordinary writer and the optional-group exit writer above carry explicit review supersession claims to the shared persistence sink. */
+    const supersededFindingSourceWorkflowStepId = this.workflowReviewKind(node) && typeof contextPatch.supersededFindingSourceWorkflowStepId === "string"
+      ? contextPatch.supersededFindingSourceWorkflowStepId
+      : undefined;
+    const supersededFindingIds = supersededFindingSourceWorkflowStepId && this.workflowReviewKind(node) && Array.isArray(contextPatch.supersededFindingIds)
+      ? contextPatch.supersededFindingIds.filter((id): id is string => typeof id === "string")
+      : undefined;
+    /*
+     * FNXC:WorkflowStepResults 2026-07-07-00:00:
+     * CE `source:"node"` skill-gate failures share the same `(no feedback
+     * captured)` defect as the optional-group path (Runfusion/Fusion#1946): a
+     * `failed` node with no `contextPatch.output`/`.notes` must still record a
+     * non-blank diagnostic sourced from `node:<id>:error`.
+     */
+    if (status === "failed" && output === undefined && notes === undefined) {
+      output = this.synthesizeNonVerdictFailureOutput({
+        stepLabel: this.workflowNodeProgressName(node),
+        contextPatch,
+        templateNodeId: node.id,
+        failureValue: nodeResult.value,
+      });
+    }
+    return this.recordOptionalGroupStepResult(taskId, {
+      workflowStepId: node.id,
+      workflowStepName: this.workflowNodeProgressName(node),
+      phase: started?.phase ?? (node.config?.phase === "post-merge" ? "post-merge" : "pre-merge"),
+      source: "node",
+      status,
+      ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
+      ...(output !== undefined ? { output } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+      ...(findings?.length ? { findings } : {}),
+      ...(repositoryReviewOutcomes?.length ? { repositoryReviewOutcomes } : {}),
+      ...(repositoryScopeRevision !== undefined ? { repositoryScopeRevision } : {}),
+      ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
+      ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
+      startedAt: started?.startedAt ?? new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  private async prepareNodeExecution(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    context: Record<string, unknown>,
+    settings: WorkflowNodeSettings | undefined,
+  ): Promise<void> {
+    const requirement = this.classifyNodePreparation(node, context, settings);
+    if (!requirement.requiresWorktree) return;
+    await this.deps.prepareNodeExecution?.(node, task, requirement);
+  }
+
+  private classifyNodePreparation(
+    node: WorkflowIrNode,
+    context: Record<string, unknown>,
+    settings: WorkflowNodeSettings | undefined,
+  ): WorkflowNodePreparationRequirement {
+    const optionalGroupId = typeof context[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
+      ? context[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
+      : undefined;
+    /*
+     * FNXC:WorkflowExecution 2026-07-15-00:00:
+     * Graph preparation receives the optional-group context and effective inline-fix
+     * setting so it applies the same classifier as runtime. Only an explicit false
+     * disables inline fixes, preserving the default-enabled review worktree contract
+     * that prevents issue #2075's pre-review no-worktree failure.
+     */
+    /*
+    FNXC:WorktreeBaseRefresh 2026-08-01-16:04:
+    A graph `code` node is the implementation boundary even when its sandbox runner does not
+    otherwise advertise a worktree need. Force preparation so an existing planning checkout is
+    refreshed before code executes; review and planning retain their normal classifier behavior.
+    */
+    const requiresWorktree = workflowNodeRequiresWorktree(node, {
+      optionalGroupId,
+      reviewerInlineFixes: settings?.reviewerInlineFixes,
+    }) || node.kind === "code";
+    return {
+      requiresWorktree,
+      reason: node.kind === "code" ? "implementation-code-node" : requiresWorktree ? "write-capable-node" : undefined,
+    };
+  }
+
+  private isAbortNodeResult(result: WorkflowNodeResult): boolean {
+    return result.outcome === "failure" && result.value === "aborted";
+  }
+
+  private withEnginePauseAbortContext(node: WorkflowIrNode, result: WorkflowNodeResult): WorkflowNodeResult {
+    /*
+    FNXC:WorkflowLifecycle 2026-06-28-18:15:
+    FN-7214 requires engine-pause aborts of in-flight workflow nodes to be re-entrant at the node boundary. Stamp a typed abort marker on the node result so executor recovery can re-run the graph without conflating this interruption with genuine node failures such as REVISE, projection errors, or exceptions.
+    */
+    return {
+      ...result,
+      outcome: "failure",
+      value: result.value ?? "aborted",
+      contextPatch: {
+        ...(result.contextPatch ?? {}),
+        [`node:${node.id}:abortKind`]: WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
+        [WORKFLOW_INTERRUPTED_NODE_ID_CONTEXT_KEY]: node.id,
+        [WORKFLOW_INTERRUPTED_NODE_ABORT_KIND_CONTEXT_KEY]: WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
+      },
+    };
+  }
+
+  private async publishTaskProjectionFromResult(
+    taskId: string,
+    node: WorkflowIrNode,
+    result: WorkflowNodeResult,
+  ): Promise<WorkflowNodeResult> {
+    const patch = extractTaskProjection(result.contextPatch);
+    if (!hasTaskProjection(patch)) return result;
+    const source = { nodeId: node.id, nodeKind: node.kind };
+    try {
+      await this.deps.publishTaskProjection?.(taskId, patch, source);
+    } catch (error) {
+      /*
+       * FNXC:WorkflowCompletion 2026-07-01-16:24:
+       * The advisory completion-summary node persists its text via a `summary`
+       * projection patch. A failed projection write here must NOT become a
+       * `projection-error` graph failure: that node has no failure edge, so it
+       * would terminate the graph and `routeGraphFailureToExecutionResume` would
+       * bounce the in-review task back to todo forever (issue #1863 v0.52.0
+       * triage loop). Keep the node's success outcome — `ensureWorkflowCompletionSummary`
+       * still backfills `task.summary` deterministically at the review/done boundary.
+       */
+      if (isCompletionSummaryNode(node)) {
+        return {
+          ...result,
+          contextPatch: {
+            ...(result.contextPatch ?? {}),
+            [`node:${node.id}:projectionError`]: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      return {
+        outcome: "failure",
+        value: "projection-error",
+        contextPatch: {
+          ...(result.contextPatch ?? {}),
+          [`node:${node.id}:projectionError`]: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    if (patch.modifiedFiles && patch.modifiedFiles.length > 0) {
+      try {
+        await this.deps.publishTouchedFiles?.(taskId, patch.modifiedFiles, source);
+      } catch {
+        // Deprecated compatibility hook; primary projection persistence owns node outcome.
+      }
+    }
+    return result;
+  }
+}
+
+function recoverPassedPlanReviewFromLatestLog(task: TaskDetail): WorkflowStepResult | undefined {
+  /*
+   * FNXC:WorkflowLifecycle 2026-06-29-03:55:
+   * FN-7228 exposed persisted tasks where Plan Review completed successfully but
+   * later cleanup erased `workflowStepResults`, leaving the dashboard with an
+   * enabled Plan Review step and no status. Trust only the latest Plan Review
+   * terminal log: completed repairs the missing projection; failed still blocks
+   * and reruns/replans through the normal path.
+   */
+  let latest: { status: "passed" | "failed"; timestamp?: string; outcome?: string } | undefined;
+  for (const entry of task.log ?? []) {
+    if (entry.action === "[pre-merge] Workflow step completed: Plan Review") {
+      latest = { status: "passed", timestamp: entry.timestamp, outcome: entry.outcome };
+    } else if (entry.action === "[pre-merge] Workflow step failed: Plan Review") {
+      latest = { status: "failed", timestamp: entry.timestamp, outcome: entry.outcome };
+    }
+  }
+  if (latest?.status !== "passed") return undefined;
+  return {
+    workflowStepId: PLAN_REVIEW_GROUP_ID,
+    workflowStepName: "Plan Review",
+    phase: "pre-merge",
+    status: "passed",
+    verdict: "APPROVE",
+    ...(latest.outcome ? { notes: latest.outcome } : {}),
+    startedAt: latest.timestamp,
+    completedAt: latest.timestamp,
+  };
+}

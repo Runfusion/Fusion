@@ -1,0 +1,15 @@
+.graph-node--draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.graph-node--dragging {
+  z-index: 3;
+  cursor: grabbing;
+  box-shadow: var(--shadow-lg);
+  transform: scale(1.02);
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    z-index var(--transition-fast);
+}

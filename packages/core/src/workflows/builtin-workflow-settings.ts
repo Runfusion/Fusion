@@ -1,0 +1,818 @@
+import { THINKING_LEVELS, type Settings } from "../types.js";
+
+/*
+FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+Single source for the planning-turn ceiling, mirroring DEFAULT_MAX_POST_REVIEW_FIXES: the declaration
+default and the engine's `settings.planningTimeoutMs ?? N` read site must not drift into two separate
+literals. 90 minutes is deliberately generous — successful planning work items measured over 7 days
+ran p50 12.7 / p90 39.5 / p99 105.7 minutes, so a tighter bound would abort legitimate plans and pay
+for the restart, which is the churn this bound exists to remove.
+*/
+export const DEFAULT_PLANNING_TIMEOUT_MS = 5_400_000;
+
+/*
+FNXC:PlanReviewReplan 2026-08-10-18:32:
+Built-in ceiling for consecutive Plan Review REVISE -> replan cycles when the resolved revision budget
+is unbounded, used when the `planReviewReplanCap` workflow value is unset.
+
+15 preserves the ceiling that was ACTUALLY in force before this constant existed. That backstop was
+`PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT` — a bound on how much reviewer PROSE is replayed into the next
+planning prompt, whose own comment states it is "bounded independently of persistence and retry
+accounting". Two unrelated concerns were sharing one number, so trimming the prompt history would have
+silently tightened a safety ceiling. Splitting them is the point; the value is held at 15 so the split
+is a pure re-wiring rather than a silent behavior change. Operators can now lower it, which is what the
+`planReviewReplanCap` setting always claimed to do but never did — nothing read it.
+*/
+export const DEFAULT_PLAN_REVIEW_REPLAN_CAP = 15;
+import {
+  DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+  DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+} from "./review-severity-gate.js";
+import type { WorkflowSettingDefinition } from "./workflow-ir-types.js";
+
+/**
+ * Built-in workflow settings catalog.
+ *
+ * `BUILTIN_MOVED_WORKFLOW_SETTINGS` is the U4 moved-key catalog: keys that
+ * formerly lived in `DEFAULT_PROJECT_SETTINGS` and are tombstoned by
+ * `MOVED_SETTINGS_KEYS`. Defaults should stay aligned with engine fallback
+ * literals; intentional product-default changes must update both together.
+ *
+ * `BUILTIN_TRIAGE_POLICY_SETTINGS` is workflow-native triage/spec policy. These
+ * keys never lived in `DEFAULT_PROJECT_SETTINGS`, are NOT part of the U4
+ * hard-move migration, must never be added to `MOVED_SETTINGS_KEYS`, and must
+ * not appear in project/global settings schemas. Canonical values are inherited
+ * from the post-FN-6232 planning prompt: subtask step threshold `7` (not the
+ * older engine copy) and packages/modules threshold `3`. Fast-mode policy is
+ * workflow-native here too: `leanPlanning` selects the lean planning variant,
+ * and `autoApproveSpec` skips the independent spec reviewer.
+ *
+ * `BUILTIN_REVIEW_REVISION_SETTINGS` is workflow-native review-loop policy.
+ * These keys also never lived in project/global settings and intentionally omit
+ * declaration defaults: an unset workflow value means unbounded remediation.
+ *
+ * `BUILTIN_OVERSIGHT_SETTINGS` is workflow-native planner oversight policy.
+ * These keys never lived in project/global settings and must never be added to
+ * `MOVED_SETTINGS_KEYS`.
+ */
+
+/**
+ * The moved-key catalog declared as workflow settings (U1, R4).
+ *
+ * Single source of truth, imported by both built-in workflow IR files
+ * (`builtin-coding-workflow-ir.ts`, `builtin-stepwise-coding-workflow-ir.ts`) so
+ * the catalog has exactly one definition.
+ *
+ * Each `default` here must stay aligned with the corresponding engine read-site
+ * fallback literal so projects without stored workflow values execute with the
+ * same policy the Workflow Editor displays. Keys with `undefined` legacy
+ * defaults (the per-phase model lanes) omit `default` entirely, which
+ * round-trips to the same effective value.
+ *
+ * NOTE: these declarations are inert in U1 — nothing reads them until the
+ * effective-settings resolver and engine integration land (U3). Adding them does
+ * not change any built-in workflow's behavior.
+ *
+ * Keys deliberately NOT in this catalog (per KTD-4 / the catalog-shrink rule):
+ *   - `completionDocumentationMode` — read outside per-task scope (triage), stays
+ *     in project settings.
+ *   - merge-cluster keys + `maxConcurrent` — owned by the columns/traits track.
+ */
+export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
+  // ── Step execution ─────────────────────────────────────────────────────
+  {
+    id: "workflowStepTimeoutMs",
+    name: "Step timeout (ms)",
+    type: "number",
+    /*
+     * FNXC:WorkflowReview 2026-07-01-08:09:
+     * Code Review steps can exceed the old six-minute default on ordinary dashboard changes. Use a fifteen-minute workflow-step default so every project without an override gets enough reviewer time while keeping runaway sessions bounded.
+     */
+    default: 900_000,
+    description: "Maximum time a single workflow step may run before it is timed out.",
+  },
+  {
+    id: "workflowStepScopeEnforcement",
+    name: "Step scope enforcement",
+    type: "enum",
+    default: "block",
+    options: [
+      { value: "block", label: "Block" },
+      { value: "warn", label: "Warn" },
+      { value: "off", label: "Off" },
+    ],
+    description: "How to handle a step that writes outside its declared file scope.",
+  },
+  {
+    id: "planOnlyScopeLeakEnforcement",
+    name: "Plan-only scope leak enforcement",
+    type: "enum",
+    default: "warn",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "warn", label: "Warn" },
+      { value: "block", label: "Block" },
+    ],
+    description: "How to handle code changes during a plan-only step.",
+  },
+  {
+    id: "workflowRevisionForkOnScopeMismatch",
+    name: "Fork workflow revision on scope mismatch",
+    type: "boolean",
+    default: true,
+    description: "Fork a new workflow revision when a step's actual scope diverges from its plan.",
+  },
+  {
+    id: "strictScopeEnforcement",
+    name: "Strict scope enforcement",
+    type: "boolean",
+    default: false,
+    description: "Enforce declared step scope strictly, rejecting any out-of-scope change.",
+  },
+  {
+    id: "runStepsInNewSessions",
+    name: "Run steps in new sessions",
+    type: "boolean",
+    default: false,
+    description: "Run each workflow step in its own agent session instead of a shared one.",
+  },
+  {
+    id: "maxParallelSteps",
+    name: "Max parallel steps",
+    type: "number",
+    default: 2,
+    description: "Maximum number of steps to run in parallel when running steps in new sessions.",
+  },
+  {
+    id: "buildRetryCount",
+    name: "Build retry count",
+    type: "number",
+    default: 0,
+    description: "Number of times to retry a failing build before giving up.",
+  },
+  // NOTE (U4 catalog-shrink): `buildTimeoutMs` was REMOVED from this catalog —
+  // it has NO reader anywhere in the engine, so per the per-task-reader rule
+  // (KTD-5) it stays a plain project setting and is NOT moved to workflow
+  // settings. It is therefore absent from `MOVED_SETTINGS_KEYS` and remains in
+  // `DEFAULT_PROJECT_SETTINGS`.
+  {
+    id: "verificationFixRetries",
+    name: "Verification fix retries",
+    type: "number",
+    default: 3,
+    description: "Number of automatic fix attempts after a failed verification.",
+  },
+  {
+    id: "maxPostReviewFixes",
+    name: "Max post-review fixes",
+    type: "number",
+    /*
+     * FNXC:WorkflowOptionalStepCycle 2026-06-29-17:55:
+     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Most built-in Code Review groups set `maxRevisions: "unbounded"`; Compound Engineering authors a two-pass cap so persistent CE reviewer findings park instead of rebounding forever.
+     *
+     * FNXC:WorkflowOptionalStepCycle 2026-07-26-19:35:
+     * Raised 3 -> 10 (operator request). Three passes is below the observed convergence length for
+     * Browser Verification and custom gates — the gates this fallback actually governs, since
+     * Plan Review and most Code Review groups resolve to "unbounded" when unset. Compound
+     * Engineering instead resolves its authored two-pass Code Review cap. Exhausting a budget parks
+     * the card for a human, so a too-low cap converts "needs another pass" into operator toil.
+     * This is a fallback, not a ceiling: an explicit workflow value or node `maxRevisions` still wins.
+     */
+    default: 10,
+    description: "Maximum automatic fix passes after review/optional-step feedback; the step re-runs each pass until it passes or this budget is exhausted.",
+  },
+
+  // ── Review / approval ──────────────────────────────────────────────────
+  {
+    id: "requirePrApproval",
+    name: "Require PR approval",
+    type: "boolean",
+    default: false,
+    description: "Require explicit approval before a pull request can be merged.",
+  },
+  {
+    id: "requirePlanApproval",
+    name: "Require plan approval",
+    type: "boolean",
+    default: false,
+    description: "Require explicit approval of the plan before execution begins.",
+  },
+  {
+    id: "reviewHandoffPolicy",
+    name: "Review handoff policy",
+    type: "enum",
+    default: "disabled",
+    options: [
+      { value: "disabled", label: "Disabled" },
+      { value: "comment-triggered", label: "Comment-triggered" },
+      { value: "always", label: "Always" },
+    ],
+    description: "When to hand off a task to a human reviewer.",
+  },
+  {
+    id: "maxReviewerContextRetries",
+    name: "Max reviewer context retries",
+    type: "number",
+    default: 2,
+    description: "Maximum reviewer retries due to insufficient context before falling back.",
+  },
+  {
+    id: "maxReviewerFallbackRetries",
+    name: "Max reviewer fallback retries",
+    type: "number",
+    default: 2,
+    description: "Maximum reviewer retries on the fallback model before failing.",
+  },
+  {
+    id: "reflectionEnabled",
+    name: "Reflection enabled",
+    type: "boolean",
+    default: false,
+    description: "Enable periodic reflection passes over completed work.",
+  },
+  // NOTE (U3 catalog-shrink, item 5): `reflectionIntervalMs` and
+  // `reflectionAfterTask` were REMOVED from this catalog — neither has any engine
+  // read site (verified by grep across packages/engine/src), so per the plan's
+  // catalog-shrink rule they stay plain project settings and are NOT moved to
+  // workflow settings. `reflectionEnabled` is kept because executor.ts reads it
+  // (gate for reflection tools).
+
+  /*
+   * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+   * Workflow lanes persist optional credential-instance ids beside their provider/model pairs.
+   * Values are validated at write time and remain inert until runtime credential resolution.
+   */
+  // ── Per-phase model lanes ──────────────────────────────────────────────
+  // Legacy defaults are all `undefined`; `default` is omitted so resolution
+  // falls through to the global lane / project default (KTD-7).
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Workflow-declared primary model lanes may pin a thinking effort per (workflow, project). Empty values inherit through the lane/global/default chain, enum options are validated against THINKING_LEVELS.
+   *
+   * FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
+   * FN-7793: planning/validator fallback lanes now get their own companion thinking-level settings (`planningFallbackThinkingLevel`/`validatorFallbackThinkingLevel`, declared below), matching the global `fallbackThinkingLevel` and project `titleSummarizerFallbackThinkingLevel` keys — fallback lanes no longer merely reuse their primary lane's thinking level.
+   */
+  {
+    id: "executionProvider",
+    name: "Execution provider",
+    type: "string",
+    description: "Provider for the execution phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "executionCredentialInstanceId",
+    name: "Execution credential instance",
+    type: "string",
+    description: "Optional credential instance for the execution model pair.",
+  },
+  {
+    id: "executionModelId",
+    name: "Execution model",
+    type: "string",
+    description: "Model id for the execution phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "executionThinkingLevel",
+    name: "Execution thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the execution phase. Empty inherits from the task or default thinking level.",
+  },
+  /*
+   * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+   * FN-8098 makes executor recovery workflow-configurable; unset values deliberately
+   * inherit the shared fallback pair so existing configurations continue to work.
+   */
+  {
+    id: "executionFallbackProvider",
+    name: "Executor fallback provider",
+    type: "string",
+    description: "Fallback provider for the execution phase.",
+  },
+  {
+    id: "executionFallbackCredentialInstanceId",
+    name: "Execution fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the execution fallback model pair.",
+  },
+  {
+    id: "executionFallbackModelId",
+    name: "Executor fallback model",
+    type: "string",
+    description: "Fallback model id for the execution phase.",
+  },
+  {
+    id: "executionFallbackThinkingLevel",
+    name: "Executor fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the executor fallback model. Empty inherits from shared fallback or executor thinking.",
+  },
+  {
+    id: "planningProvider",
+    name: "Planning provider",
+    type: "string",
+    description: "Provider for the planning phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "planningCredentialInstanceId",
+    name: "Planning credential instance",
+    type: "string",
+    description: "Optional credential instance for the planning model pair.",
+  },
+  {
+    id: "planningModelId",
+    name: "Planning model",
+    type: "string",
+    description: "Model id for the planning phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "planningThinkingLevel",
+    name: "Planning thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the planning phase. Empty inherits from the task or default thinking level.",
+  },
+  {
+    id: "planningFallbackProvider",
+    name: "Planning fallback provider",
+    type: "string",
+    description: "Fallback provider for the planning phase.",
+  },
+  {
+    id: "planningFallbackCredentialInstanceId",
+    name: "Planning fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the planning fallback model pair.",
+  },
+  {
+    id: "planningFallbackModelId",
+    name: "Planning fallback model",
+    type: "string",
+    description: "Fallback model id for the planning phase.",
+  },
+  {
+    /*
+     * FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
+     * Planning and validator fallback thinking levels are workflow-declared companions to their fallback provider/model lanes, persisted per (workflow, project). Empty means inherit; FN-7793 only declares the storage surface.
+     */
+    id: "planningFallbackThinkingLevel",
+    name: "Planning fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the planning fallback model. Empty inherits from the task or default thinking level.",
+  },
+  {
+    id: "validatorProvider",
+    name: "Validator provider",
+    type: "string",
+    description: "Provider for the validation phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "validatorCredentialInstanceId",
+    name: "Validator credential instance",
+    type: "string",
+    description: "Optional credential instance for the validator model pair.",
+  },
+  {
+    id: "validatorModelId",
+    name: "Validator model",
+    type: "string",
+    description: "Model id for the validation phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "validatorThinkingLevel",
+    name: "Validator thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the validation/review phase. Empty inherits from the task or default thinking level.",
+  },
+  {
+    id: "validatorFallbackProvider",
+    name: "Validator fallback provider",
+    type: "string",
+    description: "Fallback provider for the validation phase.",
+  },
+  {
+    id: "validatorFallbackCredentialInstanceId",
+    name: "Validator fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the validator fallback model pair.",
+  },
+  {
+    id: "validatorFallbackModelId",
+    name: "Validator fallback model",
+    type: "string",
+    description: "Fallback model id for the validation phase.",
+  },
+  {
+    id: "validatorFallbackThinkingLevel",
+    name: "Validator fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the validator fallback model. Empty inherits from the task or default thinking level.",
+  },
+];
+
+export const BUILTIN_TRIAGE_POLICY_SETTINGS: WorkflowSettingDefinition[] = [
+  {
+    id: "triageSizeSmallMaxHours",
+    name: "Triage size S max hours",
+    type: "number",
+    default: 2,
+    description: "Upper hour boundary for Size S triage guidance (S is below this value).",
+  },
+  {
+    id: "triageSizeMediumMaxHours",
+    name: "Triage size M max hours",
+    type: "number",
+    default: 4,
+    description: "Upper hour boundary for Size M triage guidance.",
+  },
+  {
+    id: "triageSizeLargeMaxHours",
+    name: "Triage size L max hours",
+    type: "number",
+    default: 8,
+    description: "Upper hour boundary for Size L triage guidance; larger work should split as XL.",
+  },
+  {
+    id: "triageNoCommitsDecisionVerbs",
+    name: "Triage no-commits decision verbs",
+    type: "multi-enum",
+    default: ["Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", "Investigate and report"],
+    options: [
+      { value: "Decide", label: "Decide" },
+      { value: "Evaluate", label: "Evaluate" },
+      { value: "Verify", label: "Verify" },
+      { value: "Confirm", label: "Confirm" },
+      { value: "Audit", label: "Audit" },
+      { value: "Review whether", label: "Review whether" },
+      { value: "Investigate and report", label: "Investigate and report" },
+    ],
+    description: "Decision-only title/mission verbs used when deciding whether a task expects no commits.",
+  },
+  {
+    id: "triageDecisionOnlyWorkflowId",
+    name: "Triage decision-only workflow",
+    type: "string",
+    default: "builtin:quick-fix",
+    description: "Preferred built-in or custom workflow id for decision-only or investigation tasks that expect no code changes.",
+  },
+  {
+    id: "triageDefaultWorkflowId",
+    name: "Triage default workflow",
+    type: "string",
+    default: "",
+    description:
+      "Optional built-in or custom workflow id override for triage. Empty inherits config.settings.defaultWorkflowId.",
+  },
+  {
+    id: "leanPlanning",
+    name: "Lean planning",
+    type: "boolean",
+    default: false,
+    description: "Use the lean fast-path planning prompt variant instead of the full triage spec prompt.",
+  },
+  {
+    id: "autoApproveSpec",
+    name: "Auto-approve spec",
+    type: "boolean",
+    default: false,
+    description: "Auto-approve the generated PROMPT.md and skip the independent spec reviewer.",
+  },
+  {
+    id: "planningTimeoutMs",
+    name: "Planning timeout (ms)",
+    type: "number",
+    minimum: 60_000,
+    integer: true,
+    /*
+     * FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+     * Workflow-native triage policy — it never lived in project/global settings, so it belongs here
+     * and must never be added to MOVED_SETTINGS_KEYS. The planning turn previously had NO
+     * Fusion-side ceiling: `workflowStepTimeoutMs` covers pre-merge workflow STEPS only, and the
+     * provider SDK's 300s cap is time-to-first-byte (cleared once headers arrive), so a hung stream
+     * ran unbounded — observed at 126 minutes, with failed-attempt durations showing a smooth
+     * 1-126 min spread and no clustering, the signature of nothing enforcing a bound.
+     */
+    default: DEFAULT_PLANNING_TIMEOUT_MS,
+    description:
+      "Maximum time a single planning/specification turn may run before the session is aborted. A timeout consumes one attempt of the bounded planning retry budget. Generous by design — it bounds hung turns, not slow ones.",
+  },
+];
+
+export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
+  {
+    id: "reviewerInlineFixes",
+    name: "Reviewer inline fixes",
+    type: "boolean",
+    default: true,
+    /*
+     * FNXC:WorkflowReviewers 2026-07-01-12:33:
+     * Default Coding reviewers should fix issues in the same review session when possible instead of always returning REVISE and bouncing the task back through executor remediation. Operators can turn this off per workflow to restore the old review-only behavior.
+     */
+    description:
+      "Allow review-type workflow nodes to fix issues in their own reviewer session before returning a final verdict. Turn off to route findings back to executor remediation.",
+  },
+  {
+    id: "planReviewMaxRevisions",
+    name: "Plan Review revision cap",
+    type: "number",
+    minimum: 0,
+    integer: true,
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
+     * Built-in Plan Review/spec remediation is unbounded when this workflow value is unset. Operators can store a non-negative integer per workflow to cap automatic replans, and `0` disables automatic Plan Review revision entirely without duplicating a read-only built-in workflow.
+     */
+    description:
+      "Maximum automatic Plan Review/spec revision attempts for this workflow. Leave unset for unbounded; set 0 to disable automatic revision.",
+  },
+  {
+    id: "codeReviewMaxRevisions",
+    name: "Code Review revision cap",
+    type: "number",
+    minimum: 0,
+    integer: true,
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
+     * An unset workflow value defers to the authored Code Review node: Compound Engineering defaults to two remediation passes while other built-ins may remain unbounded. Operators can store a non-negative integer per workflow to override the authored cap, and `0` disables automatic Code Review remediation for that workflow.
+     */
+    description:
+      "Maximum automatic Code Review remediation attempts for this workflow. Leave unset to use the workflow's authored default; set 0 to disable automatic revision.",
+  },
+  /*
+   * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+   * The blocking threshold shapes review churn at its source; the revision caps above only truncate a
+   * loop once it is already running. Exposed per workflow so an operator can restore the pre-gate
+   * behavior ("any") for a high-assurance workflow without editing a read-only built-in.
+   */
+  {
+    id: "planReviewBlockingSeverity",
+    name: "Plan Review blocking severity",
+    type: "enum",
+    options: [
+      { value: "critical", label: "P0 only (critical)" },
+      { value: "high", label: "P0 + P1 (high and above)" },
+      { value: "medium", label: "P0 + P1 + P2 medium" },
+      { value: "low", label: "Any classified finding" },
+      { value: "any", label: "Every REVISE blocks" },
+    ],
+    default: DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+    description:
+      "Minimum finding severity that lets Plan Review block execution. A REVISE carrying no finding at or above this level is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer. Choose \"any\" to block on every REVISE.",
+  },
+  {
+    id: "codeReviewBlockingSeverity",
+    name: "Code Review blocking severity",
+    type: "enum",
+    options: [
+      { value: "critical", label: "P0 only (critical)" },
+      { value: "high", label: "P0 + P1 (high and above)" },
+      { value: "medium", label: "P0 + P1 + P2 medium" },
+      { value: "low", label: "Any classified finding" },
+      { value: "any", label: "Every REVISE blocks" },
+    ],
+    default: DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+    description:
+      "Minimum finding severity that lets Code Review block merge. A REVISE carrying no finding at or above this level is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer. Choose \"any\" to block on every REVISE.",
+  },
+  /*
+   * FNXC:ReviewConvergence 2026-08-22-05:42:
+   * FN-149 keeps recovery targets workflow-native so operators choose the cost and
+   * capability of automatic review convergence without widening project policy.
+   */
+  {
+    id: "reviewConvergenceEscalationEnabled",
+    name: "Review convergence escalation",
+    type: "boolean",
+    default: true,
+    description: "Run one bounded alternate-model or replan recovery when a review repeats unchanged input.",
+  },
+  {
+    id: "reviewConvergenceEscalationProvider",
+    name: "Review convergence escalation provider",
+    type: "string",
+    description: "Provider for the optional alternate-model review remediation target.",
+  },
+  {
+    id: "reviewConvergenceEscalationModelId",
+    name: "Review convergence escalation model",
+    type: "string",
+    description: "Model for the optional alternate-model review remediation target.",
+  },
+  {
+    id: "reviewArbitrationEnabled",
+    name: "Review arbitration",
+    type: "boolean",
+    default: true,
+    description: "Enable bounded third-model arbitration after a review disagreement persists.",
+  },
+  {
+    id: "reviewArbitrationProvider",
+    name: "Review arbitration provider",
+    type: "string",
+    description: "Provider for the optional review arbitration target.",
+  },
+  {
+    id: "reviewArbitrationModelId",
+    name: "Review arbitration model",
+    type: "string",
+    description: "Model for the optional review arbitration target.",
+  },
+  {
+    id: "planReviewReplanCap",
+    name: "Plan Review replan cap",
+    type: "number",
+    minimum: 0,
+    integer: true,
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-07-15-12:00:
+     * FN-7985 makes the triage Plan Review replan ceiling operator-configurable per workflow.
+     * The write boundary rejects fractional and negative values so operators never save a
+     * value triage would discard. Leave this declaration without a default so an unset value falls back to
+     * PLAN_REVIEW_GATE_REPLAN_CAP; that preserves the source default while allowing its
+     * coordinated value to change without baking a second default into workflow settings.
+     */
+    description:
+      "Maximum automatic plan → REVISE → replan iterations before manual approval. Leave unset to use the built-in default; set 0 to require approval after the first REVISE.",
+  },
+];
+
+/**
+ * FNXC:PlannerOversight 2026-07-04-00:00:
+ * Workflows declare a default planner oversight level before per-task override and engine reader support land in FN-7509/FN-7510. The workflow-native enum stays out of project settings and `MOVED_SETTINGS_KEYS`; its schema default is `autonomous` so built-in workflows preserve full steering/control until operators choose Off, Observe, or Steer.
+ *
+ * FNXC:PlannerOversight 2026-07-04-12:00:
+ * FN-7518 adds `plannerOversightNotificationLevel`, a sibling workflow-native enum letting operators configure how noisy planner-overseer notifications are: Silent suppresses all, Errors only notifies on failures/escalations, Important (the default) notifies on interventions/recovery actions plus errors, and All notifies on every observation. Default is `important` (not `all`) to avoid noisy-by-default behavior. This setting stays workflow-native (out of project/global settings schemas and `MOVED_SETTINGS_KEYS`) and resolves through the generic `resolveEffectiveSettings` default path with no special-casing. This task only declares the setting — the emission gating that reads it lands downstream in FN-7519 (intervention timeline) and FN-7520 (run-audit/activity events).
+ */
+/**
+ * FNXC:PlannerOversight 2026-07-09-00:00:
+ * FN-7743 requirement: an ordinary in-progress task (FN-7732) sat stuck for hours
+ * with no recovery action because the executor-stage overseer observation had no
+ * staleness detection — it always reported `signal: "progressing"` regardless of
+ * inactivity. `plannerOverseerExecutorStuckAfterMs` is the configurable inactivity
+ * threshold: once a non-paused in-progress task's last execution activity
+ * (`columnMovedAt ?? updatedAt`) is older than this, the executor stage reports
+ * `signal: "stuck"` instead, which already flows through `decidePlannerRecovery`
+ * into bounded `inject_guidance` recovery. Default 2 hours (7,200,000ms): long
+ * enough that a healthy, actively-working step (the vast majority of which finish
+ * well under 2h) is never nagged, short enough to actually recover a task that has
+ * gone dark for "hours" (the FN-7732 symptom).
+ */
+/*
+FNXC:WorkflowOptionalStepCycle 2026-07-26-19:38:
+Single source for the post-review fix fallback. The `maxPostReviewFixes` declaration default above and
+the engine's inline `settings.maxPostReviewFixes ?? N` call sites had drifted apart as two separate
+literal 3s, so raising the declaration alone would have left every unset-settings path on the old
+value. Import this rather than re-inlining a number.
+*/
+export const DEFAULT_MAX_POST_REVIEW_FIXES = 10;
+
+export const DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS = 2 * 60 * 60 * 1000;
+
+export const PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID = "plannerHeartbeatPatrolEnabled";
+/*
+FNXC:MemoryAgent 2026-08-11-09:41:
+Memory consolidation resolves through the default workflow on a no-task heartbeat, so this is
+workflow-native like patrol rather than a ProjectSettings key. knowledgeGraphDir deliberately stays
+project-scoped because FN-8921 owns the artifact location.
+*/
+export const MEMORY_CONSOLIDATION_ENABLED_SETTING_ID = "memoryConsolidationEnabled";
+
+export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
+  {
+    id: MEMORY_CONSOLIDATION_ENABLED_SETTING_ID,
+    name: "Memory consolidation enabled",
+    type: "boolean",
+    default: true,
+    description: "Enable the memory agent's deterministic knowledge-graph and recall consolidation tick. Disabling stops consolidation without deleting the agent or stored memory.",
+  },
+  {
+    id: "plannerOversightLevel",
+    name: "Planner oversight level",
+    type: "enum",
+    default: "autonomous",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "observe", label: "Observe" },
+      { value: "steer", label: "Steer" },
+      { value: "autonomous", label: "Autonomous recovery" },
+    ],
+    description:
+      "Workflow planner oversight mode: Off disables oversight; Observe watches only; Steer injects guidance or suggests revisions; Autonomous recovery enables bounded retry and targeted-fix recovery.",
+  },
+  {
+    id: "plannerOversightNotificationLevel",
+    name: "Planner oversight notification level",
+    type: "enum",
+    default: "important",
+    options: [
+      { value: "silent", label: "Silent" },
+      { value: "errors", label: "Errors only" },
+      { value: "important", label: "Important" },
+      { value: "all", label: "All" },
+    ],
+    description:
+      "Planner overseer notification verbosity: Silent suppresses overseer notifications; Errors only notifies on failures/escalations; Important notifies on interventions/recovery actions and errors; All notifies on every observation. Notification-emission gating that reads this value is follow-up work (FN-7519/FN-7520).",
+  },
+  {
+    id: "plannerOverseerExecutorStuckAfterMs",
+    name: "Executor stall threshold (ms)",
+    type: "number",
+    default: DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS,
+    description:
+      "Milliseconds of executor-stage inactivity (no progress since the task's last column move/update) before the planner overseer reports the in-progress task as stuck, triggering bounded autonomous recovery (Autonomous level only). Default 7200000 (2 hours). Set higher to avoid nagging long-running steps; set lower to recover hung executors faster.",
+  },
+  /*
+  FNXC:PlannerOversight 2026-07-14-12:00:
+  Session-advisor (OMP parity) is OFF by default. Operators must flip
+  `plannerOverseerAdvisorEnabled` and set both provider + model id before any
+  second-model transcript review runs — even when plannerOversightLevel is
+  autonomous. Lifecycle supervisor (stall/retry/confirm) is unaffected.
+
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor model gate. Both provider + model id must be set for live
+  transcript advising when the feature is enabled.
+  */
+  {
+    id: "plannerOverseerAdvisorEnabled",
+    name: "Session advisor (LLM)",
+    type: "boolean",
+    default: false,
+    description:
+      "Workflow-level enable for the planner overseer session advisor (live LLM transcript review). Prefer project Settings → General → Session advisor (and per-task / Quick Add eye toggle) for day-to-day control; this workflow flag still enables when the project default is off (backward compatible). When enabled, also set Session advisor model provider and model id. Does not change lifecycle stage watching, stall recovery, or merge confirmation.",
+  },
+  {
+    id: "plannerOverseerAdvisorProvider",
+    name: "Session advisor model provider",
+    type: "string",
+    default: "",
+    description:
+      "Provider id for the planner overseer session advisor (live transcript review). Used only when Session advisor (LLM) is enabled. Must be set together with Session advisor model id.",
+  },
+  {
+    id: "plannerOverseerAdvisorModelId",
+    name: "Session advisor model id",
+    type: "string",
+    default: "",
+    description:
+      "Model id for the planner overseer session advisor. Used only when Session advisor (LLM) is enabled. Must be set together with Session advisor model provider.",
+  },
+  /*
+   * FNXC:HeartbeatPatrol 2026-07-14-23:35:
+   * Idle no-task heartbeat patrol creates net-new work while plannerOversightLevel recovers tasks already in flight. Keep patrol as its own workflow setting so operators can reduce autonomous task creation volume without disabling stuck-task observation, steering, or recovery.
+   */
+  {
+    id: PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID,
+    name: "Planner heartbeat patrol enabled",
+    type: "boolean",
+    default: true,
+    description:
+      "Enable idle/no-task heartbeat proactive patrol guidance that encourages agents to create or delegate new follow-up tasks. Disable to keep idle agents to assigned work, direct messages, explicit operator requests, and safe read-only/logging coordination without disabling planner overseer stuck-task recovery.",
+  },
+];
+
+export const BUILTIN_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
+  ...BUILTIN_MOVED_WORKFLOW_SETTINGS,
+  ...BUILTIN_TRIAGE_POLICY_SETTINGS,
+  ...BUILTIN_REVIEW_REVISION_SETTINGS,
+  ...BUILTIN_OVERSIGHT_SETTINGS,
+];
+
+const TRIAGE_POLICY_DEFAULTS = new Map(
+  BUILTIN_TRIAGE_POLICY_SETTINGS.map((setting) => [setting.id, setting.default]),
+);
+
+function formatTriagePolicyValue(id: string, value: unknown, settings: Partial<Settings>): string {
+  /*
+   * FNXC:WorkflowRouting 2026-07-15-00:00:
+   * The triage prompt must name the operator's project default workflow when no
+   * per-workflow override is configured. This keeps planning guidance aligned
+   * with config.settings.defaultWorkflowId and accepts custom workflow IDs.
+   */
+  if (id === "triageDefaultWorkflowId") {
+    const explicitValue = typeof value === "string" ? value.trim() : "";
+    if (explicitValue && explicitValue !== "builtin:coding") return explicitValue;
+    const projectDefault = typeof settings.defaultWorkflowId === "string" ? settings.defaultWorkflowId.trim() : "";
+    return projectDefault || "builtin:coding";
+  }
+  if (id === "triageNoCommitsDecisionVerbs") {
+    const verbs = Array.isArray(value) ? value : TRIAGE_POLICY_DEFAULTS.get(id);
+    return (Array.isArray(verbs) ? verbs : []).map((verb) => String(verb)).join(", ");
+  }
+  return String(value ?? TRIAGE_POLICY_DEFAULTS.get(id) ?? "");
+}
+
+export function renderTriagePolicyPlaceholders(prompt: string, settings: Partial<Settings>): string {
+  let rendered = prompt;
+  const values = settings as Record<string, unknown>;
+  for (const setting of BUILTIN_TRIAGE_POLICY_SETTINGS) {
+    const token = new RegExp(`\\{\\{${setting.id}\\}\\}`, "g");
+    rendered = rendered.replace(token, formatTriagePolicyValue(setting.id, values[setting.id] ?? setting.default, settings));
+  }
+  const leftover = rendered.match(/\{\{[^}]+\}\}/);
+  if (leftover) {
+    throw new Error(`Unresolved triage policy placeholder: ${leftover[0]}`);
+  }
+  return rendered;
+}

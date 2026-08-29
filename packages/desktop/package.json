@@ -1,0 +1,63 @@
+{
+  "name": "@fusion/desktop",
+  "productName": "Fusion",
+  "version": "0.77.0-beta.8",
+  "license": "MIT",
+  "author": {
+    "name": "Runfusion",
+    "email": "support@runfusion.ai"
+  },
+  "description": "Fusion desktop: Electron wrapper around the Fusion dashboard for macOS, Windows, and Linux.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/desktop"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
+  "private": true,
+  "type": "module",
+  "main": "dist/main-bootstrap.cjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "dev": "tsx scripts/dev.ts",
+    "build": "tsx scripts/build.ts",
+    "test": "tsx scripts/test.ts",
+    "typecheck": "tsc --noEmit",
+    "generate:icons": "tsx scripts/generate-icons.ts",
+    "pack": "electron-builder --projectDir deploy --dir",
+    "dist": "electron-builder --projectDir deploy",
+    "dist:win": "electron-builder --projectDir deploy --win",
+    "dist:mac": "electron-builder --projectDir deploy --mac",
+    "dist:linux": "electron-builder --projectDir deploy --linux"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/dashboard": "workspace:*",
+    "@fusion/engine": "workspace:*",
+    "electron-updater": "^6.6.0",
+    "ms": "^2.1.3"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "electron": "^35.0.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
+    "jsdom": "^29.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sharp": "^0.35.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.10"
+  }
+}

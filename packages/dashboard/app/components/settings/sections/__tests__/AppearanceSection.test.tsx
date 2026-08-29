@@ -1,0 +1,215 @@
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import type { Settings } from "@fusion/core";
+import { AppearanceSection } from "../AppearanceSection";
+import type { SettingsFormState } from "../context";
+
+vi.mock("../../ThemeSelector", () => ({
+  ThemeSelector: () => <div data-testid="theme-selector" />,
+}));
+
+vi.mock("../../LanguageSelector", () => ({
+  LanguageSelector: () => <div data-testid="language-selector" />,
+}));
+
+function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMessageLayoutChange = vi.fn()) {
+  const onOpenTasksInRightSidebarChange = vi.fn();
+  const onOpenMobileTasksInPopupChange = vi.fn();
+  const onTaskPopupsBoardListOnlyChange = vi.fn();
+  const onShowCostBadgeOnCardsChange = vi.fn();
+  const onTaskDetailChatFirstChange = vi.fn();
+  let form: SettingsFormState = {
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 15000,
+    groupOverlappingFiles: true,
+    autoMerge: true,
+    openTasksInRightSidebar: false,
+    openMobileTasksInPopup: false,
+    taskPopupsBoardListOnly: true,
+    showCostBadgeOnCards: false,
+    taskDetailChatFirst: false,
+    chatMessageLayout: "bubbles",
+    ...formOverrides,
+  } as SettingsFormState;
+  const setForm = vi.fn((updater: SettingsFormState | ((previous: SettingsFormState) => SettingsFormState)) => {
+    form = typeof updater === "function" ? updater(form) : updater;
+  });
+
+  render(
+    <AppearanceSection
+      form={form}
+      setForm={setForm}
+      themeMode="dark"
+      colorTheme="ocean"
+      dashboardFontScalePct={100}
+      chatMessageLayout={form.chatMessageLayout}
+      onChatMessageLayoutChange={onChatMessageLayoutChange}
+      openTasksInRightSidebar={form.openTasksInRightSidebar}
+      onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
+      openMobileTasksInPopup={form.openMobileTasksInPopup}
+      onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
+      taskPopupsBoardListOnly={form.taskPopupsBoardListOnly}
+      onTaskPopupsBoardListOnlyChange={onTaskPopupsBoardListOnlyChange}
+      showCostBadgeOnCards={form.showCostBadgeOnCards}
+      onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
+      taskDetailChatFirst={form.taskDetailChatFirst}
+      onTaskDetailChatFirstChange={onTaskDetailChatFirstChange}
+      sessionBannersHidden={false}
+      setSessionBannersHidden={vi.fn()}
+    />,
+  );
+
+  return {
+    setForm,
+    getForm: () => form,
+    onOpenTasksInRightSidebarChange,
+    onOpenMobileTasksInPopupChange,
+    onTaskPopupsBoardListOnlyChange,
+    onShowCostBadgeOnCardsChange,
+    onTaskDetailChatFirstChange,
+  };
+}
+
+describe("AppearanceSection", () => {
+  it("renders the two-option conversation layout selector and updates full width", () => {
+    const onChatMessageLayoutChange = vi.fn();
+    const { setForm, getForm } = renderAppearanceSection({}, onChatMessageLayoutChange);
+    const selector = screen.getByLabelText("Conversation layout") as HTMLSelectElement;
+    expect(selector.value).toBe("bubbles");
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    fireEvent.change(selector, { target: { value: "full-width" } });
+    expect(onChatMessageLayoutChange).toHaveBeenCalledWith("full-width");
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().chatMessageLayout).toBe("full-width");
+  });
+
+  it("selects a persisted full-width conversation layout", () => {
+    renderAppearanceSection({ chatMessageLayout: "full-width" });
+    expect((screen.getByLabelText("Conversation layout") as HTMLSelectElement).value).toBe("full-width");
+  });
+
+  it("renders and updates the open-tasks-in-right-sidebar checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Open tasks in the right sidebar");
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().openTasksInRightSidebar).toBe(true);
+  });
+
+  it("mirrors every mounted Appearance toggle to its matching live callback", () => {
+    const callbacks = renderAppearanceSection();
+
+    fireEvent.click(screen.getByLabelText("Open tasks in the right sidebar"));
+    fireEvent.click(screen.getByLabelText("Open tasks as popups"));
+    fireEvent.click(screen.getByLabelText("Keep task popups on the view where they were opened"));
+    fireEvent.click(screen.getByLabelText("Show cost badges on task cards"));
+    fireEvent.click(screen.getByLabelText("Open task details with Chat first"));
+
+    expect(callbacks.onOpenTasksInRightSidebarChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onOpenMobileTasksInPopupChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onTaskPopupsBoardListOnlyChange).toHaveBeenCalledWith(false);
+    expect(callbacks.onShowCostBadgeOnCardsChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onTaskDetailChatFirstChange).toHaveBeenCalledWith(true);
+  });
+
+  it("reflects a persisted enabled value", () => {
+    renderAppearanceSection({ openTasksInRightSidebar: true });
+
+    expect(screen.getByLabelText("Open tasks in the right sidebar")).toBeChecked();
+  });
+
+  it("renders and updates the task popup checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Open tasks as popups");
+    expect(checkbox).not.toBeChecked();
+    /*
+    FNXC:MobileTaskPopups 2026-07-15-17:35:
+    Help text must state which click targets route to the popup.
+
+    FNXC:DashboardTests 2026-07-22-18:20:
+    AppearanceSection.tsx t() fallback (and FN-8478) documents board task-card deep-tab chips
+    plus List row/card and right-dock Tasks-list → movable task popup. Assert the live help body.
+    */
+    expect(
+      screen.getByText(
+        /board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row\/card and right-dock Tasks-list clicks, open the existing movable task popup/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Other task opens keep their current behavior/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().openMobileTasksInPopup).toBe(true);
+  });
+
+  it("reflects a persisted enabled task popup value", () => {
+    renderAppearanceSection({ openMobileTasksInPopup: true });
+
+    expect(screen.getByLabelText("Open tasks as popups")).toBeChecked();
+  });
+
+  it("renders and updates the task popup view attachment checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Keep task popups on the view where they were opened");
+    expect(checkbox).toBeChecked();
+    expect(screen.getByText(/appears only on the view where it was opened/)).toBeInTheDocument();
+    expect(screen.getByText(/returning restores it in the same position\. Default: enabled/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().taskPopupsBoardListOnly).toBe(false);
+  });
+
+  it("reflects the default enabled task popup view scoping value", () => {
+    renderAppearanceSection({ taskPopupsBoardListOnly: true });
+
+    expect(screen.getByLabelText("Keep task popups on the view where they were opened")).toBeChecked();
+  });
+
+  it("renders and updates the cost badge checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Show cost badges on task cards");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByText(/board cards show derived model cost next to execution time/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().showCostBadgeOnCards).toBe(true);
+  });
+
+  it("reflects a persisted enabled cost badge value", () => {
+    renderAppearanceSection({ showCostBadgeOnCards: true });
+
+    expect(screen.getByLabelText("Show cost badges on task cards")).toBeChecked();
+  });
+
+  it("renders task detail Chat-first as unchecked by default and updates it", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Open task details with Chat first");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByText(/Off by default: task details list Activity first/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().taskDetailChatFirst).toBe(true);
+  });
+
+  it("reflects a persisted enabled task detail Chat-first value", () => {
+    renderAppearanceSection({ taskDetailChatFirst: true });
+
+    expect(screen.getByLabelText("Open task details with Chat first")).toBeChecked();
+  });
+});

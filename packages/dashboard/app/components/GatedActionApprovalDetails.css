@@ -1,0 +1,50 @@
+.gated-action-approval-details {
+  margin-bottom: var(--space-md);
+  padding: var(--space-md);
+}
+
+.gated-action-approval-details__title {
+  margin: 0 0 var(--space-sm) 0;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.gated-action-approval-details__list {
+  margin: 0;
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.gated-action-approval-details__row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--space-sm);
+}
+
+.gated-action-approval-details__row dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.gated-action-approval-details__row dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.gated-action-approval-details__code {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 768px) {
+  .gated-action-approval-details__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

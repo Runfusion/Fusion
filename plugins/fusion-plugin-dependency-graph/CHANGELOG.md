@@ -1,0 +1,775 @@
+# @fusion-plugin-examples/dependency-graph
+
+## 0.1.67-beta.8
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.8
+- @fusion/plugin-sdk@0.77.0-beta.8
+
+## 0.1.67-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.7
+- @fusion/plugin-sdk@0.77.0-beta.7
+
+## 0.1.67-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.6
+- @fusion/plugin-sdk@0.77.0-beta.6
+
+## 0.1.67-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.5
+- @fusion/plugin-sdk@0.77.0-beta.5
+
+## 0.1.67-beta.4
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.4
+- @fusion/plugin-sdk@0.77.0-beta.4
+
+## 0.1.67-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.3
+- @fusion/plugin-sdk@0.77.0-beta.3
+
+## 0.1.67-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.2
+- @fusion/plugin-sdk@0.77.0-beta.2
+
+## 0.1.67-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.1
+- @fusion/plugin-sdk@0.77.0-beta.1
+
+## 0.1.67-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.0
+- @fusion/plugin-sdk@0.77.0-beta.0
+
+## 0.1.66
+
+### Patch Changes
+
+- @fusion/core@0.76.0
+- @fusion/plugin-sdk@0.76.0
+
+## 0.1.66-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.76.0-beta.3
+- @fusion/plugin-sdk@0.76.0-beta.3
+
+## 0.1.66-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.76.0-beta.2
+- @fusion/plugin-sdk@0.76.0-beta.2
+
+## 0.1.66-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.76.0-beta.1
+- @fusion/plugin-sdk@0.76.0-beta.1
+
+## 0.1.66-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.76.0-beta.0
+- @fusion/plugin-sdk@0.76.0-beta.0
+
+## 0.1.65
+
+### Patch Changes
+
+- @fusion/core@0.75.1
+- @fusion/plugin-sdk@0.75.1
+
+## 0.1.65-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.75.1-beta.2
+- @fusion/plugin-sdk@0.75.1-beta.2
+
+## 0.1.65-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.75.1-beta.1
+- @fusion/plugin-sdk@0.75.1-beta.1
+
+## 0.1.65-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.75.1-beta.0
+- @fusion/plugin-sdk@0.75.1-beta.0
+
+## 0.1.64
+
+### Patch Changes
+
+- @fusion/core@0.75.0
+- @fusion/plugin-sdk@0.75.0
+
+## 0.1.64-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.75.0-beta.2
+- @fusion/plugin-sdk@0.75.0-beta.2
+
+## 0.1.64-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.75.0-beta.1
+- @fusion/plugin-sdk@0.75.0-beta.1
+
+## 0.1.64-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.75.0-beta.0
+- @fusion/plugin-sdk@0.75.0-beta.0
+
+## 0.1.63
+
+### Patch Changes
+
+- @fusion/core@0.74.0
+- @fusion/plugin-sdk@0.74.0
+
+## 0.1.63-beta.9
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.9
+- @fusion/plugin-sdk@0.74.0-beta.9
+
+## 0.1.63-beta.8
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.8
+- @fusion/plugin-sdk@0.74.0-beta.8
+
+## 0.1.63-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.7
+- @fusion/plugin-sdk@0.74.0-beta.7
+
+## 0.1.63-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.6
+- @fusion/plugin-sdk@0.74.0-beta.6
+
+## 0.1.63-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.5
+- @fusion/plugin-sdk@0.74.0-beta.5
+
+## 0.1.63-beta.4
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.4
+- @fusion/plugin-sdk@0.74.0-beta.4
+
+## 0.1.63-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.3
+- @fusion/plugin-sdk@0.74.0-beta.3
+
+## 0.1.63-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.2
+- @fusion/plugin-sdk@0.74.0-beta.2
+
+## 0.1.63-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.1
+- @fusion/plugin-sdk@0.74.0-beta.1
+
+## 0.1.63-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.0
+- @fusion/plugin-sdk@0.74.0-beta.0
+
+## 0.1.62
+
+### Patch Changes
+
+- @fusion/core@0.73.0
+- @fusion/plugin-sdk@0.73.0
+
+## 0.1.62-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.6
+- @fusion/plugin-sdk@0.73.0-beta.6
+
+## 0.1.62-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.5
+- @fusion/plugin-sdk@0.73.0-beta.5
+
+## 0.1.62-beta.4
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.4
+- @fusion/plugin-sdk@0.73.0-beta.4
+
+## 0.1.62-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.3
+- @fusion/plugin-sdk@0.73.0-beta.3
+
+## 0.1.62-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.2
+- @fusion/plugin-sdk@0.73.0-beta.2
+
+## 0.1.62-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.1
+- @fusion/plugin-sdk@0.73.0-beta.1
+
+## 0.1.62-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.73.0-beta.0
+- @fusion/plugin-sdk@0.73.0-beta.0
+
+## 0.1.61
+
+### Patch Changes
+
+- @fusion/core@0.72.0
+- @fusion/plugin-sdk@0.72.0
+
+## 0.1.60
+
+### Patch Changes
+
+- @fusion/core@0.71.0
+- @fusion/plugin-sdk@0.71.0
+
+## 0.1.59
+
+### Patch Changes
+
+- @fusion/core@0.70.2
+- @fusion/plugin-sdk@0.70.2
+
+## 0.1.58
+
+### Patch Changes
+
+- @fusion/core@0.70.1
+- @fusion/plugin-sdk@0.70.1
+
+## 0.1.57
+
+### Patch Changes
+
+- Updated dependencies [be55d0a]
+  - @fusion/core@0.61.0
+  - @fusion/plugin-sdk@0.61.0
+
+## 0.1.56
+
+### Patch Changes
+
+- @fusion/core@0.60.0
+- @fusion/plugin-sdk@0.60.0
+
+## 0.1.55
+
+### Patch Changes
+
+- @fusion/core@0.59.0
+- @fusion/plugin-sdk@0.59.0
+
+## 0.1.54
+
+### Patch Changes
+
+- @fusion/core@0.58.0
+- @fusion/plugin-sdk@0.58.0
+
+## 0.1.53
+
+### Patch Changes
+
+- @fusion/core@0.57.0
+- @fusion/plugin-sdk@0.57.0
+
+## 0.1.52
+
+### Patch Changes
+
+- @fusion/core@0.56.1
+- @fusion/plugin-sdk@0.56.1
+
+## 0.1.51
+
+### Patch Changes
+
+- @fusion/core@0.56.0
+- @fusion/plugin-sdk@0.56.0
+
+## 0.1.50
+
+### Patch Changes
+
+- @fusion/core@0.55.0
+- @fusion/plugin-sdk@0.55.0
+
+## 0.1.49
+
+### Patch Changes
+
+- @fusion/core@0.54.0
+- @fusion/plugin-sdk@0.54.0
+
+## 0.1.48
+
+### Patch Changes
+
+- @fusion/core@0.53.1
+- @fusion/plugin-sdk@0.53.1
+
+## 0.1.47
+
+### Patch Changes
+
+- @fusion/core@0.53.0
+- @fusion/plugin-sdk@0.53.0
+
+## 0.1.46
+
+### Patch Changes
+
+- @fusion/core@0.52.0
+- @fusion/plugin-sdk@0.52.0
+
+## 0.1.45
+
+### Patch Changes
+
+- @fusion/core@0.51.0
+- @fusion/plugin-sdk@0.51.0
+
+## 0.1.44
+
+### Patch Changes
+
+- @fusion/core@0.50.0
+- @fusion/plugin-sdk@0.50.0
+
+## 0.1.43
+
+### Patch Changes
+
+- @fusion/core@0.49.0
+- @fusion/plugin-sdk@0.49.0
+
+## 0.1.42
+
+### Patch Changes
+
+- @fusion/core@0.48.0
+- @fusion/plugin-sdk@0.48.0
+
+## 0.1.41
+
+### Patch Changes
+
+- @fusion/core@0.47.0
+- @fusion/plugin-sdk@0.47.0
+
+## 0.1.40
+
+### Patch Changes
+
+- @fusion/core@0.46.0
+- @fusion/plugin-sdk@0.46.0
+
+## 0.1.39
+
+### Patch Changes
+
+- Updated dependencies [26ebb92]
+- Updated dependencies [7e7eb62]
+  - @fusion/core@0.45.0
+  - @fusion/plugin-sdk@0.45.0
+
+## 0.1.38
+
+### Patch Changes
+
+- @fusion/core@0.44.0
+- @fusion/plugin-sdk@0.44.0
+
+## 0.1.37
+
+### Patch Changes
+
+- @fusion/core@0.43.1
+- @fusion/plugin-sdk@0.43.1
+
+## 0.1.36
+
+### Patch Changes
+
+- @fusion/core@0.43.0
+- @fusion/plugin-sdk@0.43.0
+
+## 0.1.35
+
+### Patch Changes
+
+- @fusion/core@0.42.0
+- @fusion/plugin-sdk@0.42.0
+
+## 0.1.34
+
+### Patch Changes
+
+- @fusion/core@0.41.0
+- @fusion/plugin-sdk@0.41.0
+
+## 0.1.33
+
+### Patch Changes
+
+- @fusion/core@0.40.1
+- @fusion/plugin-sdk@0.40.1
+
+## 0.1.32
+
+### Patch Changes
+
+- @fusion/core@0.40.0
+- @fusion/plugin-sdk@0.40.0
+
+## 0.1.31
+
+### Patch Changes
+
+- Updated dependencies [3d22a98]
+  - @fusion/plugin-sdk@0.39.0
+  - @fusion/dashboard@0.39.0
+  - @fusion/core@0.39.0
+
+## 0.1.30
+
+### Patch Changes
+
+- Updated dependencies [bad8f52]
+  - @fusion/dashboard@0.38.1
+  - @fusion/core@0.38.1
+  - @fusion/plugin-sdk@0.38.1
+
+## 0.1.29
+
+### Patch Changes
+
+- @fusion/dashboard@0.38.0
+- @fusion/core@0.38.0
+- @fusion/plugin-sdk@0.38.0
+
+## 0.1.28
+
+### Patch Changes
+
+- @fusion/core@0.37.0
+- @fusion/dashboard@0.37.0
+- @fusion/plugin-sdk@0.37.0
+
+## 0.1.27
+
+### Patch Changes
+
+- @fusion/core@0.36.0
+- @fusion/dashboard@0.36.0
+- @fusion/plugin-sdk@0.36.0
+
+## 0.1.26
+
+### Patch Changes
+
+- @fusion/dashboard@0.35.0
+- @fusion/core@0.35.0
+- @fusion/plugin-sdk@0.35.0
+
+## 0.1.25
+
+### Patch Changes
+
+- Updated dependencies [6a6c6fd]
+  - @fusion/dashboard@0.34.0
+  - @fusion/core@0.34.0
+  - @fusion/plugin-sdk@0.34.0
+
+## 0.1.24
+
+### Patch Changes
+
+- Updated dependencies [60a0012]
+- Updated dependencies [a10fc56]
+- Updated dependencies [de67c51]
+- Updated dependencies [6e7f1e5]
+- Updated dependencies [5d35b64]
+- Updated dependencies [408e20b]
+- Updated dependencies [4f38ed1]
+- Updated dependencies [ec6643e]
+- Updated dependencies [85786e7]
+- Updated dependencies [ef12df4]
+- Updated dependencies [d5cfa92]
+- Updated dependencies [916047c]
+- Updated dependencies [084bdc6]
+- Updated dependencies [a201f56]
+- Updated dependencies [d8493f9]
+- Updated dependencies [99359b6]
+- Updated dependencies [6083de2]
+- Updated dependencies [4c31e88]
+- Updated dependencies [dc94494]
+- Updated dependencies [e138289]
+- Updated dependencies [76429a8]
+- Updated dependencies [ed4d021]
+- Updated dependencies [51fc826]
+  - @fusion/dashboard@0.33.0
+  - @fusion/core@0.33.0
+  - @fusion/plugin-sdk@0.33.0
+
+## 0.1.23
+
+### Patch Changes
+
+- Updated dependencies [1f0bb7e]
+- Updated dependencies [67aff5d]
+  - @fusion/core@0.32.0
+  - @fusion/dashboard@0.32.0
+  - @fusion/plugin-sdk@0.32.0
+
+## 0.1.22
+
+### Patch Changes
+
+- @fusion/core@0.31.0
+- @fusion/dashboard@0.31.0
+- @fusion/plugin-sdk@0.31.0
+
+## 0.1.21
+
+### Patch Changes
+
+- @fusion/core@0.30.0
+- @fusion/dashboard@0.30.0
+- @fusion/plugin-sdk@0.30.0
+
+## Unreleased
+
+### Patch Changes
+
+- Dependency graph auto-layout now switches orientation on tall or narrow viewports so dependency depth flows left-to-right on mobile/portrait layouts.
+
+## 0.1.20
+
+### Patch Changes
+
+- @fusion/core@0.29.0
+- @fusion/dashboard@0.29.0
+- @fusion/plugin-sdk@0.29.0
+
+## 0.1.19
+
+### Patch Changes
+
+- Updated dependencies [681770f]
+  - @fusion/core@0.28.1
+  - @fusion/dashboard@0.28.1
+  - @fusion/plugin-sdk@0.28.1
+
+## 0.1.18
+
+### Patch Changes
+
+- @fusion/core@0.28.0
+- @fusion/dashboard@0.28.0
+- @fusion/plugin-sdk@0.28.0
+
+## 0.1.17
+
+### Patch Changes
+
+- @fusion/core@0.27.1
+- @fusion/dashboard@0.27.1
+- @fusion/plugin-sdk@0.27.1
+
+## 0.1.16
+
+### Patch Changes
+
+- @fusion/core@0.27.0
+- @fusion/dashboard@0.27.0
+- @fusion/plugin-sdk@0.27.0
+
+## 0.1.15
+
+### Patch Changes
+
+- @fusion/core@0.26.0
+- @fusion/dashboard@0.26.0
+- @fusion/plugin-sdk@0.26.0
+
+## 0.1.14
+
+### Patch Changes
+
+- @fusion/core@0.25.0
+- @fusion/dashboard@0.25.0
+- @fusion/plugin-sdk@0.25.0
+
+## 0.1.13
+
+### Patch Changes
+
+- @fusion/core@0.24.0
+- @fusion/dashboard@0.24.0
+- @fusion/plugin-sdk@0.24.0
+
+## 0.1.12
+
+### Patch Changes
+
+- @fusion/core@0.23.0
+- @fusion/plugin-sdk@0.23.0
+
+## 0.1.11
+
+### Patch Changes
+
+- Updated dependencies [e658e8e]
+- Updated dependencies [aecc050]
+  - @fusion/core@0.22.0
+  - @fusion/plugin-sdk@0.22.0
+
+## 0.1.10
+
+### Patch Changes
+
+- @fusion/core@0.21.0
+- @fusion/plugin-sdk@0.21.0
+
+## 0.1.9
+
+### Patch Changes
+
+- @fusion/core@0.20.0
+- @fusion/plugin-sdk@0.20.0
+
+## 0.1.8
+
+### Patch Changes
+
+- @fusion/core@0.19.0
+- @fusion/plugin-sdk@0.19.0
+
+## 0.1.7
+
+### Patch Changes
+
+- @fusion/core@0.18.1
+- @fusion/plugin-sdk@0.18.1
+
+## 0.1.6
+
+### Patch Changes
+
+- @fusion/core@0.18.0
+- @fusion/plugin-sdk@0.18.0
+
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [17a6634]
+  - @fusion/core@0.17.2
+  - @fusion/plugin-sdk@0.17.2
+
+## 0.1.4
+
+### Patch Changes
+
+- @fusion/core@0.17.1
+- @fusion/plugin-sdk@0.17.1
+
+## 0.1.3
+
+### Patch Changes
+
+- @fusion/core@0.17.0
+- @fusion/plugin-sdk@0.17.0
+
+## 0.1.2
+
+### Patch Changes
+
+- @fusion/core@0.16.0
+- @fusion/plugin-sdk@0.16.0
+
+## 0.1.1
+
+### Patch Changes
+
+- @fusion/core@0.15.0
+- @fusion/plugin-sdk@0.15.0

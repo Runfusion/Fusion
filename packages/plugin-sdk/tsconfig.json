@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // DOM is required because @fusion/core exports its types as raw src/*.ts
+    // (exports."." -> ./src/index.ts), so this project recompiles core's source
+    // here. Core relies on the DOM lib (default lib via tsconfig.base) for the
+    // global fetch `Response` type (.ok/.status/.json); without DOM those
+    // members resolve inconsistently across platforms (Windows CI build failed).
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "skipLibCheck": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts", "**/__tests__/**"]
+}

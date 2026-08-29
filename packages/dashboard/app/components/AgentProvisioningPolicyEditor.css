@@ -1,0 +1,29 @@
+.agent-provisioning-policy-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.agent-provisioning-policy-help {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.agent-provisioning-policy-help code {
+  font-family: var(--font-mono);
+}
+
+.agent-provisioning-policy-textarea {
+  min-height: calc(var(--space-2xl) + var(--space-xl));
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  .agent-provisioning-policy-editor {
+    padding: var(--space-md);
+  }
+}

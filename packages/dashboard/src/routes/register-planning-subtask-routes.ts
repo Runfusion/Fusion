@@ -1,0 +1,1360 @@
+import {
+  DEFAULT_TASK_PRIORITY,
+  resolveEffectiveSettingsDetailedById,
+  resolvePlanningSettingsModel,
+  resolveTaskOutputLanguage,
+  TASK_PRIORITIES,
+  THINKING_LEVELS,
+  type PlanningSummary,
+  type TaskPriority,
+  type TaskStore,
+  type ThinkingLevel,
+} from "@fusion/core";
+import { normalizePlanningSummaryPayload } from "../planning.js";
+import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
+import { PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../issue-image-markup.js";
+import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
+import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
+import type { AiSessionStore } from "../ai-session-store.js";
+import type { ApiRoutesContext } from "./types.js";
+import { resolveBranchSelection } from "./branch-selection.js";
+import { randomUUID } from "node:crypto";
+
+type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
+
+const planningCreateLocks = new Map<string, Promise<void>>();
+
+/**
+ * FNXC:PlanningMode 2026-07-20-15:45:
+ * The stable proposalClaimId is the cross-process authority, while this short-lived lock avoids
+ * duplicate local createTask calls before a same-process retry can observe its finalized linkage.
+ * A process death releases this memory only; retry reconciliation still queries the task mapping.
+ */
+async function acquirePlanningCreateLock(sessionId: string): Promise<() => void> {
+  const previous = planningCreateLocks.get(sessionId);
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+  const tail = previous ? previous.then(() => gate) : gate;
+  planningCreateLocks.set(sessionId, tail);
+  await previous;
+  return () => {
+    releaseGate();
+    void tail.finally(() => {
+      if (planningCreateLocks.get(sessionId) === tail) planningCreateLocks.delete(sessionId);
+    });
+  };
+}
+
+interface PlanningSubtaskRouteDeps {
+  store: TaskStore;
+  aiSessionStore?: AiSessionStore;
+  parseLastEventId: (req: import("express").Request) => number | undefined;
+  replayBufferedSSE: (res: import("express").Response, bufferedEvents: SessionBufferedEvent[]) => boolean;
+}
+
+function rethrowPlanningWorkflowCreateError(
+  err: unknown,
+  fallbackMessage: string,
+  rethrowAsApiError: ApiRoutesContext["rethrowAsApiError"],
+): never {
+  if (err instanceof ApiError) {
+    throw err;
+  }
+
+  const message = err instanceof Error ? err.message : String(err || fallbackMessage);
+  const isWorkflowClientError =
+    /^Workflow '.*' not found$/.test(message)
+    || /is a fragment and cannot be selected/.test(message);
+
+  if (isWorkflowClientError) {
+    throw new ApiError(400, message);
+  }
+
+  rethrowAsApiError(err, fallbackMessage);
+}
+
+export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
+  const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
+  const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
+  const planningRuntime = (settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
+    clarificationEnabled: settings.agentClarificationEnabled === true,
+    ntfyConfig: { enabled: settings.ntfyEnabled ?? false, topic: settings.ntfyTopic, ntfyBaseUrl: settings.ntfyBaseUrl, dashboardHost: settings.ntfyDashboardHost, events: settings.ntfyEvents },
+  });
+
+  // ── Planning Mode Routes ──────────────────────────────────────────────────
+  // UTILITY PATH: Planning sessions are on a separate control-plane lane.
+  // They must NOT be gated on task-lane saturation (maxConcurrent, semaphore, queue depth).
+
+  router.post("/planning/start", async (req, res) => {
+    try {
+      const { initialPlan, workflowId } = req.body;
+
+      if (!initialPlan || typeof initialPlan !== "string") {
+        throw badRequest("initialPlan is required and must be a string");
+      }
+      if (workflowId !== undefined && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string when provided");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = scopedStore.getRootDir();
+      /*
+      FNXC:AgentClarification 2026-07-16-16:10:
+      The legacy synchronous planning-start endpoint can emit the initial proactive question too.
+      Attach live notification settings here so it follows the same setting-gated hold and
+      delivery contract as streaming Planning Mode.
+      */
+      const runtime = planningRuntime(settings);
+
+      const { createSession, RateLimitError: _RateLimitError } = await import("../planning.js");
+      const result = await createSession(
+        ip,
+        initialPlan,
+        scopedStore,
+        rootDir,
+        settings.promptOverrides,
+        ctx.options?.pluginRunner as SkillPluginRunner,
+        { ...runtime, workflowId },
+      );
+      res.status(201).json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "RateLimitError") {
+        throw rateLimited(err.message);
+      } else {
+        rethrowAsApiError(err, "Failed to start planning session");
+      }
+    }
+  });
+
+  /**
+   * POST /api/planning/create-draft
+   * Body: { initialPlan: string, planningModelProvider?: string, planningModelId?: string, thinkingLevel?: ThinkingLevel }
+   */
+  router.post("/planning/create-draft", async (req, res) => {
+    try {
+      const { initialPlan, planningModelProvider, planningModelId, thinkingLevel } = req.body;
+
+      if (!initialPlan || typeof initialPlan !== "string" || initialPlan.trim().length === 0) {
+        throw badRequest("initialPlan is required and must be a string");
+      }
+
+      if (planningModelProvider !== undefined && typeof planningModelProvider !== "string") {
+        throw badRequest("planningModelProvider must be a string when provided");
+      }
+
+      if (planningModelId !== undefined && typeof planningModelId !== "string") {
+        throw badRequest("planningModelId must be a string when provided");
+      }
+
+      if (thinkingLevel !== undefined && !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
+        throw badRequest("thinkingLevel must be one of: " + THINKING_LEVELS.join(", "));
+      }
+      const validatedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
+
+      const { store: scopedStore, projectId } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = scopedStore.getRootDir();
+
+      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
+      const resolvedPlanningProvider =
+        (planningModelProvider && planningModelId ? planningModelProvider : undefined) ||
+        resolvedPlanningSettings.provider;
+
+      const resolvedPlanningModelId =
+        (planningModelProvider && planningModelId ? planningModelId : undefined) ||
+        resolvedPlanningSettings.modelId;
+
+      const { createDraftSession } = await import("../planning.js");
+      const draft = validatedThinkingLevel
+        ? await createDraftSession(
+            ip,
+            initialPlan,
+            rootDir,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            validatedThinkingLevel,
+            settings.promptOverrides,
+            { projectId, taskOutputLanguage: resolveTaskOutputLanguage(settings, initialPlan) },
+          )
+        : await createDraftSession(
+            ip,
+            initialPlan,
+            rootDir,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            settings.promptOverrides,
+            { projectId, taskOutputLanguage: resolveTaskOutputLanguage(settings, initialPlan) },
+          );
+      res.status(201).json(draft);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "RateLimitError") {
+        throw rateLimited(err.message);
+      }
+      rethrowAsApiError(err, "Failed to create planning draft");
+    }
+  });
+
+  /**
+   * POST /api/planning/start-streaming
+   * Start a new planning session with AI agent streaming.
+   * Body: { initialPlan: string, planningModelProvider?: string, planningModelId?: string, thinkingLevel?: ThinkingLevel }
+   * Returns: { sessionId: string }
+   *
+   * After receiving sessionId, connect to GET /api/planning/:sessionId/stream
+   * for real-time thinking output and questions.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   */
+  router.post("/planning/start-streaming", async (req, res) => {
+    try {
+      const {
+        initialPlan,
+        planningModelProvider,
+        planningModelId,
+        existingSessionId,
+        thinkingLevel,
+        clarificationEnabled,
+        workflowId,
+        sourceIssue,
+      } = req.body;
+
+      if (!initialPlan || typeof initialPlan !== "string") {
+        throw badRequest("initialPlan is required and must be a string");
+      }
+
+      if (planningModelProvider !== undefined && typeof planningModelProvider !== "string") {
+        throw badRequest("planningModelProvider must be a string when provided");
+      }
+
+      if (planningModelId !== undefined && typeof planningModelId !== "string") {
+        throw badRequest("planningModelId must be a string when provided");
+      }
+
+
+      if (workflowId !== undefined && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string when provided");
+      }
+
+      if (clarificationEnabled !== undefined && typeof clarificationEnabled !== "boolean") {
+        throw badRequest("clarificationEnabled must be a boolean when provided");
+      }
+
+      if (existingSessionId !== undefined && typeof existingSessionId !== "string") {
+        throw badRequest("existingSessionId must be a string when provided");
+      }
+
+      const validatedSourceIssue = (() => {
+        if (sourceIssue === undefined) return undefined;
+        if (!sourceIssue || typeof sourceIssue !== "object" || (sourceIssue as { provider?: unknown }).provider !== "github") throw badRequest("sourceIssue must be a GitHub issue");
+        const value = sourceIssue as { repository?: unknown; issueNumber?: unknown; url?: unknown; title?: unknown; imageBodies?: unknown; commentsUnavailable?: unknown; droppedBodyCount?: unknown };
+        if (typeof value.repository !== "string" || typeof value.issueNumber !== "number" || !Number.isInteger(value.issueNumber) || value.issueNumber <= 0 || typeof value.url !== "string") throw badRequest("sourceIssue is malformed");
+        if (value.imageBodies !== undefined && (!Array.isArray(value.imageBodies) || value.imageBodies.some((body) => typeof body !== "string"))) throw badRequest("sourceIssue imageBodies must be strings");
+        if (value.commentsUnavailable !== undefined && typeof value.commentsUnavailable !== "boolean") throw badRequest("sourceIssue commentsUnavailable must be boolean");
+        if (value.droppedBodyCount !== undefined && (typeof value.droppedBodyCount !== "number" || !Number.isInteger(value.droppedBodyCount) || value.droppedBodyCount < 0)) throw badRequest("sourceIssue droppedBodyCount must be a non-negative integer");
+        const match = value.url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/i);
+        if (!match || match[3] !== String(value.issueNumber) || `${match[1]}/${match[2]}`.toLowerCase() !== value.repository.toLowerCase()) throw badRequest("sourceIssue URL must match repository and issue number");
+        let totalChars = 0;
+        let droppedBodyCount = value.droppedBodyCount ?? 0;
+        const bodies = (value.imageBodies ?? []).flatMap((body) => {
+          if (body.length > PER_BODY_MAX_CHARS || totalChars + body.length > TRANSPORT_MAX_CHARS) { droppedBodyCount++; return []; }
+          totalChars += body.length;
+          return [body];
+        });
+        /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: Bodies are transport-only; server-side policy resolution applies the SSRF boundary and authoritative cap before session persistence. */
+        /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:51: Every newly captured context persists an array, including empty, so L2-dropped bodies cannot fall through to the legacy seed parser and bypass the recorded capture limit. */
+        return { provider: "github" as const, repository: value.repository, externalIssueId: String(value.issueNumber), issueNumber: value.issueNumber, url: value.url, ...(typeof value.title === "string" ? { title: value.title } : {}), imageUrls: extractIssueImageUrls(bodies, githubImagePolicy()), ...(value.commentsUnavailable === true ? { commentsUnavailable: true } : {}), ...(droppedBodyCount > 0 ? { droppedBodyCount } : {}) };
+      })();
+
+      if (thinkingLevel !== undefined && !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
+        throw badRequest("thinkingLevel must be one of: " + THINKING_LEVELS.join(", "));
+      }
+      const validatedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
+
+      const { store: scopedStore, projectId } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = scopedStore.getRootDir();
+      const resolvedClarificationEnabled = clarificationEnabled ?? settings.agentClarificationEnabled ?? false;
+      const runtime = planningRuntime(settings);
+      runtime.clarificationEnabled = resolvedClarificationEnabled;
+
+      /*
+       * FNXC:PlanningModelPrecedence 2026-07-22-14:15:
+       * A Planning Mode workflow exists before its task, so load its effective
+       * settings explicitly and retain selected lanes as a lower-precedence
+       * overlay. One canonical resolver receives the complete request pair,
+       * which keeps new and persisted-draft starts atomic and preserves test-mode
+       * forcing instead of allowing the request branch to bypass it.
+       */
+      const selectedWorkflowId = workflowId as string | undefined;
+      let workflowSettings: Record<string, unknown> = {};
+      if (selectedWorkflowId) {
+        try {
+          const workflowSettingsProjectId = projectId ?? scopedStore.getWorkflowSettingsProjectId();
+          workflowSettings = (await resolveEffectiveSettingsDetailedById(
+            scopedStore,
+            selectedWorkflowId,
+            workflowSettingsProjectId,
+          )).effective;
+        } catch {
+          // The route's established fail-soft settings behavior falls back to
+          // project/global values when workflow lookup cannot be completed.
+          workflowSettings = {};
+        }
+      }
+      const hasExplicitPlanningPair = Boolean(planningModelProvider && planningModelId);
+      const resolvedPlanningSettings = resolvePlanningSettingsModel({
+        ...settings,
+        ...workflowSettings,
+        ...(hasExplicitPlanningPair
+          ? { planningProvider: planningModelProvider, planningModelId }
+          : {}),
+      });
+      const resolvedPlanningProvider = resolvedPlanningSettings.provider;
+      const resolvedPlanningModelId = resolvedPlanningSettings.modelId;
+
+      if (existingSessionId) {
+        // Defeat the start-before-debounced-sync race: the textarea contents
+        // submitted with this request are authoritative — write them through
+        // to the draft row before startExistingSession reads back from SQLite.
+        // Otherwise a Start Planning click within the 500 ms debounce window
+        // would launch the session against stale text.
+        if (aiSessionStore) {
+          try {
+            await aiSessionStore.updateDraft(existingSessionId, {
+              initialPlan,
+              // Persist the explicit body override (if both fields set) so a
+              // later summarizeDraftTitle picks the same model the user just
+              // chose; pass undefined to clear any half-set state otherwise.
+              modelProvider: planningModelProvider && planningModelId ? planningModelProvider : undefined,
+              modelId: planningModelProvider && planningModelId ? planningModelId : undefined,
+              thinkingLevel: validatedThinkingLevel,
+            });
+          } catch (error) {
+            planningLogger.warn(
+              "Failed to flush draft initialPlan before start",
+              { sessionId: existingSessionId, error: String(error) },
+            );
+          }
+        }
+        const { startExistingSession } = await import("../planning.js");
+        if (validatedThinkingLevel) {
+          await startExistingSession(
+            existingSessionId,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            validatedThinkingLevel,
+            settings.promptOverrides,
+            ctx.options?.pluginRunner as SkillPluginRunner,
+            { ...runtime, workflowId, sourceIssue: validatedSourceIssue },
+          );
+        } else {
+          await startExistingSession(
+            existingSessionId,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            settings.promptOverrides,
+            ctx.options?.pluginRunner as SkillPluginRunner,
+            undefined,
+            { ...runtime, workflowId, sourceIssue: validatedSourceIssue },
+          );
+        }
+        res.status(201).json({ sessionId: existingSessionId });
+        return;
+      }
+
+      const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
+      const planningOptions = {
+        projectId,
+        workflowId,
+        ...(validatedSourceIssue ? { sourceIssue: validatedSourceIssue } : {}),
+        ...runtime,
+        pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
+      };
+      const sessionId = validatedThinkingLevel
+        ? await createSessionWithAgent(
+            ip,
+            initialPlan,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            validatedThinkingLevel,
+            settings.promptOverrides,
+            planningOptions,
+          )
+        : await createSessionWithAgent(
+            ip,
+            initialPlan,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            settings.promptOverrides,
+            planningOptions,
+          );
+      res.status(201).json({ sessionId });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "RateLimitError") {
+        throw rateLimited(err.message);
+      } else {
+        rethrowAsApiError(err, "Failed to start planning session");
+      }
+    }
+  });
+
+  /*
+  FNXC:PlanningMode 2026-07-19-12:00:
+  Rename is intentionally a lock-free, verbatim user action. The planning helper first checks the
+  persisted session type so this planning-scoped endpoint cannot mutate another AI-session surface.
+  */
+  router.patch("/planning/:sessionId/title", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const title = req.body?.title;
+      if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
+      if (typeof title !== "string") throw badRequest("title is required and must be a string");
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) throw badRequest("title must not be empty");
+      if (trimmedTitle.length > 60) throw badRequest("title must be 60 characters or less");
+
+      const { updatePlanningSessionTitle } = await import("../planning.js");
+      if (!(await updatePlanningSessionTitle(sessionId, trimmedTitle))) {
+        throw notFound(`Planning session ${sessionId} not found`);
+      }
+      res.json({ sessionId, title: trimmedTitle });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to rename planning session");
+    }
+  });
+
+  /**
+   * POST /api/planning/:sessionId/summarize-draft-title
+   * Generate (or regenerate) the sidebar title for a draft session from its
+   * latest persisted initialPlan. Fired by the modal on textarea blur and on
+   * close so that drafts the user walks away from end up with a real title
+   * instead of "New planning session". Idempotent server-side: only acts on
+   * draft rows still holding the placeholder title.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   */
+  router.post("/planning/:sessionId/summarize-draft-title", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId) {
+        throw badRequest("sessionId is required");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const rootDir = scopedStore.getRootDir();
+      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
+
+      const { summarizeDraftTitle } = await import("../planning.js");
+      const title = await summarizeDraftTitle(
+        sessionId,
+        rootDir,
+        resolvedPlanningSettings.provider,
+        resolvedPlanningSettings.modelId,
+        settings,
+      );
+
+      res.json({ title });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to summarize draft title");
+    }
+  });
+
+  /**
+   * POST /api/planning/respond
+   * Submit a response to the current planning question.
+   * Body: { sessionId: string, responses: Record<string, unknown> }
+   * Returns: { type: "question" | "complete", data: PlanningQuestion | PlanningSummary }
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   *
+   * FNXC:PlanningMultiTab 2026-07-14-00:00:
+   * Planning routes are deliberately lock-free. Multiple tabs may read and interact with the
+   * same planning session; the persisted session row plus the activeGenerations guard in
+   * planning.ts (409 GenerationInProgressError) are the only coordination. The former
+   * per-tab session lock (checkSessionLock / lock-conflict 409s) was removed entirely.
+   */
+  router.post("/planning/respond", async (req, res) => {
+    try {
+      const { sessionId, responses } = req.body;
+
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      if (!responses || typeof responses !== "object" || Array.isArray(responses)) {
+        throw badRequest("responses is required and must be an object");
+      }
+
+      /*
+      FNXC:PlanningComments 2026-07-23-12:00:
+      Contextual review batches carry only captured plain-text quotes and operator suggestions.
+      Bound and normalize the narrow shape at the HTTP boundary so arbitrary nested prompt data
+      cannot enter the existing Planning Mode generation session.
+      */
+      if ("contextualComments" in responses) {
+        const comments = responses.contextualComments;
+        if (!Array.isArray(comments) || comments.length === 0 || comments.length > 20) {
+          throw badRequest("contextualComments must contain between 1 and 20 comments");
+        }
+        const normalized = comments.map((comment) => {
+          if (!comment || typeof comment !== "object" || Array.isArray(comment)) {
+            throw badRequest("Each contextual comment must be an object");
+          }
+          const quote = typeof comment.quote === "string" ? comment.quote.trim() : "";
+          const suggestion = typeof comment.suggestion === "string" ? comment.suggestion.trim() : "";
+          if (!quote || !suggestion || quote.length > 4_000 || suggestion.length > 2_000) {
+            throw badRequest("Each contextual comment needs a bounded quote and suggestion");
+          }
+          return { quote, suggestion };
+        });
+        req.body.responses = { contextualComments: normalized };
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const { submitResponse, attachPlanningRuntime, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, planningRuntime(settings));
+      const result = await submitResponse(
+        sessionId,
+        responses,
+        scopedStore.getRootDir(),
+        settings.promptOverrides,
+        scopedStore,
+      );
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "GenerationInProgressError") {
+        throw conflict(err instanceof Error ? err.message : String(err));
+      } else {
+        rethrowAsApiError(err, "Failed to process response");
+      }
+    }
+  });
+
+  router.post("/planning/:sessionId/back", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      const questionId = req.body?.questionId;
+      if (questionId !== undefined && typeof questionId !== "string") throw badRequest("questionId must be a string when provided");
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const { rewindSession, attachPlanningRuntime } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, planningRuntime(settings));
+      const rewound = await rewindSession(
+        sessionId,
+        questionId,
+        scopedStore.getRootDir(),
+        settings.promptOverrides,
+        scopedStore,
+      );
+      res.json(rewound);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else {
+        rethrowAsApiError(err, "Failed to rewind planning session");
+      }
+    }
+  });
+
+  /**
+   * POST /api/planning/:sessionId/retry
+   * Retry a failed planning session.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   * Lock-free like all /planning/* routes (see FNXC:PlanningMultiTab on /planning/respond).
+   */
+  router.post("/planning/:sessionId/retry", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const { retrySession, attachPlanningRuntime } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, planningRuntime(settings));
+      await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides, scopedStore);
+      res.json({ success: true, sessionId });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else if (err instanceof Error && err.name === "InvalidSessionStateError") {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      } else {
+        rethrowAsApiError(err, "Failed to retry planning session");
+      }
+    }
+  });
+
+  router.post("/planning/:sessionId/stop", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      const { stopGeneration } = await import("../planning.js");
+      const stopped = stopGeneration(sessionId);
+      if (!stopped) {
+        throw notFound(`Planning session ${sessionId} not found or expired`);
+      }
+
+      res.json({ success: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to stop planning session");
+    }
+  });
+
+  /**
+   * POST /api/planning/cancel
+   * Cancel and cleanup a planning session.
+   * Body: { sessionId: string }
+   */
+  /** The sole HTTP transition that validates a continuously maintained plan. */
+  router.post("/planning/:sessionId/validate", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
+      const { validateSession } = await import("../planning.js");
+      const summary = await validateSession(sessionId);
+      res.json({ summary, validated: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (err instanceof Error && err.name === "SessionNotFoundError") throw notFound(err.message);
+      rethrowAsApiError(err, "Failed to validate planning session");
+    }
+  });
+
+  router.post("/planning/cancel", async (req, res) => {
+    try {
+      const { sessionId } = req.body;
+
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      const { cancelSession, SessionNotFoundError: _SessionNotFoundError2 } = await import("../planning.js");
+      await cancelSession(sessionId);
+      res.json({ success: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "SessionNotFoundError") {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else {
+        rethrowAsApiError(err, "Failed to cancel session");
+      }
+    }
+  });
+
+  const isTaskPriority = (value: unknown): value is TaskPriority =>
+    typeof value === "string" && (TASK_PRIORITIES as readonly string[]).includes(value);
+
+  const parsePlanningSummaryOverride = (summaryInput: unknown): PlanningSummary | undefined => {
+    if (summaryInput === undefined) {
+      return undefined;
+    }
+
+    if (!summaryInput || typeof summaryInput !== "object" || Array.isArray(summaryInput)) {
+      throw badRequest("summary must be an object");
+    }
+
+    const summary = summaryInput as Partial<PlanningSummary>;
+
+    if (typeof summary.title !== "string" || summary.title.trim().length === 0) {
+      throw badRequest("summary.title is required and must be a non-empty string");
+    }
+
+    if (typeof summary.description !== "string" || summary.description.trim().length === 0) {
+      throw badRequest("summary.description is required and must be a non-empty string");
+    }
+
+    return normalizePlanningSummaryPayload(summary, {
+      title: summary.title.trim(),
+      description: summary.description.trim(),
+    });
+  };
+
+  const logPlanningCreateWarning = (message: string, error: unknown, metadata?: Record<string, unknown>): void => {
+    planningLogger.warn(message, {
+      ...metadata,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  const runPlanningCreateSideEffect = async (
+    message: string,
+    work: () => Promise<unknown> | unknown,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> => {
+    try {
+      await work();
+    } catch (error) {
+      logPlanningCreateWarning(message, error, metadata);
+    }
+  };
+
+  /**
+   * POST /api/planning/create-task
+   * Create a task from a completed planning session.
+   * Body: { sessionId: string }
+   * Returns: Created Task
+   */
+  router.post("/planning/create-task", async (req, res) => {
+    let releaseCreateLock: (() => void) | undefined;
+    let claimedOwnerToken: string | undefined;
+    let claimedSessionId: string | undefined;
+    try {
+      const { sessionId, summary: summaryInput, branch, baseBranch, branchSelection, workflowId, previousTaskId } = req.body as {
+        sessionId?: unknown;
+        summary?: unknown;
+        branch?: unknown;
+        baseBranch?: unknown;
+        branchSelection?: unknown;
+        workflowId?: unknown;
+        previousTaskId?: unknown;
+      };
+
+      if (!sessionId || typeof sessionId !== "string") {
+        throw badRequest("sessionId is required");
+      }
+
+      if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string or null");
+      }
+      if (previousTaskId !== undefined && (typeof previousTaskId !== "string" || !previousTaskId.trim())) {
+        throw badRequest("previousTaskId must be a non-empty string");
+      }
+      const normalizedPreviousTaskId = typeof previousTaskId === "string" ? previousTaskId.trim() : undefined;
+
+      const summaryOverride = parsePlanningSummaryOverride(summaryInput);
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const projectSettings = await scopedStore.getSettings();
+      const {
+        getSession,
+        getSummary,
+        updatePlanningCreateClaim,
+        getDurablePlanningSession,
+        claimPlanningTaskCreation,
+        finalizePlanningTaskCreation,
+        reconcilePlanningTaskCreation,
+        releasePlanningTaskCreation,
+        advancePlanningTaskCreationEpoch,
+        validateSession,
+        planningProposalClaimId,
+        formatPlanningTaskHandoff,
+      } = await import("../planning.js");
+      const planningSourceModule = await import("../planning.js");
+      const resolvePlanningSourceIssue = "resolvePlanningSourceIssue" in planningSourceModule
+        ? planningSourceModule.resolvePlanningSourceIssue
+        : undefined;
+      const resolvePlanningIssueImageUrls = "resolvePlanningIssueImageUrls" in planningSourceModule
+        ? planningSourceModule.resolvePlanningIssueImageUrls
+        : undefined;
+      const { resolvePlanningGithubTrackingDecision } = await import("../github-tracking.js");
+      const { appendSourceIssueBlock } = await import("../github.js");
+
+      let session = await getSession(sessionId);
+      let summary = summaryOverride ?? getSummary(sessionId);
+      let initialPlan = session?.initialPlan;
+
+      if (!session) {
+        if (!aiSessionStore) {
+          throw notFound(`Planning session ${sessionId} not found or expired`);
+        }
+
+        const persistedSession = await aiSessionStore.get(sessionId);
+        if (!persistedSession || persistedSession.type !== "planning") {
+          throw notFound(`Planning session ${sessionId} not found or expired`);
+        }
+
+        const persistedResult = persistedSession.result;
+        if (!summaryOverride && !persistedResult) {
+          throw badRequest("Planning session result is not available");
+        }
+
+        if (!summaryOverride) {
+          try {
+            const parsedSummary = JSON.parse(persistedResult as string) as {
+              title?: unknown;
+              description?: unknown;
+              suggestedSize?: unknown;
+              priority?: unknown;
+              suggestedDependencies?: unknown;
+              keyDeliverables?: unknown;
+            };
+
+            summary = normalizePlanningSummaryPayload(parsedSummary, {
+              title: persistedSession.title,
+              description: persistedSession.title,
+            });
+          } catch {
+            throw badRequest("Planning session result is invalid");
+          }
+        }
+
+        try {
+          const parsedInput = JSON.parse(persistedSession.inputPayload) as { initialPlan?: unknown };
+          if (typeof parsedInput.initialPlan === "string" && parsedInput.initialPlan.trim().length > 0) {
+            initialPlan = parsedInput.initialPlan;
+          }
+        } catch {
+          // Keep fallback value below
+        }
+
+      }
+
+      if (!summary) {
+        throw badRequest("Planning session is not complete");
+      }
+
+      releaseCreateLock = await acquirePlanningCreateLock(sessionId);
+      /*
+      FNXC:PlanningMultiTask 2026-07-24-01:40:
+      Creating a task while a planning turn is still generating raced the turn's full-row
+      persistSession against finalize: the turn-completion write could clobber the fresh
+      createdTaskId linkage, which then disabled the next epoch rotation (review finding).
+      The durable status is the cross-process signal, so a generating session gets a clean
+      409 instead of a torn linkage; the client retries after the turn settles.
+      */
+      if (aiSessionStore) {
+        // `await` tolerates sync-returning adapter stores; a failed read must not block creation.
+        let liveRow: { type?: string; status?: string } | null = null;
+        try {
+          liveRow = (await aiSessionStore.get(sessionId)) as { type?: string; status?: string } | null;
+        } catch {
+          liveRow = null;
+        }
+        if (liveRow?.type === "planning" && liveRow.status === "generating") {
+          throw conflict("Plan is still generating — wait for the current turn to finish, then create the task.");
+        }
+      }
+      // Re-read after the local single-flight queue: an earlier caller may have finalized while
+      // we waited. Durable-first so another process's epoch rotation (plan edited after a task
+      // was created) is honored when deriving this attempt's claim key; fall back to the
+      // in-memory read for adapters/rows the strict durable restore rejects.
+      try {
+        session = (await getDurablePlanningSession(sessionId)) ?? await getSession(sessionId);
+      } catch (durableReadError) {
+        /*
+        FNXC:PlanningMultiTask 2026-07-24-01:40:
+        The fallback must be loud: deriving the claim key from a stale in-memory epoch after a
+        silent durable-read failure can replay a prior epoch's task as alreadyCreated (bounded
+        degradation — never a fork, since rotation implies that epoch's task row exists).
+        */
+        logPlanningCreateWarning(
+          "Planning create-task durable session read failed; falling back to in-memory session for claim-key derivation",
+          durableReadError,
+          { sessionId },
+        );
+        session = await getSession(sessionId);
+      }
+
+      /*
+      FNXC:PlanningMultiTask 2026-08-03-18:32:
+      An explicit create action from a plan that already produced a task starts a new creation
+      epoch even when the plan was not edited. The previous task id is the idempotency token:
+      the first request advances while retries carrying the same old id observe the already-
+      advanced/current epoch and reconcile its one canonical task.
+      */
+      if (normalizedPreviousTaskId && session?.createdTaskId === normalizedPreviousTaskId) {
+        const priorEpoch = session.taskCreationEpoch ?? 0;
+        const advanced = await advancePlanningTaskCreationEpoch(
+          sessionId,
+          normalizedPreviousTaskId,
+          priorEpoch,
+        );
+        session = advanced ?? await getDurablePlanningSession(sessionId) ?? session;
+      }
+
+      /*
+      FNXC:PlanningMode 2026-07-20-15:45:
+      FN-8442: the task table's partial unique proposalClaimId index, not this process's claim
+      state, is the multi-process and crash-after-insert authority. A session linkage is a
+      durable cache reconciled from that key; a missing linked task fails closed rather than
+      silently forking.
+
+      The key is per creation epoch (`planning-session:{id}` for epoch 0, `…#N` afterward).
+      An explicit action carrying the latest task id advances the epoch; retries carrying the
+      prior id observe the already-advanced epoch and dedupe to its canonical task.
+      */
+      let claimEpoch = session?.taskCreationEpoch ?? 0;
+      const currentProposalClaimId = () => planningProposalClaimId(sessionId, claimEpoch);
+      const findCreatedTask = async () =>
+        (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
+      /*
+      FNXC:PlanningMode 2026-07-23-12:10 (updated FNXC:PlanningMultiTask 2026-07-24-01:40):
+      The claim model allows exactly one task per creation EPOCH — a session can produce
+      multiple tasks across epochs (rotation happens on a new explicit create action or when
+      the plan is edited past a created task). After each creation the session must stop
+      advertising awaiting_input in the session list/banner, so terminalize here through
+      validateSession (the sole terminal transition) on every path that ends with a created task, including alreadyCreated
+      reconciliation; a later edit reopens it. Best-effort: a failure to terminalize must not
+      fail the task creation itself. Deploy assumption: the dashboard serves a single code
+      version per DB at a time — a pre-epoch binary handling a rotated session would derive
+      the un-suffixed key and replay epoch 0's task instead of creating a new one (bounded
+      degradation, no duplicate).
+      */
+      const markSessionComplete = () =>
+        runPlanningCreateSideEffect(
+          "Planning create-task session completion failed",
+          async () => {
+            const current = await getSession(sessionId);
+            if (current && !current.validated) await validateSession(sessionId);
+          },
+          { sessionId },
+        );
+      const returnLinkedTask = async (candidate = session) => {
+        if (!candidate?.createdTaskId) return false;
+        const linkedTask = await scopedStore.getTask(candidate.createdTaskId).catch(() => null);
+        if (linkedTask) {
+          await markSessionComplete();
+          res.status(200).json({ task: linkedTask, alreadyCreated: true });
+          return true;
+        }
+        /*
+        FNXC:PlanningMultiTask 2026-07-24-03:20:
+        Reported bug: deleting the task created from a plan left the session permanently
+        dead-ended on PLANNING_CREATED_TASK_MISSING — Retry create replayed the same 409
+        forever. Distinguish "task deleted" from "transient read failure" using the
+        include-archived task scan (the same crash-window authority findCreatedTask uses):
+        if the linked id is still LISTED but getTask failed, keep failing closed (never fork
+        on a flaky read); if it is absent from the full list, the linkage is stale — clear it
+        so this request falls through and creates a fresh task under the current epoch key.
+        */
+        const allTasks = await scopedStore.listTasks({ includeArchived: true }).catch(() => null);
+        const stillListed = allTasks === null || allTasks.some((task) => task.id === candidate.createdTaskId);
+        if (stillListed) throw conflict("PLANNING_CREATED_TASK_MISSING");
+        const staleTaskId = candidate.createdTaskId;
+        const advanced = await advancePlanningTaskCreationEpoch(
+          sessionId,
+          staleTaskId,
+          claimEpoch,
+        );
+        if (!advanced) throw conflict("Planning task creation state changed; retry creation");
+        session = advanced;
+        claimEpoch = advanced.taskCreationEpoch ?? claimEpoch + 1;
+        return false;
+      };
+
+      // A task row is the crash-window authority. Reconcile it before trying to claim.
+      const existingTask = await findCreatedTask();
+      if (existingTask) {
+        await reconcilePlanningTaskCreation(sessionId, existingTask.id, claimEpoch);
+        await markSessionComplete();
+        res.status(200).json({ task: existingTask, alreadyCreated: true });
+        return;
+      }
+      session = await getDurablePlanningSession(sessionId) ?? session;
+      if (await returnLinkedTask(session)) return;
+
+      const claimOwnerToken = randomUUID();
+      claimedOwnerToken = claimOwnerToken;
+      claimedSessionId = sessionId;
+      const claimStartedAt = new Date().toISOString();
+      const hasDurableClaimStore = typeof (aiSessionStore as unknown as { claimPlanningTaskCreation?: unknown } | undefined)?.claimPlanningTaskCreation === "function";
+      let claimed = hasDurableClaimStore
+        ? await claimPlanningTaskCreation(sessionId, claimOwnerToken, claimStartedAt, claimEpoch)
+        : session
+          ? session.createClaimStatus !== "creating" && session.createClaimStatus !== "created"
+            ? (await updatePlanningCreateClaim(sessionId, { createClaimStatus: "creating", claimOwnerToken, claimStartedAt, createdTaskId: undefined }), session)
+            : undefined
+          // Legacy test/session adapters can provide only the route's persisted row. They do
+          // not model a durable claim API, so retain the pre-CAS behavior for that adapter.
+          : ({} as NonNullable<typeof session>);
+      if (!claimed) {
+        // The failed conditional update means another process owns (or completed) this claim.
+        session = await getDurablePlanningSession(sessionId) ?? session;
+        const recoveredTask = await findCreatedTask();
+        if (recoveredTask) {
+          await reconcilePlanningTaskCreation(sessionId, recoveredTask.id, claimEpoch);
+          await markSessionComplete();
+          res.status(200).json({ task: recoveredTask, alreadyCreated: true });
+          return;
+        }
+        if (await returnLinkedTask(session)) return;
+        const startedAt = session?.claimStartedAt ? Date.parse(session.claimStartedAt) : Number.NaN;
+        const leaseExpired = session?.createClaimStatus === "creating" && Number.isFinite(startedAt) && Date.now() - startedAt >= 30_000;
+        if (!leaseExpired || !session?.claimOwnerToken) throw conflict("Planning task creation is already in progress");
+        await releasePlanningTaskCreation(sessionId, session.claimOwnerToken);
+        claimed = await claimPlanningTaskCreation(sessionId, claimOwnerToken, new Date().toISOString(), claimEpoch);
+        if (!claimed) throw conflict("Planning task creation is already in progress");
+      }
+
+      const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
+        resolveBranchSelection(branchSelection, branch, baseBranch);
+
+      /*
+      FNXC:Workflows 2026-07-05-00:00:
+      FN-7611: do not hardcode column here. This route accepts an explicit workflowId
+      (below), so a hardcoded "triage" would defeat that custom workflow's own intake
+      column resolution. Omitting `column` lets the store resolve intake for the
+      selected-or-default workflow (byte-identical "triage" for builtin:coding).
+      */
+      /*
+      FNXC:PlanningMode 2026-07-20-12:00:
+      FN-8441 hands the current lean plan to triage as task description plus a plan
+      document. The raw session request remains a separate original-description document.
+      */
+      const planMd = formatPlanningTaskHandoff(summary, session?.history ?? []);
+      // Persisted legacy sessions can lack initialPlan; retain the pre-format plan body,
+      // never the session title, as the only fail-soft operator-request substitute.
+      const originalRequest = typeof initialPlan === "string" && initialPlan.trim()
+        ? initialPlan.trim()
+        : summary.description.trim();
+      /*
+      FNXC:GitHubPlanningSourceIssue 2026-08-09-08:09:
+      Planning creates truthful GitHub provenance from only persisted structured context or a canonical
+      seed. A live holder suppresses tracking rather than blocking the task, while post-create adoption
+      remains the cross-process authority that prevents duplicate GitHub tracking streams.
+      */
+      // Older route harnesses and pre-rollout planning adapters do not export the additive resolver.
+      const sourceContext = session && typeof resolvePlanningSourceIssue === "function" ? resolvePlanningSourceIssue(session) : undefined;
+      const trackingDecision = sourceContext
+        ? await resolvePlanningGithubTrackingDecision(scopedStore, projectSettings, { owner: sourceContext.sourceIssue.repository.split("/")[0], repo: sourceContext.sourceIssue.repository.split("/")[1], issueNumber: sourceContext.sourceIssue.issueNumber, url: sourceContext.sourceIssue.url ?? "" })
+        : undefined;
+      // Create the task. Provenance is truthful even when a live importer suppresses tracking.
+      const task = await scopedStore.createTask({
+        title: summary.title,
+        description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
+        dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
+        priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
+        ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: "api" as const } }),
+        branch: resolvedBranch,
+        ...(resolvedBranch !== undefined ? { branchWriteOrigin: "operator" as const } : {}),
+        baseBranch: resolvedBaseBranch,
+        /*
+        FNXC:WorkflowSelection 2026-06-20-16:48:
+        Planning Mode creates tasks from the board context, so an active workflow lane must be materialized at create time when the client supplies it.
+        */
+        ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        proposalClaimId: currentProposalClaimId(),
+      });
+
+      // Update task with suggested size if provided.
+      if (summary.suggestedSize) {
+        await runPlanningCreateSideEffect(
+          "Planning create-task size update failed",
+          () => scopedStore.updateTask(task.id, { size: summary.suggestedSize }),
+          { taskId: task.id, sessionId },
+        );
+      }
+
+      await runPlanningCreateSideEffect(
+        "Planning create-task plan document write failed",
+        () => scopedStore.upsertTaskDocument(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } }),
+        { taskId: task.id, sessionId },
+      );
+      if (originalRequest) {
+        await runPlanningCreateSideEffect(
+          "Planning create-task original description document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } }),
+          { taskId: task.id, sessionId },
+        );
+      }
+
+      if (sourceContext) {
+        await runPlanningCreateSideEffect(
+          "Planning create-task GitHub issue document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "github-issue", content: sourceContext.markdown, author: "planning", metadata: { planningSessionId: sessionId, source: "github-source-issue" } }),
+          { taskId: task.id, sessionId },
+        );
+        await runPlanningCreateSideEffect(
+          "Planning create-task GitHub source log failed",
+          () => scopedStore.logEntry(task.id, "Imported from GitHub", sourceContext.sourceIssue.url),
+          { taskId: task.id, sessionId },
+        );
+        if (trackingDecision?.suppressedByTaskId) {
+          await runPlanningCreateSideEffect("Planning create-task duplicate source issue log failed", () => scopedStore.logEntry(task.id, `Source issue already tracked by ${trackingDecision.suppressedByTaskId}`), { taskId: task.id, sessionId });
+        }
+        const images = resolvePlanningIssueImageUrls && session ? resolvePlanningIssueImageUrls(session) : { urls: [], commentsUnavailable: false, droppedBodyCount: 0 };
+        /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: Attach only after a new task exists; downloads are best-effort and never re-fetch GitHub issue/comment APIs. */
+        await runPlanningCreateSideEffect("Planning create-task GitHub image import failed", async () => {
+          const result = await importIssueImagesFromUrls(scopedStore, task.id, images.urls, githubImagePolicy());
+          if (result.attached) await scopedStore.logEntry(task.id, `Imported ${result.attached} image attachment${result.attached === 1 ? "" : "s"} from GitHub issue`, sourceContext.sourceIssue.url);
+        }, { taskId: task.id, sessionId });
+        if (images.commentsUnavailable || images.droppedBodyCount) planningLogger.warn("Planning GitHub image capture was partial", { taskId: task.id, issueUrl: sourceContext.sourceIssue.url, commentsUnavailable: images.commentsUnavailable, droppedBodyCount: images.droppedBodyCount });
+      }
+
+      // Log the planning mode creation.
+      await runPlanningCreateSideEffect(
+        "Planning create-task log entry failed",
+        () => scopedStore.logEntry(task.id, "Created via Planning Mode", `Initial plan: ${(initialPlan ?? "").slice(0, 200)}`),
+        { taskId: task.id, sessionId },
+      );
+
+      // Write the linkage before responding. If this write is interrupted, the next retry
+      // reconciles the unique proposalClaimId task mapping above and never inserts another task.
+      if (hasDurableClaimStore) {
+        await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id, claimEpoch);
+      } else if (session) {
+        await updatePlanningCreateClaim(sessionId, { createClaimStatus: "created", createdTaskId: task.id, claimOwnerToken: undefined, claimStartedAt: undefined });
+      }
+
+      await markSessionComplete();
+
+      res.status(201).json({ task, alreadyCreated: false });
+    } catch (err: unknown) {
+      // A failed insert may release only this request's owner token. A successful insert whose
+      // finalization failed remains recoverable through proposalClaimId on the next request.
+      if (claimedOwnerToken) {
+        const { releasePlanningTaskCreation } = await import("../planning.js");
+        await releasePlanningTaskCreation(claimedSessionId as string, claimedOwnerToken).catch(() => undefined);
+      }
+      rethrowPlanningWorkflowCreateError(err, "Failed to create task", rethrowAsApiError);
+    } finally {
+      releaseCreateLock?.();
+    }
+  });
+
+  router.get("/planning/:sessionId/stream", async (req, res) => {
+    const { sessionId } = req.params;
+
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    // Send initial connection confirmation
+    res.write(": connected\n\n");
+
+    try {
+      const { planningStreamManager, getSession, reconcileStalePlanningGeneration } = await import("../planning.js");
+
+      // Verify session exists
+      const session = await getSession(sessionId);
+      if (!session) {
+        writeSSEEvent(res, "error", JSON.stringify({ message: "Session not found or expired" }));
+        res.end();
+        return;
+      }
+
+      const lastEventId = parseLastEventId(req);
+
+      /*
+      FNXC:PlanningProviderErrors 2026-07-23-20:10:
+      A session settled in a terminal error — or stranded in "generating" past the watchdog
+      window with no live turn — must end this stream with an error event instead of holding
+      the client on "Thinking/Generating plan" waiting for events that can never arrive
+      (the client's SSE reconnect loop and 8s poll both treat a persisted "generating" row as
+      healthy, so without this the hang is permanent).
+
+      FNXC:PlanningProviderErrors 2026-07-23-21:05:
+      This terminal check must run BEFORE the Last-Event-ID replay and skip it entirely. The
+      replay delivers every buffered event newer than lastEventId — including a buffered error
+      event — so emitting the terminal error after the replay double-delivered it to
+      reconnecting clients (double onError → duplicate auto-retry triggers). The terminal
+      error is written exactly once: the newest buffered error event id (or a fresh broadcast
+      when the bounded buffer evicted it) is compared against lastEventId alone. Skipping the
+      general replay is safe because the stream is terminal — the client's error handler
+      refetches session state instead of consuming intermediate events.
+      */
+      const terminalError = reconcileStalePlanningGeneration(sessionId);
+      if (terminalError) {
+        const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
+        const lastErrorEvent = [...existing].reverse().find((event) => event.event === "error");
+        const errorEventId = lastErrorEvent?.id
+          ?? planningStreamManager.broadcast(sessionId, { type: "error", data: terminalError });
+        if (lastEventId === undefined || errorEventId > lastEventId) {
+          writeSSEEvent(res, "error", JSON.stringify(terminalError), errorEventId);
+        }
+        res.end();
+        return;
+      }
+
+      if (lastEventId !== undefined) {
+        const buffered = planningStreamManager.getBufferedEvents(sessionId, lastEventId);
+        if (!replayBufferedSSE(res, buffered)) {
+          res.end();
+          return;
+        }
+      }
+
+      /*
+      FNXC:PlanningStreamTurnIdentity 2026-07-20-10:36:
+      A running summary is persisted after every interview turn, so it is catch-up state rather
+      than completion evidence. Reconnect must refresh that plan and continue into the current
+      awaiting-input question; only Validate writes `session.validated`, which authorizes a
+      terminal complete event and closes the stream.
+      */
+      /*
+      FNXC:PlanningMode 2026-07-20-18:05:
+      New and resumed sessions seed `summary` with deterministic fallback copy before the AI
+      turn starts. While `generationPurpose` is set, that value is working state rather than a
+      review-ready plan. Publishing it here moves the client out of loading early and exposes
+      Refine/Validate against the still-active generation. Only catch up a settled summary;
+      the generation path clears its purpose before broadcasting the AI-authored replacement.
+      */
+      if (session.summary && session.generationPurpose === undefined) {
+        const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
+        const lastSummaryEvent = [...existing].reverse().find((event) => event.event === "summary");
+        const summaryEventId = lastSummaryEvent?.id
+          ?? planningStreamManager.broadcast(sessionId, {
+            type: "summary",
+            data: session.summary,
+          });
+
+        if (lastEventId === undefined || summaryEventId > lastEventId) {
+          if (!writeSSEEvent(res, "summary", JSON.stringify(session.summary), summaryEventId)) {
+            res.end();
+            return;
+          }
+        }
+
+        if (session.validated) {
+          const lastCompleteEvent = [...existing].reverse().find((event) => event.event === "complete");
+          const completeEventId = lastCompleteEvent?.id
+            ?? planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          if (lastEventId === undefined || completeEventId > lastEventId) {
+            writeSSEEvent(res, "complete", JSON.stringify({}), completeEventId);
+          }
+
+          res.end();
+          return;
+        }
+      }
+
+      // First-connect catch-up should replay buffered thinking chunks so the
+      // loading view can stream immediately even if the client subscribed late.
+      if (lastEventId === undefined) {
+        const bufferedThinking = planningStreamManager
+          .getBufferedEvents(sessionId, 0)
+          .filter((event) => event.event === "thinking");
+        if (!replayBufferedSSE(res, bufferedThinking)) {
+          res.end();
+          return;
+        }
+      }
+
+      // Catch-up for awaiting_input sessions: emit current question immediately
+      // so late subscribers don't miss the transition and see the question without delay.
+      if (session.currentQuestion) {
+        const existing = planningStreamManager.getBufferedEvents(sessionId, 0);
+        const lastQuestionEvent = [...existing].reverse().find((event) => event.event === "question");
+        const questionEventId = lastQuestionEvent?.id
+          ?? planningStreamManager.broadcast(sessionId, {
+            type: "question",
+            data: session.currentQuestion,
+          });
+
+        if (lastEventId === undefined || questionEventId > lastEventId) {
+          if (!writeSSEEvent(res, "question", JSON.stringify(session.currentQuestion), questionEventId)) {
+            res.end();
+            return;
+          }
+        }
+        // Don't return — subscribe to continue receiving events (thinking, next question, etc.)
+      }
+
+      // Subscribe to session events
+      const unsubscribe = planningStreamManager.subscribe(sessionId, (event, eventId) => {
+        const data = (event as { data?: unknown }).data;
+        if (!writeSSEEvent(res, event.type, JSON.stringify(data ?? {}), eventId)) {
+          unsubscribe();
+          return;
+        }
+
+        // End stream on complete or error
+        if (event.type === "complete" || event.type === "error") {
+          unsubscribe();
+          res.end();
+        }
+      });
+
+      planningStreamManager.consumeInitialTurn(sessionId)?.();
+
+      // Handle client disconnect
+      req.on("close", () => {
+        unsubscribe();
+      });
+
+      // Send heartbeat every 30s to keep connection alive
+      const heartbeat = setInterval(() => {
+        if (res.writableEnded) {
+          clearInterval(heartbeat);
+          return;
+        }
+        res.write(": heartbeat\n\n");
+      }, 30_000);
+
+      req.on("close", () => {
+        clearInterval(heartbeat);
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      writeSSEEvent(res, "error", JSON.stringify({ message: err instanceof Error ? err.message : String(err) || "Stream error" }));
+      res.end();
+    }
+  });
+
+
+  if (process.env.FUSION_DEBUG_PLANNING_ROUTES === "1") {
+    const planningRoutes = [
+      "POST /planning/start",
+      "POST /planning/start-streaming",
+      "POST /planning/respond",
+      "POST /planning/:sessionId/back",
+      "POST /planning/:sessionId/retry",
+      "POST /planning/:sessionId/stop",
+      "POST /planning/cancel",
+      "POST /planning/create-task",
+      "GET /planning/:sessionId/stream",
+    ];
+    planningLogger.info("routes registered", { planningRoutes });
+  }
+}

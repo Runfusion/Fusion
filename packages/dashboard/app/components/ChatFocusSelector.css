@@ -1,0 +1,113 @@
+/*
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:40:
+The focus popover must use a positioned, full-width composer ancestor as its containing
+block, never the chip wrapper. A chip-anchored mobile breakpoint resolved its insets
+against the trigger and collapsed the popover into a vertical sliver. Every future
+ChatFocusSelector host must provide that positioned composer ancestor. The bounded,
+scrollable box keeps its title and controls available when the chat pane clips overflow.
+
+The chip matches --chat-input-control-size (the composer's send/attach control height)
+so it centers with the single-line textarea. Styling uses only existing design tokens.
+
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:59:
+A cleared focus is an icon-only control: its aria-label and title supply the accessible
+name, while a selected topic retains its visible chip label. The modifier removes label
+padding and gap so the cleared control stays square at every breakpoint.
+*/
+
+.chat-focus-root {
+  position: static;
+  flex: none;
+}
+
+.chat-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-inline-size: var(--chat-input-control-size, 2.25rem);
+  min-block-size: var(--chat-input-control-size, 2.25rem);
+  block-size: var(--chat-input-control-size, 2.25rem);
+  padding: 0 var(--space-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-pill, var(--radius-md));
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-focus-chip:disabled {
+  opacity: var(--opacity-disabled, 0.5);
+  cursor: default;
+}
+
+.chat-focus-chip:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-focus-chip--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-focus-chip--icon-only {
+  inline-size: var(--chat-input-control-size, 2.25rem);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+.chat-focus-chip-topic {
+  max-inline-size: calc(var(--space-xl) * 8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+}
+
+.chat-focus-popover {
+  position: absolute;
+  inset-inline-start: var(--space-md);
+  inset-inline-end: auto;
+  inset-block-end: calc(100% + var(--space-xs));
+  inline-size: min(calc(var(--space-xl) * 15), calc(100% - (var(--space-md) * 2)));
+  max-inline-size: calc(100% - (var(--space-md) * 2));
+  max-block-size: min(calc(var(--space-xl) * 16), calc(100vh - (var(--space-xl) * 6)));
+  overflow-y: auto;
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-popover);
+}
+
+.chat-focus-title {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-xs);
+}
+
+.chat-focus-help {
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  line-height: var(--line-height-normal);
+  margin: 0 0 var(--space-sm);
+}
+
+.chat-focus-input {
+  width: 100%;
+  margin-bottom: var(--space-sm);
+}
+
+.chat-focus-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.chat-focus-save,
+.chat-focus-clear {
+  flex: 0 0 auto;
+}

@@ -1,0 +1,572 @@
+import { describe, it, expect } from "vitest";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { builtinModules } from "node:module";
+import { execFileSync } from "node:child_process";
+import { parse } from "yaml";
+import { applyPrepackTransform } from "../../scripts/prepare-publish-manifest.mjs";
+
+const workspaceRoot = join(__dirname, "..", "..", "..", "..");
+
+function loadPackageJson(packageDir: string): any {
+  const path = join(workspaceRoot, "packages", packageDir, "package.json");
+  return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+function loadWorkflowYaml(name: string): any {
+  const path = join(workspaceRoot, ".github", "workflows", name);
+  const content = readFileSync(path, "utf-8");
+  return parse(content);
+}
+
+function loadRootPackageJson(): any {
+  const path = join(workspaceRoot, "package.json");
+  return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+function loadCliPrepackScript(): string {
+  const path = join(workspaceRoot, "packages", "cli", "scripts", "prepare-publish-manifest.mjs");
+  return readFileSync(path, "utf-8");
+}
+
+function hasProjectArg(script: string | undefined, project: string): boolean {
+  const parts = script?.trim().split(/\s+/) ?? [];
+  return parts.some((part, index) => part === "--project" && parts[index + 1] === project);
+}
+
+/*
+FNXC:DependencyPinning 2026-07-17-12:00:
+FN-8201 requires source and prepack-transformed manifests to keep pi-ai and
+pi-coding-agent as one exact version pair, because npm global installation does
+not honor pnpm-lock.yaml when resolving package dependency ranges.
+*/
+const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
+  const dependencies = pkg.dependencies ?? {};
+  const peerDependencies = pkg.peerDependencies ?? {};
+  const peerDependenciesMeta = pkg.peerDependenciesMeta ?? {};
+
+  for (const dependencyName of Object.keys(dependencies)) {
+    expect(
+      peerDependenciesMeta[dependencyName]?.optional,
+      `${label}: runtime dependency "${dependencyName}" must not also be an optional peer; npm/pnpm may omit it from clean standalone installs.`,
+    ).not.toBe(true);
+  }
+
+  // FNXC:DesktopPackaging 2026-08-12-20:46: Exact matched Pi runtime pin — keep in sync with
+  // pnpm-workspace.yaml overrides and check-pi-versions-pinned.mjs (currently 0.84.1).
+  for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
+    expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
+      dependencyName,
+      "0.84.1",
+    );
+    expect(dependencies[dependencyName], `${label}: ${dependencyName} must be a clean exact semver`).toMatch(
+      EXACT_SEMVER,
+    );
+    expect(peerDependencies, `${label}: ${dependencyName} must not be a peer dependency`).not.toHaveProperty(
+      dependencyName,
+    );
+    expect(peerDependenciesMeta, `${label}: ${dependencyName} must not have peer metadata`).not.toHaveProperty(
+      dependencyName,
+    );
+  }
+
+  expect(
+    dependencies["@earendil-works/pi-ai"],
+    `${label}: pi-ai and pi-coding-agent must remain a matched exact version pair`,
+  ).toBe(dependencies["@earendil-works/pi-coding-agent"]);
+
+  expect(dependencies, `${label}: typebox must not be promoted into runtime dependencies`).not.toHaveProperty(
+    "typebox",
+  );
+  expect(peerDependencies, `${label}: typebox remains the optional peer control`).toHaveProperty(
+    "typebox",
+    "*",
+  );
+  expect(peerDependenciesMeta.typebox, `${label}: typebox remains optional peer metadata`).toEqual({
+    optional: true,
+  });
+}
+
+describe("CLI package.json publishing config", () => {
+  const pkg = loadPackageJson("cli");
+  const prepackScript = loadCliPrepackScript();
+
+  /*
+   * FNXC:CliRuntimeContract 2026-08-11-09:30:
+   * Node 22.4 is the supported floor because the CLI uses import attributes and
+   * `node:fs/promises` glob; declaring it prevents unsupported runtimes from
+   * silently reaching the Node 22.4+ exit-13 liveness path FN-8954 repaired.
+   */
+  it("declares the supported Node runtime in both manifests", () => {
+    const rootPkg = loadRootPackageJson();
+    expect(pkg.engines?.node).toBe(">=22.4.0");
+    expect(rootPkg.engines?.node).toBe(pkg.engines.node);
+  });
+
+  it('has "bin" field with fn/fusion pointing to committed launcher', () => {
+    expect(pkg.bin).toBeDefined();
+    expect(pkg.bin.fn).toBe("./bin.mjs");
+    expect(pkg.bin.fusion).toBe("./bin.mjs");
+  });
+
+  it('has "files" array with committed launcher and refined globs for dist output', () => {
+    expect(pkg.files).toBeDefined();
+    expect(Array.isArray(pkg.files)).toBe(true);
+    expect(pkg.files).toContain("bin.mjs");
+    expect(pkg.files).toContain("dist/**/*.js");
+    expect(pkg.files).toContain("dist/**/*.d.ts");
+    expect(pkg.files).toContain("dist/**/*.d.ts.map");
+    expect(pkg.files).toContain("dist/**/*.js.map");
+    expect(pkg.files).toContain("dist/client/**");
+    expect(pkg.files).toContain("dist/desktop/**");
+    expect(pkg.files).toContain("README.md");
+  });
+
+  it("does not include bare 'dist' entry or globs that would match Bun binaries", () => {
+    const bunBinaryNames = [
+      "fn",
+      "fn-cli-linux-x64",
+      "fn-cli-linux-arm64",
+      "fn-cli-darwin-x64",
+      "fn-cli-darwin-arm64",
+      "fn-cli-windows-x64.exe",
+    ];
+    // No bare "dist" entry that would include everything
+    expect(pkg.files).not.toContain("dist");
+    // No glob that explicitly targets Bun binaries
+    for (const entry of pkg.files) {
+      for (const bin of bunBinaryNames) {
+        expect(entry).not.toBe(`dist/${bin}`);
+      }
+      // No wildcard like "dist/fn*" that would match binaries
+      expect(entry).not.toMatch(/^dist\/fn/);
+    }
+  });
+
+  it("stages packaged desktop runtime assets without publishing raw workspace manifests", () => {
+    const tsupRaw = readFileSync(join(workspaceRoot, "packages", "cli", "tsup.config.ts"), "utf-8");
+
+    expect(pkg.files).toContain("dist/desktop/**");
+    expect(tsupRaw).toContain("desktopRuntimeSrc");
+    expect(tsupRaw).toContain("ensureDesktopRuntimeAssetsBuilt");
+    expect(tsupRaw).toContain("Copied desktop runtime assets to dist/desktop/");
+    expect(tsupRaw).not.toContain("join(desktopRuntimeSrc, \"package.json\")");
+  });
+
+  it("excludes runtime directory from npm package (GitHub Releases only)", () => {
+    // Runtime assets are for standalone binaries distributed via GitHub Releases
+    // npm package should not include them (users install via npm get node-pty naturally)
+    for (const entry of pkg.files) {
+      expect(entry).not.toContain("runtime");
+      expect(entry).not.toMatch(/dist\/runtime/);
+    }
+  });
+
+  it("is not private", () => {
+    expect(pkg.private).not.toBe(true);
+  });
+
+  it("declares ioredis as a runtime dependency for badge pub/sub", () => {
+    const deps = Object.keys(pkg.dependencies || {});
+    expect(deps).toContain("ioredis");
+  });
+
+  /*
+  FNXC:AgentBrowserPackaging 2026-07-22-13:25:
+  Keep this unit test scoped to publish-manifest wiring. The cross-platform
+  agent-browser install workflow is authoritative for packed consumer installs,
+  npm-generated platform launchers, and native executable invariants.
+  */
+  it("preserves agent-browser publish-manifest wiring", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.dependencies?.["agent-browser"]).toBe("0.26.0");
+    expect(publishedPkg.dependencies?.["agent-browser"]).toBe(pkg.dependencies["agent-browser"]);
+    expect(pkg.bin?.["agent-browser"]).toBe("./agent-browser.mjs");
+    expect(publishedPkg.bin?.["agent-browser"]).toBe(pkg.bin["agent-browser"]);
+    expect(pkg.files).toContain("agent-browser.mjs");
+    expect(publishedPkg.files).toContain("agent-browser.mjs");
+  });
+
+  /*
+  FNXC:VoiceInput 2026-08-03-05:43:
+  FN-8753 requires the published CLI manifest to own the lazy sherpa native
+  addon. The private dashboard workspace dependency is not present after an
+  npm install, so retain the pinned optional dependency through prepack while
+  keeping private workspace tooling out of the consumer manifest.
+  */
+  it("keeps the optional voice runtime in the published manifest", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.optionalDependencies).toHaveProperty("sherpa-onnx-node", "1.13.4");
+    expect(publishedPkg.optionalDependencies).toHaveProperty("sherpa-onnx-node", "1.13.4");
+    expect(publishedPkg.devDependencies).not.toHaveProperty("@fusion/dashboard");
+    expect(publishedPkg.dependencies).not.toHaveProperty("@fusion/dashboard");
+  });
+
+  /**
+   * FNXC:Packaging 2026-06-13-16:36:
+   * Standalone npm/pnpm installs may omit a package when the published manifest declares it as both a runtime dependency and an optional peer. Keep the pi runtime packages as plain dependencies so dist/bin.js and dist/extension.js can resolve their static imports outside the monorepo, while leaving typebox as the optional-peer control because Fusion does not import it at runtime.
+   */
+  it("does not declare runtime dependencies as optional peers in source or published manifests", () => {
+    assertRuntimeDepsAreNotOptionalPeers(pkg, "source manifest");
+    assertRuntimeDepsAreNotOptionalPeers(applyPrepackTransform(pkg), "published manifest");
+  });
+
+  /*
+  FNXC:PublishBoundary 2026-07-19-21:20:
+  FN-8413 / issue #2355 requires the root published manifest to carry every
+  third-party dependency used by the raw TypeScript pi-claude-cli extension.
+  The nested private dist/pi-claude-cli/package.json is inert during npm
+  install, so keep the SDK pinned to the driver's compatible 0.24.0 API here
+  and after prepack rather than relying on the workspace dependency.
+  */
+  it("keeps raw pi-claude-cli runtime dependencies on the published root manifest", () => {
+    const piClaudeCliPkg = loadPackageJson("pi-claude-cli");
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.dependencies).toHaveProperty("@agentclientprotocol/sdk", "0.24.0");
+    expect(publishedPkg.dependencies).toHaveProperty("@agentclientprotocol/sdk", "0.24.0");
+
+    for (const [name, specifier] of Object.entries(piClaudeCliPkg.dependencies ?? {})) {
+      if (name.startsWith("@fusion/") || typeof specifier !== "string" || specifier.includes("workspace:")) {
+        continue;
+      }
+      expect(
+        pkg.dependencies,
+        `raw pi-claude-cli dependency ${name} must be installed from the published root manifest`,
+      ).toHaveProperty(name, specifier);
+    }
+  });
+
+  it("defines test:docs-index as a single-file docs README index lane", () => {
+    const script = pkg.scripts?.["test:docs-index"];
+    const parts = script?.trim().split(/\s+/) ?? [];
+    const docsIndexPath = "src/__tests__/docs-readme-index.test.ts";
+
+    expect(script).toBeDefined();
+    expect(script).toContain("vitest run");
+    expect(parts).toEqual([
+      "vitest",
+      "run",
+      docsIndexPath,
+      "--silent=passed-only",
+      "--reporter=dot",
+    ]);
+    expect(parts.filter((part) => part.endsWith(".test.ts"))).toEqual([docsIndexPath]);
+    expect(parts).not.toContain("--");
+    expect(script).not.toMatch(/vitest\s+run\s+(?:--silent=passed-only\s+)?(?:--reporter=dot\s+)?$/);
+    expect(script).not.toContain("docs-readme-index ");
+  });
+
+  it("prepack manifest rewrite strips workspace-only plugin/tooling devDependencies", () => {
+    expect(prepackScript).toContain('delete devDependencies["@fusion/pi-claude-cli"]');
+    expect(prepackScript).toContain('delete devDependencies["@fusion/pi-llama-cpp"]');
+    expect(prepackScript).toContain('delete devDependencies["@fusion-plugin-examples/roadmap"]');
+  });
+
+  // Generalized guard derived from tsup.config.ts. Any non-builtin module
+  // marked `external` MUST be a runtime dep (so `npm install @runfusion/fusion`
+  // can resolve it after publish), and any module pulled in via `noExternal`
+  // (i.e. inlined into the bundle) MUST NOT leak into runtime deps.
+  // pnpm hoisting masks the missing-dep case in the workspace, so a hardcoded
+  // allowlist isn't enough — this iterates the live config instead.
+  describe("tsup external/noExternal vs published deps", () => {
+    const tsupRaw = readFileSync(
+      join(workspaceRoot, "packages", "cli", "tsup.config.ts"),
+      "utf-8",
+    );
+
+    function extractStringArray(name: string): string[] {
+      const matches = [...tsupRaw.matchAll(new RegExp(`${name}:\\s*\\[([\\s\\S]*?)\\]`, "gm"))];
+      const values = matches.flatMap((m) =>
+        [...m[1].matchAll(/["']([^"']+)["']/g)].map((mm) => mm[1]),
+      );
+      return [...new Set(values)];
+    }
+
+    function extractRegexes(name: string): RegExp[] {
+      const matches = [...tsupRaw.matchAll(new RegExp(`${name}:\\s*\\[([\\s\\S]*?)\\]`, "gm"))];
+      // Match `/PATTERN/flags` where PATTERN may contain escaped slashes (`\/`).
+      return matches.flatMap((m) =>
+        [...m[1].matchAll(/\/((?:\\\/|[^/\n])+)\/[gimsuy]*/g)].map(
+          (mm) => new RegExp(mm[1].replace(/\\\//g, "/")),
+        ),
+      );
+    }
+
+    const externals = extractStringArray("external");
+    const noExternalRegexes = extractRegexes("noExternal");
+    const noExternalStrings = extractStringArray("noExternal");
+
+    // Externals that intentionally aren't direct deps. Each entry needs a reason —
+    // when adding to this list, document *why* it doesn't need to be a runtime dep
+    // (transitive via another dep, only used by the Bun binary, etc.) so future
+    // edits don't silently re-introduce the dockerode-class bug.
+    /*
+    FNXC:CliTests 2026-07-17-09:45:
+    FN-8210: extractStringArray("external") intentionally scans the entire tsup config, including per-plugin bundlePluginEntry externals. Optional Baileys dynamic-require helpers for the bundled WhatsApp Chat plugin are therefore allowlisted here: they must remain present in the config's external array, but are not runtime dependencies of the @runfusion/fusion CLI bin.
+    */
+    const TRANSITIVE_EXTERNALS: Record<string, string> = {
+      ssh2: "transitive dep of dockerode",
+      "cpu-features": "transitive dep of dockerode (via ssh2)",
+      "@homebridge/node-pty-prebuilt-multiarch":
+        "aliased as node-pty in dependencies; the alias entry satisfies the import",
+      jimp:
+        "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      "link-preview-js":
+        "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      "qrcode-terminal":
+        "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      /*
+       * FNXC:CliTests 2026-08-24-02:16:
+       * sharp 0.35 native addons (img-sharp platform .node files) cannot be esbuild-bundled.
+       * Externalized for CLI bin + plugin packaging; desktop generate-icons and optional
+       * Baileys media helpers own the runtime, so it is not a @runfusion/fusion published dep.
+       */
+      sharp:
+        "native image codec (desktop generate-icons + optional Baileys media); 0.35 ships img-sharp platform .node addons esbuild cannot bundle — see tsup.config.ts",
+      "@img/sharp-*":
+        "esbuild glob for sharp 0.35 platform native addons; not a published CLI runtime dep",
+      // FNXC:BuildConfig 2026-07-13-12:00: FN-7936 aliased @fusion/core to a runtime shim in bundled plugin outputs; it's no longer a tsup external, so this allowlist entry is stale.
+      // "@fusion/core": REMOVED — was "plugin-entry bundling external only; not a runtime dep of the CLI bin",
+      "@fusion/engine": "plugin-entry bundling external only; not a runtime dep of the CLI bin",
+    };
+
+    it("parses externals from tsup.config.ts", () => {
+      expect(externals.length).toBeGreaterThan(0);
+      expect(externals).toContain("dockerode");
+    });
+
+    it("externalizes sharp and @img/sharp-* native addons", () => {
+      expect(externals).toContain("sharp");
+      expect(externals).toContain("@img/sharp-*");
+    });
+
+    it.each(externals.filter(
+      (e) =>
+        !builtinModules.includes(e) &&
+        !e.startsWith("node:") &&
+        !(e in TRANSITIVE_EXTERNALS),
+    ))(
+      'external "%s" is declared as a runtime dependency',
+      (external) => {
+        const deps = Object.keys(pkg.dependencies || {});
+        const devDeps = Object.keys(pkg.devDependencies || {});
+        expect(
+          deps,
+          `tsup external "${external}" must be in @runfusion/fusion dependencies — otherwise \`npx runfusion.ai\` fails with ERR_MODULE_NOT_FOUND on a clean install. If this is a transitive dep, add it to TRANSITIVE_EXTERNALS with a reason.`,
+        ).toContain(external);
+        expect(
+          devDeps,
+          `tsup external "${external}" must not be only a devDependency`,
+        ).not.toContain(external);
+      },
+    );
+
+    /*
+    FNXC:Packaging 2026-08-11-05:52:
+    FN-8978 removed the duplicate TypeScript declaration from CLI devDependencies.
+    Prepack copies remaining devDependencies into the published manifest, so this
+    guard covers the packed output as well as the source manifest.
+    */
+    it("published manifest keeps tsup externals as runtime-only dependencies", () => {
+      const publishedPkg = applyPrepackTransform(pkg);
+      const deps = Object.keys(publishedPkg.dependencies || {});
+      const devDeps = Object.keys(publishedPkg.devDependencies || {});
+
+      for (const external of externals) {
+        if (
+          builtinModules.includes(external) ||
+          external.startsWith("node:") ||
+          external in TRANSITIVE_EXTERNALS
+        ) {
+          continue;
+        }
+
+        expect(
+          deps,
+          `published tsup external "${external}" must be in @runfusion/fusion dependencies — otherwise \`npx runfusion.ai\` fails with ERR_MODULE_NOT_FOUND on a clean install. If this is a transitive dep, add it to TRANSITIVE_EXTERNALS with a reason.`,
+        ).toContain(external);
+        expect(
+          devDeps,
+          `published tsup external "${external}" must not be only a devDependency`,
+        ).not.toContain(external);
+      }
+    });
+
+    it("TRANSITIVE_EXTERNALS entries still appear in tsup external (otherwise stale)", () => {
+      for (const name of Object.keys(TRANSITIVE_EXTERNALS)) {
+        expect(
+          externals,
+          `TRANSITIVE_EXTERNALS["${name}"] is no longer in tsup external — remove the allowlist entry.`,
+        ).toContain(name);
+      }
+    });
+
+    it("noExternal (bundled) modules are not also runtime deps", () => {
+      const deps = Object.keys(pkg.dependencies || {});
+      for (const dep of deps) {
+        for (const re of noExternalRegexes) {
+          expect(
+            re.test(dep),
+            `dep "${dep}" matches noExternal pattern ${re} — bundled code should not also be a runtime dep`,
+          ).toBe(false);
+        }
+        for (const s of noExternalStrings) {
+          expect(
+            dep,
+            `dep "${dep}" is listed in noExternal — bundled code should not also be a runtime dep`,
+          ).not.toBe(s);
+        }
+      }
+    });
+  });
+});
+
+describe("Scoped @fusion/* packages publishing config", () => {
+  const scopedPackages = ["core", "engine", "dashboard"];
+
+  for (const name of scopedPackages) {
+    describe(`@fusion/${name}`, () => {
+      const pkg = loadPackageJson(name);
+
+      it('has publishConfig with access "public"', () => {
+        expect(pkg.publishConfig).toBeDefined();
+        expect(pkg.publishConfig.access).toBe("public");
+      });
+
+      it('has "files" array', () => {
+        expect(pkg.files).toBeDefined();
+        expect(Array.isArray(pkg.files)).toBe(true);
+        expect(pkg.files).toContain("dist");
+      });
+
+      it("exports point to compiled dist output", () => {
+        const exports = pkg.exports?.["."];
+        expect(exports).toBeDefined();
+        if (typeof exports === "object") {
+          expect(exports.import).toMatch(/^\.\/dist\//);
+        } else {
+          expect(exports).toMatch(/^\.\/dist\//);
+        }
+      });
+    });
+  }
+});
+
+describe("Workspace bootstrap script contract", () => {
+  const rootPkg = loadRootPackageJson();
+  const dashboardPkg = loadPackageJson("dashboard");
+
+  it("makes root test changed-only while keeping explicit full-suite and CI-shard commands", () => {
+    expect(rootPkg.scripts?.test).toBe("node scripts/test-changed.mjs");
+    expect(rootPkg.scripts?.["test:full"]).toBe("node scripts/test-changed.mjs --full --no-cache && pnpm --filter @fusion/engine test:slow");
+    expect(rootPkg.scripts?.["test:full"]).not.toContain("pnpm build");
+    expect(rootPkg.scripts?.["test:ci:shard"]).toBe("node scripts/ci-test-shard.mjs");
+  });
+
+  it("defines verify:workspace in lint -> test:full -> build order", () => {
+    const verifyScript = rootPkg.scripts?.["verify:workspace"];
+    expect(verifyScript).toBe("pnpm lint && pnpm test:full && pnpm build:full");
+
+    const lintIdx = verifyScript.indexOf("pnpm lint");
+    const testIdx = verifyScript.indexOf("pnpm test:full");
+    const buildIdx = verifyScript.indexOf("pnpm build");
+
+    expect(lintIdx).toBeGreaterThanOrEqual(0);
+    expect(testIdx).toBeGreaterThan(lintIdx);
+    expect(buildIdx).toBeGreaterThan(testIdx);
+  });
+
+  it("keeps default build routed through workspace builder", () => {
+    expect(rootPkg.scripts?.build).toBe("node scripts/build-workspace.mjs");
+  });
+
+  it("keeps explicit opt-in scripts for full, desktop, and mobile builds", () => {
+    expect(rootPkg.scripts?.["build:all"]).toBe("pnpm -r build");
+    expect(rootPkg.scripts?.["build:desktop"]).toBe(
+      "pnpm --filter @fusion/desktop build",
+    );
+    expect(rootPkg.scripts?.["mobile:build"]).toBe(
+      "pnpm --filter @fusion/dashboard build && pnpm --filter @fusion/mobile cap sync",
+    );
+  });
+
+  it("keeps dashboard's default test lane curated with explicit deep coverage", () => {
+    const defaultTest = dashboardPkg.scripts?.test;
+    const defaultAppQuality = dashboardPkg.scripts?.["test:quality:app"];
+    const defaultApiQuality = dashboardPkg.scripts?.["test:quality:api"];
+    const appSettings = dashboardPkg.scripts?.["test:quality:app:settings"];
+    const apiCurated = dashboardPkg.scripts?.["test:quality:api:curated"];
+    const deepTest = dashboardPkg.scripts?.["test:deep"];
+
+    expect(defaultTest).toBe("node scripts/run-quality-tests.mjs");
+    expect(defaultAppQuality).toBe("node scripts/run-quality-tests.mjs --group app");
+    expect(defaultApiQuality).toBe("node scripts/run-quality-tests.mjs --group api");
+    expect(defaultAppQuality).toContain("--group app");
+    expect(appSettings).toContain("dashboard-app-quality-settings");
+    // The default quality runner dispatches grouped quality lanes by script
+    // name; the curated API sub-lane still carries the explicit quality project.
+    expect(defaultApiQuality).toContain("--group api");
+    expect(hasProjectArg(apiCurated, "dashboard-api-quality")).toBe(true);
+    expect(hasProjectArg(defaultTest, "dashboard-app")).toBe(false);
+    expect(hasProjectArg(defaultTest, "dashboard-api")).toBe(false);
+
+    expect(hasProjectArg(deepTest, "dashboard-app")).toBe(true);
+    expect(hasProjectArg(deepTest, "dashboard-api")).toBe(true);
+    expect(hasProjectArg(deepTest, "dashboard-app-quality")).toBe(false);
+    expect(hasProjectArg(deepTest, "dashboard-api-quality")).toBe(false);
+  });
+});
+
+describe("Workflow YAML validity", () => {
+  it("pr-checks.yml is valid YAML", () => {
+    const parsed = loadWorkflowYaml("pr-checks.yml");
+    expect(parsed).toBeDefined();
+    expect(parsed.name).toBe("PR Checks");
+  });
+
+  it("full-suite.yml is valid YAML", () => {
+    const parsed = loadWorkflowYaml("full-suite.yml");
+    expect(parsed).toBeDefined();
+    expect(parsed.name).toBe("Full Suite (non-blocking)");
+  });
+
+  it("version.yml is valid YAML", () => {
+    const parsed = loadWorkflowYaml("version.yml");
+    expect(parsed).toBeDefined();
+    expect(parsed.name).toBe("Version & Release");
+  });
+});
+
+describe("shipped agent skills", () => {
+  it("keeps computer-use in the published skill tree", () => {
+    /* FNXC:ComputerUseSkill 2026-08-11-07:19: package files globs, manifest transform, and the
+     * actual npm pack file list together prevent a source-only skill from being mistaken for shipped. */
+    const cli = loadPackageJson("cli");
+    expect(cli.pi.skills).toContain("./skill");
+    expect(cli.files).toContain("skill/**");
+    expect(applyPrepackTransform(cli).files).toContain("skill/**");
+    const packageDir = join(workspaceRoot, "packages", "cli");
+    const packFixture = mkdtempSync(join(tmpdir(), "fusion-cli-packlist-"));
+    try {
+      /* Keep npm's real packlist semantics without making this focused manifest test scan the
+       * multi-megabyte built CLI and dashboard bundles. Source presence is still proven by cpSync. */
+      writeFileSync(join(packFixture, "package.json"), JSON.stringify(cli));
+      cpSync(join(packageDir, "skill"), join(packFixture, "skill"), { recursive: true });
+      const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: packFixture,
+        encoding: "utf8",
+      })) as Array<{ files: Array<{ path: string }> }>;
+      const packedPaths = new Set(packed[0]!.files.map((file) => file.path));
+      expect(packedPaths).toContain("skill/fusion/SKILL.md");
+      expect(packedPaths).toContain("skill/computer-use/SKILL.md");
+    } finally {
+      rmSync(packFixture, { recursive: true, force: true });
+    }
+  });
+});

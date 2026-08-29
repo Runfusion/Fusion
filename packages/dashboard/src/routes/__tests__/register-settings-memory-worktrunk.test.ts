@@ -1,0 +1,472 @@
+// @vitest-environment node
+
+import express from "express";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createAuthMiddleware } from "../../auth-middleware.js";
+import {
+  __resetCreateFnAgentForInsights,
+  __setCreateFnAgentForInsights,
+  registerSettingsMemoryRoutes,
+} from "../register-settings-memory-routes.js";
+import { request as performRequest } from "../../test-request.js";
+import * as sse from "../../sse.js";
+
+const {
+  resolveWorktrunkBinaryMock,
+  probeWorktrunkMock,
+  readMemoryMock,
+  readInsightsMemoryMock,
+  buildInsightExtractionPromptMock,
+  processAndAuditInsightExtractionMock,
+  processMemoryDreamsMock,
+  processAgentMemoryDreamsMock,
+  resolvePlanningSettingsModelMock,
+} = vi.hoisted(() => ({
+  resolveWorktrunkBinaryMock: vi.fn(),
+  probeWorktrunkMock: vi.fn(),
+  readMemoryMock: vi.fn(),
+  readInsightsMemoryMock: vi.fn(),
+  buildInsightExtractionPromptMock: vi.fn(),
+  processAndAuditInsightExtractionMock: vi.fn(),
+  processMemoryDreamsMock: vi.fn(),
+  processAgentMemoryDreamsMock: vi.fn(),
+  resolvePlanningSettingsModelMock: vi.fn(),
+}));
+
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+  return {
+    ...actual,
+    readMemory: readMemoryMock,
+    readInsightsMemory: readInsightsMemoryMock,
+    buildInsightExtractionPrompt: buildInsightExtractionPromptMock,
+    processAndAuditInsightExtraction: processAndAuditInsightExtractionMock,
+    processMemoryDreams: processMemoryDreamsMock,
+    processAgentMemoryDreams: processAgentMemoryDreamsMock,
+    AgentStore: class {
+      async init() {}
+      async listAgents() { return []; }
+    },
+    resolvePlanningSettingsModel: resolvePlanningSettingsModelMock,
+  };
+});
+
+vi.mock("@fusion/engine", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/engine")>("@fusion/engine");
+  return {
+    ...actual,
+    resolveWorktrunkBinary: resolveWorktrunkBinaryMock,
+    probeWorktrunk: probeWorktrunkMock,
+  };
+});
+
+function createApp(pluginRunner?: Record<string, unknown>, daemonToken?: string) {
+  const router = express.Router();
+  const scopedStore = {
+    getSettings: vi.fn(async () => ({ worktrunk: { enabled: false }, memoryDreamsEnabled: true })),
+    getRootDir: vi.fn(() => "/tmp/project"),
+    getFusionDir: vi.fn(() => "/tmp/project/.fusion"),
+    // FNXC:PostgresCutover 2026-07-16-06:30: all scoped-store doubles expose
+    // the backend accessor even when the mocked AgentStore does not consume it.
+    getAsyncLayer: vi.fn(() => undefined),
+    updateSettings: vi.fn(async (patch: Record<string, unknown>) => patch),
+  };
+
+  registerSettingsMemoryRoutes(
+    {
+      router,
+      options: { pluginRunner },
+      store: {} as any,
+      runtimeLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as any,
+      getProjectContext: vi.fn(async () => ({
+        store: scopedStore,
+        // FNXC:PostgresCutover 2026-07-16-06:30: memory routes resolve the
+        // project identity through the engine before constructing async agents.
+        engine: {
+          getProjectId: () => "p1",
+          getRoutineStore: () => undefined,
+        },
+        projectId: "p1",
+      })),
+      rethrowAsApiError: (err: unknown) => {
+        throw err;
+      },
+    },
+    {
+      githubToken: undefined,
+      validateModelPresets: vi.fn(() => undefined),
+      sanitizeBooleanSetting: vi.fn((name: string, value: unknown) => {
+        if (value === undefined || value === null) return undefined;
+        if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
+        return value;
+      }),
+      sanitizeOverlapIgnorePaths: vi.fn(() => undefined),
+      discoverDashboardPiExtensions: vi.fn(async () => ({
+        manifestPaths: [],
+        disabledIds: [],
+      })),
+    },
+  );
+
+  const app = express();
+  app.use(express.json());
+  if (daemonToken) app.use(createAuthMiddleware(daemonToken));
+  app.use("/api", router);
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(err?.statusCode ?? 500).json({ error: err?.message ?? String(err) });
+  });
+
+  return { app, scopedStore };
+}
+
+async function patchSettings(app: express.Express, body: unknown) {
+  const res = await performRequest(app, "PUT", "/api/settings", JSON.stringify(body), {
+    "Content-Type": "application/json",
+  });
+  return { status: res.status, body: res.body };
+}
+
+describe("register-settings-memory-routes worktrunk gate", () => {
+  beforeEach(() => {
+    resolveWorktrunkBinaryMock.mockReset();
+    probeWorktrunkMock.mockReset();
+    readMemoryMock.mockReset();
+    readInsightsMemoryMock.mockReset();
+    buildInsightExtractionPromptMock.mockReset();
+    processAndAuditInsightExtractionMock.mockReset();
+    processMemoryDreamsMock.mockReset();
+    processAgentMemoryDreamsMock.mockReset();
+    resolvePlanningSettingsModelMock.mockReset();
+    __resetCreateFnAgentForInsights();
+  });
+
+  it("rejects worktrunk.enabled=true when binary is unavailable", async () => {
+    const { app, scopedStore } = createApp();
+    resolveWorktrunkBinaryMock.mockRejectedValueOnce(new Error("missing"));
+
+    const res = await patchSettings(app, { worktrunk: { enabled: true } });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("worktrunk integration cannot be enabled until the worktrunk binary is installed and verified");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("accepts worktrunk.enabled=true when binary resolves and probes", async () => {
+    const { app, scopedStore } = createApp();
+    resolveWorktrunkBinaryMock.mockResolvedValueOnce({ binaryPath: "/tmp/wt" });
+    probeWorktrunkMock.mockResolvedValueOnce({ ok: true, version: "1.0.0" });
+
+    const res = await patchSettings(app, { worktrunk: { enabled: true } });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { worktrunk: { enabled: true } },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("accepts worktrunk.enabled=false without verification", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { worktrunk: { enabled: false } });
+
+    expect(res.status).toBe(200);
+    expect(resolveWorktrunkBinaryMock).not.toHaveBeenCalled();
+    expect(probeWorktrunkMock).not.toHaveBeenCalled();
+    expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts settings patch without worktrunk changes", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { autoMerge: true });
+
+    expect(res.status).toBe(200);
+    expect(resolveWorktrunkBinaryMock).not.toHaveBeenCalled();
+    expect(probeWorktrunkMock).not.toHaveBeenCalled();
+    expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("sanitizes required recommendation policy as a project boolean", async () => {
+    const { app, scopedStore } = createApp();
+
+    expect((await patchSettings(app, { requireTaskRecommendations: true })).status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { requireTaskRecommendations: true },
+      expect.anything(),
+    );
+
+    scopedStore.updateSettings.mockClear();
+    expect((await patchSettings(app, { requireTaskRecommendations: false })).status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { requireTaskRecommendations: false },
+      expect.anything(),
+    );
+
+    scopedStore.updateSettings.mockClear();
+    const malformed = await patchSettings(app, { requireTaskRecommendations: "true" });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toContain("requireTaskRecommendations must be a boolean");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty built-in workflow set before persistence", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { enabledBuiltinWorkflowIds: [] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("at least one built-in workflow");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("accepts a single valid built-in workflow", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { enabledBuiltinWorkflowIds: ["builtin:quick-fix"] });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { enabledBuiltinWorkflowIds: ["builtin:quick-fix"] },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("emits one workflow invalidation only after enablement persistence", async () => {
+    const { app } = createApp();
+    const emit = vi.spyOn(sse, "emitWorkflowSseEvent");
+
+    expect((await patchSettings(app, { autoMerge: true })).status).toBe(200);
+    expect(emit).not.toHaveBeenCalled();
+    const res = await patchSettings(app, { enabledBuiltinWorkflowIds: ["builtin:quick-fix"] });
+
+    expect(res.status).toBe(200);
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith("workflow:updated", { reason: "enabledBuiltinWorkflowIds" }, "p1");
+    emit.mockRestore();
+  });
+
+  it("rejects recycleWorktrees + worktreeNaming:task-id together (mutually exclusive) with 400", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { recycleWorktrees: true, worktreeNaming: "task-id" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects worktreeNaming:task-id when recycleWorktrees is already enabled in stored settings", async () => {
+    const { app, scopedStore } = createApp();
+    // Current stored settings already have recycling on; a partial patch that only flips naming must still be rejected.
+    scopedStore.getSettings.mockResolvedValueOnce({ worktrunk: { enabled: false }, recycleWorktrees: true } as any);
+
+    const res = await patchSettings(app, { worktreeNaming: "task-id" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("accepts worktreeNaming:task-id when recycling is off", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { worktreeNaming: "task-id" });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { worktreeNaming: "task-id" },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("records unverified API provenance for populated and null-delete patches", async () => {
+    const { app, scopedStore } = createApp();
+
+    await patchSettings(app, { autoMerge: true });
+    await patchSettings(app, { autoMerge: null, changedBy: { kind: "human", id: "forged" } });
+
+    expect(scopedStore.updateSettings).toHaveBeenNthCalledWith(
+      1,
+      { autoMerge: true },
+      { kind: "api", id: "http:unverified" },
+    );
+    expect(scopedStore.updateSettings).toHaveBeenNthCalledWith(
+      2,
+      { autoMerge: null, changedBy: { kind: "human", id: "forged" } },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("records verified API provenance only after daemon authentication", async () => {
+    const { app, scopedStore } = createApp(undefined, "shared-token");
+    const response = await performRequest(app, "PUT", "/api/settings", JSON.stringify({ autoMerge: true }), {
+      authorization: "Bearer shared-token", "Content-Type": "application/json",
+    });
+
+    expect(response.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { autoMerge: true },
+      { kind: "api", id: "http:verified-token" },
+    );
+  });
+
+  it("maps the store backstop 'mutually exclusive' error to 400 (not 500)", async () => {
+    const { app, scopedStore } = createApp();
+    // A patch that clears the pre-check's view (e.g. null-clear) but resolves to a conflict inside the store,
+    // where the mutual-exclusion backstop throws. The route must classify it as a 400 client error.
+    scopedStore.updateSettings.mockRejectedValueOnce(
+      new Error('recycleWorktrees and worktreeNaming:"task-id" are mutually exclusive: ...'),
+    );
+
+    const res = await patchSettings(app, { autoMerge: true });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+  });
+
+  it("passes enabled plugin skills to memory dream processing", async () => {
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+        { pluginId: "disabled-plugin", skill: { name: "disabled-skill", enabled: false } },
+      ]),
+    };
+    const { app } = createApp(pluginRunner);
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "dream result"),
+          state: { messages: [{ role: "assistant", content: "dream result" }] },
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    processMemoryDreamsMock.mockImplementation(async (_rootDir: string, executePrompt: (prompt: string) => Promise<string>) => {
+      await executePrompt("dream prompt");
+      return { dreams: true, longTermUpdates: false };
+    });
+    processAgentMemoryDreamsMock.mockResolvedValue([]);
+
+    const res = await performRequest(app, "POST", "/api/memory/dream", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("uses executor fallback skills when memory dream processing has no plugin runner", async () => {
+    const { app } = createApp();
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "dream result"),
+          state: { messages: [{ role: "assistant", content: "dream result" }] },
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    processMemoryDreamsMock.mockImplementation(async (_rootDir: string, executePrompt: (prompt: string) => Promise<string>) => {
+      await executePrompt("dream prompt");
+      return { dreams: false, longTermUpdates: false };
+    });
+    processAgentMemoryDreamsMock.mockResolvedValue([]);
+
+    const res = await performRequest(app, "POST", "/api/memory/dream", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
+  });
+
+  it("passes enabled plugin skills to manual insight extraction", async () => {
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+        { pluginId: "disabled-plugin", skill: { name: "disabled-skill", enabled: false } },
+      ]),
+    };
+    const { app } = createApp(pluginRunner);
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "{\"insights\":[]}"),
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    readMemoryMock.mockResolvedValue({ content: "working notes" });
+    readInsightsMemoryMock.mockResolvedValue(null);
+    buildInsightExtractionPromptMock.mockReturnValue("extract insights");
+    processAndAuditInsightExtractionMock.mockResolvedValue({
+      extraction: { summary: "Extracted", insightCount: 0 },
+      pruning: { applied: false },
+    });
+
+    const res = await performRequest(app, "POST", "/api/memory/extract", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("uses executor fallback skills when manual insight extraction has no plugin runner", async () => {
+    const { app } = createApp();
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "{\"insights\":[]}"),
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    readMemoryMock.mockResolvedValue({ content: "working notes" });
+    readInsightsMemoryMock.mockResolvedValue(null);
+    buildInsightExtractionPromptMock.mockReturnValue("extract insights");
+    processAndAuditInsightExtractionMock.mockResolvedValue({
+      extraction: { summary: "Extracted", insightCount: 0 },
+      pruning: { applied: false },
+    });
+
+    const res = await performRequest(app, "POST", "/api/memory/extract", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
+  });
+});

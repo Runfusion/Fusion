@@ -1,0 +1,1503 @@
+/* ── Mailbox Modal ───────────────────────────────────────────────────── */
+
+.mailbox-modal {
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.mailbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.mailbox-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.mailbox-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--color-error);
+  color: var(--fab-text);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.mailbox-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.mailbox-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: 0 var(--space-lg) var(--space-sm);
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.mailbox-tab {
+  justify-content: center;
+  min-height: 2rem;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+/*
+FNXC:MailboxMobile 2026-08-23-23:22:
+Mailbox tab and sub-tab icons and badges must retain their intrinsic size on mobile. The
+`.mailbox-view--mobile .mailbox-tab` track uses `flex: 1 1 0` with `min-width: 0`, and the
+badged Inbox tab was the first overflowing tab to collapse its icon to a dot.
+*/
+.mailbox-tab > svg,
+.mailbox-agent-subtab > svg,
+.mailbox-tab .mailbox-tab-badge,
+.mailbox-agent-subtab .mailbox-tab-badge {
+  flex-shrink: 0;
+}
+
+.mailbox-tab > span:not(.mailbox-tab-badge),
+.mailbox-agent-subtab > span:not(.mailbox-tab-badge) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox-tab:hover {
+  color: var(--text);
+}
+
+.mailbox-tab.active {
+  color: var(--text);
+  border-color: var(--todo);
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring);
+  font-weight: 600;
+}
+
+.mailbox-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 var(--btn-border-width);
+  border-radius: var(--radius-md);
+  background: var(--color-error);
+  color: var(--fab-text);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.mailbox-content {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-lg);
+  overflow-y: auto;
+  max-height: calc(80vh - var(--header-height) - var(--space-2xl) - var(--space-xl));
+  position: relative;
+}
+
+.mailbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--btn-border-width);
+}
+
+.mailbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--space-2xl) + var(--space-lg)) var(--space-lg);
+  color: var(--text-muted);
+  text-align: center;
+  gap: var(--space-md);
+}
+
+.mailbox-empty p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.mailbox-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition-instant);
+}
+
+.mailbox-item:hover {
+  background: var(--card-hover);
+}
+
+.mailbox-item.unread {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  font-weight: 500;
+}
+
+.mailbox-item-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.mailbox-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.mailbox-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--btn-border-width);
+}
+
+.mailbox-item-from,
+.mailbox-item-to {
+  font-size: 0.85rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mailbox-item-time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mailbox-item-preview {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mailbox-item-participants {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: var(--space-xs);
+}
+
+.mailbox-item-unread-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--todo);
+  flex-shrink: 0;
+  margin-top: var(--space-xs);
+}
+
+/* Conversation grouping */
+.mailbox-conversations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--btn-border-width);
+}
+
+.mailbox-conversation-group {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition-instant);
+  position: relative;
+}
+
+.mailbox-conversation-group:hover {
+  background: var(--card-hover);
+}
+
+.mailbox-conversation-group.unread {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  font-weight: 500;
+}
+
+.mailbox-group-unread-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 var(--space-xs);
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--todo);
+  color: var(--fab-text);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  margin-top: var(--space-xs);
+}
+
+/* Message detail view */
+.mailbox-message-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.mailbox-message-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.mailbox-message-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.mailbox-message-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.mailbox-message-type {
+  display: inline-flex;
+  padding: var(--btn-border-width) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.mailbox-message-time {
+  font-size: 0.75rem;
+}
+
+.mailbox-message-participants {
+  display: flex;
+  gap: var(--space-xl);
+  padding: var(--space-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+.mailbox-participant {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.85rem;
+}
+
+.mailbox-participant-label {
+  color: var(--text-muted);
+}
+
+.mailbox-participant-value {
+  display: flex;
+  align-items: center;
+  gap: var(--btn-border-width);
+  color: var(--text);
+}
+
+.mailbox-message-body {
+  padding: var(--space-lg);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/*
+FNXC:ArtifactRegistry 2026-07-12-00:00:
+Artifact-registration mail messages now render metadata-driven media and producing-task affordances directly below the markdown body. The Open artifact link and View task button share the same mailbox action styling, spacing/radius tokens, and collapse entirely for messages without artifactId metadata.
+*/
+.mailbox-artifact-attachment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.mailbox-artifact-attachment__header,
+.mailbox-artifact-attachment__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.mailbox-artifact-attachment__title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mailbox-artifact-attachment__type {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-transform: capitalize;
+}
+
+.mailbox-artifact-attachment__media,
+.mailbox-artifact-attachment__image,
+.mailbox-artifact-attachment__audio {
+  width: 100%;
+}
+
+.mailbox-artifact-attachment__media,
+.mailbox-artifact-attachment__image {
+  max-height: min(45vh, 28rem);
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+  background: var(--surface);
+}
+
+.mailbox-artifact-attachment__audio {
+  display: block;
+}
+
+.mailbox-artifact-attachment__link {
+  text-decoration: none;
+}
+
+@media (max-width: 768px) {
+  .mailbox-artifact-attachment {
+    padding: var(--space-sm);
+  }
+
+  .mailbox-artifact-attachment__header,
+  .mailbox-artifact-attachment__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mailbox-artifact-attachment__link {
+    justify-content: center;
+    width: 100%;
+  }
+}
+
+/* Markdown rendering inside message bodies. ReactMarkdown produces standard
+   block elements (p, ul, h*, code, table, ...). Reset margins so message
+   prose still feels compact, and let pre/table scroll horizontally. */
+.mailbox-markdown > * {
+  margin: 0;
+}
+
+.mailbox-markdown > * + * {
+  margin-top: var(--space-sm);
+}
+
+.mailbox-markdown ul,
+.mailbox-markdown ol {
+  padding-left: var(--space-lg);
+}
+
+/*
+FNXC:Mailbox 2026-07-26-14:39:
+Markdown links in mailbox message bodies must use theme tokens: browser default blue
+and visited purple clash with dark themes and violate the dashboard token system.
+*/
+.mailbox-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  /*
+  FNXC:MailboxLinks 2026-07-30-22:10:
+  `--space-xs` (4px), not `--space-2xs`. That token does not exist — the scale is xs/sm/md/lg/xl/2xl —
+  so the declaration was INVALID and the browser dropped it, leaving the underline at its default
+  offset. An undefined custom property fails silently at the property level, which is why a
+  hand-written smaller step went unnoticed; `space-token-defined.test.ts` is what caught it.
+
+  Using `--space-xs` rather than adding the token FOLLOWS AN EXISTING DECISION, not my judgement:
+  `QuickEntryBox.css` and `ChatView.css` both record that `--space-2xs` is intentionally undefined
+  (FN-5934) and that the fix is "use the smallest defined token, --space-xs (4px), instead of
+  reintroducing --space-2xs". This site is the one that missed the memo; both of those files also
+  name this guard as what enforces it.
+  */
+  text-underline-offset: var(--space-xs);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+
+.mailbox-markdown a:visited {
+  color: var(--accent);
+}
+
+.mailbox-markdown a:hover {
+  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+  text-decoration-color: var(--accent);
+}
+
+.mailbox-markdown a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.mailbox-markdown :not(pre) > code {
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.mailbox-markdown-pre {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  overflow-x: auto;
+  white-space: pre;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.mailbox-markdown-table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.mailbox-markdown-table th,
+.mailbox-markdown-table td {
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--border) 85%, transparent);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/*
+FNXC:Markdown 2026-06-23-03:15:
+Wrappers for embedded raw HTML + mermaid diagrams. `<details>` from GitHub bodies
+needs a clickable summary affordance; mermaid SVGs should scroll horizontally rather
+than overflow the message column. Theme tokens only — no hard-coded colors.
+*/
+.mailbox-markdown details {
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+}
+
+.mailbox-markdown summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mailbox-mermaid {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.mailbox-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mailbox-reply-context-wrapper {
+  margin-bottom: var(--space-xs);
+}
+
+.mailbox-reply-context-static {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mailbox-reply-context {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mailbox-reply-context:hover {
+  background: var(--card-hover);
+}
+
+.mailbox-reply-context:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.mailbox-reply-context__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mailbox-reply-context__nested {
+  margin-top: var(--space-xs);
+  margin-left: var(--space-md);
+  padding-left: var(--space-md);
+  border-left: var(--btn-border-width) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.mailbox-reply-context__error {
+  color: var(--color-error);
+}
+
+/* Conversation thread */
+.mailbox-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.mailbox-conversation-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.mailbox-conversation-msg {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border-left: calc(var(--btn-border-width) * 3) solid transparent;
+}
+
+.mailbox-conversation-msg.current {
+  border-left-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+}
+
+.mailbox-conversation-msg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--btn-border-width);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.mailbox-conversation-msg-body {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* Agents tab */
+.mailbox-agents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: calc(var(--space-xl) * 2 + var(--space-lg));
+}
+
+.mailbox-agents-dropdown {
+  flex-shrink: 0;
+}
+
+.mailbox-agents-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.mailbox-compose-btn {
+  flex-shrink: 0;
+}
+
+.mailbox-agent-select {
+  width: 100%;
+  max-width: 18.75rem;
+}
+
+.mailbox-agents-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--btn-border-width);
+}
+
+/* === Mailbox Agent Sub-Tabs === */
+.mailbox-agent-subtabs {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.mailbox-agent-subtab {
+  justify-content: center;
+  min-height: calc(var(--space-lg) + var(--space-sm) - var(--btn-border-width));
+  padding: var(--space-xs) var(--space-md);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.mailbox-agent-subtab:hover {
+  color: var(--text);
+}
+
+.mailbox-agent-subtab.active {
+  color: var(--text);
+  border-color: var(--in-progress);
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring);
+}
+
+.mailbox-agent-subtab .mailbox-tab-badge {
+  margin-left: var(--btn-border-width);
+  font-size: 0.7rem;
+}
+
+.mailbox-approval-filters {
+  display: flex;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-sm);
+}
+
+.mailbox-approval-item {
+  align-items: center;
+}
+
+.mailbox-approval-status-dot {
+  flex-shrink: 0;
+}
+
+.mailbox-approval-status-dot--pending {
+  color: var(--color-warning);
+}
+
+.mailbox-approval-status-dot--approved,
+.mailbox-approval-status-dot--completed {
+  color: var(--color-success);
+}
+
+.mailbox-approval-status-dot--denied {
+  color: var(--color-error);
+}
+
+.mailbox-approval-status {
+  text-transform: capitalize;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.mailbox-approval-comment {
+  min-height: calc(var(--space-2xl) + var(--space-xl));
+}
+
+/* Skeleton loading */
+.mailbox-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.mailbox-skeleton-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+}
+
+.mailbox-skeleton-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.mailbox-skeleton-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.mailbox-skeleton-line {
+  height: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.mailbox-skeleton-line--short {
+  width: 40%;
+}
+
+.mailbox-skeleton-line--long {
+  width: 80%;
+}
+
+/* ── Mailbox View (full-page) ──────────────────────────────────────── */
+
+.mailbox-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mailbox-view .mailbox-header {
+  padding: var(--space-lg) var(--space-xl);
+  border-bottom: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+}
+
+.mailbox-view .mailbox-tabs {
+  padding-top: var(--space-sm);
+}
+
+/*
+FNXC:MailboxView 2026-06-22-12:58:
+The full-page Mailbox inner view should match Chat's page body: the shared ViewHeader owns the top chrome, and the content area is a flush split row with no extra outer padding. Keep padding on the Mailbox modal, but remove it from the page-scoped .mailbox-content so the left message-list pane aligns like Chat's sidebar.
+*/
+.mailbox-view .mailbox-content {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0;
+  max-height: none;
+}
+
+/*
+FNXC:Mailbox 2026-06-22-18:05:
+The full-page Messages split layout must let the user drag the divider to resize the left message-list pane. The previous `display: grid` with `grid-template-columns: auto auto minmax(0, 1fr)` sized the list-pane track to its content (`auto` track) and ignored the inline `style={{ width }}` set by the drag handler, so dragging the handle updated state but never changed the rendered pane width. Use a flex row so the list pane's inline `width` is authoritative: the pane is `flex: 0 0 auto` (honor its `width`, never grow/shrink) and the detail pane is `flex: 1 1 auto; min-width: 0` (fill the remainder, allow shrinking below content). The resize handle stays `flex-shrink: 0` with a real `col-resize` hit area.
+*/
+.mailbox-view .mailbox-split-layout {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+/*
+FNXC:DashboardStyling 2026-06-21-23:40:
+FN-6912 requires the full-page Messages divider to read thinner between the message list and detail panes while preserving resize discoverability. Keep the visible handle narrow, but leave the hover/active pseudo-element wider so the drag and focus affordances do not become an un-grabbable sliver.
+*/
+/*
+FNXC:Mailbox 2026-06-22-18:20:
+The mailbox resize divider mirrors the Chat sidebar divider exactly — handle hit area var(--space-sm), centered visible line var(--space-xs), transparent until hover — so the two views' dividers read identically (the widths were previously swapped + the mailbox handle had an always-on background).
+
+FNXC:SidebarDivider 2026-06-22-13:26:
+Mailbox must match Chat's divider exactly: the pane border supplies the static line, while the resize handle remains transparent until hover/active. Do not draw a second always-visible divider inside the handle.
+*/
+.mailbox-view .mailbox-split-resize-handle {
+  position: relative;
+  width: var(--space-sm);
+  flex-shrink: 0;
+  cursor: col-resize;
+  pointer-events: auto;
+  background: transparent;
+  touch-action: none;
+  transition: background var(--transition-fast);
+}
+
+.mailbox-view .mailbox-split-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-xs);
+  transform: translateX(-50%);
+}
+
+.mailbox-view .mailbox-split-resize-handle:hover::before,
+.mailbox-view .mailbox-split-resize-handle:active::before {
+  background: color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.mailbox-view .mailbox-split-resize-handle:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.mailbox-view .mailbox-split-list-pane,
+.mailbox-view .mailbox-split-detail-pane {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+/*
+FNXC:Mailbox 2026-06-22-18:05:
+The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider drag is the single source of truth for its size; the detail pane fills the rest (`flex: 1 1 auto`) and `min-width: 0` lets it shrink below its content's intrinsic width so the list pane can grow to the clamped max ratio.
+*/
+.mailbox-view .mailbox-split-list-pane {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 500px;
+  border-right: var(--btn-border-width) solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.mailbox-view .mailbox-split-detail-pane {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+}
+
+.mailbox-view .mailbox-split-empty {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+  border: var(--btn-border-width) dashed color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  text-align: center;
+}
+
+.mailbox-view .mailbox-split-empty p {
+  margin: 0;
+}
+
+/*
+FNXC:MailboxMobile 2026-07-19-17:00:
+FN-8407 supersedes FN-8238's title-then-actions mobile stack: Mailbox title and its
+unread badge, Compose, Mark all read, and Refresh share one right-aligned row at the
+320px boundary. Keep this override runtime-class-gated because CSS media and pointer
+queries cannot observe isMobileViewport()'s physical-screen or visualViewport classification;
+FN-8349 attempted this same change but finalized without landing it.
+*/
+.mailbox-view--mobile .view-header {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.mailbox-view--mobile .view-header__title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mailbox-view--mobile .view-header__actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.mailbox-view--mobile .view-header__actions .btn {
+  min-width: 0;
+  flex-shrink: 1;
+  padding: var(--space-xs);
+}
+
+.mailbox-view--mobile .view-header__actions .btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox-view--mobile .view-header__actions .btn svg,
+.mailbox-view--mobile .view-header__actions .btn-icon,
+.mailbox-view--mobile .mailbox-unread-badge {
+  flex-shrink: 0;
+}
+
+/*
+FNXC:MailboxMobile 2026-07-17-13:43:
+FN-8238 requires Inbox, Outbox, Agents, and Approvals to remain on one compact mobile row.
+Tabs may shrink while retaining their badge and use horizontal scrolling only as the narrowest
+viewport fallback; this applies only when the runtime mobile class is present.
+*/
+.mailbox-view--mobile .mailbox-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mailbox-view--mobile .mailbox-tab {
+  min-width: 0;
+  flex: 1 1 0;
+  flex-shrink: 1;
+  padding: var(--space-xs);
+  font-size: var(--font-size-xs, 0.8rem);
+}
+
+/*
+FNXC:MailboxMobile 2026-07-17-13:43:
+FN-8238 keeps mobile message-detail Back, message meta, and Delete (plus Reply for agent
+messages) on one row. Meta may truncate before controls wrap, and this does not affect the
+separate approvals Back button outside this header or non-mobile mailbox layouts.
+*/
+.mailbox-view--mobile .mailbox-message-detail-header {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.mailbox-view--mobile .mailbox-message-detail-header > .btn,
+.mailbox-view--mobile .mailbox-message-detail-actions {
+  flex-shrink: 0;
+}
+
+.mailbox-view--mobile .mailbox-message-detail-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mailbox-view--mobile .mailbox-message-detail-meta > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mailbox-view--mobile .mailbox-message-detail-actions {
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+}
+
+.mailbox-view--mobile .mailbox-message-detail-actions .btn {
+  min-width: 0;
+  padding: var(--space-xs);
+  white-space: nowrap;
+}
+
+/* ── Mailbox — Mobile (≤ 768px) ───────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .mailbox-modal .mailbox-header {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .mailbox-modal .mailbox-title {
+    flex-shrink: 0;
+  }
+
+  .mailbox-modal .mailbox-header-actions,
+  .mailbox-view .mailbox-header-actions {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .mailbox-modal .mailbox-header-actions .btn,
+  .mailbox-modal .mailbox-header-actions .btn-icon,
+  .mailbox-modal .mailbox-header-actions .modal-close,
+  .mailbox-view .mailbox-header-actions .btn,
+  .mailbox-view .mailbox-header-actions .btn-icon {
+    min-height: 2.25rem;
+  }
+
+  .mailbox-modal .mailbox-header-actions .btn-icon,
+  .mailbox-modal .mailbox-header-actions .modal-close,
+  .mailbox-view .mailbox-header-actions .btn-icon {
+    min-width: 2.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mailbox-modal .mailbox-header-actions .modal-close {
+    padding: 0;
+    border-radius: var(--radius-sm);
+  }
+
+  .mailbox-modal .mailbox-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .mailbox-modal .mailbox-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* FNXC:DashboardStyling 2026-06-19-05:50: FN-6703 requires both mobile mailbox tab presentations to use var(--font-size-xs, 0.8rem) so the regression test and token-validity guard share the same contract. */
+  .mailbox-modal .mailbox-tab {
+    flex-shrink: 0;
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-size-xs, 0.8rem);
+  }
+
+  .mailbox-modal .mailbox-content {
+    max-height: calc(100dvh - var(--header-height) - var(--space-2xl) - var(--space-xl));
+    padding: var(--space-md);
+    padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0) + var(--standalone-bottom-gap));
+  }
+
+  .mailbox-view[style*="--keyboard-overlap"],
+  .mailbox-modal[style*="--keyboard-overlap"] {
+    height: var(--vv-height, 100dvh);
+    max-height: var(--vv-height, 100dvh);
+    transform: translateY(var(--vv-offset-top, 0));
+    will-change: transform;
+  }
+
+  .mailbox-view[style*="--keyboard-overlap"] .mailbox-content,
+  .mailbox-modal[style*="--keyboard-overlap"] .mailbox-content {
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .mailbox-modal .mailbox-message-detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .mailbox-modal .mailbox-message-detail-actions {
+    flex-wrap: wrap;
+  }
+
+  .mailbox-modal .mailbox-message-participants {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .mailbox-modal .mailbox-conversation-msg {
+    padding: var(--space-xs) var(--space-md);
+  }
+
+  .mailbox-modal .mailbox-reply-context__nested {
+    margin-left: var(--space-sm);
+    padding-left: var(--space-sm);
+  }
+
+  .mailbox-modal .mailbox-agent-select {
+    max-width: 100%;
+  }
+
+  .mailbox-modal .mailbox-agents {
+    min-height: 12.5rem;
+  }
+
+  .mailbox-modal .mailbox-empty {
+    padding: var(--space-2xl) var(--space-md);
+  }
+
+  .mailbox-modal .mailbox-agent-subtabs {
+    flex: 1;
+  }
+
+  .mailbox-modal .mailbox-agent-subtab {
+    flex: 1;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /*
+  FNXC:MailboxMobile 2026-07-17-14:10:
+  FN-8238's runtime mobile class owns the compact full-page tabs and message-detail row.
+  Keep these legacy width-query fallbacks off that class: this media block follows the
+  compact rules in source order and would otherwise restore tab overflow and a wrapped
+  detail header on every actual phone viewport.
+  */
+  /* Mailbox View (full-page) width-query fallbacks outside runtime mobile mode */
+  .mailbox-view .mailbox-header {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .mailbox-view .mailbox-title {
+    flex-shrink: 0;
+  }
+
+  .mailbox-view .mailbox-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .mailbox-view .mailbox-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mailbox-view:not(.mailbox-view--mobile) .mailbox-tab {
+    flex-shrink: 0;
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-size-xs, 0.8rem);
+  }
+
+  .mailbox-view .mailbox-content {
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--space-md);
+    /* Account for mobile nav bar at bottom */
+    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0) + var(--standalone-bottom-gap) + var(--space-lg));
+  }
+
+  .mailbox-view[style*="--keyboard-overlap"] .mailbox-content {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0) + var(--space-md));
+  }
+
+  .mailbox-view .mailbox-split-layout {
+    display: block;
+    height: auto;
+  }
+
+  .mailbox-view .mailbox-split-resize-handle {
+    display: none;
+  }
+
+  .mailbox-view .mailbox-split-list-pane,
+  .mailbox-view .mailbox-split-detail-pane {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .mailbox-view:not(.mailbox-view--mobile) .mailbox-message-detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .mailbox-view:not(.mailbox-view--mobile) .mailbox-message-detail-actions {
+    flex-wrap: wrap;
+  }
+
+  .mailbox-view .mailbox-message-participants {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .mailbox-view .mailbox-conversation-msg {
+    padding: var(--space-xs) var(--space-md);
+  }
+
+  .mailbox-view .mailbox-reply-context__nested {
+    margin-left: var(--space-sm);
+    padding-left: var(--space-sm);
+  }
+
+  .mailbox-view .mailbox-agent-select {
+    max-width: 100%;
+  }
+
+  .mailbox-view .mailbox-agents {
+    min-height: 12.5rem;
+  }
+
+  .mailbox-view .mailbox-empty {
+    padding: var(--space-2xl) var(--space-md);
+  }
+
+  .mailbox-view .mailbox-agent-subtabs {
+    flex: 1;
+  }
+
+  .mailbox-view .mailbox-agent-subtab {
+    flex: 1;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* Message Composer mobile overrides */
+  .message-composer-textarea {
+    min-height: calc(var(--space-2xl) + var(--space-lg));
+  }
+
+  .message-composer-footer {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .message-composer-footer .btn {
+    min-height: 2.25rem;
+  }
+
+  .message-composer-field {
+    flex-direction: column;
+    gap: var(--btn-border-width);
+  }
+
+  .message-composer-label {
+    padding-top: 0;
+    min-width: auto;
+  }
+}
+
+/* ── Message Composer ──────────────────────────────────────────────── */
+
+.message-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.message-composer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.message-composer-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.message-composer-field {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.message-composer-field--content {
+  flex-direction: column;
+}
+
+.message-composer-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  min-width: calc(var(--space-xl) + var(--space-lg) + var(--space-sm) + var(--btn-border-width));
+  padding-top: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.message-composer-select {
+  flex: 1;
+  padding: var(--space-xs) calc(var(--space-sm) + var(--btn-border-width));
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: var(--font-primary);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.message-composer-select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.message-composer-select:focus-visible {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.message-composer-recipient-fixed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.message-composer-textarea {
+  width: 100%;
+  padding: var(--space-xs) calc(var(--space-sm) + var(--btn-border-width));
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: var(--font-primary);
+  min-height: calc(var(--space-2xl) + var(--space-xl) + var(--space-md));
+  max-height: calc(var(--space-2xl) * 10);
+  overflow-y: auto;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.message-composer-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.message-composer-textarea:focus-visible {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.message-composer-charcount {
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.message-composer-charcount .over-limit {
+  color: var(--color-error);
+}
+
+.message-composer-field--structures {
+  align-items: start;
+}
+
+.message-composer-structure-controls {
+  display: grid;
+  flex: 1;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.message-composer-structure-list {
+  display: grid;
+  gap: var(--space-xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.message-composer-structure-list li {
+  align-items: center;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.message-composer-field--wake {
+  margin-top: var(--space-xs);
+}
+
+.message-composer-wake-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.message-composer-wake-label input[type="checkbox"] {
+  margin: 0;
+}
+
+.message-composer-wake-label:has(input:disabled) {
+  cursor: default;
+}
+
+.message-composer-wake-hint {
+  margin-left: var(--space-xs);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.message-composer-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  font-size: 0.85rem;
+}
+
+.message-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+
+.mailbox-message-highlight {
+  animation: mailbox-flash 2s ease-out;
+}
+
+@keyframes mailbox-flash {
+  0% {
+    background: color-mix(in srgb, var(--color-info) 20%, transparent);
+  }
+
+  100% {
+    background: transparent;
+  }
+}

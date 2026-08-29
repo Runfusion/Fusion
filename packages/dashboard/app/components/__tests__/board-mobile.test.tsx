@@ -1,0 +1,751 @@
+import fs from "node:fs";
+import { loadAllAppCss, readAppFile } from "../../test/cssFixture";
+import path from "node:path";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import type { Task, TaskDetail, Settings } from "@fusion/core";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchTaskDetail } from "../../api";
+import { InlineCreateCard } from "../InlineCreateCard";
+import { TaskCard } from "../TaskCard";
+
+// FNXC:TaskCardTestHarness 2026-07-11-00:00: RuntimeFallbackBadge calls useToast directly, so isolated TaskCard mobile renders need the hook mocked unless wrapped in ToastProvider.
+vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
+
+vi.mock("../../api", () => ({
+  fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
+  fetchTaskDetail: vi.fn(),
+  uploadAttachment: vi.fn(),
+  fetchMission: vi.fn(),
+  fetchAgent: vi.fn(),
+  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
+  fetchSettings: vi.fn().mockResolvedValue({
+    modelPresets: [],
+    autoSelectModelPreset: false,
+    defaultPresetBySize: {},
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 30_000,
+    groupOverlappingFiles: true,
+    autoMerge: true,
+  } satisfies Partial<Settings>),
+  updateGlobalSettings: vi.fn(),
+  fetchAgents: vi.fn().mockResolvedValue([]),
+  rebuildTaskSpec: vi.fn(),
+  // InlineCreateCard renders WorkflowSelector, which loads these on mount.
+  fetchWorkflows: vi.fn().mockResolvedValue([]),
+  fetchWorkflowOptionalSteps: vi.fn().mockResolvedValue([]),
+  fetchProjectDefaultWorkflow: vi.fn().mockResolvedValue({ workflowId: null }),
+  setProjectDefaultWorkflow: vi.fn().mockResolvedValue({ workflowId: null }),
+  selectTaskWorkflow: vi.fn().mockResolvedValue({ workflowId: null, enabledWorkflowSteps: [] }),
+}));
+
+vi.mock("../../hooks/useBadgeWebSocket", () => ({
+  useBadgeWebSocket: () => ({
+    badgeUpdates: new Map(),
+    isConnected: false,
+    subscribeToBadge: vi.fn(),
+    unsubscribeFromBadge: vi.fn(),
+  }),
+}));
+
+vi.mock("../../hooks/useSessionFiles", () => ({
+  useSessionFiles: () => ({ files: [], loading: false }),
+}));
+
+vi.mock("../../hooks/useTaskDiffStats", () => ({
+  useTaskDiffStats: () => ({ stats: null, loading: false }),
+}));
+
+
+function getMainMobileSection(css: string): string {
+  // Mobile rules now live across many co-located component CSS files (each
+  // owns its own @media (max-width: 768px) block) instead of one monolith
+  // section in styles.css. Concatenate every <=768px media block in the
+  // bundle so these assertions remain location-agnostic.
+  const re = /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{/g;
+  const blocks: string[] = [];
+
+  for (const match of css.matchAll(re)) {
+    const start = match.index! + match[0].length;
+    let depth = 1;
+    let i = start;
+    while (i < css.length && depth > 0) {
+      const ch = css[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      i++;
+    }
+    blocks.push(css.slice(start, i - 1));
+  }
+
+  expect(blocks.length).toBeGreaterThan(0);
+  return blocks.join("\n");
+}
+
+describe("mobile board magnetic column snap wiring (FN-8235)", () => {
+  /*
+  FNXC:WorkflowColumns 2026-07-30-08:00:
+  Re-pinned to TWO board renders, not three. The third was the LEGACY board, deleted by U12/R9 —
+  `<main className="board" id="board" ref={setBoardRef}>` no longer appears in Board.tsx at all, so
+  both the count of 3 and the `toContain` for that markup were pinning removed code. The two that
+  remain are the selected and aggregate workflow-column renders, and the point of this guard is that
+  BOTH share the one scroll-snap hook, which still holds.
+  */
+  it("shares mobile snap and explicitly disabled mouse-pan wiring across the selected and aggregate live boards", () => {
+    const boardSource = readAppFile("components/Board.tsx");
+
+    expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
+    expect(boardSource).toContain('import { useBoardMousePan } from "../hooks/useBoardMousePan";');
+    expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
+    expect(boardSource).toContain('useBoardMousePan(boardElement, viewportMode !== "mobile")');
+    expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(2);
+    expect(boardSource.match(/\{\.\.\.boardMousePanBindings\}/g)).toHaveLength(2);
+    expect(boardSource.match(/className=\{boardClassName\}/g)).toHaveLength(2);
+    expect(readAppFile("components/Board.css")).toContain(".board.board-workflow-columns.is-mouse-panning");
+    // FNXC:BoardNavigation 2026-08-20-02:44: The skeleton stays outside both live interaction owners.
+    expect(boardSource).not.toContain('<main className="board" id="board" ref={setBoardRef}>');
+  });
+});
+
+describe("getMainMobileSection — compound media queries",  () => {
+  it("matches simple and compound 768px blocks but excludes other breakpoints", () => {
+    const syntheticCss = `
+      @media (max-width: 768px)
+      { .a { color: red; } }
+      @media (max-width: 768px), (max-height: 480px)
+      { .b { color: blue; } }
+      @media (max-width: 640px)
+      { .c { color: green; } }
+    `;
+
+    const section = getMainMobileSection(syntheticCss);
+
+    expect(section).toContain(".a { color: red;");
+    expect(section).toContain(".b { color: blue;");
+    expect(section).not.toContain(".c { color: green;");
+  });
+});
+
+function expectRuleToContain(section: string, selectorFragment: string, declaration: string): void {
+  const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+  let foundSelector = false;
+  let foundDeclaration = false;
+
+  for (const match of section.matchAll(pattern)) {
+    const selector = match[1];
+    const block = match[2];
+
+    if (!selector.includes(selectorFragment)) {
+      continue;
+    }
+
+    foundSelector = true;
+    if (block.includes(declaration)) {
+      foundDeclaration = true;
+      break;
+    }
+  }
+
+  expect(foundSelector).toBe(true);
+  expect(foundDeclaration).toBe(true);
+}
+
+function expectRuleNotToContain(section: string, selectorFragment: string, declaration: string): void {
+  const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+  let foundSelector = false;
+
+  for (const match of section.matchAll(pattern)) {
+    const selector = match[1];
+    const block = match[2];
+
+    if (!selector.includes(selectorFragment)) {
+      continue;
+    }
+
+    foundSelector = true;
+    expect(block.includes(declaration)).toBe(false);
+  }
+
+  expect(foundSelector).toBe(true);
+}
+
+function createTask(overrides: Partial<Task> & { id?: string } = {}): Task {
+  return {
+    id: overrides.id ?? "FN-1139",
+    title: overrides.title,
+    description: overrides.description ?? "Mobile board test task",
+    column: overrides.column ?? "todo",
+    dependencies: overrides.dependencies ?? [],
+    steps: overrides.steps ?? [],
+    currentStep: overrides.currentStep ?? 0,
+    log: overrides.log ?? [],
+    createdAt: overrides.createdAt ?? "2026-04-08T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
+    ...overrides,
+  } as Task;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  if (typeof window !== "undefined") {
+    window.localStorage.clear();
+  }
+});
+
+describe("Board desktop column width CSS", () => {
+  it("keeps desktop board columns equal width via 6x minmax(300px, 1fr) grid", () => {
+    const css = loadAllAppCss();
+
+    expectRuleToContain(css, ".board", "grid-template-columns: repeat(6, minmax(300px, 1fr));");
+  });
+
+  it("constrains header content so actions cannot stretch column width", () => {
+    const css = loadAllAppCss();
+
+    expectRuleToContain(css, ".column-header", "min-width: 0;");
+    expectRuleToContain(css, ".column-header h2", "min-width: 0;");
+    expectRuleToContain(css, ".column-header h2", "overflow: hidden;");
+    expectRuleToContain(css, ".column-header h2", "text-overflow: ellipsis;");
+    expectRuleToContain(css, ".column-header h2", "white-space: nowrap;");
+  });
+});
+
+describe("Board and Column mobile CSS", () => {
+  it("contains .board scroll-snap-type: x proximity in the mobile media block (FN-001)", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".board", "scroll-snap-type: x proximity;");
+  });
+
+  it("keeps .board scroll-behavior auto for the JavaScript hard settle", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".board", "scroll-behavior: auto;");
+  });
+
+  it("contains .board > .column width: 300px in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".board > .column", "width: 300px;");
+  });
+
+  it("contains .board > .column min-width: 300px in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".board > .column", "min-width: 300px;");
+  });
+
+  it("does not force .column-header min-height in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    // Column headers use natural height from padding/font — no forced min-height
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+    for (const match of mobileSection.matchAll(pattern)) {
+      const selector = match[1].trim();
+      const block = match[2];
+      // Match exactly ".column-header" (not ".column-header .btn-icon" etc.)
+      if (selector !== ".column-header") continue;
+      // No rule targeting .column-header should set min-height
+      expect(block).not.toContain("min-height");
+    }
+  });
+
+  it("hides board scrollbars in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".board", "scrollbar-width: none;");
+    expectRuleToContain(mobileSection, ".board::-webkit-scrollbar", "display: none;");
+  });
+
+  it("uses simple padding-bottom on .board (safe-area handled by parent)", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    // Board padding-bottom is just var(--space-md) to avoid double-counting safe-area-inset-bottom
+    // which is already handled by .project-content--with-mobile-nav padding
+    expectRuleToContain(mobileSection, ".board", "padding-bottom: var(--space-md);");
+  });
+});
+
+describe("TaskCard mobile", () => {
+  it("suppresses native selection and iOS callouts for non-editing Board card text", () => {
+    const css = loadAllAppCss();
+
+    // The shared `.card` selector covers both Column-rendered cards and WorktreeGroup-rendered cards.
+    expectRuleToContain(css, ".card:not(.card-editing)", "touch-action: pan-x pan-y;");
+    expectRuleToContain(css, ".card:not(.card-editing)", "user-select: none;");
+    expectRuleToContain(css, ".card:not(.card-editing)", "-webkit-user-select: none;");
+    expectRuleToContain(css, ".card:not(.card-editing)", "-webkit-touch-callout: none;");
+    expectRuleToContain(css, ".card:not(.card-editing) *", "touch-action: pan-x pan-y;");
+    expectRuleToContain(css, ".card:not(.card-editing) *", "user-select: none;");
+    expectRuleToContain(css, ".card:not(.card-editing) *", "-webkit-user-select: none;");
+    expectRuleToContain(css, ".card:not(.card-editing) *", "-webkit-touch-callout: none;");
+  });
+
+  it("keeps TaskCard edit textarea selectable while non-editing cards suppress selection", () => {
+    const css = loadAllAppCss();
+
+    expectRuleToContain(css, ".card-edit-desc-textarea", "user-select: text;");
+    expectRuleToContain(css, ".card-edit-desc-textarea", "-webkit-user-select: text;");
+    expectRuleToContain(css, ".card-edit-desc-textarea", "-webkit-touch-callout: default;");
+    expectRuleToContain(css, ".card.card-editing", "user-select: text;");
+    expectRuleToContain(css, ".card :is(input, textarea, select, [contenteditable=\"true\"])", "user-select: text;");
+  });
+
+  it("sets .card-archive-btn opacity: 1 in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".card-archive-btn", "opacity: 1;");
+  });
+
+  it("keeps archive/unarchive/Promote controls visible without min-height overrides in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    const selectors = [
+      ".card-archive-btn",
+      ".card-unarchive-btn",
+      ".card-send-back-btn",
+    ];
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+
+    for (const selector of selectors) {
+      let found = false;
+      for (const match of mobileSection.matchAll(pattern)) {
+        const blockSelector = match[1];
+        const block = match[2];
+        if (!blockSelector.includes(selector)) continue;
+        found = true;
+        expect(block).toContain("opacity: 1;");
+        expect(block).not.toContain("min-height:");
+      }
+      expect(found).toBe(true);
+    }
+  });
+
+  it("FN-4351: archive/unarchive/Promote buttons have no min-height in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    const selectors = [
+      ".card-archive-btn",
+      ".card-unarchive-btn",
+      ".card-send-back-btn",
+    ];
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+
+    for (const selector of selectors) {
+      let found = false;
+      for (const match of mobileSection.matchAll(pattern)) {
+        const blockSelector = match[1];
+        const block = match[2];
+        if (!blockSelector.includes(selector)) continue;
+        found = true;
+        expect(block).not.toContain("min-height:");
+      }
+      expect(found).toBe(true);
+    }
+
+    expectRuleToContain(mobileSection, ".card-edit-btn", "width: 28px;");
+    expectRuleToContain(mobileSection, ".card-edit-btn", "height: 28px;");
+    expectRuleToContain(mobileSection, ".card-delete-btn", "width: 28px;");
+    expectRuleToContain(mobileSection, ".card-delete-btn", "height: 28px;");
+  });
+
+  it("does not force .card-steps-toggle min-height in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    // Steps toggle uses natural height from content and padding
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+    for (const match of mobileSection.matchAll(pattern)) {
+      const selector = match[1].trim();
+      const block = match[2];
+      if (selector !== ".card-steps-toggle") continue;
+      expect(block).not.toContain("min-height");
+    }
+  });
+
+  it("does not force .card-session-files min-height in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    // Session files button uses natural height
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+    for (const match of mobileSection.matchAll(pattern)) {
+      const selector = match[1].trim();
+      const block = match[2];
+      if (selector !== ".card-session-files") continue;
+      expect(block).not.toContain("min-height");
+    }
+  });
+
+  it("wraps TaskCard footer chips instead of overflowing", () => {
+    const css = loadAllAppCss();
+    expectRuleToContain(css, ".card-footer-row", "flex-wrap: wrap;");
+    expectRuleToContain(css, ".card-footer-row", "row-gap: var(--space-xs);");
+  });
+
+  it("keeps TaskCard footer-chip cluster anchored by the right wrapper", () => {
+    const css = loadAllAppCss();
+    expectRuleToContain(css, ".card-footer-row-right", "margin-left: auto;");
+    expect(css).not.toContain(".card-footer-row > .card-time-indicator:first-of-type");
+
+    const timeIndicatorRule = css.match(/\.card-time-indicator\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(timeIndicatorRule).not.toContain("margin-left: auto;");
+
+    expectRuleToContain(css, ".card-header-actions", "margin-left: auto;");
+  });
+
+  it("FN-4365: keeps .card-header-actions on the same row as the title in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+
+    let foundHeaderActions = false;
+
+    for (const match of mobileSection.matchAll(pattern)) {
+      const selector = match[1];
+      const block = match[2];
+
+      if (selector.includes(".card-header-actions")) {
+        foundHeaderActions = true;
+        expect(block).not.toContain("width: 100%");
+        expect(block).not.toContain("margin-left: 0");
+        expect(block).not.toContain("flex-wrap");
+        expect(block).not.toContain("justify-content: flex-end");
+      }
+
+      if (selector.trim() === ".card-header") {
+        expect(block).not.toContain("flex-wrap: wrap");
+      }
+    }
+
+    expect(foundHeaderActions).toBe(true);
+  });
+
+  it("truncates TaskCard files-changed text instead of wrapping", () => {
+    const css = loadAllAppCss();
+    expectRuleToContain(css, ".card-session-files span", "text-overflow: ellipsis;");
+    expectRuleToContain(css, ".card-session-files span", "white-space: nowrap;");
+  });
+
+  it("uses compact 28px touch targets for TaskCard action buttons in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".card-edit-btn", "width: 28px;");
+    expectRuleToContain(mobileSection, ".card-edit-btn", "height: 28px;");
+    expectRuleToContain(mobileSection, ".card-delete-btn", "width: 28px;");
+    expectRuleToContain(mobileSection, ".card-delete-btn", "height: 28px;");
+  });
+
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Mobile coverage for the Revert affordance (FN-5893 Surface Enumeration —
+  mobile breakpoint): the button renders on done/archived cards at mobile
+  width and, critically, leaves NO empty/orphaned button shell when it is
+  hidden (no landed commit, or onRevertTask undefined).
+  */
+  it("sets .card-revert-btn opacity: 1 in the mobile media block alongside archive/unarchive", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".card-revert-btn", "opacity: 1;");
+  });
+
+  it("renders the Revert affordance inside the done actions dropdown at the mobile breakpoint", () => {
+    const task = createTask({ id: "FN-201", column: "done", mergeDetails: { commitSha: "abc123def456" } as any });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+      />,
+    );
+
+    expect(container.querySelector(".card-revert-btn")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Task actions" }));
+    expect(screen.getByRole("menuitem", { name: "Revert" })).toBeTruthy();
+  });
+
+  it("renders the Revert affordance on an archived card at the mobile breakpoint", () => {
+    const task = createTask({ id: "FN-202", column: "archived", mergeDetails: { commitSha: "abc123def456" } as any });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+      />,
+    );
+
+    expect(container.querySelector(".card-revert-btn")).toBeTruthy();
+  });
+
+  it("leaves no empty/orphaned Revert button shell when not revertable or onRevertTask is undefined", () => {
+    const notRevertableTask = createTask({ id: "FN-203", column: "done", mergeDetails: undefined });
+    const { container: containerA } = render(
+      <TaskCard
+        task={notRevertableTask}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+      />,
+    );
+    expect(containerA.querySelector(".card-revert-btn")).toBeNull();
+
+    const revertableTask = createTask({ id: "FN-204", column: "done", mergeDetails: { commitSha: "abc123def456" } as any });
+    const { container: containerB } = render(
+      <TaskCard task={revertableTask} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+    expect(containerB.querySelector(".card-revert-btn")).toBeNull();
+  });
+
+  it("opens task detail on quick tap", async () => {
+    const task = createTask({ id: "FN-200", column: "todo" });
+
+    const onOpenDetail = vi.fn();
+    const { container } = render(
+      <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={vi.fn()} />,
+    );
+
+    const card = container.querySelector(`[data-id="${task.id}"]`) as HTMLElement;
+    expect(card).toBeTruthy();
+
+    fireEvent.touchStart(card, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+    fireEvent.touchEnd(card, {
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    // TaskCard calls onOpenDetail directly with the task - no fetchTaskDetail needed for card taps
+    expect(onOpenDetail).toHaveBeenCalledWith(task);
+  });
+
+  it("does not open task detail when touch gesture indicates scroll", async () => {
+    const task = createTask({ id: "FN-201", column: "todo" });
+    vi.mocked(fetchTaskDetail).mockResolvedValueOnce({
+      ...task,
+      prompt: "",
+      attachments: [],
+    } as TaskDetail);
+
+    const { container } = render(
+      <TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+
+    const card = container.querySelector(`[data-id="${task.id}"]`) as HTMLElement;
+    expect(card).toBeTruthy();
+
+    fireEvent.touchStart(card, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+    fireEvent.touchMove(card, {
+      touches: [{ clientX: 150, clientY: 100 }],
+    });
+    fireEvent.touchEnd(card, {
+      changedTouches: [{ clientX: 150, clientY: 100 }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it("does not open task detail when tapping the edit button", async () => {
+    const task = createTask({ id: "FN-204", column: "todo" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onUpdateTask={vi.fn().mockResolvedValue(task)}
+      />,
+    );
+
+    const editButton = screen.getByRole("button", { name: "Edit task" });
+    fireEvent.touchStart(editButton, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+    fireEvent.touchEnd(editButton, {
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it("does not open task detail when tapping the steps toggle", async () => {
+    const task = createTask({
+      id: "FN-205",
+      column: "todo",
+      status: "executing",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "in-progress" },
+      ],
+    });
+
+    render(
+      <TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+
+    const toggleButton = screen.getByRole("button", { name: "Show steps" });
+    fireEvent.touchStart(toggleButton, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+    fireEvent.touchEnd(toggleButton, {
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it("does not open task detail when touch target is an SVG element inside a button", async () => {
+    const task = createTask({
+      id: "FN-206",
+      column: "todo",
+      status: "executing",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "in-progress" },
+      ],
+    });
+
+    render(
+      <TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+
+    const toggleButton = screen.getByRole("button", { name: "Show steps" });
+    const svgTarget = toggleButton.querySelector("svg");
+    expect(svgTarget).toBeTruthy();
+
+    fireEvent.touchStart(svgTarget as SVGElement, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+    fireEvent.touchEnd(svgTarget as SVGElement, {
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it("renders edit button with aria-label in editable columns", () => {
+    const task = createTask({ id: "FN-202", column: "todo" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onUpdateTask={vi.fn().mockResolvedValue(task)}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Edit task" })).toBeTruthy();
+  });
+
+  it("hides the progress bar for todo cards that are not executing", () => {
+    const task = createTask({
+      id: "FN-203",
+      column: "todo",
+      status: "queued",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "in-progress" },
+      ],
+    });
+
+    const { container } = render(
+      <TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+
+    expect(container.querySelector(".card-progress-bar")).toBeNull();
+  });
+
+  it("renders the progress bar when a todo card is executing", () => {
+    const task = createTask({
+      id: "FN-207",
+      column: "todo",
+      status: "executing",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "in-progress" },
+      ],
+    });
+
+    const { container } = render(
+      <TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+
+    expect(container.querySelector(".card-progress-bar")).toBeTruthy();
+  });
+});
+
+describe("InlineCreateCard mobile", () => {
+  it("contains .inline-create-input font-size: 16px in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".inline-create-input", "font-size: 16px;");
+  });
+
+  it("contains .inline-create-toggle min-height: 36px in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".inline-create-toggle", "min-height: 36px;");
+  });
+
+  it("contains .inline-create-controls .btn min-height: 36px in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".inline-create-controls .btn", "min-height: 36px;");
+  });
+
+  it("contains .inline-create-priority-select min-height: 36px in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".inline-create-priority-select", "min-height: 36px;");
+  });
+
+  it("renders dependency dropdown when Deps button is clicked", () => {
+    render(
+      <InlineCreateCard
+        tasks={[createTask({ id: "FN-301", description: "Existing dependency task" })]}
+        onSubmit={vi.fn().mockResolvedValue(createTask({ id: "FN-302" }))}
+        onCancel={vi.fn()}
+        addToast={vi.fn()}
+        availableModels={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("inline-create-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: /Deps/i }));
+
+    expect(document.querySelector(".dep-dropdown")).toBeTruthy();
+  });
+});

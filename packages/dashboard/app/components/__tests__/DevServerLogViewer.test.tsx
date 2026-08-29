@@ -1,0 +1,280 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps, SVGProps } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { DevServerLogViewer } from "../DevServerLogViewer";
+import type { DevServerLogEntry } from "../../hooks/useDevServerLogs";
+
+vi.mock("lucide-react", () => ({
+  Maximize2: (props: SVGProps<SVGSVGElement>) => <svg data-testid="icon-maximize" {...props} />,
+  Minimize2: (props: SVGProps<SVGSVGElement>) => <svg data-testid="icon-minimize" {...props} />,
+  Loader2: (props: SVGProps<SVGSVGElement>) => <svg data-testid="icon-loader" {...props} />,
+  Search: (props: SVGProps<SVGSVGElement>) => <svg data-testid="icon-search" {...props} />,
+  ChevronDown: (props: SVGProps<SVGSVGElement>) => <svg data-testid="icon-chevrondown" {...props} />,
+}));
+
+function createEntry(overrides: Partial<DevServerLogEntry>): DevServerLogEntry {
+  return {
+    id: 1,
+    text: "line",
+    stream: "stdout",
+    timestamp: "2026-04-19T10:30:00Z",
+    ...overrides,
+  };
+}
+
+function renderViewer(overrides: Partial<ComponentProps<typeof DevServerLogViewer>> = {}) {
+  const onLoadMore = vi.fn();
+
+  const result = render(
+    <DevServerLogViewer
+      entries={[]}
+      loading={false}
+      loadingMore={false}
+      hasMore={false}
+      total={0}
+      onLoadMore={onLoadMore}
+      isRunning={false}
+      {...overrides}
+    />,
+  );
+
+  return {
+    ...result,
+    onLoadMore,
+  };
+}
+
+describe("DevServerLogViewer", () => {
+  it("renders log entries with text content", () => {
+    renderViewer({
+      entries: [
+        createEntry({ id: 1, text: "line 1" }),
+        createEntry({ id: 2, text: "line 2" }),
+        createEntry({ id: 3, text: "line 3" }),
+      ],
+      total: 3,
+    });
+
+    expect(screen.getByText("line 1")).toBeInTheDocument();
+    expect(screen.getByText("line 2")).toBeInTheDocument();
+    expect(screen.getByText("line 3")).toBeInTheDocument();
+  });
+
+  it("renders timestamps", () => {
+    renderViewer({
+      entries: [createEntry({ id: 1, timestamp: "2026-04-19T10:30:00Z" })],
+      total: 1,
+    });
+
+    const timestamp = screen.getByTestId("devserver-log-timestamp");
+    expect(timestamp.textContent).toMatch(/\d{2}:\d{2}:\d{2}/);
+  });
+
+  it("renders stderr badge for stderr entries", () => {
+    renderViewer({
+      entries: [
+        createEntry({ id: 1, text: "stdout line", stream: "stdout" }),
+        createEntry({ id: 2, text: "stderr line", stream: "stderr" }),
+      ],
+      total: 2,
+    });
+
+    expect(screen.getByText("stderr line")).toBeInTheDocument();
+    expect(screen.getByTestId("devserver-log-stderr-badge")).toBeInTheDocument();
+    expect(screen.getAllByText("ERR")).toHaveLength(1);
+  });
+
+  it("shows loading spinner when loading and empty", () => {
+    renderViewer({ loading: true, entries: [] });
+
+    expect(screen.getByTestId("devserver-log-loading")).toBeInTheDocument();
+    expect(screen.getByTestId("icon-loader")).toBeInTheDocument();
+  });
+
+  it("shows empty state when not loading and no entries", () => {
+    renderViewer({ loading: false, entries: [] });
+
+    expect(screen.getByText("No logs yet. Start the dev server to see output.")).toBeInTheDocument();
+  });
+
+  it("provides an accessible label for search", () => {
+    renderViewer({
+      entries: [createEntry({ id: 1, text: "line" })],
+      total: 1,
+    });
+
+    expect(screen.getByLabelText("Search logs")).toBeInTheDocument();
+  });
+
+  it("filters entries by selected severity", () => {
+    renderViewer({
+      entries: [
+        createEntry({ id: 1, text: "server ready", stream: "stdout" }),
+        createEntry({ id: 2, text: "[warn] slow response", stream: "stdout" }),
+        createEntry({ id: 3, text: "fatal exception", stream: "stdout" }),
+        createEntry({ id: 4, text: "stderr output", stream: "stderr" }),
+      ],
+      total: 4,
+    });
+
+    const severitySelect = screen.getByTestId("devserver-log-severity-filter");
+
+    fireEvent.change(severitySelect, { target: { value: "warn" } });
+    expect(screen.getByText("[warn] slow response")).toBeInTheDocument();
+    expect(screen.queryByText("server ready")).not.toBeInTheDocument();
+    expect(screen.queryByText("fatal exception")).not.toBeInTheDocument();
+
+    fireEvent.change(severitySelect, { target: { value: "error" } });
+    expect(screen.getByText("fatal exception")).toBeInTheDocument();
+    expect(screen.getByText("stderr output")).toBeInTheDocument();
+    expect(screen.queryByText("[warn] slow response")).not.toBeInTheDocument();
+
+    fireEvent.change(severitySelect, { target: { value: "all" } });
+    expect(screen.getByText("server ready")).toBeInTheDocument();
+    expect(screen.getByText("[warn] slow response")).toBeInTheDocument();
+    expect(screen.getByText("fatal exception")).toBeInTheDocument();
+    expect(screen.getByText("stderr output")).toBeInTheDocument();
+  });
+
+  it("shows severity-specific empty message when filter has no matches", () => {
+    renderViewer({
+      entries: [createEntry({ id: 1, text: "server ready", stream: "stdout" })],
+      total: 1,
+    });
+
+    fireEvent.change(screen.getByTestId("devserver-log-severity-filter"), {
+      target: { value: "warn" },
+    });
+
+    expect(screen.getByText("No log lines match the selected severity.")).toBeInTheDocument();
+  });
+
+  it("strips ANSI escape codes from display", () => {
+    renderViewer({
+      entries: [createEntry({ id: 1, text: "\u001b[32mSuccess\u001b[0m done" })],
+      total: 1,
+    });
+
+    expect(screen.getByText("Success done")).toBeInTheDocument();
+    expect(screen.queryByText("\u001b[32mSuccess\u001b[0m done")).not.toBeInTheDocument();
+  });
+
+  it("calls onLoadMore when clicking Load older logs", () => {
+    const { onLoadMore } = renderViewer({
+      entries: [createEntry({ id: 1, text: "line" })],
+      hasMore: true,
+      total: 100,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load older logs" }));
+
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it("toggles fullscreen class", () => {
+    renderViewer({ entries: [createEntry({ id: 1, text: "line" })], total: 1 });
+
+    const container = screen.getByTestId("devserver-log-viewer");
+
+    fireEvent.click(screen.getByTestId("devserver-log-fullscreen-toggle"));
+    expect(container).toHaveClass("devserver-log-viewer--fullscreen");
+
+    fireEvent.click(screen.getByTestId("devserver-log-fullscreen-toggle"));
+    expect(container).not.toHaveClass("devserver-log-viewer--fullscreen");
+  });
+
+  function installScrollGeometry(element: HTMLElement, scrollHeight = 500, clientHeight = 100) {
+    let scrollTop = 0;
+    Object.defineProperties(element, {
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      clientHeight: { configurable: true, get: () => clientHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    return {
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = value; },
+      setScrollHeight(value: number) { scrollHeight = value; },
+    };
+  }
+
+  it("auto-scrolls when new entries arrive while running", async () => {
+    const { rerender } = renderViewer({
+      entries: [createEntry({ id: 1, text: "line 1" })],
+      isRunning: true,
+      total: 1,
+    });
+
+    const content = screen.getByTestId("devserver-log-content");
+
+    let scrollTopValue = 0;
+    const scrollTopSetter = vi.fn((value: number) => {
+      scrollTopValue = value;
+    });
+
+    Object.defineProperty(content, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: scrollTopSetter,
+    });
+    Object.defineProperty(content, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+    Object.defineProperty(content, "clientHeight", {
+      configurable: true,
+      get: () => 200,
+    });
+
+    rerender(
+      <DevServerLogViewer
+        entries={[
+          createEntry({ id: 1, text: "line 1" }),
+          createEntry({ id: 2, text: "line 2" }),
+        ]}
+        loading={false}
+        loadingMore={false}
+        hasMore={false}
+        total={2}
+        onLoadMore={vi.fn()}
+        isRunning
+      />,
+    );
+
+    await waitFor(() => {
+      expect(scrollTopSetter).toHaveBeenCalled();
+    });
+  });
+
+  it("follows in-place stream growth only while pinned, and jump-to-latest re-pins", async () => {
+    const entries = [createEntry({ id: 1, text: "streaming" })];
+    const { rerender } = renderViewer({ entries, isRunning: true, total: 1 });
+    const content = screen.getByTestId("devserver-log-content");
+    const geometry = installScrollGeometry(content);
+
+    geometry.scrollTop = 100;
+    fireEvent.scroll(content);
+    geometry.setScrollHeight(600);
+    entries[0].text = "streaming more";
+    rerender(
+      <DevServerLogViewer entries={entries} loading={false} loadingMore={false} hasMore={false} total={1} onLoadMore={vi.fn()} isRunning />,
+    );
+    await waitFor(() => expect(geometry.scrollTop).toBe(100));
+    expect(screen.getByTestId("devserver-log-jump-button")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("devserver-log-jump-button"));
+    expect(geometry.scrollTop).toBe(600);
+
+    geometry.setScrollHeight(700);
+    entries[0].text = "streaming even more";
+    rerender(
+      <DevServerLogViewer entries={entries} loading={false} loadingMore={false} hasMore={false} total={1} onLoadMore={vi.fn()} isRunning />,
+    );
+    await waitFor(() => expect(geometry.scrollTop).toBe(700));
+  });
+});

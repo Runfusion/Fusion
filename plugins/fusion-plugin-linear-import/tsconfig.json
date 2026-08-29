@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "./src",
+    "jsx": "react-jsx",
+    "types": ["node", "react"],
+    "paths": {
+      "@fusion/dashboard/app/plugins/types": ["./src/dashboard-interop.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
+  "exclude": ["dist", "node_modules", "src/**/__tests__/**"]
+}

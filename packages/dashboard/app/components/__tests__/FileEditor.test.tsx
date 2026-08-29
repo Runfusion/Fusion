@@ -1,0 +1,977 @@
+import { useState } from "react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
+import i18next from "i18next";
+import esApp from "../../../../i18n/locales/es/app.json";
+import { loadAllAppCss } from "../../test/cssFixture";
+import { FileEditor } from "../FileEditor";
+
+describe("FileEditor", () => {
+  const markdownPreviewStorageKey = "fn-file-editor-markdown-preview";
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+
+  const getEditorView = () => {
+    const editor = document.querySelector(".cm-editor") as HTMLElement | null;
+    if (!editor) {
+      throw new Error("Expected .cm-editor to exist");
+    }
+    const view = EditorView.findFromDOM(editor);
+    if (!view) {
+      throw new Error("Expected CodeMirror EditorView instance");
+    }
+    return view;
+  };
+
+  const expandEditorOptions = () => {
+    const toggle = screen.getByRole("button", { name: /toggle editor options/i });
+    if (toggle.getAttribute("aria-expanded") !== "true") {
+      fireEvent.click(toggle);
+    }
+  };
+
+  const highlightedTokenSelector = ".cm-line span[class]";
+
+  const setMobileViewport = () => {
+    window.innerWidth = 480;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes("max-width: 768px"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  };
+
+  const mockSelectionRect = () => {
+    const rect = new DOMRect(10, 20, 80, 12);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: vi.fn(() => rect),
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: vi.fn(() => ({ 0: rect, length: 1, item: () => rect, [Symbol.iterator]: function* () { yield rect; } }) as DOMRectList),
+    });
+  };
+
+  const selectNodeText = (node: Node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  };
+
+  it("renders CodeMirror editor with file-path aria-label", () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="" onChange={vi.fn()} filePath="a.ts" />);
+    expect(screen.getByLabelText("Editor for a.ts")).toBeInTheDocument();
+    expect(document.querySelector(".cm-editor")).toBeInTheDocument();
+  });
+
+  it("calls onChange when document changes", () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    render(<FileEditor content="" onChange={onChange} filePath="a.ts" />);
+    const view = getEditorView();
+    view.dispatch({ changes: { from: 0, insert: "new content" } });
+    expect(onChange).toHaveBeenCalledWith("new content");
+  });
+
+  it("undoes and redoes local edits through toolbar and standard keyboard commands", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    render(<FileEditor content="start" onChange={onChange} filePath="a.ts" />);
+    const view = getEditorView();
+
+    act(() => {
+      view.dispatch({ changes: { from: 5, insert: " one" } });
+      view.dispatch({ changes: { from: 0, insert: "two " } });
+    });
+    expect(view.state.doc.toString()).toBe("two start one");
+
+    expandEditorOptions();
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    const redoButton = screen.getByRole("button", { name: "Redo" });
+    await waitFor(() => expect(undoButton).toBeEnabled());
+    expect(redoButton).toBeDisabled();
+
+    fireEvent.click(undoButton);
+    expect(view.state.doc.toString()).toBe("start one");
+    expect(onChange).toHaveBeenLastCalledWith("start one");
+    expect(redoButton).toBeEnabled();
+
+    fireEvent.keyDown(view.contentDOM, { key: "y", ctrlKey: true });
+    expect(view.state.doc.toString()).toBe("two start one");
+    expect(onChange).toHaveBeenLastCalledWith("two start one");
+
+    fireEvent.click(undoButton);
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: "branch " } });
+    });
+    expect(view.state.doc.toString()).toBe("branch start one");
+    expect(redoButton).toBeDisabled();
+  });
+
+  it("clears history for accepted external replacements but preserves it for stale self-echoes", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="start" onChange={onChange} filePath="a.ts" />);
+    const view = getEditorView();
+
+    act(() => {
+      view.dispatch({ changes: { from: 5, insert: " local" } });
+    });
+    rerender(<FileEditor content="start local" onChange={onChange} filePath="a.ts" />);
+    act(() => {
+      view.dispatch({ changes: { from: 11, insert: " latest" } });
+    });
+    rerender(<FileEditor content="start local" onChange={onChange} filePath="a.ts" />);
+
+    await waitFor(() => expect(getEditorView().state.doc.toString()).toBe("start local latest"));
+    expandEditorOptions();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled());
+
+    rerender(<FileEditor content="replacement" onChange={onChange} filePath="a.ts" />);
+    await waitFor(() => expect(getEditorView().state.doc.toString()).toBe("replacement"));
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    const redoButton = screen.getByRole("button", { name: "Redo" });
+    expect(undoButton).toBeDisabled();
+    expect(redoButton).toBeDisabled();
+    fireEvent.click(undoButton);
+    fireEvent.click(redoButton);
+    expect(getEditorView().state.doc.toString()).toBe("replacement");
+    expect(onChange).not.toHaveBeenLastCalledWith("replacement");
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 11, insert: " edited" } });
+    });
+    fireEvent.click(undoButton);
+    expect(getEditorView().state.doc.toString()).toBe("replacement");
+  });
+
+  it("uses translated undo and redo accessible names without falling back to English", async () => {
+    await i18next.addResourceBundle("es", "app", esApp, true, true);
+    await i18next.changeLanguage("es");
+    try {
+      render(<FileEditor content="start" onChange={vi.fn()} filePath="a.ts" />);
+      act(() => {
+        getEditorView().dispatch({ changes: { from: 5, insert: " edit" } });
+      });
+      fireEvent.click(document.querySelector(".file-editor-toolbar-button")!);
+      expect(screen.getByRole("button", { name: "Deshacer" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Rehacer" })).toBeDisabled();
+    } finally {
+      await i18next.changeLanguage("en");
+    }
+  });
+
+  it("preserves the editor instance across content prop updates", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const { rerender } = render(<FileEditor content="alpha" onChange={vi.fn()} filePath="a.ts" />);
+
+    const initialContentNode = document.querySelector(".cm-content");
+    const initialEditorNode = document.querySelector(".cm-editor");
+    expect(initialContentNode).toBeInTheDocument();
+    expect(initialEditorNode).toBeInTheDocument();
+
+    rerender(<FileEditor content="alpha beta" onChange={vi.fn()} filePath="a.ts" />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".cm-content")).toBe(initialContentNode);
+      expect(document.querySelector(".cm-editor")).toBe(initialEditorNode);
+      expect(getEditorView().state.doc.toString()).toBe("alpha beta");
+    });
+  });
+
+  it("keeps the caret position through the controlled edit loop", async () => {
+    document.documentElement.dataset.theme = "dark";
+
+    function ControlledEditor() {
+      const [value, setValue] = useState("hello");
+      return <FileEditor content={value} onChange={setValue} filePath="memory.md" />;
+    }
+
+    render(<ControlledEditor />);
+
+    const initialContentNode = document.querySelector(".cm-content");
+
+    act(() => {
+      const view = getEditorView();
+      view.dispatch({ changes: { from: 5, insert: "!" }, selection: { anchor: 6 } });
+    });
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(document.querySelector(".cm-content")).toBe(initialContentNode);
+      expect(liveView.state.doc.toString()).toBe("hello!");
+      expect(liveView.state.selection.main.head).toBe(6);
+      expect(liveView.state.selection.main.anchor).toBe(6);
+    });
+  });
+
+  it.each([
+    ["markdown", "notes.md"],
+    ["non-markdown", "a.ts"],
+  ])("keeps newline and caret through stale self-echo renders for %s files", async (_label, filePath) => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="alpha" onChange={onChange} filePath={filePath} />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 5, insert: " beta" }, selection: { anchor: 10 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("alpha beta");
+    rerender(<FileEditor content="alpha beta" onChange={onChange} filePath={filePath} />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 10, insert: "\nnext" }, selection: { anchor: 15 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("alpha beta\nnext");
+
+    rerender(<FileEditor content="alpha beta" onChange={onChange} filePath={filePath} />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe("alpha beta\nnext");
+      expect(liveView.state.selection.main.head).toBe(15);
+      expect(liveView.state.selection.main.anchor).toBe(15);
+    });
+  });
+
+  it.each([
+    ["markdown trailing header", "notes.md", "intro\n\n# Heading"],
+    ["non-markdown trailing header text", "a.ts", "intro\n\n# Heading"],
+    ["markdown trailing plain text", "notes.md", "intro\n\nplain trailing text"],
+    ["non-markdown trailing plain text", "a.ts", "intro\n\nplain trailing text"],
+  ])("keeps a newline inserted after %s through a stale content prop", async (_label, filePath, initialContent) => {
+    document.documentElement.dataset.theme = "dark";
+    const nextContent = `${initialContent}\n`;
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content={initialContent} onChange={onChange} filePath={filePath} />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: initialContent.length, insert: "\n" }, selection: { anchor: nextContent.length } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith(nextContent);
+
+    rerender(<FileEditor content={nextContent} onChange={onChange} filePath={filePath} />);
+    rerender(<FileEditor content={initialContent} onChange={onChange} filePath={filePath} />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe(nextContent);
+      expect(liveView.state.selection.main.head).toBe(nextContent.length);
+      expect(liveView.state.selection.main.anchor).toBe(nextContent.length);
+    });
+  });
+
+  it("keeps local end-of-file edits when a stale self-echo was emitted more than twenty edits ago", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const initialContent = "intro\n\n# Heading";
+    const acknowledgedContent = `${initialContent}\n`;
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content={initialContent} onChange={onChange} filePath="notes.md" />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: initialContent.length, insert: "\n" }, selection: { anchor: acknowledgedContent.length } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith(acknowledgedContent);
+    rerender(<FileEditor content={acknowledgedContent} onChange={onChange} filePath="notes.md" />);
+
+    let expectedContent = acknowledgedContent;
+    for (const character of "abcdefghijklmnopqrstu") {
+      act(() => {
+        const view = getEditorView();
+        view.dispatch({ changes: { from: view.state.doc.length, insert: character }, selection: { anchor: view.state.doc.length + 1 } });
+      });
+      expectedContent += character;
+    }
+    expect(onChange).toHaveBeenLastCalledWith(expectedContent);
+
+    rerender(<FileEditor content={expectedContent} onChange={onChange} filePath="notes.md" />);
+    rerender(<FileEditor content={acknowledgedContent} onChange={onChange} filePath="notes.md" />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe(expectedContent);
+      expect(liveView.state.selection.main.head).toBe(expectedContent.length);
+      expect(liveView.state.selection.main.anchor).toBe(expectedContent.length);
+    });
+  });
+
+  it("applies external content changes while preserving the clamped caret", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="abcdef" onChange={onChange} filePath="a.ts" />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 6, insert: "!" }, selection: { anchor: 7 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("abcdef!");
+
+    rerender(<FileEditor content="xy" onChange={onChange} filePath="a.ts" />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe("xy");
+      expect(liveView.state.selection.main.head).toBe(2);
+      expect(liveView.state.selection.main.anchor).toBe(2);
+    });
+    expect(onChange).not.toHaveBeenCalledWith("xy");
+  });
+
+  it("respects readOnly prop", () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="readonly" onChange={vi.fn()} readOnly filePath="a.ts" />);
+    expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("false");
+  });
+
+  it("keeps current read-only mode when external content resets editor history", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="editable" onChange={onChange} filePath="a.ts" />);
+
+    rerender(<FileEditor content="locked replacement" onChange={onChange} readOnly filePath="a.ts" />);
+    await waitFor(() => {
+      expect(getEditorView().state.doc.toString()).toBe("locked replacement");
+      expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("false");
+    });
+
+    rerender(<FileEditor content="editable replacement" onChange={onChange} filePath="a.ts" />);
+    await waitFor(() => {
+      expect(getEditorView().state.doc.toString()).toBe("editable replacement");
+      expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("true");
+    });
+  });
+
+  it("uses fallback aria-label when filePath missing", () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="x" onChange={vi.fn()} />);
+    expect(screen.getByLabelText("File editor")).toBeInTheDocument();
+  });
+
+  it("markdown preview toggle still works", () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+    expandEditorOptions();
+    fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+    expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /edit mode/i }));
+    expect(document.querySelector(".cm-editor")).toBeInTheDocument();
+  });
+
+  it("sends selected CodeMirror text to a new task description", async () => {
+    document.documentElement.dataset.theme = "dark";
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<FileEditor content="alpha\nbeta" onChange={vi.fn()} filePath="src/example.ts" onSendSelectionToTask={onSendSelectionToTask} />);
+
+    act(() => {
+      getEditorView().dispatch({ selection: { anchor: 0, head: 5 } });
+    });
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    selectNodeText(content);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Extract this constant." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: src/example.ts"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Lines: 1"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("alpha"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Extract this constant."));
+  });
+
+  it("sends selected markdown preview text to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<FileEditor content="# Hello\n\nPreview text" onChange={vi.fn()} filePath="readme.md" onSendSelectionToTask={onSendSelectionToTask} readOnly />);
+
+    const preview = document.querySelector(".file-editor-preview .markdown-body") ?? document.querySelector(".file-editor-preview");
+    selectNodeText(preview as Node);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Document this follow-up." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: readme.md"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Preview text"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Document this follow-up."));
+  });
+  it("line-number toggle still flips state and gutter visibility", () => {
+    document.documentElement.dataset.theme = "dark";
+    const onToggle = vi.fn();
+    const { rerender } = render(
+      <FileEditor content="a\nb" onChange={vi.fn()} filePath="a.ts" showLineNumbers={false} onToggleLineNumbers={onToggle} />,
+    );
+
+    expandEditorOptions();
+    fireEvent.click(screen.getByRole("button", { name: /toggle line numbers/i }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".cm-gutters")).not.toBeInTheDocument();
+
+    rerender(<FileEditor content="a\nb" onChange={vi.fn()} filePath="a.ts" showLineNumbers onToggleLineNumbers={onToggle} />);
+    expect(document.querySelector(".cm-gutters")).toBeInTheDocument();
+  });
+
+  it("word-wrap toggle still works", () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="long long content" onChange={vi.fn()} filePath="a.ts" />);
+    expandEditorOptions();
+    const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+    expect(wrapButton.classList.contains("btn-primary")).toBe(true);
+    fireEvent.click(wrapButton);
+    expect(wrapButton.classList.contains("btn-primary")).toBe(false);
+    fireEvent.click(wrapButton);
+    expect(wrapButton.classList.contains("btn-primary")).toBe(true);
+  });
+
+  it("light mode produces highlighted tokens", async () => {
+    document.documentElement.dataset.theme = "light";
+    render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="foo.ts" />);
+
+    await waitFor(() => {
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+    });
+  });
+
+  it("dark mode produces highlighted tokens", async () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="foo.ts" />);
+
+    await waitFor(() => {
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+    });
+  });
+
+  it("theme switch reconfigures without remount", async () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="foo.ts" />);
+
+    const initialContentNode = document.querySelector(".cm-content");
+    const editor = document.querySelector(".cm-editor");
+    const initialEditorClassName = editor?.className;
+    expect(initialContentNode).toBeInTheDocument();
+
+    document.documentElement.dataset.theme = "light";
+
+    await waitFor(() => {
+      expect(document.querySelector(".cm-content")).toBe(initialContentNode);
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+      expect(document.querySelector(".cm-editor")?.className).not.toBe(initialEditorClassName);
+    });
+  });
+
+  it("language is still resolved for json", async () => {
+    document.documentElement.dataset.theme = "light";
+    render(<FileEditor content={"{\"a\":1}"} onChange={vi.fn()} filePath="foo.json" />);
+
+    await waitFor(() => {
+      expect(document.querySelector('.cm-content[data-language="json"]')).toBeInTheDocument();
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+    });
+  });
+
+  describe("markdown preview", () => {
+    it("shows edit/preview toggle for markdown extensions when expanded", () => {
+      const { rerender } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
+      expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
+
+      rerender(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.markdown" />);
+      expandEditorOptions();
+      expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
+
+      rerender(<FileEditor content="# Hello" onChange={vi.fn()} filePath="page.mdx" />);
+      expandEditorOptions();
+      expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
+    });
+
+    it("does not show edit/preview toggle for non-markdown files", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
+    });
+
+    it("switches preview and edit when expanded", () => {
+      render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
+      const previewButton = screen.getByRole("button", { name: /preview/i });
+      fireEvent.click(previewButton);
+      expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
+
+      const editButton = screen.getByRole("button", { name: /edit mode/i });
+      fireEvent.click(editButton);
+      expect(document.querySelector(".cm-editor")).toBeInTheDocument();
+    });
+
+    it("readOnly markdown shows preview action when expanded", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" readOnly />);
+      expandEditorOptions();
+      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
+    });
+
+    it("defaults editable markdown files to edit mode before a preference exists", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+
+    it("persists preview mode across fresh editable markdown mounts", async () => {
+      const { unmount } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
+      fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+
+      await waitFor(() => expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("true"));
+      unmount();
+
+      render(<FileEditor content="# Next" onChange={vi.fn()} filePath="next.md" />);
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-codemirror")).not.toBeInTheDocument();
+    });
+
+    it("persists edit mode after preview was previously stored", async () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "true");
+      const { unmount } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /edit mode/i }));
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      await waitFor(() => expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("false"));
+      unmount();
+
+      render(<FileEditor content="# Next" onChange={vi.fn()} filePath="next.md" />);
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+
+    it("always previews readOnly markdown without overwriting the editable preference", async () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "false");
+      const { unmount } = render(<FileEditor content="# Read only" onChange={vi.fn()} filePath="readme.md" readOnly />);
+
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+      await waitFor(() => expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("false"));
+      unmount();
+
+      render(<FileEditor content="# Editable" onChange={vi.fn()} filePath="readme.md" />);
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+
+    it("ignores the markdown preview preference for non-markdown files", () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "true");
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+      expandEditorOptions();
+      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /preview mode/i })).not.toBeInTheDocument();
+    });
+
+    it("falls back to edit mode when localStorage is unavailable", () => {
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("localStorage unavailable");
+      });
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("localStorage unavailable");
+      });
+
+      expect(() => render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />)).not.toThrow();
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("word wrap toggle", () => {
+    it("shows word wrap toggle button for markdown files in edit mode", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+
+      expandEditorOptions();
+      expect(screen.getByRole("button", { name: /toggle word wrap/i })).toBeInTheDocument();
+    });
+
+    it("shows word wrap toggle button for non-markdown files", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expandEditorOptions();
+      expect(screen.getByRole("button", { name: /toggle word wrap/i })).toBeInTheDocument();
+    });
+
+    it("does not show word wrap toggle button in readOnly mode", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" readOnly />);
+
+      expect(screen.queryByRole("button", { name: /toggle word wrap/i })).not.toBeInTheDocument();
+    });
+
+    it("word wrap is enabled by default", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expect(document.querySelector(".cm-content.cm-lineWrapping")).toBeInTheDocument();
+    });
+
+    it("toggle button shows active state when word wrap is enabled", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expandEditorOptions();
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      expect(wrapButton.classList.contains("btn-primary")).toBe(true);
+    });
+
+    it("clicking toggle button disables word wrap", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expandEditorOptions();
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      fireEvent.click(wrapButton);
+
+      expect(document.querySelector(".cm-content.cm-lineWrapping")).not.toBeInTheDocument();
+    });
+
+    it("clicking toggle button again re-enables word wrap", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expandEditorOptions();
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      fireEvent.click(wrapButton);
+      fireEvent.click(wrapButton);
+
+      expect(document.querySelector(".cm-content.cm-lineWrapping")).toBeInTheDocument();
+    });
+
+    it("toggle button loses active state when word wrap is disabled", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expandEditorOptions();
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      fireEvent.click(wrapButton);
+
+      expect(wrapButton.classList.contains("btn-primary")).toBe(false);
+    });
+  });
+
+  describe("line numbers", () => {
+    it("shows the line number toggle button when toggle support is provided", () => {
+      render(
+        <FileEditor
+          content={"first\nsecond\nthird"}
+          onChange={vi.fn()}
+          filePath="src/app.ts"
+          showLineNumbers={false}
+          onToggleLineNumbers={vi.fn()}
+        />,
+      );
+
+      expandEditorOptions();
+      expect(screen.getByRole("button", { name: /toggle line numbers/i })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: /toggle line numbers/i })).toHaveAttribute("title", "Toggle line numbers");
+    });
+
+    it("hides the line number toggle button when toggle support is not provided", () => {
+      render(<FileEditor content="first\nsecond" onChange={vi.fn()} filePath="src/app.ts" showLineNumbers={false} />);
+
+      expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
+    });
+
+    it("calls onToggleLineNumbers when the toggle button is clicked", () => {
+      const onToggleLineNumbers = vi.fn();
+      render(
+        <FileEditor
+          content="first\nsecond"
+          onChange={vi.fn()}
+          filePath="src/app.ts"
+          onToggleLineNumbers={onToggleLineNumbers}
+        />,
+      );
+
+      expandEditorOptions();
+      fireEvent.click(screen.getByRole("button", { name: /toggle line numbers/i }));
+      expect(onToggleLineNumbers).toHaveBeenCalledTimes(1);
+    });
+
+    it("hides the line number toggle button for read-only files", () => {
+      render(
+        <FileEditor
+          content={"one\ntwo"}
+          onChange={vi.fn()}
+          filePath="file.bin"
+          readOnly
+          showLineNumbers
+          onToggleLineNumbers={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
+    });
+
+    it("shows line numbers for editable text mode when enabled", () => {
+      render(
+        <FileEditor
+          content={"first\nsecond\nthird"}
+          onChange={vi.fn()}
+          filePath="src/app.ts"
+          showLineNumbers
+          onToggleLineNumbers={vi.fn()}
+        />,
+      );
+
+      const gutter = document.querySelector(".cm-gutters");
+      expect(gutter).toBeInTheDocument();
+    });
+
+    it("hides line numbers in markdown preview mode", () => {
+      render(
+        <FileEditor
+          content="# Heading"
+          onChange={vi.fn()}
+          filePath="readme.md"
+          showLineNumbers
+          onToggleLineNumbers={vi.fn()}
+        />,
+      );
+
+      expandEditorOptions();
+      fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+      expect(document.querySelector(".file-editor-line-numbers")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
+    });
+
+    it("hides line numbers for read-only files", () => {
+      render(
+        <FileEditor
+          content={"one\ntwo"}
+          onChange={vi.fn()}
+          filePath="file.bin"
+          readOnly
+          showLineNumbers
+          onToggleLineNumbers={vi.fn()}
+        />,
+      );
+
+      expect(document.querySelector(".file-editor-line-numbers")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("auto-save toggle", () => {
+    it.each([
+      ["markdown", "notes.md", "# Heading\n\nBody"],
+      ["non-markdown", "src/app.ts", "const value = 1;"],
+    ])("renders for editable %s files when toggle support is provided", (_label, filePath, content) => {
+      const onToggleAutoSave = vi.fn();
+      render(
+        <FileEditor
+          content={content}
+          onChange={vi.fn()}
+          filePath={filePath}
+          autoSaveEnabled
+          onToggleAutoSave={onToggleAutoSave}
+        />,
+      );
+
+      expandEditorOptions();
+      const toggle = screen.getByTestId("file-editor-auto-save-toggle");
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      expect(toggle).toHaveAttribute("title", "Toggle auto-save");
+      fireEvent.click(toggle);
+      expect(onToggleAutoSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("reflects the disabled state", () => {
+      render(<FileEditor content="text" onChange={vi.fn()} filePath="notes.txt" autoSaveEnabled={false} onToggleAutoSave={vi.fn()} />);
+
+      expandEditorOptions();
+      const toggle = screen.getByTestId("file-editor-auto-save-toggle");
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      expect(toggle.classList.contains("btn-primary")).toBe(false);
+    });
+
+    it("is absent when the host does not wire auto-save", () => {
+      render(<FileEditor content="text" onChange={vi.fn()} filePath="notes.txt" />);
+
+      expandEditorOptions();
+      expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    });
+
+    it("is absent for readOnly files", () => {
+      render(<FileEditor content="text" onChange={vi.fn()} filePath="notes.txt" readOnly autoSaveEnabled onToggleAutoSave={vi.fn()} />);
+
+      expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    });
+
+    it("is absent in markdown Preview mode", () => {
+      render(<FileEditor content="# Heading" onChange={vi.fn()} filePath="notes.md" autoSaveEnabled onToggleAutoSave={vi.fn()} />);
+
+      expandEditorOptions();
+      expect(screen.getByTestId("file-editor-auto-save-toggle")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+      expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("editor toolbar options collapse", () => {
+    it("hides edit, preview, line numbers, and wrap while collapsed", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /preview mode/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /toggle word wrap/i })).not.toBeInTheDocument();
+    });
+
+    it.each([
+      "Edit mode",
+      "Preview mode",
+      "Toggle line numbers",
+      "Toggle word wrap",
+    ])("collapsed toolbar removes %s from layout", (ariaLabel) => {
+      const css = loadAllAppCss();
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+
+      try {
+        const { container } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        const button = container.querySelector(`[aria-label="${ariaLabel}"]`) as HTMLElement | null;
+        expect(button).toBeTruthy();
+
+        const hiddenAncestor = button?.closest("[hidden]") as HTMLElement | null;
+        const hiddenDisplay = hiddenAncestor ? getComputedStyle(hiddenAncestor).display : "";
+        expect(button?.offsetParent === null || hiddenDisplay === "none").toBe(true);
+      } finally {
+        style.remove();
+      }
+    });
+
+    it("expanding shows all actions in one toolbar actions row", () => {
+      const css = loadAllAppCss();
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+
+      try {
+        setMobileViewport();
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        expandEditorOptions();
+
+        const toggleButton = screen.getByRole("button", { name: /toggle editor options/i });
+        const editButton = screen.getByRole("button", { name: /edit mode/i });
+        const actionsRow = editButton.closest(".file-editor-toolbar-actions") as HTMLElement;
+        const toolbar = editButton.closest(".file-editor-toolbar");
+        expect(actionsRow).toBeTruthy();
+        expect(toolbar).toContainElement(toggleButton);
+        expect(toolbar).toContainElement(actionsRow);
+        expect(actionsRow).toContainElement(screen.getByRole("button", { name: /preview mode/i }));
+        expect(actionsRow).toContainElement(screen.getByRole("button", { name: /toggle line numbers/i }));
+        expect(actionsRow).toContainElement(screen.getByRole("button", { name: /toggle word wrap/i }));
+
+        expect(getComputedStyle(actionsRow).width).not.toBe("100%");
+      } finally {
+        style.remove();
+      }
+    });
+
+    it.each([/edit mode/i, /preview mode/i, /toggle line numbers/i, /toggle word wrap/i])(
+      "expanded action button %s uses compact toolbar class signature",
+      (name) => {
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        expandEditorOptions();
+        const button = screen.getByRole("button", { name });
+        expect(button.className).toContain("btn");
+        expect(button.className).toContain("btn-sm");
+        expect(button.className).toContain("file-editor-toolbar-button");
+      },
+    );
+
+    it("aria-expanded reflects state", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
+      const optionsButton = screen.getByRole("button", { name: /toggle editor options/i });
+      expect(optionsButton).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(optionsButton);
+      expect(optionsButton).toHaveAttribute("aria-expanded", "true");
+    });
+  });
+
+  describe("toolbar sizing CSS", () => {
+    it("keeps equal height and font-size for all toolbar buttons on desktop and mobile", () => {
+      const css = loadAllAppCss();
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+
+      try {
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        expandEditorOptions();
+
+        const buttons = [
+          screen.getByRole("button", { name: /edit mode/i }),
+          screen.getByRole("button", { name: /preview mode/i }),
+          screen.getByRole("button", { name: /toggle line numbers/i }),
+          screen.getByRole("button", { name: /toggle word wrap/i }),
+        ];
+
+        const desktopStyles = buttons.map((button) => getComputedStyle(button));
+        expect(new Set(desktopStyles.map((styleDecl) => styleDecl.height)).size).toBe(1);
+        expect(new Set(desktopStyles.map((styleDecl) => styleDecl.fontSize)).size).toBe(1);
+
+        window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+          matches: query.includes("max-width: 768px"),
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }));
+
+        const mobileStyles = buttons.map((button) => getComputedStyle(button));
+        expect(new Set(mobileStyles.map((styleDecl) => styleDecl.height)).size).toBe(1);
+        expect(new Set(mobileStyles.map((styleDecl) => styleDecl.fontSize)).size).toBe(1);
+      } finally {
+        style.remove();
+      }
+    });
+
+    it("reduces toolbar vertical padding when expanded", () => {
+      const css = loadAllAppCss();
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+
+      try {
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        const toolbar = document.querySelector(".file-editor-toolbar") as HTMLElement;
+        const collapsed = getComputedStyle(toolbar);
+
+        expandEditorOptions();
+        const expanded = getComputedStyle(toolbar);
+
+        expect(expanded.paddingTop).not.toBe(collapsed.paddingTop);
+        expect(expanded.paddingBottom).not.toBe(collapsed.paddingBottom);
+      } finally {
+        style.remove();
+      }
+    });
+  });
+});

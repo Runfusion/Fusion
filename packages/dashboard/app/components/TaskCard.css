@@ -1,0 +1,2177 @@
+/* === Cards === */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--card-padding);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast),
+    opacity var(--transition-normal);
+  position: relative;
+  user-select: none;
+  touch-action: pan-x pan-y;
+  /*
+  FNXC:TaskCardLayout 2026-08-05-07:31 (FN-8802):
+  Every TaskCard host can become narrower than a card's populated intrinsic content, including pinned desktop docks and mobile columns. Make the shared root a border-box, shrinkable flex item so existing title truncation, badge wrapping, footer-chip wrapping, and visible trailing controls contain themselves without host-specific branches.
+  */
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  container-type: inline-size;
+  container-name: task-card;
+}
+.card:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+.card:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+  outline: none;
+}
+.card.file-drop-target {
+  border: 2px dashed var(--todo);
+  background: color-mix(in srgb, var(--todo) 8%, transparent);
+}
+
+.task-card-context-menu-popover {
+  position: fixed;
+  z-index: 1000;
+}
+
+.task-card-context-menu-popover .task-context-menu {
+  position: static;
+}
+
+/*
+FNXC:TaskCardMobilePan 2026-06-13-19:51:
+Mobile board cards must allow horizontal kanban panning from every visible card surface, not only from gaps or progress-count text.
+The global mobile touch-action reset applies to descendants, and browsers intersect touch-action along the touched element's ancestor chain, so the whole non-editing card subtree must opt back into pan-x.
+
+FNXC:TaskCardMobileSelection 2026-07-01-00:00:
+Mobile long-press opens the Board task context menu, so non-editing card text must not trigger native text selection or iOS copy callouts. Keep this scoped to the shared `.card` subtree so normal and worktree-grouped Board cards are covered while edit controls opt back into selectable text.
+*/
+.card:not(.card-editing),
+.card:not(.card-editing) * {
+  touch-action: pan-x pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.card.card-editing,
+.card.card-editing *,
+.card :is(input, textarea, select, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Agent-active glow: animated border glow when an agent is actively working on a task.
+   Uses the in-progress column color to stay consistent with the theme. */
+.card.agent-active {
+  border-color: var(--in-progress);
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--in-progress) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--in-progress) 15%, transparent);
+  animation: agent-glow 2.5s ease-in-out infinite;
+}
+
+@keyframes agent-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px color-mix(in srgb, var(--in-progress) 40%, transparent),
+      0 0 20px color-mix(in srgb, var(--in-progress) 15%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 12px color-mix(in srgb, var(--in-progress) 60%, transparent),
+      0 0 28px color-mix(in srgb, var(--in-progress) 25%, transparent);
+  }
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+  row-gap: var(--space-xs);
+  min-width: 0;
+  margin-bottom: var(--space-xs);
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-11-00:00:
+FN-7837 keeps the id, size chip, and right-aligned actions cluster together while extra header badges wrap inside this middle group, preventing header metadata from orphaning onto a misaligned second row on desktop and mobile.
+
+FNXC:TaskCardLayout 2026-07-12-00:00:
+FN-7862 requires the task id, the first badge row, and the right-side controls to share one centered header baseline. Use the existing card chip height as the row rhythm while preserving FN-7837: the outer header stays nowrap and badges wrap only in the middle group.
+
+FNXC:TaskCardLayout 2026-07-17-13:05 (FN-8234):
+The size chip is a direct header child immediately after the task id, before this wrapping middle group. Its chip-height rhythm must align with the id and trailing actions without returning it to the actions cluster.
+*/
+.card-header-badges {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  row-gap: var(--space-xs);
+  min-width: 0;
+  min-height: var(--card-chip-height);
+}
+
+/*
+FNXC:TaskCardLayout 2026-08-01-05:38:
+The fast-mode badge must share the header line with status, priority, and oversight badges whenever space remains. Keep this nested semantic wrapper layout-transparent so its meta badges join `.card-header-badges` directly instead of wrapping as one atomic group.
+*/
+.card-meta-badges {
+  display: contents;
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-12-00:00:
+FN-7871 requires the mono task id to read optically centered with the first-row header badges and right-side icons/chips. Keep the outer FN-7862 flex-start first-row anchor and FN-7837 middle-badge wrapping intact; use a token-derived visual nudge on the id itself because its line-height: 1 glyph box sits slightly high inside the shared chip-height row.
+
+FNXC:TaskCardLayout 2026-07-13-01:01:
+Lock the id to the same chip-height row as .card-header-actions so the task id, adjacent size chip, and trailing actions share one optical baseline on desktop and mobile.
+*/
+.card-id {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  max-height: var(--card-chip-height);
+  line-height: 1;
+  transform: translateY(calc(var(--space-xs) / 4));
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.card-title {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/*
+FNXC:TaskTitleDisplay 2026-08-19-15:22:
+FN-044 bounds only the display-derived description fallback after title precedence has been resolved.
+The card remains presentation-only: it neither persists a fallback nor restores FN-036's AI-length policy.
+*/
+.card-title--bounded-description {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.card-branch-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.card-branch-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-xs);
+  padding: calc(var(--space-xs) / 4) calc(var(--space-sm) - (var(--space-xs) / 4));
+  border-radius: var(--radius-pill);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  color: var(--text-muted);
+  font-size: 0.625rem;
+}
+
+.card-branch-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.card-branch-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+/* z-index + position: relative so .card-dep-badge tooltip renders above .card-title */
+.card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  position: relative;
+  z-index: 1;
+}
+
+
+.card-retry-badge {
+  cursor: pointer;
+}
+
+.card-retry-badge:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.card-retry-badge--warning {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-retry-badge--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+}
+
+.card-status-badge,
+.card-priority-badge,
+.card-size-badge,
+.card-no-commits-expected-badge,
+.card-workflow-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+}
+
+.card-status-badge {
+  letter-spacing: 0.5px;
+}
+
+.card-queued-reason-icon {
+  flex: 0 0 auto;
+  margin-inline-start: var(--space-xs);
+  margin-inline-end: calc(var(--space-xs) / -2);
+  transform: translateY(calc(var(--space-xs) / -8));
+}
+
+.card-status-badge--queued-with-reason {
+  padding-inline-end: var(--space-xs);
+}
+
+/*
+FNXC:WorkflowBoard 2026-06-29-00:00:
+Aggregate Board cards need a compact workflow-name badge so operators can identify each card's source workflow while shared columns combine multiple workflows. The badge is opt-in metadata from Board and uses neutral card tokens so non-board TaskCard callers do not render empty workflow shells.
+
+FNXC:WorkflowBoard 2026-06-30-00:00:
+All workflows cards need workflow identity at the bottom-left below every other card icon/action/meta row, so the wrapper is rendered after those rows and left-aligns the neutral badge without adding click targets.
+
+FNXC:WorkflowBadges 2026-06-30-00:00:
+Workflow badges need a slight token-based gap between icon and label so compact workflow identity remains readable without changing placement, clickability, or truncation behavior.
+*/
+/*
+FNXC:TaskCardLayout 2026-07-10-00:00:
+FN-7780 anchors the created-by-agent badge in its own bottom-left row before workflow identity, matching the existing workflow-row layout so the header ID/status/action row no longer wraps because of the agent chip on narrow/mobile cards.
+*/
+.card-agent-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: var(--space-xs);
+}
+
+.card-workflow-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: var(--space-xs);
+}
+
+.card-workflow-badge {
+  column-gap: calc(var(--space-xs) / 2);
+  max-width: min(100%, 18ch);
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  flex: 0 1 auto;
+}
+
+.card-no-commits-expected-badge {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
+
+/* Unified PR entity node-state badge (R12). Clickable, links to the PR view. */
+.card-pr-node-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* DISTINCT error badge for the failed node-state (never the open-PR badge). */
+.card-pr-node-badge--failed {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+  color: var(--color-error);
+}
+
+/*
+FNXC:TaskCardPlanReviewBadge 2026-07-11-12:15:
+The Plan Review "Reviewing" badge must read as an active review state without adding custom sizing. Reuse the in-review semantic token and existing status badge geometry so desktop and mobile header wrapping keep the same invariants.
+
+FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
+Code Review / Browser Verification reuse the same reviewing token while the card is in In-review so lane-owned gates share one active-review chrome.
+*/
+.card-status-badge--reviewing {
+  background: color-mix(in srgb, var(--in-review) 18%, transparent);
+  color: var(--in-review);
+  border-color: color-mix(in srgb, var(--in-review) 35%, transparent);
+}
+
+.card-status-badge.stalled-review {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.card-stalled-review-reason {
+  margin-top: var(--space-xs);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.card-status-badge--triage {
+  background: var(--status-triage-bg);
+  color: var(--triage);
+}
+.card-status-badge--todo {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+/*
+FNXC:CodingIdeasWorkflow 2026-07-25-12:05:
+"Queued to plan" is a waiting state, not a ready one, so it reads quieter than the Ready badge it
+sits beside in the same slot — muted text over a washed-out todo tint via color-mix, no new tokens
+and no hardcoded color. Same geometry as every other status badge; only the fill changes.
+*/
+.card-status-badge--todo.queued-to-plan {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+  color: var(--text-muted);
+}
+.card-status-badge--in-progress {
+  background: var(--status-in-progress-bg);
+  color: var(--in-progress);
+}
+.card-status-badge--in-review {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+.card-status-badge--done {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+.card-status-badge--archived {
+  background: var(--status-archived-bg);
+  color: var(--text-muted);
+}
+
+.card-status-badge.pulsing {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.card-status-badge.failed {
+  background: var(--status-error-bg);
+  color: var(--color-error-dark);
+}
+
+.card-status-badge.in-review-stall {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-status-badge.in-review-stall.in-review-stall--merge-retries-exhausted {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+}
+
+.card-status-badge.stale-paused-review {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+}
+
+.card-status-badge.card-task-age-staleness-badge--warning {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-status-badge.card-task-age-staleness-badge--critical {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+}
+
+.card-status-badge.paused {
+  background: var(--status-done-bg-deep);
+  color: var(--text-muted);
+}
+
+.card-status-badge.needs-user-feedback {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-status-badge.awaiting-approval {
+  background: var(--status-triage-bg-deep);
+  color: var(--triage);
+}
+
+/*
+FNXC:PlanReviewReplan 2026-07-15-12:15:
+FN-7985 promotes exhausted automatic Plan Review revisions from an ordinary approval hold to a
+warning badge, while generic and release-authorization holds retain the triage appearance.
+*/
+.card-status-badge.awaiting-approval--plan-review-replan-cap {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+@media (max-width: 768px) {
+  .card-status-badge.awaiting-approval--plan-review-replan-cap {
+    max-width: 100%;
+    text-align: center;
+  }
+}
+
+.card-status-badge.awaiting-input {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+/*
+FNXC:PlannerOversight 2026-07-05-00:00:
+FN-7592 replaces the overseer badge's uppercase text label with a small `Eye` icon so it
+reads as a compact glyph rather than a wide pill. Color it per `PlannerOverseerState` via the
+`data-planner-overseer-state` attribute so operators can distinguish watching/steering/recovering/awaiting-confirmation at
+a glance without reading text. Colors reuse existing semantic tokens: neutral/info for the
+passive "watching" state, warning for the more active "steering"/"recovering" states, and the
+triage token for "awaiting-confirmation" (a human-decision hold), matching the hue conventions
+used elsewhere in this file (e.g. .card-oversight-badge--*, .card-status-badge--triage).
+
+FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+The Eye inherits shared text-badge padding, border, and line height. Its token-sized glyph must
+not enlarge that shared box, so icon-only and text header chips stay one height on desktop and mobile.
+*/
+.card-planner-overseer-state {
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+.card-planner-overseer-state svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+.card-planner-overseer-state[data-planner-overseer-state="watching"] {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+}
+
+.card-planner-overseer-state[data-planner-overseer-state="steering"],
+.card-planner-overseer-state[data-planner-overseer-state="recovering"] {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-planner-overseer-state[data-planner-overseer-state="awaiting-confirmation"] {
+  background: color-mix(in srgb, var(--triage) 18%, transparent);
+  color: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 45%, transparent);
+}
+
+.card.awaiting-input {
+  border-left: 3px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
+}
+
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+*/
+/*
+FNXC:TaskCardLayout 2026-08-01-04:48 (FN-8665):
+The size chip must derive its box from the shared header-chip padding, line-height, and border so it renders at the same height as status and metadata chips. As a direct child after .card-id, keep it anchored to the header's first row when the middle badge group wraps.
+
+FNXC:TaskCardLayout 2026-08-01-06:46 (FN-8675):
+Every task-card header badge must share the first-row vertical centerline. The direct size chip keeps FN-8665's intrinsic badge geometry, so offset it downward by the token-derived space that centers status and metadata chips inside `.card-header-badges` rather than giving it a divergent fixed row height.
+*/
+.card-size-badge {
+  align-self: flex-start;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  transform: translateY(calc((var(--space-xs) * 3) / 4));
+  letter-spacing: 0.5px;
+}
+
+/* Size S: subtle green tint (low effort) */
+.card-size-badge.size-s {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+
+/* Size M: neutral tint (medium effort) */
+.card-size-badge.size-m {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
+/* Size L: subtle amber tint (higher effort) */
+.card-size-badge.size-l {
+  background: color-mix(in srgb, var(--triage) 15%, transparent);
+  color: var(--triage);
+}
+
+.card-priority-badge {
+  /* FNXC:PriorityIconOnlyBadge 2026-07-12-00:00: FN-7867 removes visible priority text from board cards, so these shared spacing declarations no longer add card text width; keep them to preserve the Task Detail priority chip/select geometry that reuses the same badge class. */
+  flex-shrink: 0;
+  gap: var(--space-xs);
+  letter-spacing: 0.4px;
+}
+
+.card-priority-badge--low {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.card-priority-badge--high {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.card-priority-badge--urgent {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error-dark);
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+Fast-mode's icon-only chip shares the text-badge box geometry instead of a fixed square. Keep the
+Zap at the badge text size so it remains centered without making the header row taller on desktop or mobile.
+*/
+.card-execution-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  justify-content: center;
+  box-sizing: border-box;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+}
+
+.card-execution-mode-badge svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+.card-execution-mode-badge--fast {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-00:00:
+FN-7516 read-only effective-oversight-level badge, shown only for an explicit
+non-"off" per-task planner-oversight override. Mirrors the .card-status-badge/
+.card-priority-badge chip sizing so it participates in the same wrap/height
+invariants as the rest of .card-meta-badges. Level modifiers use existing
+semantic status tokens (info/warning/error family) rather than new hex values.
+*/
+.card-oversight-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+}
+
+.card-oversight-badge--observe {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.card-oversight-badge--steer {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.card-oversight-badge--autonomous {
+  background: color-mix(in srgb, var(--triage) 15%, transparent);
+  color: var(--triage);
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-17:00:
+FN-7517 addition: the task-detail quick oversight-level-change control (see
+TaskDetailModal.tsx/.css) renders this badge class even for the "off" level
+(unlike the card-surface read-only badge, which never shows for "off") so the
+select control has a neutral, token-based chip background rather than
+falling through to an unstyled transparent shell.
+*/
+.card-oversight-badge--off {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+}
+
+.card.failed {
+  border-left: 3px solid var(--color-error-dark);
+}
+
+/* Error display on failed task cards */
+.card-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  margin: var(--space-xs) 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-error-dark) 25%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
+  color: var(--color-error-dark);
+  line-height: 1.4;
+}
+
+.card-error-icon {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.card-error-text {
+  word-break: break-word;
+}
+
+.card-error-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  min-height: 24px;
+  padding: var(--space-xs) calc(var(--space-sm) - (var(--space-xs) / 2));
+  border-radius: var(--radius-sm);
+  border-color: color-mix(in srgb, var(--color-error-dark) 20%, transparent);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error-dark);
+}
+
+.card-error-retry-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+}
+
+.card-error-retry-btn:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+.card-error-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .card-error-retry-btn {
+    min-height: 36px;
+  }
+}
+
+/* Awaiting manual plan approval: amber left border + subtle pulsing background to signal human review needed.
+   Distinct from agent-active (purple glow), failed (red left border + error block), and paused (dimmed opacity). */
+.card.awaiting-approval {
+  border-left: 3px solid var(--triage);
+  background: color-mix(in srgb, var(--triage) 6%, transparent);
+  animation: approval-pulse 3s ease-in-out infinite;
+}
+
+@keyframes approval-pulse {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--triage) 6%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--triage) 12%, transparent);
+  }
+}
+
+.card.paused {
+  opacity: 0.55;
+  border-left: 3px solid var(--text-muted);
+  cursor: default;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.card-dep-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.6875rem;
+  color: var(--triage);
+  position: relative;
+  cursor: default;
+}
+
+.card-dep-badge.clickable {
+  cursor: pointer;
+  transition: color var(--transition-fast), text-decoration var(--transition-fast);
+}
+
+.card-dep-badge.clickable:hover {
+  color: var(--todo);
+  text-decoration: underline;
+}
+
+.card-dep-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.card-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.6875rem;
+  color: var(--in-progress);
+  position: relative;
+  cursor: default;
+}
+
+.card-fanout-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-xs) / 2);
+  font-size: 0.6875rem;
+  position: relative;
+  cursor: default;
+}
+
+.card-fanout-count {
+  font-family: var(--font-mono);
+}
+
+.card-fanout-badge--stale {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border-radius: var(--radius-pill);
+  padding-inline: calc(var(--space-xs) / 2);
+}
+
+.card-scope-badge[data-tooltip]:hover::after,
+.card-fanout-badge[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  margin-bottom: var(--space-xs);
+  box-shadow: var(--shadow-md);
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+The clickable mission chip uses the shared text-badge box geometry, including its transparent
+border. This keeps its label and Target glyph on the same header baseline as status and icon-only chips
+at desktop and mobile breakpoints.
+*/
+.card-mission-badge {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  gap: var(--space-xs);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  font-family: var(--font-mono);
+  color: var(--badge-mission-text);
+  background: var(--badge-mission-bg);
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-mission-badge svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+.card-mission-badge:hover {
+  color: var(--badge-mission-text-hover);
+  background: var(--badge-mission-bg-hover);
+}
+
+.card-agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.card-action-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  flex-wrap: wrap;
+  row-gap: var(--space-xs);
+}
+
+/*
+FNXC:TaskCardCostBadge 2026-07-12-00:00:
+On cards with Promote, the opt-in cost badge belongs directly below that action in the bottom-right corner. Keep its shared card-cost-indicator styling and only position its wrapper so cards without Promote retain their existing footer/meta layout.
+*/
+.card-promote-cost-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-xs);
+}
+
+.card-provider-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.card-provider-icons .provider-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.card-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  padding: calc(var(--space-xs) / 4) calc(var(--space-sm) - (var(--space-xs) / 4));
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-agent-created-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  gap: var(--space-xs);
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  padding: calc(var(--space-xs) / 4) calc(var(--space-sm) - (var(--space-xs) / 4));
+  border-radius: var(--radius-pill);
+  line-height: 1;
+}
+
+/*
+FNXC:TaskCardAgentBadges 2026-08-10-03:41:
+FN-8930 makes created-by provenance distinct from current ownership at every card width. The owner remains the filled Bot pill; provenance stays text-bearing but uses a lighter outlined Sparkles treatment so two names cannot imply two assignees.
+*/
+.card-agent-created-badge--provenance {
+  font-weight: 400;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-style: dashed;
+}
+
+.card-agent-badge-text {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+FNXC:TaskCardBadges 2026-07-15-00:00:
+Task-card agent badges must retain their visible text label in narrow containers and on mobile. Do not hide the label into an icon-only pill; the existing ellipsis constraints preserve the card's no-wrap badge geometry for long names.
+*/
+
+.card-agent-badge--loading {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.card-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+/*
+FNXC:TaskCardDates 2026-07-24-11:02:
+Lifecycle dates share the card's compact metadata rhythm and wrap independently
+on narrow/mobile cards, so added terminal metadata cannot force horizontal scroll.
+*/
+.card-lifecycle-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+}
+
+.card-lifecycle-dates time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.card-footer-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.card-session-files {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.card-session-files svg {
+  flex-shrink: 0;
+}
+
+.card-session-files span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-session-files:hover {
+  color: var(--text);
+}
+
+.card-session-files:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.card-source-provenance {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.card-footer-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  justify-content: flex-end;
+  margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.card-source-provenance .provider-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+/*
+FNXC:TaskCardTimingBadge 2026-06-13-17:26:
+The execution-time badge is part of the footer's bottom-right chip cluster, so it inherits the same height, padding, font, and responsive sizing as retry and GitHub tracking badges instead of using the old meta-row placement.
+*/
+.card-time-indicator,
+.card-cost-indicator,
+.card-github-tracking-chip,
+.card-retry-badge,
+.card-create-pr-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.card-time-indicator > span,
+.card-cost-indicator > span,
+.card-github-tracking-chip > span,
+.card-retry-badge > span,
+.card-create-pr-action > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  transform: translateY(1px);
+}
+
+.card-time-indicator svg,
+.card-cost-indicator svg,
+.card-github-tracking-chip svg,
+.card-retry-badge svg,
+.card-create-pr-action svg,
+.card-source-provenance svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.card-promote-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  margin-left: auto;
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  white-space: nowrap;
+}
+
+.card-promote-action svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.card-github-tracking-chip {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.card-github-tracking-chip:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.card-github-tracking-chip:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.card-github-tracking-link {
+  text-decoration: none;
+}
+
+.card-duplicate-chip,
+.card-duplicate-keep {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.card-duplicate-chip > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  transform: translateY(1px);
+}
+
+.card-time-indicator,
+.card-cost-indicator {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+}
+
+.card-duplicate-chip {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+
+.card-duplicate-keep {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  appearance: none;
+  background-image: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.card-duplicate-keep:hover {
+  background: var(--card-hover);
+}
+
+.card-duplicate-keep:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+@media (max-width: 768px) {
+  .card-duplicate-chip {
+    max-width: 100%;
+  }
+
+  .card-undo-chip,
+  .card-refine-chip,
+  .card-reverted-chip {
+    max-width: 100%;
+  }
+}
+
+/*
+FNXC:TaskRevert 2026-07-04-00:00:
+FN-7555's "Undo of <id>" chip is purely informational (not a warning/error), so it
+reuses the neutral `.card-time-indicator` token pair instead of the near-duplicate
+chip's `--color-warning` tokens. Layout (padding/height/radius/font) still matches
+`.card-duplicate-chip` for visual consistency in the footer row.
+
+FNXC:TaskRevert 2026-07-16-00:00:
+FN-8066's Reverted chip is source-task provenance rather than a warning/error. It
+shares the neutral undo-chip tokens and narrow-screen constraints so completed-card
+footer chips retain their established density in board and list layouts.
+
+FNXC:RefinementTitle 2026-07-26-20:10:
+The "Refines <id>" chip is the same class of neutral provenance, so it JOINS these
+selectors rather than forking a fourth chip variant with its own tokens. It carries a
+Sparkles icon; `gap: var(--space-xs)` on the shared rule already spaces icon from label,
+so the icon needs no rule of its own.
+*/
+.card-undo-chip,
+.card-refine-chip,
+.card-reverted-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.card-undo-chip > span,
+.card-refine-chip > span,
+.card-reverted-chip > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  transform: translateY(1px);
+}
+
+.card-github-tracking-chip .provider-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.card-create-pr-action {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.card-create-pr-action:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+.card-create-pr-action:disabled {
+  cursor: wait;
+  opacity: var(--opacity-disabled);
+}
+
+.card-create-pr-action:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.card-progress-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.card-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.card-progress-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.card-progress-active {
+  flex-shrink: 0;
+  padding: 1px var(--space-xs);
+  border: 1px solid color-mix(in srgb, var(--in-progress) 45%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--in-progress) 12%, transparent);
+  color: var(--in-progress);
+  font-size: 0.625rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-31-20:57:
+FN-8631 requires the steps toggle to be content-sized: a fixed minimum height made its unused
+vertical space look like a dead band at the bottom of cards with progress. Token padding preserves
+the established compact mobile interaction rhythm while the card remains the primary touch target.
+*/
+.card-steps-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: 6px;
+  padding: var(--space-xs) 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+
+.card-steps-toggle:hover {
+  color: var(--text);
+}
+
+.card-steps-toggle:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.card-steps-toggle-icon {
+  transition: transform var(--transition-normal);
+}
+
+.card-steps-toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.card-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.card-step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.card-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.card-step-dot--pending {
+  background: var(--border);
+}
+
+.card-step-dot--in-progress {
+  background: var(--todo);
+}
+
+.card-step-dot--done {
+  background: var(--color-success);
+}
+
+.card-step-dot--skipped {
+  background: var(--text-dim);
+}
+
+/*
+FNXC:WorkflowSteps 2026-06-25-00:00:
+`failed` is a blocking gate failure (red/error); `advisory_failure` is a non-blocking REVISE that
+returned feedback but does not block merge (amber/warning). `running` is a graph node actively
+executing. These map 1:1 to the unified progress status so the dot color encodes blocking-ness.
+*/
+.card-step-dot--failed {
+  background: var(--color-error-dark);
+}
+
+.card-step-dot--advisory_failure {
+  background: var(--ws-warning);
+}
+
+.card-step-dot--running {
+  background: var(--todo);
+}
+
+.card-step-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-step-name.completed {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.card-step-name.active {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.card-step-active-badge {
+  flex-shrink: 0;
+  padding: 1px var(--space-xs);
+  border: 1px solid color-mix(in srgb, var(--in-progress) 40%, transparent);
+  border-radius: var(--radius-pill);
+  color: var(--in-progress);
+  font-size: 0.5625rem;
+  font-weight: 650;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/* Animation for initializing spinner */
+@keyframes task-card-initializing-spinner-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+@keyframes task-card-edit-spinner-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* === Card Inline Editing === */
+
+/* Card in edit mode - highlighted border matching column theme */
+.card.card-editing {
+  border: 1px solid var(--todo);
+  border-left: 3px solid var(--todo);
+  background: var(--card);
+  cursor: default;
+}
+
+.card.card-editing[data-column="triage"] {
+  border-color: var(--triage);
+  border-left-color: var(--triage);
+}
+
+.card.card-editing[data-column="todo"] {
+  border-color: var(--todo);
+  border-left-color: var(--todo);
+}
+
+/* Edit content container */
+.card-editing-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Description textarea in edit mode - follows InlineCreateCard patterns */
+.card-edit-desc-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  min-height: 80px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.card-edit-desc-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.card-edit-desc-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.card-edit-desc-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-12-00:00:
+FN-7889 requires the right-side menu icons and action chips to share the mono task id's optical centerline. Mirror FN-7871's token-derived id nudge on the whole trailing-actions cluster while preserving FN-7862's flex-start first-row anchor and FN-7837's middle-badge wrap contract.
+
+FNXC:TaskCardLayout 2026-07-13-01:00:
+The trailing actions cluster (Actions/Send-back and ⋯ menu) must share the task-id first-row baseline. Lock the cluster to the chip height so a larger touch-target child (28px ⋯) cannot grow the flex line and sink actions below the id; overflow stays visible so the hit box can extend outside the locked row.
+*/
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  flex: 0 0 auto;
+  gap: var(--space-xs);
+  box-sizing: border-box;
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  max-height: var(--card-chip-height);
+  margin-left: auto;
+  overflow: visible;
+  transform: translateY(calc(var(--space-xs) / 4));
+}
+
+/* Edit button - visible on hover */
+.card-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+/* Prominent affordance to answer an agent's blocking planning question.
+   Always visible (not hover-gated) — the task is parked waiting on the user. */
+.card-answer-questions-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--todo);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.card-answer-questions-btn:hover {
+  filter: brightness(1.1);
+}
+
+.card-answer-questions-btn:focus {
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.card:hover .card-edit-btn {
+  opacity: 1;
+}
+
+.card-edit-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.card-edit-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/*
+FNXC:TaskCardMenu 2026-07-10-12:00:
+Visible ⋯ (card actions) button — the context menu was right-click/long-press only and users never
+found it. Mirrors .card-edit-btn's hover-revealed styling on desktop; stays visible while its menu is
+open (aria-expanded) and on keyboard focus so it never vanishes mid-interaction. Always visible on
+mobile (no hover there) — see the mobile block below, which uses the project mobile MQ including the
+short-landscape variant (FN-5751 lesson: never a desktop-only or portrait-only fix).
+*/
+.card-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.card:hover .card-menu-btn,
+.card-menu-btn[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.card-menu-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.card-menu-btn:focus-visible {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/*
+FNXC:TaskCardMenu 2026-07-10-12:00:
+Mobile has no hover — the ⋯ affordance must be always visible with a comfortable touch target. Includes short-landscape phones per the project mobile MQ.
+
+FNXC:TaskCardLayout 2026-07-13-00:59:
+The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-actions' flex line. Without a negative vertical margin (same cancel pattern as .card-edit-btn/.card-delete-btn), align-items:center sinks the Actions/Send-back trigger below the mono task-id baseline on mobile. Keep the 28px hit box; cancel only the layout contribution so trailing actions stay vertically aligned with the task id (follow-up to FN-7933's within-cluster centerline).
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  /*
+  FNXC:TaskCardLayout 2026-08-01-04:48 (FN-8665):
+  Narrow and short-landscape cards keep the size chip first-row anchored while its shared mobile text-chip rule supplies the same intrinsic height as neighboring badges.
+
+  FNXC:TaskCardLayout 2026-08-01-06:46 (FN-8675):
+  Mobile and short-landscape header badges require the same centered first-row alignment as desktop. Preserve the direct size chip's compact intrinsic geometry and apply the token-derived row-center offset instead of changing its height.
+  */
+  .card-size-badge {
+    align-self: flex-start;
+    box-sizing: border-box;
+    transform: translateY(calc((var(--space-xs) * 3) / 4));
+  }
+
+  .card-menu-btn {
+    opacity: 1;
+    width: 28px;
+    height: 28px;
+    /* Match edit/delete: cancel 28px layout growth while preserving the larger tap target. */
+    margin: -6px 0;
+    line-height: 1;
+    border-radius: var(--radius-md);
+  }
+
+  .card-menu-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* Delete button - visible on hover for triage column */
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.card-delete-btn:hover {
+  color: var(--color-error);
+}
+
+.card-delete-btn:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+/* Archive/Unarchive/Revert buttons */
+/*
+FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+.card-revert-btn shares the .card-archive-btn/.card-unarchive-btn tokenized
+look (no one-off px/hex) — it's applied alongside .card-archive-btn on the
+markup so no separate ruleset was strictly required, but it's declared here
+too so future divergence doesn't have to rediscover the shared selector group.
+*/
+.card-archive-btn,
+.card-unarchive-btn,
+.card-revert-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--space-xs) / 4)
+    calc(var(--space-sm) - (var(--space-xs) / 2));
+  margin-left: var(--space-xs);
+  font-size: 0.625rem;
+  font-weight: 500;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.card:hover .card-archive-btn,
+.card:hover .card-unarchive-btn,
+.card:hover .card-revert-btn {
+  opacity: 1;
+}
+
+.card-archive-btn:hover,
+.card-unarchive-btn:hover,
+.card-revert-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
+}
+
+.card-archive-btn:focus,
+.card-unarchive-btn:focus,
+.card-revert-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-16-00:00 (FN-8149):
+The three-dot menu is the sole card move/action entry point. Keep this shared button treatment because Start and Promote still use .card-send-back-btn; their hover-reveal and optical alignment must remain intact after menu consolidation.
+*/
+.card-send-back-btn {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  gap: calc(var(--space-xs) / 2);
+  padding: calc(var(--space-xs) / 4)
+    calc(var(--space-sm) - (var(--space-xs) / 2));
+  margin-left: var(--space-xs);
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(calc(var(--space-xs) / -4));
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.card:hover .card-send-back-btn {
+  opacity: 1;
+}
+
+.card-send-back-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
+}
+
+.card-send-back-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.card-promote-action.card-send-back-btn {
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  margin-left: auto;
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text);
+}
+
+.card-promote-action.card-send-back-btn:hover:not(:disabled) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.card-promote-action.card-send-back-btn:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.card-promote-action.card-send-back-btn:disabled {
+  cursor: not-allowed;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 24%, transparent);
+}
+
+
+/* Loading state during save */
+.card-edit-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.card-edit-loading-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--todo);
+  border-radius: 50%;
+  animation: task-card-edit-spinner-spin 1s linear infinite;
+}
+
+.card-edit-loading-text {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+/* === Mobile Responsive Overrides === */
+@media (max-width: 768px) {
+  /* Card edit button: always visible on mobile (no hover) */
+  .card-edit-btn {
+    opacity: 1;
+    width: 28px;
+    height: 28px;
+    margin: -6px -6px -6px 0;
+    border-radius: var(--radius-md);
+  }
+
+  .card-edit-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Card delete button: always visible on mobile (no hover) */
+  .card-delete-btn {
+    opacity: 1;
+    width: 28px;
+    height: 28px;
+    margin: -6px -6px -6px 0;
+    border-radius: var(--radius-md);
+  }
+
+  .card-delete-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /*
+  FNXC:TaskCardLayout 2026-07-26-08:29 (FN-8599):
+  At narrow breakpoints, the id, wrapping badge group, and trailing actions retain the mobile chip-height row. The direct id-adjacent size chip has its own first-row anchor in the shared narrow/short-landscape block so wrapping cannot center it over the whole header.
+  */
+  .card-id,
+  .card-header-badges,
+  .card-header-actions {
+    min-height: var(--card-chip-height-mobile);
+  }
+
+  /*
+  FNXC:TaskCardLayout 2026-07-13-00:00:
+  FN-7933 follows FN-7928 by keeping the Send-back/Actions trigger and ⋯ menu button on one optical vertical center inside trailing header actions at the mobile breakpoint. Preserve FN-7889's cluster↔id nudge, FN-7862's flex-start header anchor, FN-7837's badge-wrap grouping, FN-7928's desktop centering, and FN-4351's no-min-height mobile rule for the send-back/menu buttons.
+
+  FNXC:TaskCardLayout 2026-07-13-01:01:
+  On mobile the id-adjacent size chip and trailing actions must sit on the same first-row baseline as the task id. Lock the cluster and mono id to the mobile chip height so the 28px ⋯ touch target cannot stretch the row and drop trailing actions below FN-#### / DONE. overflow:visible keeps the larger hit boxes paintable outside the locked row.
+  */
+  .card-id {
+    height: var(--card-chip-height-mobile);
+    min-height: var(--card-chip-height-mobile);
+    max-height: var(--card-chip-height-mobile);
+    box-sizing: border-box;
+  }
+
+  .card-header-actions {
+    align-items: center;
+    gap: calc(var(--space-xs) / 2);
+    flex-shrink: 0;
+    height: var(--card-chip-height-mobile);
+    min-height: var(--card-chip-height-mobile);
+    max-height: var(--card-chip-height-mobile);
+    overflow: visible;
+  }
+
+  .card-menu-btn,
+  .card-size-badge {
+    line-height: 1;
+  }
+
+
+  /* FN-4351/FN-3965: keep secondary actions visible on touch, but compact per WCAG 2.5.8 because the card tap surface is the primary target for opening task detail. */
+  .card-archive-btn,
+  .card-unarchive-btn,
+  .card-revert-btn {
+    opacity: 1;
+  }
+
+  .card-send-back-btn {
+    opacity: 1;
+    line-height: 1;
+    margin-top: 0;
+    margin-bottom: 0;
+    /* Keep the base optical raise for Start/Promote while they share this compact mobile treatment. */
+    transform: translateY(calc(var(--space-xs) / -4));
+  }
+
+  .card-promote-action.card-send-back-btn {
+    opacity: 1;
+    margin-left: auto;
+  }
+
+  .card-promote-cost-row {
+    justify-content: flex-end;
+  }
+
+  /* Card: compact progress bar on narrow cards */
+  .card-progress {
+    gap: var(--space-xs);
+  }
+
+  .card-progress-label {
+    font-size: 0.625rem;
+    min-width: 30px;
+  }
+
+  .card-steps-toggle {
+    padding: var(--space-xs) 0;
+  }
+
+  .card-lifecycle-dates {
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+    font-size: 0.625rem;
+  }
+
+  .card-footer-row {
+    margin-top: var(--space-xs);
+    gap: var(--space-xs);
+    row-gap: var(--space-xs);
+  }
+
+  .card-workflow-badge-row {
+    margin-top: var(--space-xs);
+  }
+
+  .card-workflow-badge {
+    max-width: 100%;
+  }
+
+  .card-time-indicator,
+  .card-cost-indicator,
+  .card-github-tracking-chip,
+  .card-retry-badge,
+  .card-create-pr-action {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.625rem;
+    height: var(--card-chip-height-mobile);
+    min-height: var(--card-chip-height-mobile);
+  }
+
+
+  .card-header-badges {
+    gap: calc(var(--space-xs) / 2);
+    row-gap: var(--space-xs);
+  }
+
+  /*
+  FNXC:TaskCardLayout 2026-07-17-15:00 (FN-8254):
+  Every header chip uses this mobile text-badge scale. The former size-only block padding made
+  its box diverge; text, icon-only, PR, oversight, and mission chips must remain one height.
+  */
+  .card-status-badge,
+  .card-priority-badge,
+  .card-size-badge,
+  .card-no-commits-expected-badge,
+  .card-planner-overseer-state,
+  .card-execution-mode-badge,
+  .card-pr-node-badge,
+  .card-mission-badge,
+  .card-oversight-badge {
+    font-size: 0.5625rem;
+    line-height: 1;
+    padding: calc(var(--space-xs) / 4) calc((var(--space-xs) * 3) / 2);
+    border: var(--btn-border-width) solid transparent;
+  }
+
+  .card-planner-overseer-state svg,
+  .card-execution-mode-badge svg,
+  .card-mission-badge svg {
+    width: 0.5625rem;
+    height: 0.5625rem;
+  }
+
+  .card-stalled-review-reason {
+    font-size: 0.625rem;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+
+  .card-mission-badge {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-agent-created-badge {
+    font-size: 0.5625rem;
+    padding: calc(var(--space-xs) / 4) var(--space-sm);
+  }
+
+  .card-agent-created-badge--provenance {
+    background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+    border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+    border-style: dashed;
+  }
+
+  .card-branch-row {
+    gap: calc(var(--space-xs) / 2);
+  }
+
+  .card-branch-chip {
+    max-width: 100%;
+  }
+
+  .card-branch-value {
+    max-width: 18ch;
+  }
+
+  /* Card: wrap dependency badges */
+  .card-dep-list {
+    flex-wrap: wrap;
+  }
+}
+
+/* Card-placed custom field badges (U13 / KTD-14). */
+.card-field-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+
+.card-field-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted, #b4b8c0);
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-field-badge--boolean {
+  background: var(--accent, #4f7cff);
+  border-color: var(--accent, #4f7cff);
+  color: var(--cta-text);
+}
+
+.card-field-badge--multi {
+  gap: 3px;
+  max-width: none;
+}
+
+.card-field-badge-token {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.card-field-badge--overflow {
+  font-weight: 600;
+}
+
+/* FNXC:TaskRevert 2026-08-01-19:51: Reverted tasks require visible resolution controls, not hover-only menu actions. */
+.card-reverted-actions { display: inline-flex; gap: var(--space-1); }
+.reverted-tasks-section { display: grid; gap: var(--space-2); padding: var(--space-3); }

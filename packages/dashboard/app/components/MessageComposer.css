@@ -1,0 +1,57 @@
+/* FNXC:NativeStructureEmbed 2026-07-22-10:30: A matching custom drag is visible without leaving an empty drop shell when ordinary compose is idle. */
+.message-composer--native-structure-drag-over {
+  outline: solid var(--border-strong);
+  outline-offset: calc(var(--space-xs) * -1);
+}
+
+.message-composer-structure-list > li {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.message-composer-structure-list .native-structure-preview {
+  flex: 1 1 auto;
+}
+
+/*
+FNXC:MessageComposerMobileWidth 2026-08-07-03:22:
+Long native-structure kind and label values must not give the shared Messages picker an intrinsic width that escapes a narrow composer. The shared select remains shrinkable at every breakpoint; mobile explicitly fills its stacked field so both full-page and modal callers inherit containment.
+*/
+.message-composer-structure-controls .message-composer-select {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .message-composer-field--structures,
+  .message-composer-structure-controls {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .message-composer-structure-list > li {
+    align-items: stretch;
+  }
+}
+
+.message-composer-mode,
+.message-composer-report {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.message-composer-mode {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.message-composer-report-section {
+  border-block-start: var(--border) solid var(--border-subtle);
+  display: grid;
+  gap: var(--space-sm);
+  padding-block-start: var(--space-sm);
+}

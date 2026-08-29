@@ -1,0 +1,597 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TaskDocumentPreconditionFailedError, type TaskDocument, type TaskStore } from "@fusion/core";
+
+const { loadWorkspaceConfig } = vi.hoisted(() => ({
+  loadWorkspaceConfig: vi.fn(),
+}));
+import {
+  createChatTaskDocumentTools,
+  createTaskDocumentReadTool,
+  createTaskDocumentWriteTool,
+  createTaskPromptWriteTool,
+} from "../agent-tools.js";
+
+vi.mock("@fusion/core", async (importOriginal) => {
+  const { createEngineCoreMock } = await import("../test/mockCore.js");
+  return createEngineCoreMock(() => importOriginal<typeof import("@fusion/core")>(), { loadWorkspaceConfig });
+});
+
+const TASK_ID = "FN-1272";
+
+type DocStore = Pick<TaskStore, "upsertTaskDocument" | "getTaskDocument" | "getTaskDocuments">;
+
+function createMockDocument(overrides: Partial<TaskDocument> = {}): TaskDocument {
+  return {
+    id: "doc-1",
+    taskId: TASK_ID,
+    key: "plan",
+    content: "Initial plan content",
+    revision: 1,
+    contentHash: `sha256:${"a".repeat(64)}`,
+    author: "agent",
+    createdAt: "2026-04-08T12:00:00.000Z",
+    updatedAt: "2026-04-08T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createMockStore(overrides: Partial<DocStore> = {}) {
+  const upsertTaskDocument = vi.fn<DocStore["upsertTaskDocument"]>();
+  const getTaskDocument = vi.fn<DocStore["getTaskDocument"]>();
+  const getTaskDocuments = vi.fn<DocStore["getTaskDocuments"]>();
+
+  const store: TaskStore = {
+    upsertTaskDocument,
+    getTaskDocument,
+    getTaskDocuments,
+    ...overrides,
+  } as unknown as TaskStore;
+
+  return {
+    store,
+    upsertTaskDocument,
+    getTaskDocument,
+    getTaskDocuments,
+  };
+}
+
+async function runTool(
+  tool: { execute: (...args: any[]) => Promise<any> },
+  callId: string,
+  params: Record<string, unknown>,
+) {
+  return tool.execute(callId, params, undefined as any, undefined as any, undefined as any);
+}
+
+function getText(result: any): string {
+  const first = result?.content?.[0];
+  return first?.type === "text" ? first.text : "";
+}
+
+describe("task_document_write tool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls store.upsertTaskDocument with taskId, key, content, and author", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockResolvedValue(
+      createMockDocument({ key: "plan", content: "Refined implementation plan", revision: 3, author: "triage-agent" }),
+    );
+
+    const tool = createTaskDocumentWriteTool(store, TASK_ID);
+    const result = await runTool(tool, "call-1", {
+      key: "plan",
+      content: "Refined implementation plan",
+      author: "triage-agent",
+    });
+
+    expect(upsertTaskDocument).toHaveBeenCalledWith(TASK_ID, {
+      key: "plan",
+      content: "Refined implementation plan",
+      author: "triage-agent",
+    });
+    expect(getText(result)).toContain("Saved document \"plan\"");
+    expect(getText(result)).toContain("revision 3");
+  });
+
+  it("forwards combined CAS expectations and returns revision/hash details", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    const hash = `sha256:${"a".repeat(64)}`;
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ revision: 4, contentHash: hash }));
+    const result = await runTool(createTaskDocumentWriteTool(store, TASK_ID), "call-cas", {
+      key: "plan", content: "rebased", expected_revision: 3, expected_content_hash: hash,
+    });
+    expect(upsertTaskDocument).toHaveBeenCalledWith(TASK_ID, {
+      key: "plan", content: "rebased", author: "agent", expectedRevision: 3, expectedContentHash: hash,
+    });
+    expect(result.details).toEqual({ key: "plan", revision: 4, contentHash: hash });
+  });
+
+  it("returns a typed error result for stale task-bound publication", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new TaskDocumentPreconditionFailedError({
+      projectId: "p1", taskId: TASK_ID, key: "plan", expectedRevision: 1,
+      currentRevision: 2, currentContentHash: `sha256:${"b".repeat(64)}`,
+    }));
+    const result = await runTool(createTaskDocumentWriteTool(store, TASK_ID), "call-stale", {
+      key: "plan", content: "stale", expected_revision: 1,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.details).toEqual(expect.objectContaining({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", currentRevision: 2 }));
+    expect(getText(result)).toContain("re-read");
+  });
+
+  it("defaults author to agent when not provided", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ key: "notes", revision: 2 }));
+
+    const tool = createTaskDocumentWriteTool(store, TASK_ID);
+    await runTool(tool, "call-2", {
+      key: "notes",
+      content: "Executor notes",
+    });
+
+    expect(upsertTaskDocument).toHaveBeenCalledWith(TASK_ID, {
+      key: "notes",
+      content: "Executor notes",
+      author: "agent",
+    });
+  });
+
+  it("returns a user-facing error message for invalid key validation errors", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(
+      new Error("Invalid document key: \"invalid key\". Must be 1-64 characters: letters, digits, hyphens, or underscores."),
+    );
+
+    const tool = createTaskDocumentWriteTool(store, TASK_ID);
+    const result = await runTool(tool, "call-3", {
+      key: "invalid key",
+      content: "anything",
+      author: "agent",
+    });
+
+    expect(getText(result)).toContain("ERROR: Failed to save document");
+    expect(getText(result)).toContain("Invalid document key");
+  });
+
+  it("returns a user-facing error message for store errors", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new Error("database temporarily unavailable"));
+
+    const tool = createTaskDocumentWriteTool(store, TASK_ID);
+    const result = await runTool(tool, "call-4", {
+      key: "research",
+      content: "Notes",
+      author: "agent",
+    });
+
+    expect(getText(result)).toContain("ERROR: Failed to save document");
+    expect(getText(result)).toContain("database temporarily unavailable");
+  });
+
+  it("returns archived read-only details when document writes are blocked", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new Error("Task FN-007 is archived — documents are read-only"));
+
+    const tool = createTaskDocumentWriteTool(store, TASK_ID);
+    const result = await runTool(tool, "call-archived", {
+      key: "research",
+      content: "Notes",
+      author: "agent",
+    });
+
+    expect(getText(result)).toContain("ERROR: Failed to save document");
+    expect(getText(result)).toContain("archived");
+  });
+});
+
+describe("task_prompt_write tool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadWorkspaceConfig.mockResolvedValue(undefined);
+  });
+
+  it("reports success only after the authoritative store reads back the exact prompt", async () => {
+    const updateTask = vi.fn().mockResolvedValue({});
+    const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "# Verified plan" });
+    const store = { updateTask, getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-prompt", {
+      content: "# Verified plan",
+    });
+
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: "# Verified plan" }, undefined);
+    expect(getTask).toHaveBeenCalledWith(TASK_ID);
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("refuses a reset-fenced planning write before durable prompt persistence", async () => {
+    const updateTask = vi.fn();
+    const store = { updateTask, getTask: vi.fn().mockResolvedValue({ id: TASK_ID }) } as unknown as TaskStore;
+
+    const result = await runTool(
+      createTaskPromptWriteTool(store, TASK_ID, undefined, () => false),
+      "call-reset-fenced",
+      { content: "# Stale plan" },
+    );
+
+    expect(getText(result)).toContain("was reset before PROMPT.md could be persisted");
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pre-reset planner write after it queues behind the reset lifecycle lock", async () => {
+    let releaseReset!: () => void;
+    let enteredQueue!: () => void;
+    const resetPublication = new Promise<void>((resolve) => { releaseReset = resolve; });
+    const queuedBehindReset = new Promise<void>((resolve) => { enteredQueue = resolve; });
+    let generationCurrent = true;
+    const updateTask = vi.fn();
+    const store = {
+      getTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      updateTask,
+      withPlanningLifecycleLock: vi.fn(async (_id: string, write: () => Promise<void>) => {
+        enteredQueue();
+        await resetPublication;
+        await write();
+      }),
+      withTaskLock: vi.fn(async (_id: string, write: () => Promise<void>) => await write()),
+      updateTaskUnlocked: vi.fn(),
+      isBackendMode: vi.fn(() => false),
+    } as unknown as TaskStore;
+
+    const resultPromise = runTool(
+      createTaskPromptWriteTool(store, TASK_ID, undefined, () => generationCurrent),
+      "call-queued-before-reset",
+      { content: "# Discarded plan" },
+    );
+    await queuedBehindReset;
+    generationCurrent = false;
+    releaseReset();
+
+    const result = await resultPromise;
+    expect(getText(result)).toContain("was reset before PROMPT.md could be persisted");
+    expect(store.updateTaskUnlocked).not.toHaveBeenCalled();
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the authoritative prompt read-back is missing or different", async () => {
+    const updateTask = vi.fn().mockResolvedValue({});
+    const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "" });
+    const store = { updateTask, getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-prompt", {
+      content: "# Plan that must persist",
+    });
+
+    expect(getText(result)).toContain("ERROR:");
+    expect(getText(result)).toContain("could not be verified");
+  });
+
+  it("reads the authoritative prompt only after the promptless row write resolves", async () => {
+    const calls: string[] = [];
+    let written = false;
+    const updateTask = vi.fn().mockImplementation(async () => {
+      calls.push("updateTask");
+      written = true;
+      return { id: TASK_ID };
+    });
+    const getTask = vi.fn().mockImplementation(async () => {
+      calls.push("getTask");
+      return written ? { id: TASK_ID, prompt: "# Verified plan" } : { id: TASK_ID };
+    });
+    const store = { updateTask, getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-order", { content: "# Verified plan" });
+
+    expect(calls).toEqual(["getTask", "updateTask", "getTask"]);
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("confirms a duplicate verdict prompt when the artifact reads back exactly", async () => {
+    const content = "DUPLICATE: FN-1672";
+    const store = {
+      updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      getTask: vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content }),
+    } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-duplicate", { content });
+
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it.each([
+    ["missing", null],
+    ["empty", { id: TASK_ID, prompt: "" }],
+    ["altered", { id: TASK_ID, prompt: "# Truncated" }],
+  ])("fails closed when the post-write artifact is %s", async (_state, readBack) => {
+    const store = {
+      updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      getTask: vi.fn().mockResolvedValue(readBack),
+    } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-unverified", { content: "# Complete plan" });
+
+    expect(getText(result)).toContain("ERROR:");
+    expect(getText(result)).toContain("could not be verified");
+    expect(getText(result)).not.toContain(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("fails closed when the authoritative read-back rejects", async () => {
+    const getTask = vi.fn()
+      .mockResolvedValueOnce({ id: TASK_ID })
+      .mockRejectedValueOnce(new Error(`Task ${TASK_ID} not found`));
+    const store = { updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }), getTask } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-reject", { content: "# Complete plan" });
+
+    expect(getText(result)).toContain("ERROR:");
+    expect(getText(result)).toContain("could not be verified");
+  });
+
+  it("confirms a workspace prompt after atomically publishing its validated repository scope", async () => {
+    const content = "## Repository Scope\n- `packages/engine`\n\n# Workspace plan";
+    const updateTask = vi.fn().mockResolvedValue({ id: TASK_ID });
+    const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content });
+    loadWorkspaceConfig.mockResolvedValue({ repos: ["packages/engine"] });
+    const store = { updateTask, getTask, getRootDir: () => "/workspace" } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-workspace", { content });
+
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
+      prompt: content,
+      repositoryScope: expect.objectContaining({ repositories: ["packages/engine"], state: "confirmed" }),
+    }), undefined);
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+
+  it("keeps a verified prompt write successful when the plan mirror fails", async () => {
+    const content = "# Verified plan";
+    const store = {
+      updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }),
+      getTask: vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content }),
+      upsertTaskDocument: vi.fn().mockRejectedValue(new Error("database unavailable")),
+    } as unknown as TaskStore;
+
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-mirror-failure", { content });
+
+    expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
+  });
+});
+
+describe("task_document_read tool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reads a retained archived document directly by key and returns content", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(
+      createMockDocument({ key: "plan", content: "Detailed execution checklist", revision: 4 }),
+    );
+
+    const tool = createTaskDocumentReadTool(store, TASK_ID);
+    const result = await runTool(tool, "call-5", { key: "plan" });
+
+    expect(getTaskDocument).toHaveBeenCalledWith(TASK_ID, "plan");
+    expect(getText(result)).toContain("Document: plan");
+    expect(getText(result)).toContain("Revision: 4");
+    expect(getText(result)).toContain("Detailed execution checklist");
+  });
+
+  it("caps a long document while retaining its identity and a narrowing hint", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(createMockDocument({ key: "plan", content: "x".repeat(20_000) }));
+
+    const result = await runTool(createTaskDocumentReadTool(store, TASK_ID), "call-long", { key: "plan" });
+    expect(getText(result).length).toBeLessThanOrEqual(12_000);
+    expect(getText(result)).toContain("Document: plan");
+    expect(getText(result)).toContain("read a narrower document");
+  });
+
+  it("returns not found message when the requested key does not exist", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(null);
+
+    const tool = createTaskDocumentReadTool(store, TASK_ID);
+    const result = await runTool(tool, "call-6", { key: "plan" });
+
+    expect(getTaskDocument).toHaveBeenCalledWith(TASK_ID, "plan");
+    expect(getText(result)).toContain("Document \"plan\" not found.");
+  });
+
+  it("lists all documents when no key is provided", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockResolvedValue([
+      createMockDocument({ key: "plan", revision: 2, updatedAt: "2026-04-08T12:15:00.000Z" }),
+      createMockDocument({ key: "research", revision: 1, updatedAt: "2026-04-08T12:30:00.000Z" }),
+    ]);
+
+    const tool = createTaskDocumentReadTool(store, TASK_ID);
+    const result = await runTool(tool, "call-7", {});
+
+    expect(getTaskDocuments).toHaveBeenCalledWith(TASK_ID);
+    expect(getText(result)).toContain("Task documents:");
+    expect(getText(result)).toContain("- plan (revision 2, updated 2026-04-08T12:15:00.000Z)");
+    expect(getText(result)).toContain("- research (revision 1, updated 2026-04-08T12:30:00.000Z)");
+  });
+
+  it("keeps the archived document registry hidden when list is empty", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockResolvedValue([]);
+
+    const tool = createTaskDocumentReadTool(store, TASK_ID);
+    const result = await runTool(tool, "call-8", {});
+
+    expect(getTaskDocuments).toHaveBeenCalledWith(TASK_ID);
+    expect(getText(result)).toBe("No documents found for this task.");
+  });
+
+  it("returns a user-facing error message for read failures", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockRejectedValue(new Error("read timeout"));
+
+    const tool = createTaskDocumentReadTool(store, TASK_ID);
+    const result = await runTool(tool, "call-9", {});
+
+    expect(getText(result)).toContain("ERROR: Failed to read task documents");
+    expect(getText(result)).toContain("read timeout");
+  });
+});
+
+describe("chat task document tools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function findChatTool(name: "fn_task_document_write" | "fn_task_document_read", store: TaskStore) {
+    const tool = createChatTaskDocumentTools(store).find((candidate) => candidate.name === name);
+    expect(tool).toBeDefined();
+    return tool!;
+  }
+
+  it("exposes canonical document tools without an archived publication capability", () => {
+    const { store } = createMockStore();
+    const tools = createChatTaskDocumentTools(store);
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "fn_task_document_write",
+      "fn_task_document_read",
+    ]);
+    expect(JSON.stringify(tools.map((tool) => tool.parameters))).not.toMatch(/archived.publication|append_content|allow_archived/i);
+  });
+
+  it("writes a document to the explicit task_id", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2020", key: "plan", revision: 5 }));
+
+    const tool = findChatTool("fn_task_document_write", store);
+    const result = await runTool(tool, "call-chat-write", {
+      task_id: "FN-2020",
+      key: "plan",
+      content: "Chat-authored plan",
+      author: "chat-agent",
+    });
+
+    expect(upsertTaskDocument).toHaveBeenCalledWith("FN-2020", {
+      key: "plan",
+      content: "Chat-authored plan",
+      author: "chat-agent",
+    });
+    expect(getText(result)).toContain("Saved document \"plan\"");
+    expect(getText(result)).toContain("revision 5");
+  });
+
+  it("forwards hash-only CAS for explicit cross-task publication", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    const hash = `sha256:${"c".repeat(64)}`;
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2020", contentHash: hash, revision: 6 }));
+    await runTool(findChatTool("fn_task_document_write", store), "call-chat-cas", {
+      task_id: "FN-2020", key: "plan", content: "rebased", expected_content_hash: hash,
+    });
+    expect(upsertTaskDocument).toHaveBeenCalledWith("FN-2020", {
+      key: "plan", content: "rebased", author: "agent", expectedContentHash: hash,
+    });
+  });
+
+  it("returns typed stale details for explicit cross-task publication", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new TaskDocumentPreconditionFailedError({
+      projectId: "p1", taskId: "FN-2020", key: "plan", expectedContentHash: `sha256:${"a".repeat(64)}`,
+      currentRevision: null, currentContentHash: null,
+    }));
+    const result = await runTool(findChatTool("fn_task_document_write", store), "call-chat-stale", {
+      task_id: "FN-2020", key: "plan", content: "stale", expected_content_hash: `sha256:${"a".repeat(64)}`,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.details).toEqual(expect.objectContaining({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", taskId: "FN-2020" }));
+  });
+
+  it("reads a retained archived document from the explicit task_id", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2021", key: "notes", content: "Chat notes" }));
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-read", { task_id: "FN-2021", key: "notes" });
+
+    expect(getTaskDocument).toHaveBeenCalledWith("FN-2021", "notes");
+    expect(getText(result)).toContain("Document: notes");
+    expect(getText(result)).toContain("Chat notes");
+  });
+
+  it("returns not found for a missing explicit-task document key", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(null);
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-missing", { task_id: "FN-2022", key: "missing" });
+
+    expect(getTaskDocument).toHaveBeenCalledWith("FN-2022", "missing");
+    expect(getText(result)).toContain("Document \"missing\" not found.");
+  });
+
+  it("continues to use the live-only registry when an explicit key is omitted", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockResolvedValue([
+      createMockDocument({ taskId: "FN-2023", key: "plan", revision: 1 }),
+      createMockDocument({ taskId: "FN-2023", key: "docs", revision: 2 }),
+    ]);
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-list", { task_id: "FN-2023" });
+
+    expect(getTaskDocuments).toHaveBeenCalledWith("FN-2023");
+    expect(getText(result)).toContain("Task documents:");
+    expect(getText(result)).toContain("- plan (revision 1");
+    expect(getText(result)).toContain("- docs (revision 2");
+  });
+
+  it("returns clean errors for non-existent explicit task writes", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new Error("Task FN-404 not found"));
+
+    const tool = findChatTool("fn_task_document_write", store);
+    const result = await runTool(tool, "call-chat-write-error", {
+      task_id: "FN-404",
+      key: "plan",
+      content: "No target",
+    });
+
+    expect(getText(result)).toContain("ERROR: Failed to save document \"plan\" for task FN-404");
+    expect(getText(result)).toContain("Task FN-404 not found");
+  });
+
+  it("returns clean errors for non-existent explicit task reads", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockRejectedValue(new Error("Task FN-405 not found"));
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-read-error", { task_id: "FN-405" });
+
+    expect(getText(result)).toContain("ERROR: Failed to read task documents for task FN-405");
+    expect(getText(result)).toContain("Task FN-405 not found");
+  });
+});
+
+describe("document tool factory integration", () => {
+  it("uses the provided store instance across write and read tools", async () => {
+    const { store, upsertTaskDocument, getTaskDocument, getTaskDocuments } = createMockStore();
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ key: "plan", revision: 1 }));
+    getTaskDocument.mockResolvedValue(createMockDocument({ key: "plan", content: "Saved plan", revision: 1 }));
+    getTaskDocuments.mockResolvedValue([
+      createMockDocument({ key: "plan", revision: 1, updatedAt: "2026-04-08T12:45:00.000Z" }),
+    ]);
+
+    const writeTool = createTaskDocumentWriteTool(store, TASK_ID);
+    const readTool = createTaskDocumentReadTool(store, TASK_ID);
+
+    await runTool(writeTool, "call-10", { key: "plan", content: "Saved plan" });
+    await runTool(readTool, "call-11", { key: "plan" });
+    await runTool(readTool, "call-12", {});
+
+    expect(upsertTaskDocument).toHaveBeenCalledTimes(1);
+    expect(getTaskDocument).toHaveBeenCalledTimes(1);
+    expect(getTaskDocuments).toHaveBeenCalledTimes(1);
+  });
+});

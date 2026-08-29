@@ -1,0 +1,32 @@
+.native-shell-onboarding-modal {
+  width: min(100%, calc(var(--space-2xl) * 20));
+}
+
+.native-shell-onboarding-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: 0 var(--space-xl) var(--space-xl);
+}
+
+.native-shell-onboarding-label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.native-shell-onboarding-mode-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .native-shell-onboarding-modal {
+    width: calc(100% - var(--space-lg));
+  }
+
+  .native-shell-onboarding-mode-row {
+    flex-direction: column;
+  }
+}

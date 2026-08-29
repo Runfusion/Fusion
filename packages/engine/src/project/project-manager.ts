@@ -1,0 +1,527 @@
+import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import { createTaskStoreForBackend, resolveEffectiveConcurrency, type Task, type CentralCore, type RegisteredProject } from "@fusion/core";
+import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
+import { ChildProcessRuntime } from "../runtimes/child-process-runtime.js";
+import { RemoteNodeRuntime } from "../runtimes/remote-node-runtime.js";
+import type {
+  ProjectRuntime,
+  ProjectRuntimeConfig,
+  RuntimeStatus,
+  GlobalMetrics,
+} from "./project-runtime.js";
+import { projectManagerLog } from "../logger.js";
+
+/**
+ * Events emitted by ProjectManager with project attribution.
+ */
+export interface ProjectManagerEvents {
+  /** Emitted when a task is created in any project */
+  "task:created": [data: { projectId: string; projectName: string; task: Task }];
+  /** Emitted when a task is deleted in any project */
+  "task:deleted": [data: { projectId: string; projectName: string; task: Task; meta?: { githubIssueAction?: import("@fusion/core").GithubIssueAction; observed?: boolean; outboxEventId?: string } }];
+  /** Emitted when a task is moved in any project */
+  "task:moved": [
+    data: {
+      projectId: string;
+      projectName: string;
+      task: Task;
+      from: string;
+      to: string;
+    }
+  ];
+  /** Emitted when a task is updated in any project */
+  "task:updated": [data: { projectId: string; projectName: string; task: Task }];
+  /** Emitted when an error occurs in any project */
+  "error": [data: { projectId: string; projectName: string; error: Error }];
+  /** Emitted when project health status changes */
+  "health:changed": [
+    data: {
+      projectId: string;
+      projectName: string;
+      status: RuntimeStatus;
+      previous: RuntimeStatus;
+    }
+  ];
+  /** Emitted when a runtime is added */
+  "runtime:added": [data: { projectId: string; projectName: string }];
+  /** Emitted when a runtime is removed */
+  "runtime:removed": [data: { projectId: string; projectName: string }];
+  /** Emitted when a runtime is restarted */
+  "project:runtime-restarted": [data: { projectId: string; projectName: string; isolationMode: import("@fusion/core").IsolationMode; reason?: string }];
+}
+
+
+
+export interface ProjectRuntimeRestartBlockedError {
+  kind: "active_tasks";
+  count: number;
+}
+
+export function isProjectRuntimeRestartBlockedError(error: unknown): error is ProjectRuntimeRestartBlockedError {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { kind?: unknown; count?: unknown };
+  return candidate.kind === "active_tasks" && typeof candidate.count === "number";
+}
+
+/**
+ * ProjectManager orchestrates all project runtimes and enforces global
+ * concurrency limits from CentralCore.
+ *
+ * This is the main entry point for multi-project support in the engine.
+ * It manages multiple ProjectRuntime instances (one per project) and:
+ * - Creates appropriate runtime type based on isolation mode
+ * - Forwards runtime events with project attribution
+ * - Enforces global concurrency limits via CentralCore
+ * - Updates project health in CentralCore
+ * - Logs activity to CentralCore's unified feed
+ *
+ * **Project Registration Assumption:**
+ * ProjectManager assumes projects are already registered in CentralCore.
+ * Call `centralCore.registerProject()` before `addProject()`.
+ *
+ * @example
+ * ```typescript
+ * const central = new CentralCore();
+ * await central.init();
+ *
+ * const manager = new ProjectManager(central);
+ *
+ * // Register project in CentralCore first
+ * const project = await central.registerProject({
+ *   name: "My Project",
+ *   path: "/path/to/project"
+ * });
+ *
+ * // Then add runtime
+ * const runtime = await manager.addProject({
+ *   projectId: project.id,
+ *   workingDirectory: await central.resolveLocalProjectWorkingDirectory(project.id),
+ *   isolationMode: "in-process",
+ *   maxConcurrent: 2,
+ *   maxWorktrees: 4,
+ * });
+ *
+ * // Listen to all project events
+ * manager.on("task:created", ({ projectId, projectName, task }) => {
+ *   console.log(`${projectName}: Task ${task.id} created`);
+ * });
+ * ```
+ */
+export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
+  private runtimes = new Map<string, ProjectRuntime>();
+  private projectNames = new Map<string, string>();
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  The shared cross-project semaphore, its mutable limit, the 30s reconciliation
+  poll and the live `concurrency:changed` subscription are all DELETED. Capacity is
+  two numbers PER PROJECT; the machine-wide cap was a third limiter kept in a
+  separate authority (a central-DB singleton row) which every runtime then had to
+  subscribe to and periodically re-reconcile. Removing the limiter removes the
+  subscription, the poll, and the drift between them in one step.
+  */
+
+  /**
+   * @param centralCore - CentralCore reference for global coordination
+   */
+  constructor(private centralCore: CentralCore) {
+    super();
+    this.setMaxListeners(100);
+
+    projectManagerLog.log("ProjectManager initialized");
+  }
+
+  /**
+   * Add a project runtime and start it.
+   *
+   * **Prerequisite:** Project must already be registered in CentralCore.
+   *
+   * @param config - Runtime configuration (must match a registered project)
+   * @returns The created and started ProjectRuntime
+   * @throws Error if project not found in CentralCore or runtime already exists
+   */
+  async addProject(config: ProjectRuntimeConfig): Promise<ProjectRuntime> {
+    // Validate project exists in CentralCore
+    const project = await this.centralCore.getProject(config.projectId);
+    if (!project) {
+      throw new Error(
+        `Project ${config.projectId} not found in CentralCore. ` +
+          "Register the project first with centralCore.registerProject()."
+      );
+    }
+
+    // Check if runtime already exists
+    if (this.runtimes.has(config.projectId)) {
+      throw new Error(`Runtime already exists for project ${config.projectId}`);
+    }
+
+    projectManagerLog.log(`Adding project runtime for ${config.projectId} (${project.name})`);
+
+    // Store project name for event attribution
+    this.projectNames.set(config.projectId, project.name);
+
+    // Create appropriate runtime based on isolation mode
+    let runtime: ProjectRuntime;
+    const configWithSemaphore = { ...config };
+
+    if (config.isolationMode === "child-process") {
+      runtime = new ChildProcessRuntime(configWithSemaphore, this.centralCore);
+    } else {
+      let assignedNode = undefined;
+
+      if (project.nodeId) {
+        assignedNode = await this.centralCore.getNode(project.nodeId);
+
+        if (!assignedNode) {
+          projectManagerLog.warn(
+            `Assigned node ${project.nodeId} not found for project ${project.id}; falling back to InProcessRuntime`
+          );
+        }
+      }
+
+      if (assignedNode?.type === "remote") {
+        runtime = new RemoteNodeRuntime({
+          nodeConfig: assignedNode,
+          projectId: config.projectId,
+          projectName: project.name,
+        });
+      } else {
+        // Default to local in-process runtime (includes unassigned + local-node assigned)
+        runtime = new InProcessRuntime(configWithSemaphore, this.centralCore);
+      }
+    }
+
+    // Set up event forwarding with project attribution
+    this.setupEventForwarding(runtime, config.projectId, project.name);
+
+    // Start the runtime
+    await runtime.start();
+
+    // Update project health to active
+    await this.centralCore.updateProjectHealth(config.projectId, {
+      status: "active",
+      activeTaskCount: 0,
+      inFlightAgentCount: 0,
+      totalTasksCompleted: 0,
+      totalTasksFailed: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Update project status from "initializing" to "active"
+    await this.centralCore.updateProject(project.id, {
+      status: "active",
+    });
+
+    // Store runtime
+    this.runtimes.set(config.projectId, runtime);
+
+    // Log to activity feed
+    await this.centralCore.logActivity({
+      type: "task:created", // Using task:created as a generic activity type
+      projectId: config.projectId,
+      projectName: project.name,
+      timestamp: new Date().toISOString(),
+      details: `Project runtime started for ${project.name}`,
+    });
+
+    this.emit("runtime:added", { projectId: config.projectId, projectName: project.name });
+
+    projectManagerLog.log(`Project runtime added for ${config.projectId}`);
+    return runtime;
+  }
+
+  /**
+   * Remove a project runtime and stop it.
+   *
+   * @param id - Project ID to remove
+   * @throws Error if runtime not found
+   */
+  async removeProject(id: string): Promise<void> {
+    const runtime = this.runtimes.get(id);
+    if (!runtime) {
+      throw new Error(`Runtime not found for project ${id}`);
+    }
+
+    const projectName = this.projectNames.get(id) ?? id;
+    projectManagerLog.log(`Removing project runtime for ${id}`);
+
+    // Stop the runtime
+    await runtime.stop();
+
+    // Remove from maps
+    this.runtimes.delete(id);
+    this.projectNames.delete(id);
+
+    // Update project health to paused
+    await this.centralCore.updateProjectHealth(id, {
+      status: "paused",
+      activeTaskCount: 0,
+      inFlightAgentCount: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Log to activity feed
+    await this.centralCore.logActivity({
+      type: "task:created",
+      projectId: id,
+      projectName: projectName,
+      timestamp: new Date().toISOString(),
+      details: `Project runtime stopped for ${projectName}`,
+    });
+
+    this.emit("runtime:removed", { projectId: id, projectName });
+
+    projectManagerLog.log(`Project runtime removed for ${id}`);
+  }
+
+  /**
+   * Get a runtime by project ID.
+   */
+  getRuntime(id: string): ProjectRuntime | undefined {
+    return this.runtimes.get(id);
+  }
+
+  /**
+   * List all managed runtimes.
+   */
+  listRuntimes(): ProjectRuntime[] {
+    return Array.from(this.runtimes.values());
+  }
+
+  /**
+   * Get all project IDs.
+   */
+  getProjectIds(): string[] {
+    return Array.from(this.runtimes.keys());
+  }
+
+  /**
+   * Get global metrics aggregated across all runtimes.
+   */
+  async getGlobalMetrics(): Promise<GlobalMetrics> {
+    const statusCounts: Record<RuntimeStatus, number> = {
+      active: 0,
+      paused: 0,
+      errored: 0,
+      stopped: 0,
+      starting: 0,
+      stopping: 0,
+    };
+
+    let totalInFlight = 0;
+    let totalActiveAgents = 0;
+
+    for (const [id, runtime] of this.runtimes) {
+      const status = runtime.getStatus();
+      statusCounts[status]++;
+
+      try {
+        const metrics = runtime.getMetrics();
+        totalInFlight += metrics.inFlightTasks;
+        totalActiveAgents += metrics.activeAgents;
+
+        // Update health in CentralCore
+        const project = await this.centralCore.getProject(id);
+        if (project) {
+          await this.centralCore.updateProjectHealth(id, {
+            status: status as "active" | "paused" | "errored" | "initializing",
+            activeTaskCount: metrics.inFlightTasks,
+            inFlightAgentCount: metrics.activeAgents,
+            lastActivityAt: metrics.lastActivityAt,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (error) {
+        projectManagerLog.warn(`Failed to get metrics for ${id}:`, error);
+      }
+    }
+
+    return {
+      totalInFlightTasks: totalInFlight,
+      totalActiveAgents: totalActiveAgents,
+      runtimeCountByStatus: statusCounts,
+      totalRuntimes: this.runtimes.size,
+    };
+  }
+
+  /**
+   * Set up event forwarding from runtime to ProjectManager listeners.
+   */
+  private setupEventForwarding(
+    runtime: ProjectRuntime,
+    projectId: string,
+    projectName: string
+  ): void {
+    // Forward task:created
+    runtime.on("task:created", (task: Task) => {
+      this.emit("task:created", { projectId, projectName, task });
+      this.logActivity("task:created", projectId, projectName, `Task ${task.id} created`, task.id, task.title).catch((err: unknown) => {
+        projectManagerLog.warn(`Failed to log task:created activity for ${projectId}:`, err);
+      });
+    });
+
+    // Forward task:moved
+    runtime.on("task:moved", (data: { task: Task; from: string; to: string }) => {
+      this.emit("task:moved", { projectId, projectName, task: data.task, from: data.from, to: data.to });
+      this.logActivity(
+        "task:moved",
+        projectId,
+        projectName,
+        `Task ${data.task.id} moved: ${data.from} → ${data.to}`,
+        data.task.id,
+        data.task.title,
+        { from: data.from, to: data.to }
+      ).catch((err: unknown) => {
+        projectManagerLog.warn(`Failed to log task:moved activity for ${projectId}:`, err);
+      });
+    });
+
+    // Forward task:updated
+    runtime.on("task:updated", (task: Task) => {
+      this.emit("task:updated", { projectId, projectName, task });
+    });
+
+    // Forward task:deleted
+    runtime.on("task:deleted", (task: Task, meta?: { githubIssueAction?: import("@fusion/core").GithubIssueAction; observed?: boolean; outboxEventId?: string }) => {
+      this.emit("task:deleted", { projectId, projectName, task, meta });
+    });
+
+    // Forward errors
+    runtime.on("error", (error: Error) => {
+      this.emit("error", { projectId, projectName, error });
+      this.logActivity(
+        "task:failed",
+        projectId,
+        projectName,
+        `Error in ${projectName}: ${error.message}`
+      ).catch((err: unknown) => {
+        projectManagerLog.warn(`Failed to log task:failed activity for ${projectId}:`, err);
+      });
+    });
+
+    // Forward health changes
+    runtime.on("health-changed", (data: { status: RuntimeStatus; previous: RuntimeStatus }) => {
+      this.emit("health:changed", { projectId, projectName, status: data.status, previous: data.previous });
+
+      // Update health in CentralCore
+      this.centralCore.updateProjectHealth(projectId, {
+        status: data.status as "active" | "paused" | "errored" | "initializing",
+        updatedAt: new Date().toISOString(),
+      }).catch((err: unknown) => {
+        projectManagerLog.warn(`Failed to update health for ${projectId}:`, err);
+      });
+    });
+  }
+
+  /**
+   * Log activity to CentralCore's unified feed.
+   */
+  private async logActivity(
+    type: "task:created" | "task:moved" | "task:failed",
+    projectId: string,
+    projectName: string,
+    details: string,
+    taskId?: string,
+    taskTitle?: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      await this.centralCore.logActivity({
+        type,
+        projectId,
+        projectName,
+        timestamp: new Date().toISOString(),
+        details,
+        taskId,
+        taskTitle,
+        metadata,
+      });
+    } catch (error) {
+      // Best-effort logging
+      projectManagerLog.warn("Failed to log activity:", error);
+    }
+  }
+
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  `acquireGlobalSlot` / `releaseGlobalSlot` are DELETED. Measured: they had NO
+  production callers — only tests — so the central-DB `currentlyActive` counter
+  they maintained was never incremented by real work. The cross-project cap had two
+  mechanisms, an in-memory semaphore (live) and this durable slot counter (dead);
+  both are gone with the limiter itself.
+  */
+
+
+  async restartProjectRuntime(projectId: string, options?: { reason?: string; force?: boolean }): Promise<void> {
+    const runtime = this.runtimes.get(projectId);
+    if (!runtime) {
+      throw new Error(`Runtime not found for project ${projectId}`);
+    }
+
+    const metrics = runtime.getMetrics();
+    if (!options?.force && metrics.inFlightTasks > 0) {
+      throw { kind: "active_tasks", count: metrics.inFlightTasks } satisfies ProjectRuntimeRestartBlockedError;
+    }
+
+    const project = await this.centralCore.getProject(projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+
+    const workingDirectory = await this.centralCore.resolveLocalProjectWorkingDirectory(projectId);
+    await this.removeProject(projectId);
+
+    const capacity = await this.resolveStartupConcurrency(project, workingDirectory);
+    await this.addProject({
+      projectId,
+      workingDirectory,
+      isolationMode: project.isolationMode,
+      maxConcurrent: capacity.maxConcurrent,
+      maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
+      settings: project.settings,
+    });
+
+    this.emit("project:runtime-restarted", {
+      projectId,
+      projectName: project.name,
+      isolationMode: project.isolationMode,
+      reason: options?.reason,
+    });
+  }
+
+  /*
+  FNXC:CapacityModel 2026-08-21-15:45:
+  Runtime restarts must preserve FN-9185's live-settings precedence instead of restoring a stale registry snapshot.
+  */
+  private async resolveStartupConcurrency(project: RegisteredProject, workingDirectory: string) {
+    if (!existsSync(workingDirectory)) return resolveEffectiveConcurrency(project.settings);
+    try {
+      const boot = await createTaskStoreForBackend({ rootDir: workingDirectory, projectId: project.id });
+      try {
+        return resolveEffectiveConcurrency(await boot.taskStore.getSettingsFast());
+      } finally {
+        await boot.shutdown();
+      }
+    } catch {
+      return resolveEffectiveConcurrency(project.settings);
+    }
+  }
+
+  /**
+   * Stop all runtimes and clean up.
+   */
+  async stopAll(): Promise<void> {
+    projectManagerLog.log("Stopping all project runtimes...");
+
+    const stopPromises = Array.from(this.runtimes.keys()).map((id) =>
+      this.removeProject(id).catch((error) => {
+        projectManagerLog.error(`Failed to stop runtime ${id}:`, error);
+      })
+    );
+
+    await Promise.all(stopPromises);
+
+    projectManagerLog.log("All project runtimes stopped");
+    this.removeAllListeners();
+  }
+}

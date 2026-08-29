@@ -1,0 +1,721 @@
+/* === Split Project Button === */
+/* === Project Selector === */
+.project-selector {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  overflow: visible;
+  min-width: 0;
+  max-width: min(32ch, 24vw);
+}
+
+.project-selector-trigger,
+.project-selector__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: calc(var(--space-xs) + var(--space-xs) / 2) calc(var(--space-xs) + var(--space-xs) / 2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.project-selector-trigger-label,
+.project-selector__trigger-text {
+  min-width: 0;
+  max-width: min(24ch, 18vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.project-selector-trigger:hover,
+.project-selector__trigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.project-selector-trigger--open,
+.project-selector__trigger.open {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.project-selector-chevron,
+.project-selector__trigger-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.project-selector-chevron--open,
+.project-selector__trigger-chevron.rotate {
+  transform: rotate(180deg);
+}
+
+.project-selector-dropdown,
+.project-selector__dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  min-width: 240px;
+  max-width: 360px;
+  max-height: min(480px, calc(100vh - 120px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-dim) transparent;
+}
+
+.project-selector__dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.project-selector__dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.project-selector__dropdown::-webkit-scrollbar-thumb {
+  background-color: var(--text-dim);
+  border-radius: 3px;
+}
+
+.project-selector-item,
+.project-selector__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.project-selector-item:hover,
+.project-selector__item:hover,
+.project-selector__item.highlighted {
+  background: var(--card-hover);
+}
+
+.project-selector-item--current,
+.project-selector__item[aria-selected="true"] {
+  background: var(--card-hover);
+}
+
+.project-selector-divider {
+  height: 1px;
+  margin: var(--space-xs) var(--space-sm);
+  background: var(--border);
+}
+
+.project-selector-manage {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.project-selector-manage:hover {
+  background: var(--card-hover);
+}
+
+.project-selector-manage:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.project-selector__trigger-icon {
+  flex-shrink: 0;
+}
+
+.project-selector__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.project-selector__search-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.project-selector__search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.project-selector__search-input:focus-visible {
+  outline: none;
+}
+
+.project-selector__search-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-selector__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-selector__section + .project-selector__section {
+  margin-top: var(--space-xs);
+}
+
+.project-selector__section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-dim);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+}
+
+.project-selector__no-results {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.project-selector__no-results-icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* Autocomplete highlight — marks the matched text substring */
+.project-selector__highlight {
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--todo);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 2px;
+}
+
+/* Exact match indicator banner */
+.project-selector__exact-match {
+  padding: var(--space-xs) calc(var(--space-sm) + var(--space-xs));
+  margin-bottom: var(--space-xs);
+  font-size: 12px;
+  color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 8%, transparent);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+/* Exact match badge shown on item */
+.project-selector__exact-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+  color: var(--todo);
+  flex-shrink: 0;
+}
+
+/* Exact match item subtle highlight */
+.project-selector__item.exact-match {
+  background: color-mix(in srgb, var(--todo) 5%, transparent);
+}
+
+.project-selector__footer {
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--border);
+}
+
+.project-selector__view-all {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  justify-content: flex-start;
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.project-selector__view-all:hover,
+.project-selector__view-all.highlighted {
+  background: var(--card-hover);
+}
+
+.project-selector__view-all:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.project-selector-dot,
+.project-selector__dot,
+.project-selector__item-check {
+  flex-shrink: 0;
+}
+
+.project-selector-dot,
+.project-selector__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.project-selector-info,
+.project-selector__item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-selector-name,
+.project-selector__item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.project-selector-path,
+.project-selector__item-path {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-selector-check,
+.project-selector__item-check {
+  color: var(--todo);
+}
+
+/* Bookmark star toggle */
+.project-selector__bookmark {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+/* Show star on row hover or when bookmarked */
+.project-selector__item:hover .project-selector__bookmark,
+.project-selector__item.highlighted .project-selector__bookmark,
+.project-selector__bookmark.bookmarked {
+  opacity: 1;
+}
+
+.project-selector__bookmark:hover {
+  color: var(--todo);
+  background: var(--card-hover);
+}
+
+.project-selector__bookmark.bookmarked {
+  color: var(--todo);
+}
+
+.project-selector__bookmark:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Light theme overrides for project selector */
+[data-theme="light"] .project-selector-trigger:hover {
+  background: var(--card-hover);
+}
+
+[data-theme="light"] .project-selector-dropdown {
+  background: var(--surface);
+}
+
+[data-theme="light"] .project-selector-item:hover {
+  background: var(--card-hover);
+}
+
+[data-theme="light"] .project-selector-item--current,
+[data-theme="light"] .project-selector__item[aria-selected="true"] {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+}
+
+/* === Mobile Project Switch (logo-adjacent dropdown) === */
+.mobile-project-switch {
+  position: relative;
+  display: none; /* Hidden by default, shown on mobile via media query */
+}
+
+.mobile-project-switch-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.mobile-project-switch-trigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.project-selector-trigger:focus-visible,
+.project-selector__trigger:focus-visible,
+.project-selector-item:focus-visible,
+.project-selector__item:focus-visible,
+.mobile-project-switch-trigger:focus-visible,
+.mobile-project-switch-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.mobile-project-switch-trigger--open {
+  color: var(--todo);
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.mobile-project-switch-chevron--open {
+  transform: rotate(180deg);
+}
+
+.mobile-project-switch-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  min-width: 200px;
+  max-width: 280px;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.mobile-project-switch-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.mobile-project-switch-item:hover {
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-item--current {
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.mobile-project-switch-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-project-switch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.mobile-project-switch-path {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-project-switch-check {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+.mobile-project-switch-divider {
+  height: 1px;
+  margin: var(--space-xs) 0;
+  background: var(--border);
+}
+
+.mobile-project-switch-section-label {
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  font-family: var(--font-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.mobile-project-switch-bookmark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.mobile-project-switch-bookmark:hover,
+.mobile-project-switch-bookmark.bookmarked {
+  color: var(--accent);
+}
+
+.mobile-project-switch-bookmark:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.mobile-project-switch-bookmark:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.mobile-project-switch-manage {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
+  cursor: pointer;
+  text-align: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.mobile-project-switch-manage:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.mobile-project-switch-manage:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Compact styles for mobile-project-switch (mobile + tablet) */
+@media (max-width: 768px), (min-width: 769px) and (max-width: 1024px) {
+  .mobile-project-switch {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+@media (max-width: 768px) {
+  .mobile-project-switch-bookmark {
+    padding: var(--space-sm);
+  }
+}
+
+/* === Project Content Wrapper (footer-safe layout) === */
+
+.dashboard-project-stack {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.dashboard-project-shell {
+  /*
+  FNXC:DashboardFooterLayout 2026-06-21-10:30:
+  Keep the desktop footer-height token on the project shell for sibling consumers such as the left sidebar, which cannot inherit custom properties from project-content itself.
+
+  FNXC:TerminalLayout 2026-07-04-19:26:
+  The optional pinned terminal sits below this shell inside .dashboard-project-stack, so this flex row must keep min-height:0 and relinquish vertical space instead of being covered by an overlay.
+  */
+  --executor-footer-height: 36px;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  /*
+  FNXC:Navigation 2026-06-22-00:10:
+  Anchor for the right dock, which is absolutely positioned so it overlays the page content instead of shrinking it.
+  */
+  position: relative;
+}
+
+.dashboard-project-shell--with-sidebar {
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.project-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:30:
+  Containing block for kept-alive main views (KeepAliveView): their hidden state is position:absolute inset:0 so a hidden Planning subtree consumes no layout space while keeping a real (non-zero) box for xterm-safe geometry.
+  */
+  position: relative;
+}
+
+/**
+ * Wrapper for project-view content (board, list, agents) that reserves space
+ * for the fixed ExecutorStatusBar footer. This wrapper is the single source of
+ * truth for the footer-safe content area — child views simply use height: 100%
+ * to fill the available space without needing to know about the footer.
+ *
+ * When the footer is present, --with-footer reserves space via padding-bottom
+ * equal to the footer height. Because the wrapper uses box-sizing: border-box,
+ * children with height: 100% resolve to the content area (wrapper height minus
+ * padding), which is exactly the safe zone above the fixed footer.
+ *
+ * On mobile the token is overridden to match the shorter touch-safe footer.
+ */
+.project-content--with-footer {
+  /*
+  FNXC:DashboardFooterLayout 2026-06-21-10:30:
+  The desktop footer wrapper must co-locate --executor-footer-height: 36px with its padding-bottom consumer so the footer-safe contract and CSS regression tests stay in sync.
+  */
+  --executor-footer-height: 36px;
+  padding-bottom: var(--executor-footer-height);
+}
+
+@media (max-width: 768px) {
+  .dashboard-project-shell {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .project-content--with-footer {
+    /*
+    FNXC:DashboardFooterLayout 2026-06-21-10:30:
+    ProjectSelector.css loads after ExecutorStatusBar.css in concatenated CSS fixtures, so repeat the mobile footer-height override here to preserve the touch-safe footer reservation when the desktop wrapper token is co-located with its consumer.
+    */
+    --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  /* Hide project selector on mobile (belt-and-suspenders with conditional rendering) */
+  .project-selector {
+    display: none;
+  }
+}
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+ProjectSelector.css loads after ExecutorStatusBar.css, so reassert the desktop footer token for tablet/desktop mode after the mobile width override above — otherwise mid-tablet still reserves the taller mobile footer while the bar sits at bottom:0. Also un-hide the project selector for tablet-class ≤768 CSS px (width media hid it with true phones).
+*/
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer,
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .dashboard-project-shell {
+  --executor-footer-height: 36px;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-selector {
+  display: inline-flex;
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-footer {
+  --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
+}
+
+html[data-viewport-mode="mobile"] .project-selector {
+  display: none;
+}

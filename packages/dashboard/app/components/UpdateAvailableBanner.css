@@ -1,0 +1,14 @@
+.update-available-banner__content { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+.update-available-banner__text { margin: 0; color: var(--text); }
+.update-available-banner__text code { font-family: var(--font-mono); }
+.update-available-banner__link { color: var(--color-info); text-decoration: underline; text-underline-offset: var(--space-xs); transition: color var(--transition-fast); }
+.update-available-banner__link:hover { color: var(--text); }
+.update-available-banner__link:focus-visible { outline: none; box-shadow: var(--focus-ring-strong); border-radius: var(--radius-sm); }
+.update-available-banner__actions, .update-available-banner__update-btn, .update-available-banner__restart-btn { display: inline-flex; align-items: center; gap: var(--space-xs); }
+.update-available-banner__actions { flex-wrap: wrap; }
+.update-available-banner__update-btn:disabled { color: var(--color-warning); }
+.update-available-banner__update-btn svg.spinning, .update-available-banner__restart-btn svg.spinning { animation: update-available-banner-spin 1s linear infinite; }
+.update-available-banner__install-status { font-weight: 500; }
+.update-available-banner__install-status--success { color: var(--color-success); }
+.update-available-banner__install-status--error { color: var(--color-error); }
+@keyframes update-available-banner-spin { to { transform: rotate(360deg); } }

@@ -1,0 +1,2593 @@
+// @vitest-environment node
+
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
+import express from "express";
+import http from "node:http";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { createApiRoutes } from "../routes.js";
+import {
+  getProjectIdFromRequest as getProjectIdFromRouteRequest,
+  getProjectContext as resolveRouteProjectContext,
+  getScopedStore as resolveRouteScopedStore,
+} from "../routes/context.js";
+import { GitHubClient } from "../github.js";
+import * as resolveDiffBaseModule from "../routes/resolve-diff-base.js";
+import { githubRateLimiter } from "../github-poll.js";
+import type { TaskStore, TaskAttachment, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, ChatSession, ChatMessage } from "@fusion/core";
+import type { TaskDetail } from "@fusion/core";
+import type { AuthStorageLike, ModelRegistryLike } from "../routes.js";
+import { __resetBatchImportRateLimiter, __setCreateFnAgentForRefine } from "../routes.js";
+import * as agentGenerationModule from "../agent-generation.js";
+import { __resetPlanningState, __setCreateFnAgent, planningStreamManager } from "../planning.js";
+import * as planningModule from "../planning.js";
+import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "../ai-session-store.js";
+import * as usageModule from "../usage.js";
+import * as claudeCliProbeModule from "../claude-cli-probe.js";
+import * as droidCliProbeModule from "../droid-cli-probe.js";
+import * as projectStoreResolver from "../project-store-resolver.js";
+import * as terminalServiceModule from "../terminal-service.js";
+import { get as performGet, request as performRequest } from "../test-request.js";
+import { resetRuntimeLogSink, setRuntimeLogSink } from "../runtime-logger.js";
+import { resetDiagnosticsSink, setDiagnosticsSink, type LogEntry } from "../ai-session-diagnostics.js";
+import * as updateCheckModule from "../update-check.js";
+import { __setAgentReflectionServiceForTests } from "../routes/register-agent-reflection-rating-routes.js";
+
+// Mock @fusion/core for gh CLI auth checks
+const mockCentralListProjects = vi.fn().mockResolvedValue([]);
+const mockCentralInit = vi.fn().mockResolvedValue(undefined);
+const mockCentralClose = vi.fn().mockResolvedValue(undefined);
+const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
+const mockCentralGetLocalNode = vi.fn().mockResolvedValue({ id: "node-local" });
+const mockCentralListNodes = vi.fn().mockResolvedValue([]);
+const { mockPerformUpdateCheck, mockClearUpdateCheckCache, mockExecSync, mockExecFile } = vi.hoisted(() => ({
+  mockPerformUpdateCheck: vi.fn(),
+  mockClearUpdateCheckCache: vi.fn(),
+  mockExecSync: vi.fn(),
+  mockExecFile: vi.fn(),
+}));
+
+vi.mock("../update-check.js", async () => {
+  const actual = await vi.importActual<typeof import("../update-check.js")>("../update-check.js");
+  return {
+    ...actual,
+    performUpdateCheck: mockPerformUpdateCheck,
+    clearUpdateCheckCache: mockClearUpdateCheckCache,
+  };
+});
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  mockExecSync.mockImplementation(((...args: Parameters<typeof actual.execSync>) => actual.execSync(...args)) as typeof actual.execSync);
+  // Default execFile mock blocks host-process pgrep calls used by /kill-vitest
+  // but passes through all other commands (including git) to preserve route
+  // behavior for integration-style API tests in this file.
+  mockExecFile.mockImplementation((...callArgs: unknown[]) => {
+    const [file, argsOrCb, maybeOptions, maybeCb] = callArgs as [string, unknown, unknown, unknown];
+    const args = Array.isArray(argsOrCb) ? argsOrCb : [];
+    const cb =
+      typeof maybeCb === "function"
+        ? (maybeCb as (err: unknown, stdout?: string, stderr?: string) => void)
+        : typeof maybeOptions === "function"
+          ? (maybeOptions as (err: unknown, stdout?: string, stderr?: string) => void)
+          : typeof argsOrCb === "function"
+            ? (argsOrCb as (err: unknown, stdout?: string, stderr?: string) => void)
+            : null;
+
+    if (file === "pgrep" && args[0] === "-f" && args[1] === "vitest") {
+      if (cb) queueMicrotask(() => cb(null, "", ""));
+      return;
+    }
+
+    return (actual.execFile as (...innerArgs: unknown[]) => unknown)(...callArgs);
+  });
+  return {
+    ...actual,
+    execSync: mockExecSync,
+    execFile: mockExecFile,
+  };
+});
+
+vi.mock("@fusion/core", async (importOriginal) => {
+  const { createCoreMock } = await import("../test/mockCoreEngine.js");
+  return createCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
+    resolveGlobalDir: vi.fn().mockReturnValue("/tmp/fusion-test"),
+    isGhAvailable: vi.fn(),
+    isGhAuthenticated: vi.fn(),
+    isQmdAvailable: vi.fn().mockResolvedValue(false),
+    CentralCore: vi.fn().mockImplementation(function () { return {
+      init: mockCentralInit,
+      close: mockCentralClose,
+      listProjects: mockCentralListProjects,
+      reconcileProjectStatuses: mockCentralReconcileProjectStatuses,
+      getLocalNode: mockCentralGetLocalNode,
+      listNodes: mockCentralListNodes,
+    }; }),
+  });
+});
+
+vi.mock("@fusion/engine", async () => {
+  const { createEngineMock } = await import("../test/mockCoreEngine.js");
+  return createEngineMock({
+  createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void }) => ({
+    session: {
+      state: {
+        messages: [] as Array<{ role: string; content: string }>,
+      },
+      prompt: vi.fn(async function (this: { state?: { messages?: Array<{ role: string; content: string }> } }, message: string) {
+        options?.onText?.("mock-ai-output");
+        const messages = this.state?.messages ?? [];
+        messages.push({ role: "user", content: message });
+        messages.push({
+          role: "assistant",
+          content: JSON.stringify({
+            subtasks: [
+              {
+                id: "subtask-1",
+                title: "Mock subtask",
+                description: "Generated by the route test engine mock",
+                suggestedSize: "S",
+                dependsOn: [],
+              },
+            ],
+          }),
+        });
+      }),
+      dispose: vi.fn(),
+    },
+  })),
+  promptWithFallback: vi.fn(async (session: { prompt: (message: string) => Promise<void> }, prompt: string) => {
+    await session.prompt(prompt);
+  }),
+  /*
+  FNXC:DashboardRouteTests 2026-06-27-00:08:
+  Route tests mock @fusion/engine wholesale, but planning/subtask helpers now resolve MCP servers before creating read-only AI sessions. Keep the default MCP result shaped so unrelated route assertions do not fail on the fallback vi.fn() returning undefined.
+  */
+  resolveMcpServersForStore: vi.fn().mockResolvedValue({ servers: [], errors: [] }),
+  createAgentTask: vi.fn(async (
+    taskStore: TaskStore,
+    input: Parameters<TaskStore["createTask"]>[0],
+    options?: { sourceTaskId?: string },
+  ) => ({
+    task: await taskStore.createTask({
+      ...input,
+      source: input.source ?? {
+        sourceType: "api",
+        sourceParentTaskId: options?.sourceTaskId,
+      },
+    }),
+    wasDuplicate: false,
+  })),
+  AgentReflectionService: class MockAgentReflectionService {
+    async generateReflection(): Promise<import("@fusion/core").AgentReflection | null> {
+      throw new Error("Reflection service unavailable in route tests");
+    }
+
+    async buildReflectionContext(): Promise<never> {
+      throw new Error("Reflection service unavailable in route tests");
+    }
+  },
+  });
+});
+
+import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
+import { createAgentTask, createFnAgent } from "@fusion/engine";
+
+const mockIsGhAvailable = vi.mocked(isGhAvailable);
+const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
+
+function createMockGlobalSettingsStore() {
+  return {
+    getSettings: vi.fn().mockResolvedValue({}),
+    updateSettings: vi.fn().mockResolvedValue({}),
+    getSettingsPath: vi.fn().mockReturnValue("/fake/home/.fusion/settings.json"),
+    init: vi.fn().mockResolvedValue(false),
+    invalidateCache: vi.fn(),
+  };
+}
+
+function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  return {
+    getTask: vi.fn(),
+    listTasks: vi.fn().mockResolvedValue([]),
+    searchTasks: vi.fn().mockResolvedValue([]),
+    findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
+    createTask: vi.fn(),
+    createTaskWithReservedId: undefined,
+    moveTask: vi.fn(),
+    updateTask: vi.fn(),
+    getBranchGroupByBranchName: vi.fn(),
+    ensureBranchGroupForSource: vi.fn(),
+    setTaskBranchGroup: vi.fn().mockResolvedValue(undefined),
+    deleteTask: vi.fn(),
+    mergeTask: vi.fn(),
+    archiveTask: vi.fn(),
+    unarchiveTask: vi.fn(),
+    getSettings: vi.fn().mockResolvedValue({}),
+    getSettingsFast: vi.fn().mockResolvedValue({}),
+    updateSettings: vi.fn(),
+    updateGlobalSettings: vi.fn(),
+    getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
+    getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
+    getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
+    logEntry: vi.fn().mockResolvedValue(undefined),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
+    addSteeringComment: vi.fn(),
+    addTaskComment: vi.fn(),
+    updateTaskComment: vi.fn(),
+    deleteTaskComment: vi.fn(),
+    getTaskDocuments: vi.fn().mockResolvedValue([]),
+    getTaskDocument: vi.fn().mockResolvedValue(null),
+    getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
+    getAllDocuments: vi.fn().mockResolvedValue([]),
+    upsertTaskDocument: vi.fn(),
+    deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
+    updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    updateIssueInfo: vi.fn().mockResolvedValue(undefined),
+    linkGithubIssue: vi.fn().mockResolvedValue(undefined),
+    recordActivity: vi.fn().mockResolvedValue(undefined),
+    getFusionDir: vi.fn().mockReturnValue("/fake/root/.fusion"),
+    getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    /*
+    FNXC:PluginMcpServers 2026-07-23-23:40:
+    FN-8491 (3cd023fa4) made resolveProjectContext bind a project-scoped plugin
+    MCP provider on every getProjectContext call. A store that already exposes
+    getProjectScopedPluginMcpServers is treated as runtime-owned and skips the
+    binder (which would otherwise call getPluginStore()); declare it here so the
+    route contracts under test stay isolated from plugin-loader bootstrapping.
+    Same alignment as remote-access-routes.test.ts (d7752931b).
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
+    // FNXC:PostgresCutover 2026-07-05-16:20: routes borrow the AsyncDataLayer
+    // from the scoped store (e.g. triggerCommentWakeForAssignedAgent builds a
+    // backend AgentStore). null = legacy mode for this mock.
+    getAsyncLayer: vi.fn().mockReturnValue(null),
+    getDistributedTaskIdAllocator: vi.fn().mockReturnValue({
+      reserveDistributedTaskId: vi.fn().mockResolvedValue({ reservationId: "res-1", taskId: "FN-7001" }),
+      commitDistributedTaskIdReservation: vi.fn().mockResolvedValue({}),
+      abortDistributedTaskIdReservation: vi.fn().mockResolvedValue({}),
+    }),
+    listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    createWorkflowStep: vi.fn(),
+    getWorkflowStep: vi.fn(),
+    updateWorkflowStep: vi.fn(),
+    deleteWorkflowStep: vi.fn(),
+    getMissionStore: vi.fn().mockReturnValue({
+      listMissions: vi.fn().mockReturnValue([]),
+      createMission: vi.fn(),
+      getMissionWithHierarchy: vi.fn(),
+      updateMission: vi.fn(),
+      getMission: vi.fn(),
+      deleteMission: vi.fn(),
+      listMilestonesByMission: vi.fn().mockReturnValue([]),
+      createMilestone: vi.fn(),
+      updateMilestone: vi.fn(),
+      getMilestone: vi.fn(),
+      deleteMilestone: vi.fn(),
+      listTasksByMilestone: vi.fn().mockReturnValue([]),
+      createMissionTask: vi.fn(),
+      updateMissionTask: vi.fn(),
+      getMissionTask: vi.fn(),
+      deleteMissionTask: vi.fn(),
+    }),
+    ...overrides,
+  } as unknown as TaskStore;
+}
+
+const TASK_TOKEN_USAGE_FIXTURE = {
+  inputTokens: 1200,
+  outputTokens: 450,
+  cachedTokens: 210,
+  totalTokens: 1860,
+  firstUsedAt: "2026-04-24T09:00:00.000Z",
+  lastUsedAt: "2026-04-24T10:15:00.000Z",
+};
+
+const FAKE_TASK_DETAIL: TaskDetail = {
+  id: "FN-001",
+  description: "Test task",
+  column: "in-progress",
+  dependencies: [],
+  steps: [],
+  currentStep: 0,
+  log: [],
+  tokenUsage: TASK_TOKEN_USAGE_FIXTURE,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  prompt: "# KB-001\n\nTest task",
+};
+
+async function GET(app: express.Express, path: string): Promise<{ status: number; body: any }> {
+  const res = await performGet(app, path);
+  return { status: res.status, body: res.body };
+}
+
+async function REQUEST(
+  app: express.Express,
+  method: string,
+  path: string,
+  body?: Buffer | string,
+  headers?: Record<string, string>,
+): Promise<{ status: number; body: any }> {
+  const res = await performRequest(app, method, path, body, headers);
+  return { status: res.status, body: res.body };
+}
+
+function collectOrderedRouteKeys(router: express.Router): string[] {
+  const stack = (router as unknown as {
+    stack?: Array<{ route?: { path?: string; methods?: Record<string, boolean> } }>;
+  }).stack ?? [];
+
+  const orderedKeys: string[] = [];
+  for (const layer of stack) {
+    const route = layer.route;
+    if (!route?.path || !route.methods) continue;
+    const method = Object.keys(route.methods).find((name) => route.methods?.[name]);
+    if (!method) continue;
+    orderedKeys.push(`${method.toUpperCase()} ${route.path}`);
+  }
+  return orderedKeys;
+}
+
+afterEach(() => {
+  resetDiagnosticsSink();
+});
+
+
+describe("GET /tasks", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns tasks with optional pagination params", async () => {
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?limit=10&offset=5");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(store.listTasks).toHaveBeenCalledWith({ limit: 10, offset: 5, slim: true, includeArchived: false });
+  });
+
+  it.each(["triage", "todo", "in-progress"] as const)(
+    "passes column=%s through to the store and returns only matching rows",
+    async (column) => {
+      const tasks = [
+        { ...FAKE_TASK_DETAIL, id: "FN-TRIAGE", column: "triage" as const },
+        { ...FAKE_TASK_DETAIL, id: "FN-TODO", column: "todo" as const },
+        { ...FAKE_TASK_DETAIL, id: "FN-INPROGRESS", column: "in-progress" as const },
+        { ...FAKE_TASK_DETAIL, id: "FN-DONE", column: "done" as const },
+      ];
+      (store.listTasks as ReturnType<typeof vi.fn>).mockImplementationOnce(async (opts?: { column?: string }) => (
+        opts?.column ? tasks.filter((task) => task.column === opts.column) : tasks
+      ));
+
+      const res = await GET(buildApp(), `/api/tasks?column=${column}&limit=20`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body.every((task: { column: string }) => task.column === column)).toBe(true);
+      expect(store.listTasks).toHaveBeenCalledWith({
+        limit: 20,
+        offset: undefined,
+        slim: true,
+        includeArchived: false,
+        column,
+      });
+    },
+  );
+
+  it("returns 400 for invalid column filters", async () => {
+    const res = await GET(buildApp(), "/api/tasks?column=Planning");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("column");
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("returns tasks for search query", async () => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=FN-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(store.searchTasks).toHaveBeenCalledWith("FN-001", {
+      limit: undefined,
+      offset: undefined,
+      slim: true,
+      includeArchived: false,
+    });
+  });
+
+  it("returns tasks for search query with limit", async () => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=something&limit=5");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(store.searchTasks).toHaveBeenCalledWith("something", {
+      limit: 5,
+      offset: undefined,
+      slim: true,
+      includeArchived: false,
+    });
+  });
+
+  it("returns empty array for non-existent search query", async () => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=nonexistent");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("falls back to listTasks for empty search query", async () => {
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?q=");
+
+    expect(res.status).toBe(200);
+    expect(store.listTasks).toHaveBeenCalled();
+    expect(store.searchTasks).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for invalid pagination params", async () => {
+    const res = await GET(buildApp(), "/api/tasks?limit=-1");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("limit");
+  });
+});
+
+describe("Standardized error responses", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns 400 validation errors as { error } without success field", async () => {
+    const res = await GET(buildApp(), "/api/tasks?limit=-1");
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: expect.stringContaining("limit") });
+    expect(res.body).not.toHaveProperty("success");
+  });
+
+  it("returns 404 not-found errors as { error }", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(Object.assign(new Error("Task NOPE not found"), { code: "ENOENT" }));
+
+    const res = await GET(buildApp(), "/api/tasks/NOPE");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: expect.stringContaining("not found") });
+  });
+
+  it("returns 500 errors as { error } and logs to the runtime logger", async () => {
+    const runtimeEvents: Array<{ level: string; scope: string; message: string; context?: Record<string, unknown> }> = [];
+    setRuntimeLogSink((level, scope, message, context) => {
+      runtimeEvents.push({ level, scope, message, context });
+    });
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Config read failed"));
+
+    try {
+      const res = await GET(buildApp(), "/api/settings");
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "Config read failed" });
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          scope: "api:error",
+          message: "Request failed",
+          context: expect.objectContaining({
+            method: "GET",
+            path: "/api/settings",
+            statusCode: 500,
+            message: "Config read failed",
+          }),
+        }),
+      );
+    } finally {
+      resetRuntimeLogSink();
+    }
+  });
+});
+
+describe("GET /projects", () => {
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(createMockStore()));
+    return app;
+  }
+
+  beforeEach(() => {
+    mockCentralListProjects.mockReset().mockResolvedValue([]);
+    mockCentralInit.mockReset().mockResolvedValue(undefined);
+    mockCentralClose.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("prioritizes the project for the current working directory", async () => {
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/workspace/current-project");
+    mockCentralListProjects.mockResolvedValueOnce([
+      {
+        id: "proj_other",
+        name: "Other Project",
+        path: "/workspace/other-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "proj_current",
+        name: "Current Project",
+        path: "/workspace/current-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await GET(buildApp(), "/api/projects");
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect((res.body as Array<{ id: string }>).map((project) => project.id)).toEqual([
+      "proj_current",
+      "proj_other",
+    ]);
+    cwdSpy.mockRestore();
+  });
+
+  it("prefers the deepest matching ancestor when cwd is nested inside a project", async () => {
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/workspace/current-project/packages/dashboard");
+    mockCentralListProjects.mockResolvedValueOnce([
+      {
+        id: "proj_parent",
+        name: "Parent",
+        path: "/workspace",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "proj_current",
+        name: "Current Project",
+        path: "/workspace/current-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "proj_other",
+        name: "Other Project",
+        path: "/workspace/other-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await GET(buildApp(), "/api/projects");
+
+    expect(res.status).toBe(200);
+    expect((res.body as Array<{ id: string }>).map((project) => project.id)).toEqual([
+      "proj_current",
+      "proj_parent",
+      "proj_other",
+    ]);
+    cwdSpy.mockRestore();
+  });
+});
+
+describe("GET /tasks/:id", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns task detail on success", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
+
+    const res = await GET(buildApp(), "/api/tasks/KB-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe("FN-001");
+    expect(res.body.prompt).toBe("# KB-001\n\nTest task");
+  });
+
+  it("returns tokenUsage unchanged when task detail includes usage totals", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
+
+    const res = await GET(buildApp(), "/api/tasks/KB-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body.tokenUsage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 450,
+      cachedTokens: 210,
+      totalTokens: 1860,
+      firstUsedAt: "2026-04-24T09:00:00.000Z",
+      lastUsedAt: "2026-04-24T10:15:00.000Z",
+    });
+  });
+
+  it("leaves tokenUsage undefined when no task usage has been recorded", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      tokenUsage: undefined,
+    });
+
+    const res = await GET(buildApp(), "/api/tasks/KB-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body.tokenUsage).toBeUndefined();
+  });
+
+  it("caps task detail activity logs to keep the modal payload bounded", async () => {
+    const log = Array.from({ length: 510 }, (_, index) => ({
+      timestamp: `2026-01-01T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      action: `entry-${index}`,
+    }));
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      log,
+    });
+
+    const res = await GET(buildApp(), "/api/tasks/KB-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body.log).toHaveLength(500);
+    expect(res.body.log[0].action).toBe("entry-10");
+    expect(res.body.log[499].action).toBe("entry-509");
+    expect(res.body.activityLogTotal).toBe(510);
+    expect(res.body.activityLogTruncatedCount).toBe(10);
+  });
+
+  it("returns 404 when task genuinely does not exist (ENOENT)", async () => {
+    const err: NodeJS.ErrnoException = new Error("ENOENT: no such file or directory");
+    err.code = "ENOENT";
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+
+    const res = await GET(buildApp(), "/api/tasks/KB-999");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+
+  it("returns 500 on transient/unexpected errors (non-ENOENT)", async () => {
+    const err = new Error("Unexpected end of JSON input");
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+
+    const res = await GET(buildApp(), "/api/tasks/KB-001");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Unexpected end of JSON input");
+  });
+});
+
+describe("POST /tasks", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("attaches automatic title summarization for short descriptions when the project option is enabled", async () => {
+    const createdTask = { ...FAKE_TASK_DETAIL, title: undefined, description: "short request" };
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: true });
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "short request" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const [createInput, options] = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(createInput).toMatchObject({ description: "short request", summarize: false });
+    expect(options.onSummarize).toEqual(expect.any(Function));
+  });
+
+  it("forwards no-workflow and explicit owner inputs but drops public exemption-shaped fields", async () => {
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      assignedAgentId: "executor-1",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "No workflow still needs an executor owner",
+        workflowId: null,
+        agentId: "executor-1",
+        ownershipExemption: true,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const createInput = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createInput).toMatchObject({
+      description: "No workflow still needs an executor owner",
+      workflowId: null,
+      assignedAgentId: "executor-1",
+    });
+    expect(createInput).not.toHaveProperty("ownershipExemption");
+  });
+
+  it("returns a typed client failure when the universal owner resolver rejects an explicit owner", async () => {
+    (store.createTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Task intake owner resolution failed: explicit-assignee-ineligible"),
+    );
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Reject a triage-only owner", assignedAgentId: "triage-agent" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: "Task intake owner resolution failed: explicit-assignee-ineligible" });
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not synchronously create tracking issues in POST /tasks route", async () => {
+    const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
+      owner: "task",
+      repo: "repo",
+      number: 42,
+      htmlUrl: "https://github.com/task/repo/issues/42",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ githubAuthMode: "token", githubAuthToken: "tok" });
+    const linkGithubIssue = store.linkGithubIssue as ReturnType<typeof vi.fn>;
+    const recordActivity = store.recordActivity as ReturnType<typeof vi.fn>;
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      githubTracking: { enabled: true, repoOverride: "task/repo" },
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Track this task",
+        githubTracking: { enabled: true, repoOverride: "task/repo" },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(createIssueSpy).not.toHaveBeenCalled();
+    expect(linkGithubIssue).not.toHaveBeenCalled();
+    expect(recordActivity).not.toHaveBeenCalled();
+    createIssueSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      name: "project default when task override is omitted",
+      projectSettings: { githubTrackingEnabledByDefault: true, githubTrackingDefaultRepo: "task/repo", githubAuthMode: "token", githubAuthToken: "tok" },
+      globalSettings: {},
+    },
+    {
+      name: "global default when project default is omitted",
+      projectSettings: { githubTrackingDefaultRepo: "task/repo", githubAuthMode: "token", githubAuthToken: "tok" },
+      globalSettings: { githubTrackingEnabledByDefault: true },
+    },
+    {
+      name: "disabled when defaults are off at every level",
+      projectSettings: { githubTrackingDefaultRepo: "task/repo", githubAuthMode: "token", githubAuthToken: "tok" },
+      globalSettings: { githubTrackingEnabledByDefault: false },
+    },
+  ])("honors tracking precedence: $name", async ({ projectSettings, globalSettings }) => {
+    const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
+      owner: "task",
+      repo: "repo",
+      number: 43,
+      htmlUrl: "https://github.com/task/repo/issues/43",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue(projectSettings);
+    const mockGlobalSettingsStore = {
+      getSettings: vi.fn().mockResolvedValue(globalSettings),
+      updateSettings: vi.fn().mockResolvedValue({}),
+      getSettingsPath: vi.fn().mockReturnValue("/fake/home/.fusion/settings.json"),
+      init: vi.fn().mockResolvedValue(false),
+      invalidateCache: vi.fn(),
+    };
+    (store.getGlobalSettingsStore as ReturnType<typeof vi.fn>).mockReturnValue(mockGlobalSettingsStore);
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      githubTracking: { enabled: true, repoOverride: "task/repo" },
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Track settings precedence" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(createIssueSpy).not.toHaveBeenCalled();
+    expect(store.linkGithubIssue).not.toHaveBeenCalled();
+
+    createIssueSpy.mockRestore();
+  });
+
+  it("uses store.createTask for local task creation", async () => {
+    const createTask = vi.fn().mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-7001",
+      column: "triage",
+      createdAt: "2026-05-05T00:00:00.000Z",
+      updatedAt: "2026-05-05T00:00:00.000Z",
+      nodeId: "node-target",
+    });
+    const storeWithCreate = createMockStore({ createTask });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(storeWithCreate));
+
+    const res = await REQUEST(
+      app,
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Big initiative", nodeId: "node-target" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "Big initiative", nodeId: "node-target" }),
+      expect.objectContaining({ settings: { autoSummarizeTitles: undefined } }),
+    );
+    expect((storeWithCreate.getDistributedTaskIdAllocator as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when nodeId is not a string", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Task", nodeId: 123 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("nodeId must be a string");
+  });
+
+  it("returns 500 when store.createTask throws", async () => {
+    const createTask = vi.fn().mockRejectedValue(new Error("Task ID already exists: FN-7001"));
+    const storeWithCreate = createMockStore({ createTask });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(storeWithCreate));
+
+    const res = await REQUEST(
+      app,
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Big initiative" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Task ID already exists: FN-7001");
+  });
+
+  it("forwards branch and baseBranch on create", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      branch: "fusion/fn-branch",
+      baseBranch: "main",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Task with branch fields",
+        branch: " fusion/fn-branch ",
+        baseBranch: " main ",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: "fusion/fn-branch",
+        baseBranch: "main",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("applies branchSelection on create when supplied", async () => {
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      branch: "feature/existing",
+      baseBranch: "main",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Task with branch selection",
+        branchSelection: {
+          mode: "existing",
+          branchName: " feature/existing ",
+          baseBranch: " main ",
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: "feature/existing",
+        baseBranch: "main",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("persists an auto-derived branch for auto-new branchSelection", async () => {
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-5671",
+      title: "Branch Strategy Dropdown",
+      description: "Task with auto-new strategy",
+      column: "triage",
+      branch: undefined,
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-5671",
+      title: "Branch Strategy Dropdown",
+      description: "Task with auto-new strategy",
+      column: "triage",
+      branch: "fusion/fn-5671-branch-strategy-dropdown",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Task with auto-new strategy",
+        title: "Branch Strategy Dropdown",
+        branchSelection: {
+          mode: "auto-new",
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    /*
+    FNXC:BranchSelection 2026-08-23-23:30:
+    A `branch` write must declare its origin. Both branches here are DERIVED by the route from the task id/title, never typed by the operator, so they are stamped "engine"; only a name the operator supplied writes "operator".
+    */
+    expect(store.updateTask).toHaveBeenCalledWith("FN-5671", {
+      branch: "fusion/fn-5671-branch-strategy-dropdown",
+      branchWriteOrigin: "engine",
+    });
+    expect(res.body.branch).toBe("fusion/fn-5671-branch-strategy-dropdown");
+  });
+
+  it("persists per-task branch and shared group context for shared-group branchSelection", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-7001",
+      title: "Shared Group Branch Task",
+      description: "Task with shared branch target",
+      column: "triage",
+      branch: undefined,
+    };
+    const ensuredGroup = {
+      id: "BG-001",
+      sourceType: "new-task" as const,
+      sourceId: "feature/shared",
+      branchName: "feature/shared",
+      autoMerge: false,
+      prState: "none" as const,
+      status: "open" as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+    (store.getBranchGroupByBranchName as ReturnType<typeof vi.fn>).mockReturnValue(null);
+    (store.ensureBranchGroupForSource as ReturnType<typeof vi.fn>).mockReturnValue(ensuredGroup);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...createdTask,
+      branch: "feature/shared/shared-group-branch-task",
+      branchContext: { groupId: "BG-001", source: "new-task", assignmentMode: "shared" },
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Task with shared branch target",
+        title: "Shared Group Branch Task",
+        branchSelection: {
+          mode: "shared-group",
+          branchName: "feature/shared",
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.ensureBranchGroupForSource).toHaveBeenCalledWith("new-task", "feature/shared", { branchName: "feature/shared" });
+    expect(store.setTaskBranchGroup).toHaveBeenCalledWith("FN-7001", "BG-001");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7001", {
+      branch: "feature/shared/shared-group-branch-task",
+      branchWriteOrigin: "engine",
+    });
+    expect(res.body.branch).toBe("feature/shared/shared-group-branch-task");
+  });
+
+  it("joins existing open branch groups by shared branch name", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-7002",
+      title: "Join Existing Group",
+      description: "Task joins existing group",
+      column: "triage",
+      branch: undefined,
+    };
+    const existingGroup = {
+      id: "BG-existing",
+      sourceType: "planning" as const,
+      sourceId: "PS-1",
+      branchName: "feature/shared",
+      autoMerge: false,
+      prState: "none" as const,
+      status: "open" as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+    (store.getBranchGroupByBranchName as ReturnType<typeof vi.fn>).mockReturnValue(existingGroup);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...createdTask,
+      branch: "feature/shared/join-existing-group",
+      branchContext: { groupId: "BG-existing", source: "planning", assignmentMode: "shared" },
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Task joins existing group",
+        title: "Join Existing Group",
+        branchSelection: { mode: "shared-group", branchName: "feature/shared" },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.ensureBranchGroupForSource).not.toHaveBeenCalled();
+    expect(store.setTaskBranchGroup).toHaveBeenCalledWith("FN-7002", "BG-existing");
+    expect(res.body.branch).not.toBe("feature/shared");
+  });
+
+  it("returns 400 when create branch payload is not a string", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Task", branch: 10 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("branch must be a string");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when model fields are not strings", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Invalid model payload",
+        modelProvider: ["anthropic"],
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("modelProvider must be a string");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards max thinkingLevel when provided", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      thinkingLevel: "max",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Deep reasoning task",
+        thinkingLevel: "max",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Deep reasoning task",
+        thinkingLevel: "max",
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: undefined },
+      }),
+    );
+  });
+
+  it("returns 400 for invalid thinkingLevel value", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Bad thinking level",
+        thinkingLevel: "ultra",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("thinkingLevel must be one of");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards reviewLevel when provided", async () => {
+    const createdTask = { ...FAKE_TASK_DETAIL, column: "triage" };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", reviewLevel: 2 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewLevel: 2 }),
+      expect.any(Object),
+    );
+  });
+
+  it("accepts reviewLevel 0 (None) via POST", async () => {
+    const createdTask = { ...FAKE_TASK_DETAIL, column: "triage", reviewLevel: 0 };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", reviewLevel: 0 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewLevel: 0 }),
+      expect.any(Object),
+    );
+  });
+
+  it("returns 400 for invalid reviewLevel value via POST", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", reviewLevel: 5 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("reviewLevel must be an integer between 0 and 3");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for non-integer reviewLevel via POST", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", reviewLevel: 1.5 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("reviewLevel must be an integer between 0 and 3");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards autoMerge when provided", async () => {
+    const createdTask = { ...FAKE_TASK_DETAIL, column: "triage", autoMerge: true };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", autoMerge: true }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ autoMerge: true }),
+      expect.any(Object),
+    );
+  });
+
+  it("rejects client-supplied autoMerge provenance via POST", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", autoMerge: false, autoMergeProvenance: "mission" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("autoMergeProvenance is server-managed");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for invalid autoMerge value via POST", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", autoMerge: "true" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("autoMerge must be a boolean");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards priority when provided", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      priority: "high" as const,
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Priority task",
+        priority: "high",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Priority task",
+        priority: "high",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("returns 400 for invalid priority value", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Bad priority",
+        priority: "medium",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("priority must be one of");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards executionMode when provided with 'fast'", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      executionMode: "fast",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Fast task",
+        executionMode: "fast",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Fast task",
+        executionMode: "fast",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("forwards executionMode when provided with 'standard'", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      executionMode: "standard",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Standard task",
+        executionMode: "standard",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Standard task",
+        executionMode: "standard",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("returns 400 for invalid executionMode value", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Bad execution mode",
+        executionMode: "turbo",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("executionMode must be one of");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards planningModelProvider and planningModelId when provided", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      planningModelProvider: "google",
+      planningModelId: "gemini-2.5-pro",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Use planning model",
+        planningModelProvider: "google",
+        planningModelId: "gemini-2.5-pro",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Use planning model",
+        planningModelProvider: "google",
+        planningModelId: "gemini-2.5-pro",
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: undefined },
+      }),
+    );
+  });
+
+  it("passes onSummarize callback when autoSummarizeTitles is enabled", async () => {
+    // Mock getSettingsFast to return autoSummarizeTitles: true
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: true });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300), // Long description > 200 chars
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Verify onSummarize callback is passed - the route should pass it when autoSummarizeTitles is enabled
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: undefined,
+        description: "x".repeat(300),
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("does not create onSummarize callback when autoSummarizeTitles is disabled", async () => {
+    // Mock getSettingsFast to return autoSummarizeTitles: false (default)
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: false });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300), // Long description > 200 chars
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: undefined,
+        description: "x".repeat(300),
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: false },
+        onSummarize: undefined,
+      }),
+    );
+  });
+
+  it("passes onSummarize callback when summarize flag is explicitly true", async () => {
+    // Mock getSettingsFast to return autoSummarizeTitles: false
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue({ autoSummarizeTitles: false });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+        summarize: true,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Verify onSummarize callback is passed - explicit summarize flag should trigger it even when auto is off
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summarize: true,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: false },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("forwards summarize field when provided in request body", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      summarize: true,
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Test task",
+        summarize: true,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summarize: true,
+      }),
+      expect.any(Object),
+    );
+  });
+
+  // ── Lane Precedence Regression Tests for onSummarize Callback ─────────────────
+  // Tests for FN-1730: ensure onSummarize callback resolves models following the hierarchy:
+  // 1. Project titleSummarizerProvider + titleSummarizerModelId (project lane)
+  // 2. Global titleSummarizerGlobalProvider + titleSummarizerGlobalModelId (global lane)
+  // 3. Default defaultProvider + defaultModelId (default fallback)
+  //
+  // Note: These tests verify that the route passes the correct settings to createTask
+  // and that the onSummarize callback is invoked with the expected settings.
+  // The actual AI summarization behavior is tested separately.
+
+  it("invokes onSummarize callback when autoSummarizeTitles is enabled", async () => {
+    // Mock project settings with autoSummarizeTitles: true (using getSettingsFast)
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      autoSummarizeTitles: true,
+    });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("passes correct settings to onSummarize callback when project title lane is configured", async () => {
+    // Mock project settings with titleSummarizerProvider + titleSummarizerModelId (using getSettingsFast)
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      autoSummarizeTitles: true,
+      titleSummarizerProvider: "anthropic",
+      titleSummarizerModelId: "claude-sonnet-4-5",
+    });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    // Verify the callback was passed with autoSummarizeTitles setting
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("passes correct settings to onSummarize callback when global title lane is configured", async () => {
+    // Mock project settings with global titleSummarizerGlobalProvider + titleSummarizerGlobalModelId (using getSettingsFast)
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      autoSummarizeTitles: true,
+      titleSummarizerGlobalProvider: "openai",
+      titleSummarizerGlobalModelId: "gpt-4o",
+    });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("passes correct settings to onSummarize callback when default lane is configured", async () => {
+    // Mock project settings with only defaultProvider + defaultModelId (using getSettingsFast)
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      autoSummarizeTitles: true,
+      defaultProvider: "mistral",
+      defaultModelId: "mistral-large",
+    });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+
+  it("passes correct settings to onSummarize callback when project default override is configured", async () => {
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      autoSummarizeTitles: true,
+      defaultProviderOverride: "openai",
+      defaultModelIdOverride: "gpt-4o",
+      defaultProvider: "mistral",
+      defaultModelId: "mistral-large",
+    });
+
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "x".repeat(300),
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: true },
+        onSummarize: expect.any(Function),
+      }),
+    );
+  });
+});
+
+describe("PATCH /tasks/:id branch fields", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("forwards trimmed branch and baseBranch values", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      branch: "fusion/fn-123",
+      baseBranch: "main",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ branch: " fusion/fn-123 ", baseBranch: " main " }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      branch: "fusion/fn-123",
+      baseBranch: "main",
+    }));
+  });
+
+  it("treats empty-string patch values as clears (null)", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      branch: undefined,
+      baseBranch: undefined,
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ branch: "   ", baseBranch: "" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      branch: null,
+      baseBranch: null,
+    }));
+  });
+
+  it("rejects client-supplied autoMerge provenance while preserving server-owned task updates", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ autoMerge: false, autoMergeProvenance: "mission" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("autoMergeProvenance is server-managed");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards a null autoMerge patch so TaskStore clears the user override and provenance", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      autoMerge: undefined,
+      autoMergeProvenance: undefined,
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ autoMerge: null }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ autoMerge: null }));
+  });
+
+  it("returns 400 for invalid branch payload types", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ branch: 42 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("branch must be a string or null");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("POST /tasks/:id/review/address", () => {
+  let store: TaskStore;
+  const reviewerBlockTimestamp = "2026-01-02T03:04:05.000Z";
+  const reviewerBlockItemId = "reviewer-code-step-na-revise-2026-01-02T03-04-05-000Z-1";
+  const fallbackTimestamp = "2026-01-03T04:05:06.000Z";
+  const fallbackItemId = "reviewer-plan-step-2-rethink-2026-01-03T04-05-06-000Z-1";
+
+  beforeEach(() => {
+    store = createMockStore({ updateStep: vi.fn() } as unknown as Partial<TaskStore>);
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  function authorizeMarkedTopLevelReviewNodes(...nodes: Array<{ id: string; kind?: "prompt" | "gate" | "script" | "optional-group" }>) {
+    const workflowId = "WF-review-kind";
+    const workflowIr = {
+      version: "v1" as const,
+      name: "Marked review nodes",
+      nodes: [
+        { id: "start", kind: "start" as const },
+        ...nodes.map(({ id, kind = "prompt" }) => ({ id, kind, config: { reviewKind: "code" } })),
+        { id: "end", kind: "end" as const },
+      ],
+      edges: [
+        { from: "start", to: nodes[0]?.id ?? "end" },
+        ...nodes.slice(0, -1).map((node, index) => ({ from: node.id, to: nodes[index + 1]!.id })),
+        ...(nodes.length > 0 ? [{ from: nodes[nodes.length - 1]!.id, to: "end" }] : []),
+      ],
+    };
+    store.getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId, stepIds: [] });
+    store.getTaskWorkflowSelectionAsync = vi.fn().mockResolvedValue({ workflowId, stepIds: [] });
+    store.getWorkflowDefinition = vi.fn().mockResolvedValue({ ir: workflowIr });
+  }
+
+  function mockReviewerBlockLogs() {
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        timestamp: reviewerBlockTimestamp,
+        agent: "reviewer",
+        type: "text",
+        text: "## Code Review:\n\n### Verdict: REVISE\n\nFix tests before merge.",
+      },
+    ]);
+  }
+
+  function mockPrReviewDetails() {
+    return vi.spyOn(GitHubClient.prototype, "getPrReviewDetails").mockResolvedValue({
+      mode: "pull-request",
+      refreshable: true,
+      fetchedAt: "2026-01-04T05:06:07.000Z",
+      summary: { reviewDecision: "CHANGES_REQUESTED", reviewers: [], blockingReasons: [], checks: [] },
+      items: [
+        {
+          itemId: "ri-1",
+          sourceMode: "pull-request",
+          title: "Fix tests",
+          body: "Fix tests",
+          author: "reviewer",
+          createdAt: "2026-01-04T05:06:07.000Z",
+          updatedAt: "2026-01-04T05:06:07.000Z",
+          filePath: "src/a.ts",
+          line: 4,
+          reviewState: "CHANGES_REQUESTED",
+        },
+      ],
+    });
+  }
+
+  it("normalizes current workflow review results into stable canonical items", async () => {
+    const taskWithWorkflowReviews = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-009",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      workflowStepResults: [
+        { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "passed", verdict: "APPROVE_WITH_NOTES", output: "1. Keep the assertion focused.", completedAt: "2026-01-02T00:00:00.000Z" },
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "failed", verdict: "REVISE", notes: "Clarify the rollback plan.", startedAt: "2026-01-03T00:00:00.000Z" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "advisory_failure", verdict: "APPROVE", completedAt: "2026-01-04T00:00:00.000Z" },
+        { workflowStepId: "code-review", workflowStepName: "Invalid marked builtin", source: "optional-group", status: "advisory_failure", verdict: "REVISE", reviewKind: "invalid" as unknown as "code", output: "Invalid marker must not become legacy compatibility.", completedAt: "2026-01-04T01:00:00.000Z" },
+        { workflowStepId: "custom-review", workflowStepName: "Custom Review", status: "passed", verdict: "REVISE", output: "Must not be inferred." },
+        { workflowStepId: "custom-plan", workflowStepName: "Custom Plan", source: "node", status: "failed", reviewKind: "plan", notes: "Persisted marker qualifies this feedback.", completedAt: "2026-01-05T00:00:00.000Z" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", status: "pending", verdict: "REVISE" },
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "skipped", verdict: "REVISE" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", status: "passed", verdict: "REVISE", supersededAt: "2026-01-05T00:00:00.000Z" },
+        { workflowStepId: "superseded-custom", workflowStepName: "Superseded Custom", source: "node", status: "failed", reviewKind: "code", output: "Must be excluded even when only the reason remains.", supersededReason: "replaced" },
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "failed", verdict: "REVISE", bypassedAt: "2026-01-05T00:00:00.000Z" },
+      ],
+      log: [{ timestamp: reviewerBlockTimestamp, action: "code review Step 1: REVISE - legacy fallback must not duplicate structured data" }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithWorkflowReviews);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([{ agent: "reviewer", type: "text", text: "## Code Review:\\n### Verdict: REVISE" }]);
+    authorizeMarkedTopLevelReviewNodes({ id: "custom-plan" });
+
+    const first = await REQUEST(buildApp(), "GET", "/api/tasks/FN-009/review");
+    const refreshed = await REQUEST(buildApp(), "POST", "/api/tasks/FN-009/review/refresh");
+
+    expect(first.status).toBe(200);
+    expect(refreshed.status).toBe(200);
+    expect(first.body.items).toHaveLength(4);
+    expect(first.body.items.map((item: { body: string; reviewType: string }) => [item.body, item.reviewType])).toEqual(expect.arrayContaining([
+      ["1. Keep the assertion focused.", "code"],
+      ["Clarify the rollback plan.", "plan"],
+      ["Persisted marker qualifies this feedback.", "plan"],
+      ["No written feedback was provided by this review step.", "code"],
+    ]));
+    expect(first.body.summary).toEqual({ summary: "Custom Plan failed" });
+    expect(first.body.items.map((item: { itemId: string }) => item.itemId)).toEqual(refreshed.body.items.map((item: { itemId: string }) => item.itemId));
+    expect(store.getAgentLogs).not.toHaveBeenCalled();
+  });
+
+  it("projects resolution and rejects resolved workflow findings from revision requests", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-8956",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      workflowStepResults: [{
+        workflowStepId: "custom-code-review",
+        workflowStepName: "Code review",
+        source: "node",
+        status: "failed",
+        reviewKind: "code",
+        verdict: "REVISE",
+        output: "Structured review findings",
+        findings: [
+          { id: "receipt", title: "Receipt", body: "Fixed in review", resolution: "resolved-in-review" },
+          { id: "stale", title: "Stale", body: "Fixed later", resolution: "superseded" },
+          { id: "upheld", title: "Upheld", body: "Dispute adjudicated against implementer", resolution: "dispute-upheld" },
+          { id: "open", title: "Open", body: "Still needs work" },
+        ],
+      }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    authorizeMarkedTopLevelReviewNodes({ id: "custom-code-review" });
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-8956" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...task, column: "in-progress", status: null });
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-8956/review");
+    expect(review.status).toBe(200);
+    expect(review.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resolution: "resolved-in-review" }),
+      expect.objectContaining({ resolution: "superseded" }),
+      expect.objectContaining({ resolution: "dispute-upheld" }),
+      expect.not.objectContaining({ resolution: expect.anything() }),
+    ]));
+    const byBody = new Map(review.body.items.map((item: { itemId: string; body: string }) => [item.body, item.itemId]));
+    const resolved = await REQUEST(buildApp(), "POST", "/api/tasks/FN-8956/review/address", JSON.stringify({
+      selectedItems: [{ id: byBody.get("Fixed in review"), source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(resolved.status).toBe(400);
+
+    const upheld = await REQUEST(buildApp(), "POST", "/api/tasks/FN-8956/review/address", JSON.stringify({
+      selectedItems: [{ id: byBody.get("Dispute adjudicated against implementer"), source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(upheld.status).toBe(400);
+
+    const open = await REQUEST(buildApp(), "POST", "/api/tasks/FN-8956/review/address", JSON.stringify({
+      selectedItems: [{ id: byBody.get("Still needs work"), source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(open.status).toBe(200);
+  });
+
+  it("does not expose materialized template identities even when manually marked", async () => {
+    const taskWithMaterializedResult = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-011",
+      workflowStepResults: [{
+        workflowStepId: "steps#0:step-execute",
+        workflowStepName: "Template review",
+        source: "node",
+        status: "passed",
+        reviewKind: "code",
+        output: "A manually persisted template result must not be addressable.",
+      }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithMaterializedResult);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-011/review");
+    expect(review.status).toBe(200);
+    expect(review.body.items).toEqual([]);
+
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-011/review/address", JSON.stringify({
+      selectedItems: [{ id: "workflow-review-forged", source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(address.status).toBe(400);
+  });
+
+  it("accepts marked top-level review node ids containing template-like delimiters", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-011-delimiters",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      workflowStepResults: [
+        { workflowStepId: "architecture::review", workflowStepName: "Architecture review", source: "node", status: "passed", reviewKind: "plan", output: "Exact top-level identity is authoritative." },
+        { workflowStepId: "review#12:code", workflowStepName: "Code review", source: "optional-group", status: "failed", reviewKind: "code", notes: "Punctuation does not imply a template instance." },
+      ],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    authorizeMarkedTopLevelReviewNodes(
+      { id: "architecture::review", kind: "prompt" },
+      { id: "review#12:code", kind: "optional-group" },
+    );
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-delimiter" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...task, column: "in-progress", status: null });
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-011-delimiters/review");
+    expect(review.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Architecture review passed", reviewType: "plan" }),
+      expect.objectContaining({ title: "Code review failed", reviewType: "code" }),
+    ]));
+
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-011-delimiters/review/address", JSON.stringify({
+      selectedItems: [{ id: review.body.items[0].itemId, source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(address.status).toBe(200);
+  });
+
+  it("addresses a marked custom review with a server-owned canonical snapshot", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-012",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      reviewState: undefined,
+      workflowStepResults: [{
+        workflowStepId: "custom-code-check",
+        workflowStepName: "Custom code check",
+        source: "node",
+        status: "failed",
+        reviewKind: "code",
+        output: "Use the authoritative persisted feedback.",
+        completedAt: "2026-01-06T00:00:00.000Z",
+      }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    authorizeMarkedTopLevelReviewNodes({ id: "custom-code-check" });
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-custom" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...task, column: "in-progress", status: null });
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-012/review");
+    expect(review.body.items).toEqual([expect.objectContaining({
+      title: "Custom code check failed",
+      body: "Use the authoritative persisted feedback.",
+      reviewType: "code",
+      sourceMode: "reviewer-agent",
+    })]);
+    const itemId = review.body.items[0].itemId;
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-012/review/address", JSON.stringify({
+      selectedItems: [{ id: itemId, source: "reviewer-agent", body: "FORGED" }],
+    }), { "Content-Type": "application/json" });
+
+    expect(address.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-012", expect.objectContaining({
+      reviewState: expect.objectContaining({
+        addressing: [expect.objectContaining({ itemId, snapshot: expect.objectContaining({ body: "Use the authoritative persisted feedback." }) })],
+      }),
+    }));
+  });
+
+  it.each([
+    ["unmarked", { workflowStepId: "review-by-name", workflowStepName: "Review", source: "node", status: "failed", verdict: "REVISE", output: "lookalike" }],
+    ["pending", { workflowStepId: "pending", workflowStepName: "Pending", source: "node", status: "pending", reviewKind: "plan", output: "not terminal" }],
+    ["skipped", { workflowStepId: "skipped", workflowStepName: "Skipped", source: "node", status: "skipped", reviewKind: "code", output: "not current" }],
+    ["bypassed", { workflowStepId: "bypassed", workflowStepName: "Bypassed", source: "node", status: "failed", reviewKind: "code", output: "not current", bypassReason: "operator" }],
+    ["superseded", { workflowStepId: "superseded", workflowStepName: "Superseded", source: "node", status: "passed", reviewKind: "plan", output: "not current", supersededReason: "retry" }],
+    ["prior attempt only", { workflowStepId: "prior", workflowStepName: "Prior", source: "node", status: "skipped", priorAttempts: [{ workflowStepId: "prior", workflowStepName: "Prior", source: "node", status: "failed", reviewKind: "code", output: "history only" }] }],
+    ["blank", { workflowStepId: "blank", workflowStepName: "Blank", source: "optional-group", status: "passed", reviewKind: "code", output: "   ", notes: "" }],
+    ["template instance", { workflowStepId: "group::child", workflowStepName: "Template", source: "node", status: "passed", reviewKind: "code", output: "not addressable" }],
+  ])("rejects GET and canonical address for excluded marked custom %s results", async (_state, result) => {
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-013", workflowStepResults: [result], reviewState: undefined };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-013/review");
+    const refreshed = await REQUEST(buildApp(), "POST", "/api/tasks/FN-013/review/refresh");
+    expect(review.body.items).toEqual([]);
+    expect(refreshed.body.items).toEqual([]);
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-013/review/address", JSON.stringify({
+      selectedItems: [{ id: "workflow-review-forged", source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(address.status).toBe(400);
+  });
+
+  it("uses legacy activity review feedback when workflow results are absent or unsupported", async () => {
+    const taskWithUnsupportedWorkflowReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-010",
+      workflowStepResults: [{ workflowStepId: "custom-review", workflowStepName: "Custom Review", status: "passed", verdict: "REVISE", output: "not a current built-in review node" }],
+      log: [{ timestamp: fallbackTimestamp, action: "plan review Step 2: RETHINK - revise the approach" }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithUnsupportedWorkflowReview);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-010/review");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([expect.objectContaining({
+      itemId: fallbackItemId,
+      title: "plan review RETHINK",
+      body: "plan review Step 2: RETHINK - revise the approach",
+      verdict: "RETHINK",
+      reviewType: "plan",
+    })]);
+    expect(store.getAgentLogs).toHaveBeenCalledWith("FN-010");
+  });
+
+  it("resumes reviewer-agent in-review tasks using canonical log-derived review ids when reviewState is absent", async () => {
+    const taskWithoutPersistedItems = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      updatedAt: reviewerBlockTimestamp,
+      steps: [{ id: "s1", title: "Step 1", status: "done" }],
+      reviewState: undefined,
+    };
+    const taskAfterAddressing = {
+      ...taskWithoutPersistedItems,
+      reviewState: { source: "reviewer-agent", items: [], addressing: [{ itemId: reviewerBlockItemId, status: "queued", selectedAt: reviewerBlockTimestamp }] },
+    };
+    const movedTask = { ...taskAfterAddressing, column: "in-progress", status: null, sessionFile: null, assignedAgentId: null };
+    mockReviewerBlockLogs();
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(taskWithoutPersistedItems).mockResolvedValueOnce(taskAfterAddressing);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: reviewerBlockItemId, source: "reviewer-agent", summary: "code review REVISE", body: "Fix tests before merge." }] }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      reviewState: expect.objectContaining({
+        source: "reviewer-agent",
+        items: [expect.objectContaining({ id: reviewerBlockItemId, source: "reviewer-agent" })],
+        addressing: [expect.objectContaining({ itemId: reviewerBlockItemId, status: "queued" })],
+      }),
+    });
+    expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("Fix tests before merge."), "user");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(store.updateStep).toHaveBeenCalledWith("FN-001", 0, "pending");
+  });
+
+  it("addresses workflow review items by canonical id without trusting forged client feedback", async () => {
+    const taskWithWorkflowReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-009",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "passed",
+        verdict: "APPROVE_WITH_NOTES",
+        output: "Canonical advisory: preserve this text.",
+        completedAt: "2026-01-05T00:00:00.000Z",
+      }],
+      reviewState: undefined,
+    };
+    const movedTask = { ...taskWithWorkflowReview, column: "in-progress", status: null };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithWorkflowReview);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-009/review");
+    const itemId = review.body.items[0].itemId;
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-009/review/address", JSON.stringify({
+      selectedItems: [{
+        id: itemId,
+        source: "reviewer-agent",
+        summary: "FORGED summary",
+        body: "FORGED body",
+        author: "attacker",
+        filePath: "forged.ts",
+        lineNumber: 999,
+        url: "https://invalid.example/forged",
+      }],
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-009", {
+      reviewState: expect.objectContaining({
+        addressing: [expect.objectContaining({
+          itemId,
+          snapshot: expect.objectContaining({
+            summary: "Code Review APPROVE_WITH_NOTES",
+            body: "Canonical advisory: preserve this text.",
+            authorLogin: "reviewer-agent",
+            filePath: undefined,
+            lineNumber: undefined,
+            url: undefined,
+          }),
+        })],
+      }),
+    });
+    const steering = (store.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(steering).toContain("Canonical advisory: preserve this text.");
+    expect(steering).not.toContain("FORGED");
+    expect(steering).not.toContain("invalid.example");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-009", "in-progress", { preserveProgress: true });
+  });
+
+  it("accepts reviewer-agent fallback log review ids when no reviewer text block exists", async () => {
+    const taskWithFallbackLog = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-progress",
+      sessionFile: "active.session.json",
+      reviewState: { source: "reviewer-agent", items: [], addressing: [] },
+      log: [{ timestamp: fallbackTimestamp, action: "plan review Step 2: RETHINK - revise the approach" }],
+    };
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(taskWithFallbackLog).mockResolvedValueOnce(taskWithFallbackLog);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: fallbackItemId, source: "reviewer-agent", summary: "plan review RETHINK", body: "revise the approach" }] }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      reviewState: expect.objectContaining({
+        items: [expect.objectContaining({ id: fallbackItemId })],
+        addressing: [expect.objectContaining({ itemId: fallbackItemId })],
+      }),
+    });
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("for PR in-progress tasks validates canonical PR review items without moving task", async () => {
+    mockPrReviewDetails();
+    const taskWithPrReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-progress",
+      sessionFile: "active.session.json",
+      prInfo: { number: 42, url: "https://github.com/acme/repo/pull/42", head: "feature", base: "main" },
+      reviewState: {
+        source: "pull-request",
+        items: [{ id: "ri-1", body: "Fix tests", summary: "Fix tests", author: { login: "reviewer" }, createdAt: "2026-01-04T05:06:07.000Z", path: "src/a.ts", line: 4 }],
+        addressing: [],
+      },
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(taskWithPrReview).mockResolvedValueOnce(taskWithPrReview);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-1", source: "pr-review", summary: "Fix tests", body: "Fix tests", filePath: "src/a.ts", lineNumber: 4 }] }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty selection", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-001", reviewState: { source: "reviewer-agent", items: [], addressing: [] } });
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [] }), { "Content-Type": "application/json" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("selectedItems must be a non-empty array");
+  });
+
+  it("rejects unsupported review source", async () => {
+    mockReviewerBlockLogs();
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-001", updatedAt: reviewerBlockTimestamp, reviewState: { source: "reviewer-agent", items: [], addressing: [] } });
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: reviewerBlockItemId, source: "other", summary: "x", body: "x" }] }), { "Content-Type": "application/json" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Unsupported review source");
+  });
+
+  it("rejects source mismatch and unknown item ids against canonical review data", async () => {
+    mockPrReviewDetails();
+    const taskWithPrReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      prInfo: { number: 42, url: "https://github.com/acme/repo/pull/42", head: "feature", base: "main" },
+      reviewState: { source: "pull-request", items: [{ id: "ri-1", body: "x", summary: "x", author: { login: "reviewer" }, createdAt: "2026-01-04T05:06:07.000Z" }], addressing: [] },
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithPrReview);
+
+    const mismatch = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-1", source: "reviewer-agent", summary: "x", body: "x" }] }), { "Content-Type": "application/json" });
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.error).toContain("does not match task review mode");
+
+    const unknown = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-2", source: "pr-review", summary: "x", body: "x" }] }), { "Content-Type": "application/json" });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toContain("must reference existing review items");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /tasks/:id/pr/address-feedback", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({ updateStep: vi.fn() } as unknown as Partial<TaskStore>);
+  });
+
+  function buildApp(options?: Parameters<typeof createApiRoutes>[1]) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, options));
+    return app;
+  }
+
+  const linkedPr = {
+    number: 42,
+    url: "https://github.com/acme/repo/pull/42",
+    status: "open",
+    title: "Feature PR",
+    headBranch: "feature/fn-7185",
+    baseBranch: "main",
+    commentCount: 3,
+    lastReviewDecision: "CHANGES_REQUESTED" as const,
+  };
+
+  it("rejects tasks without a linked pull request", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-001", prInfo: undefined, prInfos: undefined });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/pr/address-feedback", "{}", { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("linked pull request");
+    expect(store.addSteeringComment).not.toHaveBeenCalled();
+  });
+
+  it("rejects linked PR tasks outside startable columns before recording steering", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "done",
+      prInfo: linkedPr,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/pr/address-feedback", "{}", { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-03-03:00 (red on main from my own #2723):
+    THE MESSAGE NOW NAMES THE BOARD'S RESOLVED COLUMNS. #2723 changed this 400 from
+    "PR feedback can only be addressed for in-review or in-progress tasks" to
+    "... for tasks in '<review>' or '<wip>'" — because telling an operator their card must be `in-review` on a
+    board with no such column sends them looking for something that was deleted.
+
+    The assertion checked the OLD prose. Asserting the resolved column NAMES instead of the sentence keeps the
+    case pinned to what matters (the refusal identifies the lanes the operator can actually use) and stops it
+    breaking again the next time the wording is improved.
+    */
+    expect(res.body.error).toContain("in-review");
+    expect(res.body.error).toContain("in-progress");
+    expect(store.addSteeringComment).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
+  it("moves in-review tasks to in-progress and records steering plus log context", async () => {
+    const inReviewTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review",
+      status: "awaiting-user-review",
+      error: "previous error",
+      sessionFile: "session.json",
+      assignedAgentId: null,
+      prInfo: linkedPr,
+      steps: [
+        { id: "s1", title: "Step 1", status: "done" },
+        { id: "s2", title: "Step 2", status: "pending" },
+      ],
+    };
+    const afterSteering = { ...inReviewTask, steeringComments: [{ id: "sc-1", body: "x", author: "user", createdAt: "2026-06-28T00:00:00.000Z" }] };
+    const movedTask = { ...afterSteering, column: "in-progress", status: null, error: null, sessionFile: null };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(inReviewTask).mockResolvedValueOnce(afterSteering);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/pr/address-feedback", "{}", { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.addSteeringComment).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("Run /ce-resolve-pr-feedback to resolve open PR review feedback"),
+      "user",
+    );
+    expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("PR #42 https://github.com/acme/repo/pull/42"), "user");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null, sessionFile: null });
+    expect(store.updateStep).toHaveBeenCalledWith("FN-001", 0, "pending");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Address PR feedback requested", expect.stringContaining("PR #42"));
+    expect(res.body.task.column).toBe("in-progress");
+  });
+
+  it("wakes the assigned agent for in-progress tasks with no active session", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-progress",
+      assignedAgentId: "agent-1",
+      sessionFile: null,
+      prInfo: linkedPr,
+    };
+    const executeHeartbeat = vi.fn().mockResolvedValue({ id: "run-1" });
+    const initSpy = vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+    const getAgentSpy = vi.spyOn(AgentStore.prototype, "getAgent").mockResolvedValue({
+      id: "agent-1",
+      name: "Executor",
+      role: "executor",
+      state: "idle",
+      runtimeConfig: { messageResponseMode: "immediate" },
+    } as any);
+    const activeRunSpy = vi.spyOn(AgentStore.prototype, "getActiveHeartbeatRun").mockResolvedValue(null);
+    (store.getFusionDir as ReturnType<typeof vi.fn>).mockReturnValue("/fake/root/.fusion");
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task).mockResolvedValueOnce(task);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+
+    try {
+      const res = await REQUEST(
+        buildApp({
+          heartbeatMonitor: {
+            rootDir: "/fake/root",
+            startRun: vi.fn(),
+            executeHeartbeat,
+            stopRun: vi.fn(),
+          },
+        }),
+        "POST",
+        "/api/tasks/FN-001/pr/address-feedback",
+        "{}",
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(executeHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: "agent-1",
+        source: "on_demand",
+        taskId: "FN-001",
+        triggerDetail: "pr-address-feedback",
+        triggeringCommentIds: ["sc-1"],
+        triggeringCommentType: "steering",
+      }));
+    } finally {
+      initSpy.mockRestore();
+      getAgentSpy.mockRestore();
+      activeRunSpy.mockRestore();
+    }
+  });
+
+  it("keeps in-progress tasks in place while adding the skill steering prompt", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-progress",
+      assignedAgentId: "agent-1",
+      sessionFile: "active.json",
+      prInfos: [linkedPr],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task).mockResolvedValueOnce(task);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/pr/address-feedback", "{}", { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("ce-resolve-pr-feedback"), "user");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Address PR feedback requested", expect.stringContaining("ce-resolve-pr-feedback"));
+  });
+});

@@ -1,0 +1,53 @@
+{
+  "name": "@fusion-plugin-examples/roadmap",
+  "version": "0.1.55-beta.8",
+  "type": "module",
+  "description": "Roadmap plugin package for Fusion",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./src/server/index.d.ts",
+      "source": "./src/server/index.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./dashboard-view": {
+      "types": "./src/dashboard-view.tsx",
+      "source": "./src/dashboard-view.tsx",
+      "import": "./dist/dashboard-view.js"
+    },
+    "./roadmap-suggestions": {
+      "types": "./src/roadmap-suggestions.d.ts",
+      "source": "./src/roadmap-suggestions.ts",
+      "import": "./dist/roadmap-suggestions.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.1.0",
+    "lucide-react": "^0.542.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/express": "^5.0.5",
+    "@types/node": "^25.5.2",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

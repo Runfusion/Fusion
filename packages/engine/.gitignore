@@ -1,0 +1,6 @@
+# Build outputs belong in dist/, not src/. Block accidental commits of tsc
+# emit alongside .ts sources.
+src/*.js
+src/*.js.map
+src/*.d.ts
+src/*.d.ts.map

@@ -1,0 +1,416 @@
+/* === FileMentionPopup === */
+.file-mention-popup {
+  position: absolute;
+  z-index: 250;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  min-width: calc(var(--space-xl) * 7 + var(--space-md));
+  max-width: calc(var(--space-xl) * 10);
+  max-height: calc(var(--space-xl) * 7 + var(--space-sm));
+  overflow-y: auto;
+  padding: var(--space-xs) 0;
+}
+
+.file-mention-popup-groups {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-mention-popup-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-mention-popup-group-header {
+  padding: var(--space-xs) var(--space-md);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  letter-spacing: calc(var(--space-xs) / 2);
+  text-transform: uppercase;
+}
+
+.file-mention-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-mention-popup-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.5);
+}
+
+.file-mention-popup-item:hover {
+  background: var(--card-hover);
+}
+
+.file-mention-popup-item--selected {
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.file-mention-popup-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  background: var(--card-hover);
+}
+
+.file-mention-popup-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.file-mention-popup-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: calc(var(--space-xs) / 2);
+}
+
+.file-mention-popup-item-name {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-mention-popup-item-path {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-mention-popup-task-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.file-mention-popup-task-id {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.file-mention-popup-column-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  line-height: 1;
+  text-transform: capitalize;
+}
+
+.file-mention-popup-column-badge--triage {
+  background: var(--status-triage-bg);
+  color: var(--triage);
+}
+
+.file-mention-popup-column-badge--todo {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+
+.file-mention-popup-column-badge--in-progress {
+  background: var(--status-in-progress-bg);
+  color: var(--in-progress);
+}
+
+.file-mention-popup-column-badge--in-review {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+
+.file-mention-popup-column-badge--done {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+
+.file-mention-popup-column-badge--archived {
+  background: var(--status-archived-bg);
+  color: var(--text-muted);
+}
+
+.file-mention-popup-empty {
+  padding: var(--space-lg) var(--space-md);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--space-md);
+}
+
+.file-mention-popup-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg) var(--space-md);
+}
+
+.file-mention-popup-loading .spinner {
+  display: inline-block;
+  width: var(--space-lg);
+  height: var(--space-lg);
+  border: calc(var(--space-xs) / 2) solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: file-mention-popup-spinner-spin var(--duration-slow) linear infinite;
+}
+
+@keyframes file-mention-popup-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .file-mention-popup {
+    /* Anchored to relative chat input wrappers; bottom: 100% tracks input height on mobile. */
+    top: auto !important;
+    bottom: calc(100% + var(--space-xs));
+    left: max(var(--space-md), env(safe-area-inset-left, 0px)) !important;
+    right: max(var(--space-md), env(safe-area-inset-right, 0px));
+    max-width: none;
+    width: auto;
+    max-height: calc(var(--space-xl) * 8 + var(--space-sm));
+  }
+
+  .file-mention-popup-item {
+    min-height: calc(var(--space-lg) + var(--space-xl) - var(--space-sm));
+    padding: calc(var(--space-sm) + (var(--space-xs) / 2)) var(--space-md);
+  }
+}
+
+/* Empty state */
+.chat-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  color: var(--text-muted);
+  padding: var(--space-xl);
+  text-align: center;
+}
+
+.chat-empty-state h2 {
+  font-size: calc(var(--space-xl) - var(--space-xs));
+  color: var(--text);
+  margin: 0;
+}
+
+.chat-empty-state-agent-select select {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
+  min-width: calc(var(--space-xl) * 8 + var(--space-sm));
+}
+
+/* New chat dialog */
+.chat-new-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.chat-new-dialog {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  width: calc(var(--space-xl) * 16 + var(--space-md));
+  max-width: calc(100vw - (var(--space-md) * 2));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.chat-new-dialog h3 {
+  margin: 0;
+  font-size: calc(var(--space-lg) + (var(--space-xs) / 2));
+}
+
+.chat-new-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.25));
+  color: var(--text-muted);
+}
+
+.chat-new-dialog input,
+.chat-new-dialog select {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
+}
+
+.chat-new-dialog-mode-toggle {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.chat-new-dialog-mode-btn {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.25));
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.chat-new-dialog-mode-btn:hover {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--todo) 40%, var(--border));
+}
+
+.chat-new-dialog-mode-btn--active {
+  background: color-mix(in srgb, var(--todo) 18%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--todo) 50%, var(--border));
+  font-weight: 500;
+}
+
+.chat-new-dialog-mode-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-new-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.chat-view-delete-dialog-copy {
+  margin: 0 0 var(--space-lg);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.5);
+}
+
+/* New Chat dialog model selector */
+.chat-new-dialog-model-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Agent list in new chat dialog */
+.chat-new-dialog-loading,
+.chat-new-dialog-empty {
+  padding: var(--space-lg);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
+}
+
+.chat-new-dialog-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: calc(var(--space-xl) * 12 + var(--space-md));
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs);
+}
+
+.chat-new-dialog-agent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.chat-new-dialog-agent-item:hover {
+  background: var(--surface-hover);
+}
+
+.chat-new-dialog-agent-item--selected {
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.chat-new-dialog-agent-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.chat-new-dialog-agent-role {
+  font-size: var(--space-md);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+/* Ensure dropdown portal renders above dialog */
+.chat-new-dialog {
+  overflow: visible;
+}
+
+@media (max-width: 768px) {
+  .quick-chat-fab {
+    right: var(--space-xs);
+    bottom: calc(var(--space-xs) + var(--executor-footer-height-mobile, var(--executor-footer-height, 0px)) + var(--mobile-nav-height, 44px) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ChatView New Chat + Delete dialogs should stay inset/compact on mobile.
+     styles.css intentionally stretches .chat-new-dialog-backdrop for full-screen
+     overlays, so scope the compact override to ChatView's modifier class only. */
+  .chat-view-dialog-backdrop {
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+    padding: var(--space-md);
+    padding-top: max(var(--space-md), env(safe-area-inset-top, 0px));
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+  }
+
+  .chat-view-dialog {
+    width: 100%;
+    max-width: min(100%, calc(var(--space-xl) * 16));
+    max-height: calc(100dvh - (var(--space-md) * 2) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+}

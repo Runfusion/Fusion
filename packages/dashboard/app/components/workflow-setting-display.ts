@@ -1,0 +1,220 @@
+import type { WorkflowSettingDefinition } from "../api";
+
+export type WorkflowSettingGroup = "models" | "review" | "oversight" | "steps" | "advanced";
+
+export interface WorkflowSettingDisplay {
+  group: WorkflowSettingGroup;
+  label: string;
+  description?: string;
+}
+
+/*
+FNXC:WorkflowSettings 2026-06-17-09:13:
+Title summarization is project/global-scoped and configured in Project Models, so this workflow display map intentionally omits titleSummarizer* keys. If a custom workflow declares a same-named key, render it as Advanced instead of implying Fusion will execute it as a workflow model lane.
+*/
+const DISPLAY: Record<string, WorkflowSettingDisplay> = {
+  planningProvider: {
+    group: "models",
+    label: "Plan/Triage provider",
+    description: "Provider used when planning or triaging tasks.",
+  },
+  planningModelId: {
+    group: "models",
+    label: "Plan/Triage model",
+    description: "Model used when planning or triaging tasks.",
+  },
+  planningFallbackProvider: {
+    group: "models",
+    label: "Plan/Triage fallback provider",
+  },
+  planningFallbackModelId: {
+    group: "models",
+    label: "Plan/Triage fallback model",
+  },
+  executionProvider: {
+    group: "models",
+    label: "Executor provider",
+    description: "Provider used by task implementation agents.",
+  },
+  executionModelId: {
+    group: "models",
+    label: "Executor model",
+    description: "Model used by task implementation agents.",
+  },
+  /*
+   * FNXC:SettingsModels 2026-07-16-00:00:
+   * FN-8169 requires the Executor fallback to remain in the Models group so the shared lane catalog can render it immediately after Executor. Without these existing key classifications, pair filtering suppresses the fallback row entirely.
+   */
+  executionFallbackProvider: {
+    group: "models",
+    label: "Executor fallback provider",
+  },
+  executionFallbackModelId: {
+    group: "models",
+    label: "Executor fallback model",
+  },
+  validatorProvider: {
+    group: "models",
+    label: "Reviewer provider",
+    description: "Provider used by review and validation agents.",
+  },
+  validatorModelId: {
+    group: "models",
+    label: "Reviewer model",
+    description: "Model used by review and validation agents.",
+  },
+  validatorFallbackProvider: {
+    group: "models",
+    label: "Reviewer fallback provider",
+  },
+  validatorFallbackModelId: {
+    group: "models",
+    label: "Reviewer fallback model",
+  },
+  requirePrApproval: {
+    group: "review",
+    label: "Require PR approval",
+  },
+  requirePlanApproval: {
+    group: "review",
+    label: "Require plan approval",
+  },
+  reviewHandoffPolicy: {
+    group: "review",
+    label: "Review handoff policy",
+  },
+  maxReviewerContextRetries: {
+    group: "review",
+    label: "Reviewer context retries",
+  },
+  maxReviewerFallbackRetries: {
+    group: "review",
+    label: "Reviewer fallback retries",
+  },
+  reflectionEnabled: {
+    group: "review",
+    label: "Reflection enabled",
+  },
+  planReviewMaxRevisions: {
+    group: "review",
+    label: "Plan Review revision cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-06-30-19:47:
+     * The Values tab must tell operators that an empty built-in workflow value is intentionally unbounded, not the old three-pass Plan Review default. Numeric values cap retries and `0` turns off automatic revision.
+     */
+    description: "Leave empty for unbounded automatic Plan Review/spec revision; set 0 to disable automatic revision.",
+  },
+  codeReviewMaxRevisions: {
+    group: "review",
+    label: "Code Review revision cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-06-30-19:47:
+     * Built-in workflow values are editable even when definitions are read-only, so this label is the operator-facing override for Code Review remediation without requiring a workflow duplicate. Empty values preserve each workflow's authored node cap.
+     */
+    description: "Leave empty to use this workflow's authored Code Review default; set 0 to disable automatic revision.",
+  },
+  planReviewReplanCap: {
+    group: "review",
+    label: "Plan Review replan cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-07-15-12:00:
+     * FN-7985 exposes triage's separate consecutive Plan Review REVISE ceiling here. An
+     * empty value intentionally delegates to the engine constant rather than duplicating
+     * its default in the editable workflow setting.
+     */
+    description: "Leave empty to use the built-in Plan Review replan default; set 0 to require approval after the first REVISE.",
+  },
+  workflowStepTimeoutMs: {
+    group: "steps",
+    label: "Step timeout",
+  },
+  workflowStepScopeEnforcement: {
+    group: "steps",
+    label: "Step scope enforcement",
+  },
+  planOnlyScopeLeakEnforcement: {
+    group: "steps",
+    label: "Plan-only scope leak enforcement",
+  },
+  workflowRevisionForkOnScopeMismatch: {
+    group: "steps",
+    label: "Fork revision on scope mismatch",
+  },
+  strictScopeEnforcement: {
+    group: "steps",
+    label: "Strict scope enforcement",
+  },
+  runStepsInNewSessions: {
+    group: "steps",
+    label: "Run steps in new sessions",
+  },
+  maxParallelSteps: {
+    group: "steps",
+    label: "Max parallel steps",
+  },
+  buildRetryCount: {
+    group: "steps",
+    label: "Build retry count",
+  },
+  verificationFixRetries: {
+    group: "steps",
+    label: "Verification fix retries",
+  },
+  maxPostReviewFixes: {
+    group: "steps",
+    label: "Post-review fix passes",
+  },
+  /*
+   * FNXC:PlannerOversight 2026-07-04-00:00:
+   * First-class Values-tab display entry for the workflow-native plannerOversightLevel
+   * setting (FN-7508). This is the project/global default surface: the default
+   * workflow's stored value here is the effective oversight level for every task
+   * under it that does not set a per-task override (FN-7515, TaskForm selector).
+   */
+  memoryConsolidationEnabled: {
+    group: "oversight",
+    label: "Memory consolidation enabled",
+    description: "Enable the Memory Keeper's deterministic knowledge-graph and recall consolidation tick.",
+  },
+  plannerOversightLevel: {
+    group: "oversight",
+    label: "Planner oversight level",
+    description:
+      "Off disables oversight; Observe watches only; Steer injects guidance or suggests revisions; Autonomous recovery enables bounded retry and targeted-fix recovery. Per-task overrides are set on individual tasks and win over this project/global default.",
+  },
+};
+
+export const WORKFLOW_SETTING_GROUP_ORDER: WorkflowSettingGroup[] = [
+  "models",
+  "review",
+  "oversight",
+  "steps",
+  "advanced",
+];
+
+export const WORKFLOW_SETTING_GROUP_LABELS: Record<WorkflowSettingGroup, string> = {
+  models: "Models",
+  review: "Review & Approval",
+  oversight: "Planner Oversight",
+  steps: "Step Execution",
+  advanced: "Advanced",
+};
+
+export function getWorkflowSettingDisplay(setting: WorkflowSettingDefinition): WorkflowSettingDisplay {
+  return DISPLAY[setting.id] ?? { group: "advanced", label: setting.name, description: setting.description };
+}
+
+export function groupWorkflowSettings(
+  settings: WorkflowSettingDefinition[],
+): Array<{ group: WorkflowSettingGroup; settings: WorkflowSettingDefinition[] }> {
+  const byGroup = new Map<WorkflowSettingGroup, WorkflowSettingDefinition[]>();
+  for (const setting of settings) {
+    const group = getWorkflowSettingDisplay(setting).group;
+    const list = byGroup.get(group) ?? [];
+    list.push(setting);
+    byGroup.set(group, list);
+  }
+  return WORKFLOW_SETTING_GROUP_ORDER
+    .map((group) => ({ group, settings: byGroup.get(group) ?? [] }))
+    .filter((entry) => entry.settings.length > 0);
+}

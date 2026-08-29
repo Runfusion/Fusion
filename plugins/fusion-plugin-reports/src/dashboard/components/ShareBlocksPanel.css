@@ -1,0 +1,29 @@
+.share-blocks-panel {
+  border-top: var(--btn-border-width) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-top: var(--space-md);
+}
+
+.share-blocks-panel__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.share-blocks-panel__content {
+  min-height: calc(var(--space-2xl) * 4);
+  resize: vertical;
+}
+
+.share-blocks-panel__locked {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .share-blocks-panel__tabs {
+    flex-direction: column;
+  }
+}

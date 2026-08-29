@@ -1,0 +1,466 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { AgentDetailView } from "../AgentDetailView";
+import { AgentGenerationModal } from "../AgentGenerationModal";
+import { AgentImportModal } from "../AgentImportModal";
+import { AgentListModal } from "../AgentListModal";
+import * as api from "../../api";
+
+/*
+FNXC:DashboardTests 2026-07-18-07:15:
+AgentDetailView/AgentListModal now call fetchSettings for runtime-config surfaces.
+Include it on the ../../api mock so vitest does not fail the suite on missing export.
+*/
+vi.mock("../../api", () => ({
+  fetchAgent: vi.fn(),
+  updateAgent: vi.fn(),
+  updateAgentState: vi.fn(),
+  deleteAgent: vi.fn(),
+  fetchAgentLogs: vi.fn(),
+  fetchAgentLogsWithMeta: vi.fn(),
+  fetchAgentRunLogs: vi.fn(),
+  fetchAgentChildren: vi.fn(),
+  fetchAgentRuns: vi.fn(),
+  fetchAgentRunDetail: vi.fn(),
+  startAgentRun: vi.fn(),
+  stopAgentRun: vi.fn(),
+  updateAgentInstructions: vi.fn(),
+  updateAgentSoul: vi.fn(),
+  updateAgentMemory: vi.fn(),
+  fetchAgentMemoryFiles: vi.fn(),
+  fetchAgentMemoryFile: vi.fn(),
+  saveAgentMemoryFile: vi.fn(),
+  fetchAgentTasks: vi.fn(),
+  fetchChainOfCommand: vi.fn(),
+  fetchWorkspaceFileContent: vi.fn(),
+  saveWorkspaceFileContent: vi.fn(),
+  fetchModels: vi.fn(),
+  fetchPluginRuntimes: vi.fn(() => Promise.resolve([])),
+  fetchAgents: vi.fn(),
+  createAgent: vi.fn(),
+  startAgentGeneration: vi.fn(),
+  generateAgentSpec: vi.fn(),
+  cancelAgentGeneration: vi.fn(),
+  fetchAgentBudgetStatus: vi.fn(),
+  resetAgentBudget: vi.fn(),
+  upgradeAgentHeartbeatProcedure: vi.fn(),
+  fetchCompanies: vi.fn(),
+  fetchSettings: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock("../AgentLogViewer", () => ({
+  AgentLogViewer: ({ entries }: { entries: Array<{ text: string }> }) => (
+    <div data-testid="agent-log-viewer">{entries.map((entry, index) => <span key={index}>{entry.text}</span>)}</div>
+  ),
+}));
+
+const mockFetchAgent = vi.mocked(api.fetchAgent);
+const mockUpdateAgent = vi.mocked(api.updateAgent);
+const mockUpdateAgentState = vi.mocked(api.updateAgentState);
+const mockDeleteAgent = vi.mocked(api.deleteAgent);
+const mockFetchAgentLogs = vi.mocked(api.fetchAgentLogs);
+const mockFetchAgentLogsWithMeta = vi.mocked(api.fetchAgentLogsWithMeta);
+const mockFetchAgentRunLogs = vi.mocked(api.fetchAgentRunLogs);
+const mockFetchAgentChildren = vi.mocked(api.fetchAgentChildren);
+const mockFetchAgentRuns = vi.mocked(api.fetchAgentRuns);
+const mockFetchAgentRunDetail = vi.mocked(api.fetchAgentRunDetail);
+const mockStartAgentRun = vi.mocked(api.startAgentRun);
+const mockStopAgentRun = vi.mocked(api.stopAgentRun);
+const mockUpdateAgentInstructions = vi.mocked(api.updateAgentInstructions);
+const mockUpdateAgentSoul = vi.mocked(api.updateAgentSoul);
+const mockUpdateAgentMemory = vi.mocked(api.updateAgentMemory);
+const mockFetchAgentMemoryFiles = vi.mocked(api.fetchAgentMemoryFiles);
+const mockFetchAgentMemoryFile = vi.mocked(api.fetchAgentMemoryFile);
+const mockSaveAgentMemoryFile = vi.mocked(api.saveAgentMemoryFile);
+const mockFetchAgentTasks = vi.mocked(api.fetchAgentTasks);
+const mockFetchChainOfCommand = vi.mocked(api.fetchChainOfCommand);
+const mockFetchWorkspaceFileContent = vi.mocked(api.fetchWorkspaceFileContent);
+const mockSaveWorkspaceFileContent = vi.mocked(api.saveWorkspaceFileContent);
+const mockFetchModels = vi.mocked(api.fetchModels);
+const mockFetchAgents = vi.mocked(api.fetchAgents);
+const mockCreateAgent = vi.mocked(api.createAgent);
+const mockStartAgentGeneration = vi.mocked(api.startAgentGeneration);
+const mockGenerateAgentSpec = vi.mocked(api.generateAgentSpec);
+const mockCancelAgentGeneration = vi.mocked(api.cancelAgentGeneration);
+const mockFetchAgentBudgetStatus = vi.mocked(api.fetchAgentBudgetStatus);
+const mockResetAgentBudget = vi.mocked(api.resetAgentBudget);
+const mockFetchCompanies = vi.mocked(api.fetchCompanies);
+
+const originalFetch = globalThis.fetch;
+
+import { loadAllAppCss } from "../../test/cssFixture";
+
+function readStyles(): string {
+  return loadAllAppCss();
+}
+
+describe("agent modal mobile CSS structure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    const mockAgent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "active",
+      taskId: "FN-001",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastHeartbeatAt: "2026-01-01T00:10:00.000Z",
+      metadata: {},
+      runtimeConfig: {},
+      heartbeatHistory: [],
+      activeRun: null,
+      completedRuns: [],
+    };
+
+    mockFetchAgent.mockResolvedValue(mockAgent as any);
+    mockUpdateAgent.mockResolvedValue(mockAgent as any);
+    mockUpdateAgentState.mockResolvedValue({ ...mockAgent, state: "paused" } as any);
+    mockDeleteAgent.mockResolvedValue(undefined as any);
+    mockFetchAgentLogs.mockResolvedValue([]);
+    mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: [], total: 0, hasMore: false } as any);
+    mockFetchAgentRunLogs.mockResolvedValue([]);
+    mockFetchAgentChildren.mockResolvedValue([]);
+    mockFetchAgentRuns.mockResolvedValue([]);
+    mockFetchAgentRunDetail.mockResolvedValue(undefined as any);
+    mockStartAgentRun.mockResolvedValue({ id: "run-001", status: "active" } as any);
+    mockStopAgentRun.mockResolvedValue({ ok: true });
+    mockUpdateAgentInstructions.mockResolvedValue(mockAgent as any);
+    mockUpdateAgentSoul.mockResolvedValue(mockAgent as any);
+    mockUpdateAgentMemory.mockResolvedValue(mockAgent as any);
+    mockFetchAgentMemoryFiles.mockResolvedValue({ files: [] } as any);
+    mockFetchAgentMemoryFile.mockResolvedValue({ content: "" } as any);
+    mockSaveAgentMemoryFile.mockResolvedValue({ success: true });
+    mockFetchAgentTasks.mockResolvedValue([]);
+    mockFetchChainOfCommand.mockResolvedValue([mockAgent] as any);
+    mockFetchWorkspaceFileContent.mockResolvedValue({ content: "" } as any);
+    mockSaveWorkspaceFileContent.mockResolvedValue({ success: true, mtime: "2026-01-01T00:00:00.000Z", size: 0 });
+    mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
+
+    mockFetchAgents.mockResolvedValue([
+      {
+        id: "agent-001",
+        name: "Test Agent",
+        role: "executor",
+        state: "idle",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      },
+    ] as any);
+    mockCreateAgent.mockResolvedValue({
+      id: "agent-002",
+      name: "New Agent",
+      role: "executor",
+      state: "idle",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      metadata: {},
+    } as any);
+
+    mockStartAgentGeneration.mockResolvedValue({
+      sessionId: "session-1",
+      roleDescription: "Build a reviewer agent",
+    });
+    mockGenerateAgentSpec.mockResolvedValue({
+      spec: {
+        title: "Accessibility Reviewer",
+        icon: "♿",
+        role: "reviewer",
+        description: "Reviews UI accessibility compliance",
+        systemPrompt: "You are an accessibility expert.",
+        thinkingLevel: "high",
+        maxTurns: 8,
+      },
+    });
+    mockCancelAgentGeneration.mockResolvedValue({ success: true });
+    mockFetchAgentBudgetStatus.mockResolvedValue({ agentId: "agent-001", currentUsage: 0, budgetLimit: null, usagePercent: null, thresholdPercent: null, isOverBudget: false, isOverThreshold: false, lastResetAt: null, nextResetAt: null });
+    mockResetAgentBudget.mockResolvedValue(undefined);
+    mockFetchCompanies.mockResolvedValue({ companies: [] });
+
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          companyName: "Acme AI",
+          agents: [{ name: "Reviewer", role: "reviewer", title: "Code Reviewer" }],
+          created: ["Reviewer"],
+          skipped: [],
+          errors: [],
+          dryRun: true,
+        }),
+      }) as Response,
+    );
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  describe("AgentDetailView", () => {
+    /*
+    FNXC:ModalTouchGeometry 2026-07-30-18:20:
+    THE SCRIM IS FLOATINGWINDOW'S NOW — this asserts the panel, not a local overlay.
+
+    This case demanded `.agent-detail-overlay`, which no component renders: FN-8619 migrated Agent
+    Detail onto `FloatingWindow`, whose `modal` host owns the scrim
+    (`.floating-window-overlay--modal`). `AgentDetailView.core.test.tsx:97` already asserts the
+    class is ABSENT, so the suite was asserting both sides of the same fact and one of them had to
+    be red.
+
+    The panel class is what this file is actually for: `.agent-detail-modal` is live and is what the
+    mobile `@media` block in AgentDetailView.css targets. The overlay half is dropped rather than
+    re-pointed at `.floating-window-overlay` — that would only re-assert FloatingWindow's own
+    contract, which FloatingWindow.test.tsx already covers, and would say nothing about Agent
+    Detail being mobile-targetable.
+    */
+    it("modal panel keeps its mobile-targetable class", async () => {
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".agent-detail-modal")).toBeTruthy();
+      });
+      // The retired local scrim must stay retired; its CSS is dead and tracked in #2915.
+      expect(document.querySelector(".agent-detail-overlay")).toBeNull();
+    });
+
+    it("tabs have scrollable container class", async () => {
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".agent-detail-tabs")).toBeTruthy();
+        expect(document.querySelectorAll(".agent-detail-tab").length).toBeGreaterThan(0);
+      });
+    });
+
+    it("footer has safe-area class", async () => {
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".agent-detail-footer")).toBeTruthy();
+      });
+    });
+
+    it("styles.css has mobile full-screen rules for agent-detail modal", () => {
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-detail-modal[\s\S]*?width:\s*100vw/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-detail-modal[\s\S]*?height:\s*100dvh/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-detail-modal[\s\S]*?border-radius:\s*0/);
+    });
+
+    it("shows stop control for active agents", async () => {
+      mockFetchAgent.mockResolvedValueOnce({
+        id: "agent-active",
+        name: "Active Agent",
+        role: "executor",
+        state: "active",
+        taskId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+        runtimeConfig: {},
+        heartbeatHistory: [],
+        activeRun: null,
+        completedRuns: [],
+      } as any);
+
+      render(<AgentDetailView agentId="agent-active" onClose={vi.fn()} addToast={vi.fn()} />);
+
+      const controls = await waitFor(() => {
+        const node = document.querySelector(".agent-detail-controls");
+        expect(node).toBeTruthy();
+        return node as HTMLElement;
+      });
+
+      expect(within(controls).getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    });
+
+    it("shows paused controls for paused agents", async () => {
+      mockFetchAgent.mockResolvedValueOnce({
+        id: "agent-paused",
+        name: "Paused Agent",
+        role: "executor",
+        state: "paused",
+        taskId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+        runtimeConfig: {},
+        heartbeatHistory: [],
+        activeRun: null,
+        completedRuns: [],
+      } as any);
+
+      render(<AgentDetailView agentId="agent-paused" onClose={vi.fn()} addToast={vi.fn()} />);
+
+      const controls = await waitFor(() => {
+        const node = document.querySelector(".agent-detail-controls");
+        expect(node).toBeTruthy();
+        return node as HTMLElement;
+      });
+
+      expect(within(controls).getByRole("button", { name: "Resume" })).toBeInTheDocument();
+      expect(within(controls).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+    });
+  });
+
+  describe("AgentGenerationModal", () => {
+    /*
+    FNXC:ModalTouchGeometry 2026-07-30-18:20:
+    `.agent-dialog-overlay` belongs to NewAgentDialog, NOT to this modal.
+
+    That class is still live — `NewAgentDialog.tsx:415` renders it — which is why the stale
+    expectation here looked plausible. But AgentGenerationModal was migrated onto `FloatingWindow`
+    with `modal` (AgentGenerationModal.tsx:162), so its scrim is
+    `.floating-window-overlay--modal` and it never emits the local overlay. Asserted explicitly
+    because "modal blocks the app beneath it" is a real contract worth pinning per FN-8619.
+    */
+    it("dialog renders inside the shared modal scrim", () => {
+      render(<AgentGenerationModal isOpen={true} onClose={vi.fn()} onGenerated={vi.fn()} />);
+
+      expect(document.querySelector(".floating-window-overlay--modal")).toBeTruthy();
+      expect(document.querySelector(".agent-dialog")).toBeTruthy();
+    });
+
+    it("does not hardcode inline width on dialog", () => {
+      render(<AgentGenerationModal isOpen={true} onClose={vi.fn()} onGenerated={vi.fn()} />);
+
+      const dialog = document.querySelector(".agent-dialog") as HTMLElement | null;
+      expect(dialog).toBeTruthy();
+      expect(dialog?.style.width).toBe("");
+      expect(dialog?.style.maxWidth).toBe("");
+    });
+
+    it("summary rows have targetable classes in preview", async () => {
+      render(<AgentGenerationModal isOpen={true} onClose={vi.fn()} onGenerated={vi.fn()} />);
+
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText("Role Description"), "Build an accessibility reviewer");
+      await user.click(screen.getByRole("button", { name: "Generate" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Use This" })).toBeInTheDocument();
+      });
+
+      expect(document.querySelectorAll(".agent-dialog-summary-row").length).toBeGreaterThan(0);
+    });
+
+    it("styles.css has mobile full-screen rules for agent-dialog", () => {
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog[\s\S]*?width:\s*100vw(?:\s*!important)?/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog[\s\S]*?border-radius:\s*0/);
+    });
+  });
+
+  describe("AgentImportModal", () => {
+    it("import dialog class exists", () => {
+      render(<AgentImportModal isOpen={true} onClose={vi.fn()} onImported={vi.fn()} />);
+
+      expect(document.querySelector(".agent-import-dialog")).toBeTruthy();
+    });
+
+    it("supports browse-first launch mode", () => {
+      render(<AgentImportModal isOpen={true} onClose={vi.fn()} onImported={vi.fn()} initialInputMethod="browse" />);
+
+      expect(screen.getByPlaceholderText("Search companies...")).toBeInTheDocument();
+    });
+
+    it("file upload area has targetable class", () => {
+      render(<AgentImportModal isOpen={true} onClose={vi.fn()} onImported={vi.fn()} />);
+
+      expect(document.querySelector(".agent-import-file-upload")).toBeTruthy();
+    });
+
+    it("styles.css has mobile rules for agent-import classes", () => {
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-import-file-upload[\s\S]*?flex-direction:\s*column/);
+    });
+  });
+
+  describe("AgentListModal", () => {
+    it("renders modal with modal--wide class", async () => {
+      render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(".modal--wide")).toBeTruthy();
+      });
+    });
+
+    it("styles.css contains 768px and 640px breakpoints for agent list modal", async () => {
+      render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeInTheDocument();
+      });
+
+      const styles = readStyles();
+      expect(styles).toContain("@media (max-width: 768px)");
+      expect(styles).toContain("@media (max-width: 640px)");
+    });
+
+    it("styles.css has board single-column at 640px", async () => {
+      render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeInTheDocument();
+      });
+
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.agent-list-modal \.agent-board\s*{[\s\S]*?grid-template-columns:\s*1fr/);
+    });
+
+    it("styles.css has controls stacking at 640px", async () => {
+      render(<AgentListModal isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeInTheDocument();
+      });
+
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.agent-list-modal \.agent-controls\s*{[\s\S]*?flex-direction:\s*column/);
+    });
+  });
+
+  describe("AgentErrorDetailsModal", () => {
+    it("mobile rules let modal fill the fullscreen container without double viewport clipping", () => {
+      const styles = readStyles();
+      const modalRuleMatch = styles.match(/@media[^{]*\(max-width:\s*768px\)[^{]*\{\s*\.agent-error-modal\s*\{[^}]+\}/);
+      expect(modalRuleMatch).toBeTruthy();
+      const modalRule = modalRuleMatch![0];
+
+      // height/max-height now subtract mobile-nav-height + safe-area-inset
+      // to avoid clipping under the bottom toolbar.
+      expect(modalRule).toMatch(/height:\s*calc\(100%/);
+      expect(modalRule).toMatch(/max-height:\s*calc\(100%/);
+      expect(modalRule).toContain("min-height: 0");
+      expect(modalRule).toContain("width: 100%");
+      expect(modalRule).toContain("max-width: 100%");
+    });
+
+    it("keeps the error log as the scrollable surface on mobile", () => {
+      const styles = readStyles();
+      const contentRuleMatch = styles.match(/\.agent-error-modal__content\s*\{[^}]+\}/);
+      expect(contentRuleMatch).toBeTruthy();
+      expect(contentRuleMatch![0]).toContain("overflow: hidden");
+
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-error-modal__error\s*\{[^}]*max-height:\s*none;[^}]*\}/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-error-modal__error\s*\{[^}]*-webkit-overflow-scrolling:\s*touch;[^}]*\}/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-error-modal__error\s*\{[^}]*overscroll-behavior:\s*contain;[^}]*\}/);
+    });
+  });
+
+  describe("Cross-cutting mobile CSS", () => {
+    it("agent-dialog mobile rules include safe-area inset handling", () => {
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog[\s\S]*?safe-area-inset-bottom/);
+    });
+
+    it("agent-dialog mobile rules tokenize field font-size for iOS zoom prevention", () => {
+      const styles = readStyles();
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-dialog-field[\s\S]*?font-size:\s*calc\(var\(--space-md\) \+ var\(--space-xs\)\)/);
+    });
+  });
+});

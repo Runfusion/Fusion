@@ -1,0 +1,261 @@
+/* === Session Notification Banner === */
+
+/*
+FNXC:SessionBanner 2026-06-25-00:00:
+FN-7020 requires the needs-input banner to stay visible when relevant without competing with primary dashboard content. Keep the desktop and mobile layouts compact by reducing padding, gaps, list heights, and text scale while preserving token-based touch targets.
+*/
+.session-notification-banner {
+  --session-notification-banner-max-height: min(52vh, calc(var(--space-2xl) * 10));
+  --session-notification-list-max-height: min(38vh, calc(var(--space-2xl) * 7));
+  --session-notification-touch-size: calc(var(--space-xl) + var(--space-xs));
+
+  box-sizing: border-box;
+  max-height: var(--session-notification-banner-max-height);
+  opacity: 1;
+  transition: opacity var(--transition-fast), max-height var(--transition-fast);
+  animation: session-notification-banner-enter var(--transition-fast);
+}
+
+.session-notification-banner > .banner__copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+@keyframes session-notification-banner-enter {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: var(--session-notification-banner-max-height);
+  }
+}
+
+.session-notification-banner__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.session-notification-banner__headline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.session-notification-banner__headline svg {
+  color: var(--triage);
+  flex-shrink: 0;
+}
+
+.session-notification-banner__dismiss-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: var(--session-notification-touch-size);
+  border: var(--btn-border-width) solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-notification-banner__dismiss-all:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--border);
+}
+
+.session-notification-banner__dismiss-all:focus-visible,
+.session-notification-banner__resume:focus-visible,
+.session-notification-banner__dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.session-notification-banner__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  overflow-y: auto;
+  max-height: var(--session-notification-list-max-height);
+}
+
+.session-notification-banner__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--triage) 8%, var(--surface));
+}
+
+.session-notification-banner__item--error {
+  border-color: color-mix(in srgb, var(--color-error) 35%, var(--border));
+  background: var(--status-error-bg, color-mix(in srgb, var(--color-error) 12%, var(--surface)));
+}
+
+.session-notification-banner__item-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.session-notification-banner__type-icon {
+  color: var(--triage);
+  flex-shrink: 0;
+}
+
+.session-notification-banner__type-icon--error {
+  color: var(--color-error);
+}
+
+.session-notification-banner__text {
+  min-width: 0;
+}
+
+.session-notification-banner__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-notification-banner__meta {
+  margin: var(--space-xs) 0 0;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.session-notification-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.session-notification-banner__resume {
+  min-height: var(--session-notification-touch-size);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--triage) 60%, var(--border));
+  background: transparent;
+  color: var(--triage);
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-notification-banner__resume:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--triage) 14%, transparent);
+  border-color: var(--triage);
+}
+
+.session-notification-banner__resume:disabled,
+.session-notification-banner__resume--disabled {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  cursor: not-allowed;
+}
+
+.session-notification-banner__item--error .session-notification-banner__resume {
+  border-color: color-mix(in srgb, var(--color-error) 60%, var(--border));
+  color: var(--color-error);
+}
+
+.session-notification-banner__item--error .session-notification-banner__resume:disabled,
+.session-notification-banner__item--error .session-notification-banner__resume--disabled {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+.session-notification-banner__item--error .session-notification-banner__resume:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  border-color: var(--color-error);
+}
+
+.session-notification-banner__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--session-notification-touch-size);
+  height: var(--session-notification-touch-size);
+  border-radius: var(--radius-sm);
+  border: var(--btn-border-width) solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-notification-banner__dismiss:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--border);
+}
+
+@media (max-width: 768px) {
+  .session-notification-banner {
+    --session-notification-banner-max-height: min(46vh, calc(var(--space-2xl) * 9));
+    --session-notification-list-max-height: min(32vh, calc(var(--space-2xl) * 6));
+    --session-notification-touch-size: calc(var(--space-xl) + var(--space-md));
+
+    padding: var(--space-xs) var(--space-sm);
+    gap: var(--space-xs);
+  }
+
+  .session-notification-banner__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .session-notification-banner__item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+  }
+
+  .session-notification-banner__item-main {
+    width: 100%;
+  }
+
+  .session-notification-banner__title {
+    max-width: 100%;
+  }
+
+  .session-notification-banner__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+
+/*
+FNXC:SessionBanner 2026-07-16-20:55:
+FN-8229 uses the established banner icon treatment for non-planning work that
+is still generating after the footer pill is removed. Keep progress semantic
+rather than introducing a separate component or hard-coded status color.
+*/
+.session-notification-banner__type-icon--progress {
+  color: var(--color-accent);
+}

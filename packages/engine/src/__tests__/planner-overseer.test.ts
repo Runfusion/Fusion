@@ -1,0 +1,680 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  OVERSEER_WATCHED_STAGES,
+  PlannerOverseerMonitor,
+  resolveWatchedStage,
+  type OverseerTaskRef,
+} from "../overseer/planner-overseer.js";
+
+function taskFixture(overrides: Partial<OverseerTaskRef> = {}): OverseerTaskRef {
+  return {
+    id: "FN-1000",
+    column: "in-progress",
+    prInfo: undefined,
+    reviewState: undefined,
+    paused: false,
+    pausedReason: undefined,
+    workflowTransitionNotification: undefined,
+    ...overrides,
+  } as OverseerTaskRef;
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+
+THE INVARIANT: the watched stage comes from the column's ROLE, not from its id.
+
+Keyed on the id, `resolveWatchedStage` returned null for every card on a renamed board — and
+`observeTask` returns early on a null stage, so no observation was recorded, no
+`overseer:intervention` was emitted, and `PlannerRecoveryController` had nothing to steer, retry or
+targeted-fix. The whole oversight loop went inert and said nothing about it, which is why this is
+worth a parameter rather than a fallback.
+
+THE REVIEW TEST IS THE THREE-TRAIT UNION. `isReviewColumnRole` checks only `mergeBlocker ||
+humanReview`, so a board whose review lane carries `merge` (mergeOrchestration) — the default's own
+shape — would classify as not-in-review and be skipped. That case is asserted below precisely because
+reaching for the obvious helper would have reintroduced the bug this change removes.
+
+REVERT PROOF, measured: drop the `columnFlags` branch and the three renamed-lane cases fail with
+`expected null to be "executor" / "merger"`.
+*/
+describe("resolveWatchedStage keys on the column role", () => {
+  const wip = { countsTowardWip: true } as never;
+  const mergeLane = { mergeOrchestration: true } as never;
+  const humanReviewLane = { humanReview: true } as never;
+
+  it("classifies a RENAMED wip lane as the executor stage", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "building" }), wip)).toBe("executor");
+  });
+
+  it("classifies a review lane that carries only mergeOrchestration", () => {
+    // The union matters: `isReviewColumnRole` would answer false here and the card would be skipped.
+    expect(resolveWatchedStage(taskFixture({ column: "signoff" }), mergeLane)).toBe("merger");
+  });
+
+  it("classifies a review lane that carries humanReview", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "waiting" }), humanReviewLane)).toBe("merger");
+  });
+
+  it("still returns null for a lane carrying neither role", () => {
+    // The gate must still gate — watching every column would be its own defect.
+    expect(resolveWatchedStage(taskFixture({ column: "shipped" }), { complete: true } as never)).toBeNull();
+  });
+
+  it("falls back to the legacy ids when no flags are supplied", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "in-progress" }))).toBe("executor");
+    expect(resolveWatchedStage(taskFixture({ column: "todo" }))).toBeNull();
+  });
+});
+
+describe("resolveWatchedStage", () => {
+  it("resolves an active in-progress task to executor", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "in-progress" }))).toBe("executor");
+  });
+
+  it("resolves in-review with a pending reviewState to reviewer", () => {
+    expect(
+      resolveWatchedStage(
+        taskFixture({
+          column: "in-review",
+          reviewState: {
+            source: "reviewer-agent",
+            items: [],
+            addressing: [],
+          } as unknown as OverseerTaskRef["reviewState"],
+        }),
+      ),
+    ).toBe("reviewer");
+  });
+
+  it("resolves in-review with no reviewState/PR/gate marker to merger (awaiting integration)", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "in-review" }))).toBe("merger");
+  });
+
+  it("resolves in-review with an explicit manual-merge-hold marker to merger", () => {
+    expect(
+      resolveWatchedStage(
+        taskFixture({
+          column: "in-review",
+          reviewState: {
+            source: "reviewer-agent",
+            items: [],
+            addressing: [],
+          } as unknown as OverseerTaskRef["reviewState"],
+          workflowTransitionNotification: {
+            kind: "manual-merge-hold",
+            column: "in-review",
+            transitionId: "t-1",
+          } as unknown as OverseerTaskRef["workflowTransitionNotification"],
+        }),
+      ),
+    ).toBe("merger");
+  });
+
+  it("resolves in-review with an active (open) PR to pull-request", () => {
+    expect(
+      resolveWatchedStage(
+        taskFixture({
+          column: "in-review",
+          prInfo: {
+            url: "https://github.com/o/r/pull/1",
+            number: 1,
+            status: "open",
+            title: "t",
+            headBranch: "h",
+            baseBranch: "b",
+            commentCount: 0,
+          } as unknown as OverseerTaskRef["prInfo"],
+        }),
+      ),
+    ).toBe("pull-request");
+  });
+
+  it("resolves a paused workflow-cli-approval gate to workflow-gate regardless of column", () => {
+    expect(
+      resolveWatchedStage(
+        taskFixture({
+          column: "in-progress",
+          paused: true,
+          pausedReason: "workflow-cli-approval:build: npm run build",
+        }),
+      ),
+    ).toBe("workflow-gate");
+  });
+
+  it("resolves a paused workflow-input gate to workflow-gate", () => {
+    expect(
+      resolveWatchedStage(
+        taskFixture({
+          column: "in-review",
+          paused: true,
+          pausedReason: "workflow-input:ask: What environment?",
+        }),
+      ),
+    ).toBe("workflow-gate");
+  });
+
+  it("returns null for non-monitorable columns (todo/done/archived/triage)", () => {
+    for (const column of ["todo", "done", "archived", "triage"] as const) {
+      expect(resolveWatchedStage(taskFixture({ column }))).toBeNull();
+    }
+  });
+
+  it("deterministic precedence: workflow-gate wins over an active PR and reviewState in a compound state", () => {
+    const compound = taskFixture({
+      column: "in-review",
+      paused: true,
+      pausedReason: "workflow-cli-approval:deploy: run deploy",
+      prInfo: {
+        url: "https://github.com/o/r/pull/2",
+        number: 2,
+        status: "open",
+        title: "t",
+        headBranch: "h",
+        baseBranch: "b",
+        commentCount: 0,
+      } as unknown as OverseerTaskRef["prInfo"],
+      reviewState: {
+        source: "reviewer-agent",
+        items: [],
+        addressing: [],
+      } as unknown as OverseerTaskRef["reviewState"],
+    });
+    expect(resolveWatchedStage(compound)).toBe("workflow-gate");
+  });
+
+  it("deterministic precedence: an active PR wins over reviewState when no gate is paused", () => {
+    const compound = taskFixture({
+      column: "in-review",
+      prInfo: {
+        url: "https://github.com/o/r/pull/3",
+        number: 3,
+        status: "open",
+        title: "t",
+        headBranch: "h",
+        baseBranch: "b",
+        commentCount: 0,
+      } as unknown as OverseerTaskRef["prInfo"],
+      reviewState: {
+        source: "reviewer-agent",
+        items: [],
+        addressing: [],
+      } as unknown as OverseerTaskRef["reviewState"],
+    });
+    expect(resolveWatchedStage(compound)).toBe("pull-request");
+  });
+
+  it("never throws on a malformed/partial task (missing column/optional fields)", () => {
+    expect(resolveWatchedStage({} as OverseerTaskRef)).toBeNull();
+    expect(resolveWatchedStage(null)).toBeNull();
+    expect(resolveWatchedStage(undefined)).toBeNull();
+    expect(resolveWatchedStage({ id: "FN-1" } as OverseerTaskRef)).toBeNull();
+  });
+});
+
+describe("PlannerOverseerMonitor.observeTask", () => {
+  const stageFixtures: Array<{ stage: (typeof OVERSEER_WATCHED_STAGES)[number]; task: OverseerTaskRef }> = [
+    { stage: "executor", task: taskFixture({ column: "in-progress" }) },
+    {
+      stage: "reviewer",
+      task: taskFixture({
+        column: "in-review",
+        reviewState: { source: "reviewer-agent", items: [], addressing: [] } as unknown as OverseerTaskRef["reviewState"],
+      }),
+    },
+    { stage: "merger", task: taskFixture({ column: "in-review" }) },
+    {
+      stage: "pull-request",
+      task: taskFixture({
+        column: "in-review",
+        prInfo: {
+          url: "https://github.com/o/r/pull/9",
+          number: 9,
+          status: "open",
+          title: "t",
+          headBranch: "h",
+          baseBranch: "b",
+          commentCount: 0,
+        } as unknown as OverseerTaskRef["prInfo"],
+      }),
+    },
+    {
+      stage: "workflow-gate",
+      task: taskFixture({ column: "in-progress", paused: true, pausedReason: "workflow-input:ask: env?" }),
+    },
+  ];
+
+  it.each(stageFixtures)(
+    "records exactly one observation for the $stage stage when level is not off",
+    async ({ stage, task }) => {
+      for (const level of ["observe", "steer", "autonomous"] as const) {
+        const monitor = new PlannerOverseerMonitor();
+        const observation = await monitor.observeTask(task, level);
+        expect(observation).not.toBeNull();
+        expect(observation?.stage).toBe(stage);
+        expect(observation?.oversightLevel).toBe(level);
+        expect(observation?.taskId).toBe(task.id);
+        expect(observation?.sources.length).toBeGreaterThan(0);
+        expect(monitor.getObservations(task.id)).toHaveLength(1);
+      }
+    },
+  );
+
+  it.each(stageFixtures)("records nothing and returns null for the $stage stage when level is off", async ({ task }) => {
+    const monitor = new PlannerOverseerMonitor();
+    const observation = await monitor.observeTask(task, "off");
+    expect(observation).toBeNull();
+    expect(monitor.getObservations(task.id)).toHaveLength(0);
+  });
+
+  it("returns null and records nothing when no stage is monitorable", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const observation = await monitor.observeTask(taskFixture({ column: "todo" }), "autonomous");
+    expect(observation).toBeNull();
+    expect(monitor.getObservations("FN-1000")).toHaveLength(0);
+  });
+
+  it("invokes the onObservation callback when provided", async () => {
+    const onObservation = vi.fn().mockResolvedValue(undefined);
+    const monitor = new PlannerOverseerMonitor({ onObservation });
+    const task = taskFixture({ column: "in-progress" });
+    const observation = await monitor.observeTask(task, "observe");
+    expect(onObservation).toHaveBeenCalledTimes(1);
+    expect(onObservation).toHaveBeenCalledWith(observation);
+  });
+
+  it("still resolves when the onObservation callback throws (best-effort)", async () => {
+    const onObservation = vi.fn().mockRejectedValue(new Error("callback exploded"));
+    const monitor = new PlannerOverseerMonitor({ onObservation });
+    const task = taskFixture({ column: "in-progress" });
+    await expect(monitor.observeTask(task, "observe")).resolves.not.toBeNull();
+    expect(monitor.getObservations(task.id)).toHaveLength(1);
+  });
+
+  it("records into the store best-effort and swallows logEntry failures", async () => {
+    const store = { logEntry: vi.fn().mockRejectedValue(new Error("log failed")) };
+    const monitor = new PlannerOverseerMonitor({ store });
+    const task = taskFixture({ column: "in-progress" });
+    await expect(monitor.observeTask(task, "observe")).resolves.not.toBeNull();
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+  });
+
+  // FN-7577: an unchanged heartbeat (same stage/signal/reason) must not re-write
+  // the activity feed on every poll tick — only a CHANGE re-logs; clear() resets
+  // the dedup so a re-run re-logs its first observation.
+  it("dedupes consecutive identical feed entries, re-logs on signal change, resets on clear", async () => {
+    const store = { logEntry: vi.fn().mockResolvedValue(undefined) };
+    const monitor = new PlannerOverseerMonitor({ store });
+    const task = taskFixture({ column: "in-progress" });
+
+    // Three identical healthy ticks → a single feed entry.
+    await monitor.observeTask(task, "observe");
+    await monitor.observeTask(task, "observe");
+    await monitor.observeTask(task, "observe");
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+
+    // Signal flips (executor paused → "blocked") → re-logs once.
+    const paused = { ...task, paused: true, pausedReason: "gate" };
+    await monitor.observeTask(paused, "observe");
+    await monitor.observeTask(paused, "observe");
+    expect(store.logEntry).toHaveBeenCalledTimes(2);
+
+    // clear() drops the dedup key so the next identical observation re-logs.
+    monitor.clear(task.id);
+    await monitor.observeTask(paused, "observe");
+    expect(store.logEntry).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds the per-task ring buffer to the configured cap, keeping the most recent N", async () => {
+    const monitor = new PlannerOverseerMonitor({ maxObservationsPerTask: 3 });
+    const task = taskFixture({ column: "in-progress" });
+    const observations = [];
+    for (let i = 0; i < 5; i++) {
+      const obs = await monitor.observeTask(task, "observe");
+      observations.push(obs);
+    }
+    const retained = monitor.getObservations(task.id);
+    expect(retained).toHaveLength(3);
+    // The three retained entries should be the last three recorded (index 2,3,4).
+    expect(retained.map((o) => o.observedAt)).toEqual(
+      [observations[2], observations[3], observations[4]].map((o) => o!.observedAt),
+    );
+  });
+
+  it("defaults the ring buffer cap to 20 entries per task", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({ column: "in-progress" });
+    for (let i = 0; i < 25; i++) {
+      await monitor.observeTask(task, "observe");
+    }
+    expect(monitor.getObservations(task.id)).toHaveLength(20);
+  });
+
+  it("clear() removes retained observations for a task", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({ column: "in-progress" });
+    await monitor.observeTask(task, "observe");
+    expect(monitor.getObservations(task.id)).toHaveLength(1);
+    monitor.clear(task.id);
+    expect(monitor.getObservations(task.id)).toHaveLength(0);
+    expect(monitor.getObservedTaskIds()).not.toContain(task.id);
+  });
+
+  it("never throws on a malformed/partial task passed to observeTask (degrades to no-op)", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    await expect(monitor.observeTask({} as OverseerTaskRef, "autonomous")).resolves.toBeNull();
+    await expect(monitor.observeTask(undefined as unknown as OverseerTaskRef, "autonomous")).resolves.toBeNull();
+  });
+});
+
+// FN-7743: executor-stage stall detection. FN-7732 was a non-paused in-progress
+// task that sat stuck for hours while the overseer always reported
+// `signal: "progressing"` because there was no staleness check. These tests lock
+// the invariant across the enumerated data states: stale (stuck), recent
+// (progressing, unchanged), paused (blocked, unchanged), and missing/malformed
+// timestamp (fail-safe progressing).
+describe("PlannerOverseerMonitor.observeTask — FN-7743 executor stall detection", () => {
+  const THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2h, mirrors the declared setting default
+  const NOW = Date.UTC(2026, 6, 9, 12, 0, 0);
+
+  function isoMsAgo(ms: number): string {
+    return new Date(NOW - ms).toISOString();
+  }
+
+  it("reports stuck for a non-paused in-progress task whose last activity is older than the threshold", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      updatedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000), // 3h idle
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("stuck");
+    expect(observation?.stage).toBe("executor");
+    expect(observation?.reason).toMatch(/inactive for over \d+h/);
+  });
+
+  it("prefers columnMovedAt over updatedAt when both are present", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      // updatedAt looks fresh, but columnMovedAt (the more specific signal) is stale.
+      updatedAt: isoMsAgo(1000),
+      columnMovedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("stuck");
+  });
+
+  it("remains progressing for a non-paused in-progress task with recent activity", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      updatedAt: isoMsAgo(5 * 60 * 1000), // 5 minutes ago — well under threshold
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("remains progressing at exactly the threshold boundary minus one ms, and flips to stuck at/after the boundary", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const justUnder = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(THRESHOLD_MS - 1) });
+    const atThreshold = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(THRESHOLD_MS) });
+
+    const obsUnder = await monitor.observeTask(justUnder, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+    expect(obsUnder?.signal).toBe("progressing");
+
+    const obsAt = await monitor.observeTask(atThreshold, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+    expect(obsAt?.signal).toBe("stuck");
+  });
+
+  it("still reports blocked (unchanged) for a paused in-progress task even with a stale timestamp", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      paused: true,
+      pausedReason: "some-engine-park-reason",
+      updatedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("blocked");
+  });
+
+  it("fails safe to progressing when both updatedAt and columnMovedAt are missing", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({ column: "in-progress", updatedAt: undefined, columnMovedAt: undefined });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("fails safe to progressing when the timestamp is malformed/unparseable", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({ column: "in-progress", updatedAt: "not-a-real-date" });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("defaults executorStuckAfterMs to the declared 2h default when options are omitted", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const staleTask = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(3 * 60 * 60 * 1000) });
+    const freshTask = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(60 * 1000) });
+
+    const staleObs = await monitor.observeTask(staleTask, "autonomous", { now: () => NOW });
+    const freshObs = await monitor.observeTask(freshTask, "autonomous", { now: () => NOW });
+
+    expect(staleObs?.signal).toBe("stuck");
+    expect(freshObs?.signal).toBe("progressing");
+  });
+
+  // FN-7577: the dedup key must stay stable within an hour bucket so an ever-
+  // changing millisecond-precise duration in the reason does not defeat dedup.
+  it("keeps the stuck reason stable within the same inactivity-hour bucket for feed dedup", async () => {
+    const store = { logEntry: vi.fn().mockResolvedValue(undefined) };
+    const monitor = new PlannerOverseerMonitor({ store });
+    const task = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(THRESHOLD_MS + 5 * 60 * 1000) });
+
+    // Two polls a few seconds apart within the same inactivity-hour bucket.
+    await monitor.observeTask(task, "observe", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+    await monitor.observeTask(task, "observe", { now: () => NOW + 5000, executorStuckAfterMs: THRESHOLD_MS });
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+
+    // An hour-boundary crossing is a real state change — re-logs once.
+    await monitor.observeTask(task, "observe", { now: () => NOW + 60 * 60 * 1000, executorStuckAfterMs: THRESHOLD_MS });
+    expect(store.logEntry).toHaveBeenCalledTimes(2);
+  });
+});
+
+// FNXC:PlannerOversight 2026-07-15-17:05:
+// FN-7965: a task parked `status: "failed"` at the executor stage reported
+// `progressing` ("Task is actively executing in-progress work") because the
+// derivation never read `status` — so the overseer treated a dead task as healthy
+// and only reacted once the FN-7743 stall proxy fired hours later. `failed` had
+// been derived for the merger/pull-request stages only. These tests lock the
+// invariant across the enumerated surfaces: failed (failed), failed-but-paused
+// (blocked — a human owns it), healthy (progressing, unchanged), and the
+// terminal columns that must stay unmonitored.
+describe("PlannerOverseerMonitor.observeTask — FN-7965 executor failure detection", () => {
+  it("reports failed for a non-paused in-progress task parked status=failed", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      columnMovedAt: new Date().toISOString(),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous");
+
+    // Must NOT wait for the 2h stall proxy: the failure is visible immediately.
+    expect(observation?.stage).toBe("executor");
+    expect(observation?.signal).toBe("failed");
+  });
+
+  it("keeps paused precedence: a paused failed task is blocked, not failed", async () => {
+    // A human owns an operator/user-paused row — it must never be routed into
+    // autonomous bounded recovery just because status is failed.
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      status: "failed",
+      paused: true,
+      pausedReason: "error-unrecoverable",
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous");
+
+    expect(observation?.signal).toBe("blocked");
+  });
+
+  it.each([undefined, null, "queued"])("still reports progressing for a healthy in-progress task (status=%s)", async (status) => {
+    // Negative control: FN-7577 — a healthy card must never flip to a problem
+    // signal, or every in-progress task shows the "recovering" badge.
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      status: status as never,
+      updatedAt: new Date().toISOString(),
+      columnMovedAt: new Date().toISOString(),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous");
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("keeps the failed reason constant so the FN-7577 feed dedup holds", async () => {
+    // The reason must not interpolate task.error/status, or an observation would
+    // be re-emitted every poll for the same unchanged failure.
+    const monitor = new PlannerOverseerMonitor();
+    const a = await monitor.observeTask(taskFixture({ id: "FN-1000", status: "failed" }), "autonomous");
+    const b = await monitor.observeTask(taskFixture({ id: "FN-1000", status: "failed" }), "autonomous");
+
+    expect(a?.reason).toBe(b?.reason);
+    expect(a?.reason).not.toMatch(/failed:|error/i);
+  });
+});
+
+/*
+FNXC:WorkflowReviewGates 2026-07-26-16:45:
+Before the pre-merge review gates moved into `in-review`, a hung Code Review sat in `in-progress`
+and the FN-7743 executor stall check caught it. After the move it maps to the `reviewer` stage,
+which returned `progressing` unconditionally with no time-based check — so a gate that never posted
+a verdict produced no stall signal at all, however long it hung.
+
+These cases pin the replacement, and specifically pin the thing that makes it safe: the anchor is
+the GATE's own `startedAt` lease, not `columnMovedAt`. Anchoring on the column would fire during a
+legitimate human merge-wait, which is exactly the false positive that would make operators distrust
+the signal — so "settled gates + old card = progressing" is asserted alongside the positive case.
+*/
+describe("PlannerOverseerMonitor.observeTask — review-gate stall detection (in-review gates)", () => {
+  const THRESHOLD_MS = 2 * 60 * 60 * 1000;
+  const NOW = Date.UTC(2026, 6, 26, 12, 0, 0);
+  const isoMsAgo = (ms: number) => new Date(NOW - ms).toISOString();
+
+  const gate = (overrides: Record<string, unknown>) => ({
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    phase: "pre-merge",
+    ...overrides,
+  });
+
+  it("reports stuck when a pre-merge gate has been pending past the threshold", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      columnMovedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000),
+      workflowStepResults: [gate({ status: "pending", startedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    // A plain in-review card with no reviewState resolves to the `merger` stage,
+    // not `reviewer` — which is exactly why the check lives on both in-review stages.
+    expect(observation?.signal).toBe("stuck");
+    expect(observation?.stage).toBe("merger");
+    expect(observation?.reason).toMatch(/Review gate running for over \d+h/);
+  });
+
+  it("also reports stuck on the reviewer stage when reviewState is present", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      reviewState: { items: [], summary: {} },
+      workflowStepResults: [gate({ status: "pending", startedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.stage).toBe("reviewer");
+    expect(observation?.signal).toBe("stuck");
+    expect(observation?.reason).toMatch(/Review gate running for over \d+h/);
+  });
+
+  it("stays progressing while the gate is pending but still within the threshold", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      workflowStepResults: [gate({ status: "pending", startedAt: isoMsAgo(60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("stays progressing for a long human merge-wait once the gates have settled", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      // The card has sat in review for days, but no gate is running — a human owes a merge.
+      columnMovedAt: isoMsAgo(72 * 60 * 60 * 1000),
+      updatedAt: isoMsAgo(72 * 60 * 60 * 1000),
+      workflowStepResults: [gate({ status: "passed", completedAt: isoMsAgo(71 * 60 * 60 * 1000) })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("degrades to progressing when the pending gate has no usable startedAt", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-review",
+      workflowStepResults: [gate({ status: "pending", startedAt: "not-a-date" })],
+    } as never);
+
+    const observation = await monitor.observeTask(task, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+});

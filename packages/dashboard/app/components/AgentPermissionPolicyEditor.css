@@ -1,0 +1,174 @@
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+The permission-policy editor nests native fields and rule actions inside Agent Settings. Keep rows, summaries, controls, disabled states, and keyboard focus on shared theme tokens so policy behavior remains unchanged while controls are legible in every theme.
+*/
+.agent-policy-editor {
+  padding: var(--space-lg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.agent-policy-editor .input,
+.agent-policy-editor .select {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.agent-policy-editor .input:focus-visible,
+.agent-policy-editor .select:focus-visible,
+.agent-policy-editor .btn:focus-visible,
+.agent-policy-exempt summary:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-policy-editor .input:disabled,
+.agent-policy-editor .select:disabled,
+.agent-policy-editor .btn:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.agent-policy-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agent-policy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem);
+  gap: var(--space-md);
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-policy-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.agent-policy-description {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.agent-policy-inherit-note {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.agent-policy-examples,
+.agent-policy-exempt-list {
+  margin: 0;
+  padding-left: var(--space-xl);
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.agent-policy-examples code,
+.agent-policy-exempt-list code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.agent-policy-tool-rules {
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agent-policy-tool-rules h4,
+.agent-policy-tool-rules p {
+  margin: 0;
+}
+
+.agent-policy-tool-rules p,
+.agent-policy-tool-empty {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.agent-policy-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agent-policy-tool-row,
+.agent-policy-tool-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 12rem) auto;
+  gap: var(--space-sm);
+  align-items: end;
+  color: var(--text);
+  background: var(--surface-subtle);
+}
+
+.agent-policy-tool-row label,
+.agent-policy-tool-add label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.agent-policy-tool-row .input,
+.agent-policy-tool-add .input {
+  width: 100%;
+}
+
+.agent-policy-exempt {
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-sm);
+  color: var(--text-muted);
+}
+
+.agent-policy-exempt summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agent-policy-exempt p {
+  margin: var(--space-sm) 0;
+}
+
+@media (max-width: 768px) {
+  .agent-policy-editor {
+    padding: var(--space-md);
+  }
+
+  .agent-policy-row,
+  .agent-policy-tool-row,
+  .agent-policy-tool-add {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-policy-tool-row .btn,
+  .agent-policy-tool-add .btn {
+    width: 100%;
+  }
+
+  .agent-policy-examples,
+  .agent-policy-exempt-list {
+    padding-left: var(--space-lg);
+  }
+}

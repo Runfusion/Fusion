@@ -1,0 +1,349 @@
+/*
+FNXC:GoalsViewStyling 2026-06-20-01:33:
+FN-6789 mounts Goals as a flex child of .project-content; grow, zero min-width, and use 100% width so the view fills the viewport instead of collapsing to intrinsic content width, mirroring the FN-6446 SecretsView fix.
+*/
+/*
+FNXC:Navigation 2026-06-22-01:10:
+The title row now comes from the shared .view-header (which supplies the --space-lg top/side padding). The root keeps scroll + sizing but drops its uniform padding; .goals-view__content carries the body's horizontal/bottom inset and the inter-block gap so cards stay aligned under the header.
+*/
+.goals-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/*
+FNXC:ViewHeader 2026-06-23-04:15:
+Body inset must equal the shared ViewHeader's horizontal padding (var(--space-xl)) so Goals cards align flush under the header title instead of sitting 8px to its left — the prior var(--space-lg) inset left the main pane visibly misaligned with the header. Add a top inset so the first card clears the header divider; flex:1 lets the content fill the scroll viewport so short lists don't leave the pane looking truncated.
+
+FNXC:Goals 2026-06-23-04:45:
+Bump the top padding from var(--space-lg) to var(--space-xl) so the first card/warning gets clear breathing room below the header divider instead of reading flush against it (matches the small top-margin breathing room added to the embedded Automations body below its edge-to-edge header).
+*/
+.goals-view__content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-xl) var(--space-xl) var(--space-xl);
+}
+
+.goals-count {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:ViewHeader 2026-06-23-05:00:
+The Add Goal button rides in the ViewHeader actions row, which is clamped to --view-header-content-row (28px). Base `.btn` padding (8px 16px) + an 18px icon is intrinsically ~36px and made the Goals header 69px. Reduce padding to the btn-sm box (4px 10px) so the button's CONTENT fits inside 28px without clipping (the 18px icon stays centered), bringing the header to the canonical 61px while keeping btn-primary color/border.
+*/
+.goals-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) calc(var(--space-sm) + var(--space-xs) / 2);
+}
+
+.goals-add-button:focus-visible,
+.goals-card:focus-visible,
+.goals-activate-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.goals-warning {
+  margin: 0;
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  border: calc(var(--space-xs) / 4) solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+
+.goals-error {
+  margin: 0;
+}
+
+.goals-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.goals-form-label {
+  color: var(--text-muted);
+}
+
+.goals-form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.goals-form-draft-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  align-self: flex-start;
+}
+
+.goals-form textarea.input {
+  min-height: calc(var(--space-2xl) * 2);
+  resize: vertical;
+}
+
+.goals-form-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/*
+FNXC:GoalsViewStyling 2026-06-20-12:00:
+FN-6828 keeps Goals action controls and linked-mission panels at intrinsic height on wide cards instead of stretching them to the card height, while tablet widths stack the three card zones before columns cramp or clip.
+*/
+.goals-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  scroll-margin-top: var(--space-xl);
+}
+
+.goals-card--anchored {
+  border-color: var(--color-warning);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.goals-card-archived {
+  border-color: color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+
+/*
+FNXC:Goals 2026-06-23-04:45:
+The goal card is a 3-column flex row: .goals-card-main | .goals-card-actions | .goals-linked-missions. .goals-card-main previously had only min-width:0 (no flex), so it defaulted to flex:0 1 auto and sized to its content. A long markdown description made main grow to its full intrinsic width (measured 819px in a 1024px card), starving the equal-weight .goals-linked-missions (flex:1) down to ~13px — the linked-missions column collapsed and read as "messed up". Give main flex:1 so it shares row width with the linked-missions column (each ~50%) and both stay legible regardless of description length. min-width:0 keeps the markdown body from forcing overflow.
+*/
+.goals-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.goals-card-edit {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.goals-card-title {
+  margin: 0;
+  color: var(--text);
+  font-size: calc(var(--space-md) + var(--space-xs));
+}
+
+.goals-card-description {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+}
+
+.goals-card-description > :first-child {
+  margin-top: 0;
+}
+
+.goals-card-description > :last-child {
+  margin-bottom: 0;
+}
+
+.goals-card-description-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  max-height: calc(var(--space-md) * 6);
+}
+
+.goals-card-description-toggle {
+  margin-top: var(--space-xs);
+  align-self: flex-start;
+  color: var(--text-muted);
+}
+
+.goals-card-status {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+}
+
+.goals-card-actions {
+  display: flex;
+  align-self: flex-start;
+  gap: var(--space-sm);
+}
+
+.goals-linked-missions {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-left: var(--space-md);
+  border-left: calc(var(--space-xs) / 4) solid var(--border);
+}
+
+.goals-linked-missions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.goals-linked-missions-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+}
+
+.goals-linked-missions-count,
+.goals-linked-mission-status,
+.goals-linked-missions-empty {
+  color: var(--text-muted);
+}
+
+.goals-linked-missions-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.goals-linked-missions-picker {
+  flex: 1 1 calc(var(--space-xl) * 10);
+  min-width: 0;
+}
+
+.goals-linked-missions-link-button,
+.goals-linked-mission-chip,
+.goals-linked-mission-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.goals-linked-missions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.goals-linked-mission-chip {
+  gap: calc(var(--space-xs) / 2);
+  padding: calc(var(--space-xs) / 2);
+  border: calc(var(--space-xs) / 4) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+}
+
+.goals-linked-mission-link {
+  border-radius: var(--radius-pill);
+}
+
+.goals-linked-missions-empty {
+  margin: 0;
+}
+
+.goals-activate-button {
+  min-width: calc(var(--space-2xl) * 2);
+}
+
+.goals-empty {
+  color: var(--text-muted);
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .goals-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .goals-card-actions {
+    align-self: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .goals-linked-missions {
+    padding-left: 0;
+    padding-top: var(--space-md);
+    border-left: 0;
+    border-top: calc(var(--space-xs) / 4) solid var(--border);
+  }
+
+  .goals-linked-missions-controls {
+    align-items: stretch;
+  }
+
+  /*
+  FNXC:Goals 2026-06-27-00:00:
+  FN-7155: In this tablet column layout, the picker flex-basis maps to height instead of width. Reset flex so the mission picker stays at native select height while preserving full-width stacking.
+  */
+  .goals-linked-missions-picker {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  .goals-linked-missions-link-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  /* .goals-header removed: the shared .view-header wraps its actions cluster on narrow widths. */
+  .goals-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .goals-form-actions,
+  .goals-card-actions,
+  .goals-linked-missions-controls {
+    flex-direction: column;
+  }
+
+  .goals-linked-missions {
+    padding-left: 0;
+    padding-top: var(--space-md);
+    border-left: 0;
+    border-top: calc(var(--space-xs) / 4) solid var(--border);
+  }
+
+  /*
+  FNXC:Goals 2026-06-27-00:00:
+  FN-7155: In this mobile column layout, the picker flex-basis maps to height instead of width. Reset flex so the mission picker stays at native select height while preserving full-width stacking.
+  */
+  .goals-linked-missions-picker {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  .goals-linked-missions-link-button {
+    width: 100%;
+  }
+
+  .goals-card-description-collapsed {
+    -webkit-line-clamp: 3;
+    max-height: calc(var(--space-md) * 5);
+  }
+}

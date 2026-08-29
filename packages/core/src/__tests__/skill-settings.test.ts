@@ -1,0 +1,86 @@
+import { describe, expect, it } from "vitest";
+import {
+  computeSkillId,
+  getSkillSettingState,
+  parseSkillId,
+  normalizeStoredSkillPath,
+  resolvePluginSkillEnabled,
+} from "../config/skill-settings.js";
+
+describe("skill-settings", () => {
+  it("computes and parses stable skill IDs", () => {
+    const id = computeSkillId("plugin:fusion-plugin", "skills/ce-plan/SKILL.md");
+    expect(id).toBe("plugin%3Afusion-plugin::skills/ce-plan/SKILL.md");
+    expect(parseSkillId(id)).toEqual({
+      source: "plugin:fusion-plugin",
+      relativePath: "skills/ce-plan/SKILL.md",
+    });
+    expect(parseSkillId("not-a-skill-id")).toBeNull();
+  });
+
+  it("keeps stored skill identity normalization and the skills/packages schema stable (FN-9114)", () => {
+    expect(normalizeStoredSkillPath("skills/review/pr/SKILL.md")).toBe("review/pr/SKILL.md");
+    expect(normalizeStoredSkillPath("review/pr")).toBe("review/pr");
+    const settings = { skills: ["+review/pr/SKILL.md"], packages: [{ source: "plugin:x", skills: ["-x/SKILL.md"] }] };
+    expect(Object.keys(settings)).toEqual(["skills", "packages"]);
+    expect(settings.packages[0]).toEqual({ source: "plugin:x", skills: ["-x/SKILL.md"] });
+  });
+
+  it("resolves top-level + and - skill entries by path or wildcard ID", () => {
+    const skillId = computeSkillId("plugin:fusion-plugin", "skills/ce-plan/SKILL.md");
+
+    expect(getSkillSettingState(skillId, { skills: ["+ce-plan/SKILL.md"] })).toBe("enabled");
+    expect(getSkillSettingState(skillId, { skills: ["-skills/ce-plan/SKILL.md"] })).toBe("disabled");
+    expect(getSkillSettingState(computeSkillId("*", "skills/ce-plan/SKILL.md"), {
+      skills: ["+ce-plan/SKILL.md"],
+    })).toBe("enabled");
+  });
+
+  it("resolves package-scoped plugin skill entries", () => {
+    const skillId = computeSkillId("plugin:fusion-plugin", "skills/ce-plan/SKILL.md");
+
+    expect(getSkillSettingState(skillId, {
+      packages: [{ source: "plugin:fusion-plugin", skills: ["+skills/ce-plan/SKILL.md"] }],
+    })).toBe("enabled");
+    expect(getSkillSettingState(skillId, {
+      packages: [{ source: "plugin:fusion-plugin", skills: ["-ce-plan/SKILL.md"] }],
+    })).toBe("disabled");
+  });
+
+  it("uses project toggles ahead of static plugin defaults", () => {
+    expect(resolvePluginSkillEnabled({
+      packages: [{ source: "plugin:fusion-plugin", skills: ["+skills/opt-in/SKILL.md"] }],
+    }, "fusion-plugin", "opt-in", false)).toBe(true);
+
+    expect(resolvePluginSkillEnabled({
+      packages: [{ source: "plugin:fusion-plugin", skills: ["-skills/default-on/SKILL.md"] }],
+    }, "fusion-plugin", "default-on", true)).toBe(false);
+  });
+
+  it("matches custom plugin skill paths only when the resolved path is supplied", () => {
+    const settings = {
+      packages: [{ source: "plugin:fusion-plugin", skills: ["+skills/data/ef-core/SKILL.md"] }],
+    };
+
+    expect(resolvePluginSkillEnabled(settings, "fusion-plugin", "ef-core", false, "skills/data/ef-core/SKILL.md")).toBe(true);
+    expect(resolvePluginSkillEnabled(settings, "fusion-plugin", "ef-core", false)).toBe(false);
+  });
+
+  it("preserves name-derived lookup when no resolved plugin skill path is supplied", () => {
+    expect(resolvePluginSkillEnabled({
+      packages: [{ source: "plugin:fusion-plugin", skills: ["+skills/ef-core/SKILL.md"] }],
+    }, "fusion-plugin", "ef-core", false)).toBe(true);
+  });
+
+  it("falls back to static defaults when settings omit the plugin skill", () => {
+    expect(resolvePluginSkillEnabled({}, "fusion-plugin", "default-on", undefined)).toBe(true);
+    expect(resolvePluginSkillEnabled({}, "fusion-plugin", "default-off", false)).toBe(false);
+  });
+
+  it("honors both top-level and package-scoped settings entries", () => {
+    expect(resolvePluginSkillEnabled({ skills: ["+skills/top-level/SKILL.md"] }, "fusion-plugin", "top-level", false)).toBe(true);
+    expect(resolvePluginSkillEnabled({
+      packages: [{ source: "plugin:fusion-plugin", skills: ["-skills/package-level/SKILL.md"] }],
+    }, "fusion-plugin", "package-level", true)).toBe(false);
+  });
+});

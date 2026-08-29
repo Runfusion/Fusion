@@ -1,0 +1,166 @@
+.graph-task-node {
+  position: absolute;
+  z-index: 1;
+  width: min(100%, var(--graph-task-node-width, calc(var(--space-2xl) * 9)));
+  max-width: var(--graph-task-node-max-width, calc(var(--space-2xl) * 9.5));
+  transition:
+    box-shadow var(--transition-fast),
+    z-index var(--transition-fast),
+    opacity var(--transition-fast),
+    border-color var(--transition-fast);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  touch-action: manipulation;
+}
+
+.graph-task-node:hover {
+  box-shadow: var(--shadow-md);
+  z-index: 2;
+}
+
+.graph-task-node--selected {
+  box-shadow: var(--focus-ring-strong), var(--shadow-md);
+  z-index: 2;
+}
+
+.graph-task-node--highlighted {
+  box-shadow: 0 0 0 var(--btn-border-width) var(--todo), var(--shadow-md);
+  z-index: 2;
+}
+
+.graph-task-node--dimmed {
+  opacity: 0.4;
+}
+
+.graph-task-node--active {
+  border-color: color-mix(in srgb, var(--in-progress) 50%, transparent);
+  box-shadow:
+    0 0 0 var(--btn-border-width) color-mix(in srgb, var(--in-progress) 45%, transparent),
+    0 0 var(--space-md) color-mix(in srgb, var(--in-progress) 50%, transparent),
+    0 0 var(--space-xl) color-mix(in srgb, var(--in-progress) 20%, transparent);
+  transform: scale(1.01);
+}
+
+.graph-task-node--in-review {
+  border-inline-start: calc(var(--btn-border-width) * 3) solid var(--in-review);
+  border-start-start-radius: var(--radius-md);
+  border-end-start-radius: var(--radius-md);
+}
+
+.graph-task-active-indicator {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--space-xs) * 5);
+  width: 100%;
+  padding-inline: var(--space-sm);
+  background: color-mix(in srgb, var(--in-progress) 85%, transparent);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  animation: graph-task-active-pulse calc(var(--transition-normal) * 8) ease-in-out infinite;
+}
+
+.graph-task-active-indicator-text {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-xs) * 2.5);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--card);
+}
+
+.graph-task-node .card {
+  width: 100%;
+  height: 100%;
+}
+
+.graph-task-node[data-current-step="0"] .card-steps-list .card-step-item:nth-child(1),
+.graph-task-node[data-current-step="1"] .card-steps-list .card-step-item:nth-child(2),
+.graph-task-node[data-current-step="2"] .card-steps-list .card-step-item:nth-child(3),
+.graph-task-node[data-current-step="3"] .card-steps-list .card-step-item:nth-child(4),
+.graph-task-node[data-current-step="4"] .card-steps-list .card-step-item:nth-child(5),
+.graph-task-node[data-current-step="5"] .card-steps-list .card-step-item:nth-child(6),
+.graph-task-node[data-current-step="6"] .card-steps-list .card-step-item:nth-child(7),
+.graph-task-node[data-current-step="7"] .card-steps-list .card-step-item:nth-child(8),
+.graph-task-node[data-current-step="8"] .card-steps-list .card-step-item:nth-child(9),
+.graph-task-node[data-current-step="9"] .card-steps-list .card-step-item:nth-child(10),
+.graph-task-node[data-current-step="10"] .card-steps-list .card-step-item:nth-child(11),
+.graph-task-node[data-current-step="11"] .card-steps-list .card-step-item:nth-child(12),
+.graph-task-node[data-current-step="12"] .card-steps-list .card-step-item:nth-child(13),
+.graph-task-node[data-current-step="13"] .card-steps-list .card-step-item:nth-child(14),
+.graph-task-node[data-current-step="14"] .card-steps-list .card-step-item:nth-child(15),
+.graph-task-node[data-current-step="15"] .card-steps-list .card-step-item:nth-child(16),
+.graph-task-node[data-current-step="16"] .card-steps-list .card-step-item:nth-child(17),
+.graph-task-node[data-current-step="17"] .card-steps-list .card-step-item:nth-child(18),
+.graph-task-node[data-current-step="18"] .card-steps-list .card-step-item:nth-child(19),
+.graph-task-node[data-current-step="19"] .card-steps-list .card-step-item:nth-child(20) {
+  background: color-mix(in srgb, var(--in-progress) 15%, transparent);
+  border-left: calc(var(--btn-border-width) * 2) solid var(--in-progress);
+  padding-left: var(--space-xs);
+  font-weight: 500;
+}
+
+.graph-task-node[data-current-step="0"] .card-steps-list .card-step-item:nth-child(1) .card-step-dot,
+.graph-task-node[data-current-step="1"] .card-steps-list .card-step-item:nth-child(2) .card-step-dot,
+.graph-task-node[data-current-step="2"] .card-steps-list .card-step-item:nth-child(3) .card-step-dot,
+.graph-task-node[data-current-step="3"] .card-steps-list .card-step-item:nth-child(4) .card-step-dot,
+.graph-task-node[data-current-step="4"] .card-steps-list .card-step-item:nth-child(5) .card-step-dot,
+.graph-task-node[data-current-step="5"] .card-steps-list .card-step-item:nth-child(6) .card-step-dot,
+.graph-task-node[data-current-step="6"] .card-steps-list .card-step-item:nth-child(7) .card-step-dot,
+.graph-task-node[data-current-step="7"] .card-steps-list .card-step-item:nth-child(8) .card-step-dot,
+.graph-task-node[data-current-step="8"] .card-steps-list .card-step-item:nth-child(9) .card-step-dot,
+.graph-task-node[data-current-step="9"] .card-steps-list .card-step-item:nth-child(10) .card-step-dot,
+.graph-task-node[data-current-step="10"] .card-steps-list .card-step-item:nth-child(11) .card-step-dot,
+.graph-task-node[data-current-step="11"] .card-steps-list .card-step-item:nth-child(12) .card-step-dot,
+.graph-task-node[data-current-step="12"] .card-steps-list .card-step-item:nth-child(13) .card-step-dot,
+.graph-task-node[data-current-step="13"] .card-steps-list .card-step-item:nth-child(14) .card-step-dot,
+.graph-task-node[data-current-step="14"] .card-steps-list .card-step-item:nth-child(15) .card-step-dot,
+.graph-task-node[data-current-step="15"] .card-steps-list .card-step-item:nth-child(16) .card-step-dot,
+.graph-task-node[data-current-step="16"] .card-steps-list .card-step-item:nth-child(17) .card-step-dot,
+.graph-task-node[data-current-step="17"] .card-steps-list .card-step-item:nth-child(18) .card-step-dot,
+.graph-task-node[data-current-step="18"] .card-steps-list .card-step-item:nth-child(19) .card-step-dot,
+.graph-task-node[data-current-step="19"] .card-steps-list .card-step-item:nth-child(20) .card-step-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  animation: graph-task-step-pulse calc(var(--transition-normal) * 10) ease-in-out infinite;
+}
+
+@keyframes graph-task-active-pulse {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--in-progress) 85%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--in-progress) 65%, transparent);
+  }
+}
+
+@keyframes graph-task-step-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.75;
+  }
+}
+
+@media (max-width: 768px) {
+  .graph-task-node {
+    width: min(100%, var(--graph-task-node-mobile-width, calc(var(--space-2xl) * 8)));
+  }
+
+  .graph-task-node--active {
+    transform: scale(1.005);
+  }
+
+  .graph-task-active-indicator {
+    min-height: var(--space-xl);
+    padding-inline: var(--space-md);
+  }
+
+  .graph-task-active-indicator-text {
+    font-size: calc(var(--space-xs) * 2.75);
+  }
+}

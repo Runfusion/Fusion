@@ -1,0 +1,70 @@
+.clipp-test-runner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.clipp-test-runner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.clipp-test-runner-header h4 {
+  margin: 0;
+}
+
+.clipp-test-runner-header p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.clipp-test-runner-slug {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.clipp-test-runner-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-md);
+}
+
+.clipp-test-runner-form,
+.clipp-test-runner-output {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.clipp-test-runner-help {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.clipp-test-runner-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.clipp-test-runner-pre {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  white-space: pre-wrap;
+}
+
+.clipp-test-runner-pre-stderr {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+@media (max-width: 768px) {
+  .clipp-test-runner-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "id": "fusion-plugin-compound-engineering",
+  "name": "Compound Engineering",
+  "version": "0.1.0",
+  "description": "A dedicated dashboard surface for compound-engineering artifacts and interactive ce-* sessions.",
+  "author": "Fusion Team",
+  "fusionVersion": ">=0.1.0",
+  "dashboardViews": [
+    {
+      "viewId": "compound-engineering",
+      "label": "Compound Engineering",
+      "componentPath": "./dashboard-view",
+      "icon": "Boxes",
+      "placement": "primary",
+      "order": 36
+    }
+  ],
+  "settingsSchema": {
+    "defaultProvider": {
+      "type": "string",
+      "label": "Default Session Provider",
+      "description": "Model provider used for CE interactive sessions (for example anthropic). Leave blank to use the host default.",
+      "group": "Sessions",
+      "defaultValue": ""
+    },
+    "defaultModelId": {
+      "type": "string",
+      "label": "Default Session Model",
+      "description": "Model ID within the provider used for CE interactive sessions. Leave blank to use the host default.",
+      "group": "Sessions",
+      "defaultValue": ""
+    },
+    "disabledStages": {
+      "type": "array",
+      "itemType": "string",
+      "label": "Disabled Stages",
+      "description": "Stage IDs hidden from launch in the Compound Engineering view. Empty means all registered stages are launchable.",
+      "group": "Sessions",
+      "defaultValue": []
+    },
+    "reconcileOnHooks": {
+      "type": "boolean",
+      "label": "Reconcile on Board Changes",
+      "description": "Run the board→pipeline reconcile sweep automatically after task move/complete hooks. Disable to only reconcile on demand.",
+      "group": "Sync",
+      "defaultValue": true
+    },
+    "reconcileIntervalMinutes": {
+      "type": "number",
+      "label": "Reconcile Cadence (minutes)",
+      "description": "Cadence hint for how often an on-demand refresh surface sweeps the reconciler. Not a continuous poll loop.",
+      "group": "Sync",
+      "defaultValue": 15
+    }
+  }
+}

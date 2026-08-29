@@ -1,0 +1,39 @@
+.worktrunk-install-approval-details {
+  margin-bottom: var(--space-md);
+  padding: var(--space-md);
+}
+
+.worktrunk-install-approval-details__title {
+  margin: 0 0 var(--space-sm) 0;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.worktrunk-install-approval-details__list {
+  margin: 0;
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.worktrunk-install-approval-details__row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--space-sm);
+}
+
+.worktrunk-install-approval-details__row dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.worktrunk-install-approval-details__row dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .worktrunk-install-approval-details__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

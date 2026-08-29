@@ -1,0 +1,5 @@
+.mic-button { transition: color var(--transition-fast), background-color var(--transition-fast); }
+.mic-button--listening { color: var(--color-error); }
+.mic-button--transcribing { color: var(--color-warning); }
+.mic-button--error { color: var(--color-error); }
+@media (max-width: 768px) { .mic-button { min-inline-size: calc(var(--space-4) * 2 + var(--space-1)); min-block-size: calc(var(--space-4) * 2 + var(--space-1)); } }

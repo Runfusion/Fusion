@@ -1,0 +1,35 @@
+/*
+FNXC:KnowledgeGraphDashboard 2026-08-13-23:30:
+The graph view deliberately presents capped list/detail slices rather than a whole-graph canvas. Responsive stacking keeps every filter and drill-down control usable below the Memory view mobile breakpoint.
+*/
+.knowledge-graph-panel { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: var(--space-md); overflow: auto; }
+.knowledge-graph-empty { align-items: center; justify-content: center; }
+.knowledge-graph-status, .knowledge-graph-filters, .knowledge-graph-neighbors, .knowledge-graph-path { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--space-md); }
+.knowledge-graph-status > div { display: grid; gap: var(--space-xs); margin-right: auto; }
+.knowledge-graph-status strong { color: var(--text); }
+.knowledge-graph-status span, .knowledge-graph-muted { color: var(--text-muted); }
+.knowledge-graph-status dl { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin: 0; }
+.knowledge-graph-status dl div { display: grid; gap: 0; }
+.knowledge-graph-status dt { color: var(--text-muted); font-size: var(--font-size-xs); }
+.knowledge-graph-status dd { margin: 0; font-size: var(--font-size-xs); }
+.knowledge-graph-toggle, .knowledge-graph-kind-options { display: flex; flex-wrap: wrap; gap: var(--space-xs); align-items: center; }
+.knowledge-graph-kind-options label { display: inline-flex; gap: var(--space-xs); align-items: center; color: var(--text-muted); font-size: var(--font-size-sm); }
+.knowledge-graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-md); }
+.knowledge-graph-results, .knowledge-graph-detail { min-width: 0; padding: var(--space-md); }
+.knowledge-graph-results h3, .knowledge-graph-detail h3, .knowledge-graph-neighbors h3, .knowledge-graph-path h3 { width: 100%; margin: 0; }
+.knowledge-graph-results ul, .knowledge-graph-edge-list ul, .knowledge-graph-neighbors ul { display: flex; flex-direction: column; gap: var(--space-xs); margin: var(--space-sm) 0; padding: 0; list-style: none; }
+.knowledge-graph-results li .btn { display: grid; width: 100%; justify-content: start; gap: var(--space-xs); text-align: left; }
+.knowledge-graph-results li span { color: var(--text-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.knowledge-graph-pagination { display: flex; justify-content: space-between; gap: var(--space-sm); }
+.knowledge-graph-edge-list h4 { display: flex; justify-content: space-between; margin: var(--space-md) 0 var(--space-xs); }
+.knowledge-graph-edge-list h4 span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: normal; }
+.knowledge-graph-edge-list li, .knowledge-graph-neighbors li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
+.knowledge-graph-provenance { border-radius: var(--radius-full); padding: var(--space-xs) var(--space-xs); font-size: var(--font-size-xs); }
+.knowledge-graph-provenance--extracted { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 15%, transparent); }
+.knowledge-graph-provenance--inferred { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.knowledge-graph-endpoint { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.knowledge-graph-path-chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-top: var(--space-sm); }
+.knowledge-graph-path-chain span { display: inline-flex; align-items: center; gap: var(--space-xs); }
+.knowledge-graph-path-chain em { color: var(--text-muted); font-size: var(--font-size-xs); font-style: normal; }
+.knowledge-graph-error { width: 100%; color: var(--color-error); }
+@media (max-width: 768px) { .knowledge-graph-layout { grid-template-columns: minmax(0, 1fr); } .knowledge-graph-status, .knowledge-graph-filters, .knowledge-graph-neighbors, .knowledge-graph-path { align-items: stretch; } .knowledge-graph-status > div { margin-right: 0; } .knowledge-graph-status dl { display: grid; grid-template-columns: minmax(0, 1fr); } }

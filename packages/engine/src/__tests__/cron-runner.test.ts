@@ -1,0 +1,2401 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { CronRunner, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, isInProcessScheduledEvalCommand } from "../scheduling/cron-runner.js";
+import type { AiPromptExecutor } from "../scheduling/cron-runner.js";
+import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, AutomationStep, Settings } from "@fusion/core";
+import { randomUUID } from "node:crypto";
+
+const cronLoggerSpies = vi.hoisted(() => ({
+  log: vi.fn(), debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+const piModuleMocks = vi.hoisted(() => ({
+  createFnAgent: vi.fn(),
+  promptWithFallback: vi.fn(),
+}));
+
+const coreModuleMocks = vi.hoisted(() => ({
+  runMemoryBackupCommand: vi.fn(),
+  runBackupCommand: vi.fn(),
+}));
+
+vi.mock("../logger.js", () => ({
+  createLogger: () => ({
+    log: cronLoggerSpies.log,
+    /*
+    FNXC:TestInfrastructure 2026-07-29-14:20 (#2573 review — greptile P1):
+    The spy object carries `debug` but this factory did not wire it through, so
+    the logger handed to production still lacked it. cron-runner's tick() calls
+    log.debug on the dedupe / scope-mismatch / lost-atomic-claim paths, and the
+    resulting TypeError was SWALLOWED by tick()'s own error handler — the polling
+    cycle aborted early while the test carried on and still passed. A silently
+    truncated run is worse than a red one: it asserts against a cycle that never
+    happened.
+    */
+    debug: cronLoggerSpies.debug,
+    warn: cronLoggerSpies.warn,
+    error: cronLoggerSpies.error,
+  }),
+}));
+
+vi.mock("../pi.js", () => ({
+  createFnAgent: piModuleMocks.createFnAgent,
+  promptWithFallback: piModuleMocks.promptWithFallback,
+}));
+
+vi.mock("@fusion/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fusion/core")>();
+  return {
+    ...actual,
+    runMemoryBackupCommand: coreModuleMocks.runMemoryBackupCommand,
+    runBackupCommand: coreModuleMocks.runBackupCommand,
+  };
+});
+
+// Default settings inline to avoid @fusion/core build dependency during tests
+const DEFAULT_SETTINGS: Settings = {
+  maxConcurrent: 2,
+  maxWorktrees: 4,
+  pollIntervalMs: 30000,
+  autoResolveConflicts: true,
+  requirePlanApproval: false,
+  recycleWorktrees: false,
+  worktreeNaming: "random",
+  globalPause: false,
+  enginePaused: false,
+  ntfyEnabled: false,
+  defaultProvider: "anthropic",
+  defaultModelId: "claude-sonnet-4-5",
+  planningProvider: "anthropic",
+  planningModelId: "claude-sonnet-4-5",
+  validatorProvider: "openai",
+  validatorModelId: "gpt-4o",
+  taskStuckTimeoutMs: undefined,
+  groupOverlappingFiles: false,
+  autoMerge: true,
+};
+
+function createMockSchedule(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
+  return {
+    id: "test-schedule-id",
+    name: "Test Schedule",
+    description: "A test schedule",
+    scheduleType: "hourly",
+    cronExpression: "0 * * * *",
+    command: "echo hello",
+    enabled: true,
+    runCount: 0,
+    runHistory: [],
+    nextRunAt: new Date(Date.now() - 60000).toISOString(), // past = due
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeStep(overrides: Partial<AutomationStep> = {}): AutomationStep {
+  return {
+    id: randomUUID(),
+    type: "command",
+    name: "Test Step",
+    command: "echo step",
+    ...overrides,
+  };
+}
+
+function createMockStore(settingsOverrides: Partial<Settings> = {}): TaskStore {
+  return {
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      ...settingsOverrides,
+    }),
+    getFusionDir: vi.fn().mockReturnValue("/tmp/fusion-test/.fusion"),
+    /*
+    FNXC:EngineTests 2026-07-17-06:05:
+    resolveGlobalBackupRoot reads store.getGlobalSettingsDir() and falls back to
+    resolveGlobalDir() when unset. Tests forbid bare resolveGlobalDir() (writes to
+    real ~/.fusion), so return an explicit temp global dir.
+    */
+    getGlobalSettingsDir: vi.fn().mockReturnValue("/tmp/fusion-test-global"),
+    on: vi.fn(),
+    off: vi.fn(),
+  } as unknown as TaskStore;
+}
+
+function createMockAutomationStore(schedules: ScheduledTask[] = []): AutomationStore {
+  return {
+    getDueSchedules: vi.fn().mockResolvedValue(schedules),
+    getDueSchedulesAllScopes: vi.fn().mockResolvedValue(schedules),
+    claimDueSchedule: vi.fn().mockResolvedValue(true),
+    recordRun: vi.fn().mockResolvedValue(undefined),
+    getSchedule: vi.fn().mockImplementation(async (id: string) => {
+      const s = schedules.find((s) => s.id === id);
+      if (!s) throw new Error(`Schedule ${id} not found`);
+      return s;
+    }),
+  } as unknown as AutomationStore;
+}
+
+describe("CronRunner", () => {
+  let runner: CronRunner;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    piModuleMocks.promptWithFallback.mockResolvedValue(undefined);
+    piModuleMocks.createFnAgent.mockResolvedValue({
+      session: {
+        dispose: vi.fn(),
+      },
+    });
+    coreModuleMocks.runMemoryBackupCommand.mockResolvedValue({
+      success: true,
+      output: "memory backup ok",
+    });
+    coreModuleMocks.runBackupCommand.mockResolvedValue({
+      success: true,
+      output: "Backup created: fusion-2026-01-01-000000.db + fusion-central-2026-01-01-000000.db (1 MB).",
+    });
+  });
+
+  afterEach(() => {
+    if (runner) runner.stop();
+  });
+
+  describe("start/stop", () => {
+    it("starts and stops without error", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore();
+      runner = new CronRunner(store, automationStore);
+
+      runner.start();
+      expect(runner["running"]).toBe(true);
+
+      runner.stop();
+      expect(runner["running"]).toBe(false);
+    });
+
+    it("is idempotent on start", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore();
+      runner = new CronRunner(store, automationStore);
+
+      runner.start();
+      runner.start(); // should not double-start
+      runner.stop();
+    });
+
+    it("is safe to stop when not started", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore();
+      runner = new CronRunner(store, automationStore);
+
+      // Should not throw
+      expect(() => runner.stop()).not.toThrow();
+    });
+  });
+
+  describe("createAiPromptExecutor", () => {
+    it("passes executor fallback skill selection to scheduled AI prompt sessions", async () => {
+      let capturedOptions: any;
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions = options;
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Summarize this");
+
+      expect(capturedOptions.skillSelection).toMatchObject({
+        projectRootDir: "/test/project",
+        sessionPurpose: "executor",
+        requestedSkillNames: ["fusion"],
+      });
+    });
+
+    it("requests coding tools and forwards the allowed tool list", async () => {
+      let capturedOptions: any;
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions = options;
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Summarize this", "anthropic", "claude-sonnet-4-5", ["Read", "Grep"]);
+
+      expect(capturedOptions.tools).toBe("coding");
+      expect(capturedOptions.toolsAllowlist).toEqual(["Read", "Grep"]);
+    });
+
+    it("leaves toolsAllowlist undefined when the step omits allowedTools", async () => {
+      let capturedOptions: any;
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions = options;
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Summarize this");
+
+      expect(capturedOptions.tools).toBe("coding");
+      expect(capturedOptions.toolsAllowlist).toBeUndefined();
+    });
+
+    it("forwards thinkingLevel as createFnAgent defaultThinkingLevel and omits blank values", async () => {
+      const capturedOptions: any[] = [];
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions.push(options);
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Think deeply", undefined, undefined, undefined, "high");
+      await executor("Inherit defaults", undefined, undefined, undefined, "   ");
+
+      expect(capturedOptions[0].defaultThinkingLevel).toBe("high");
+      expect(capturedOptions[1].defaultThinkingLevel).toBeUndefined();
+    });
+
+    it("forwards store-resolved MCP servers to scheduled AI prompt sessions", async () => {
+      let capturedOptions: any;
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions = options;
+        return { session: { dispose: vi.fn() } };
+      });
+      const store = {
+        async getSettingsByScope() {
+          return {
+            global: { mcpServers: { enabled: true, servers: [] } },
+            project: {
+              mcpServers: {
+                enabled: true,
+                servers: [
+                  {
+                    name: "cron-tools",
+                    transport: "stdio",
+                    command: "node",
+                    env: { MCP_TOKEN: { secretRef: "cron-token", scope: "project" } },
+                  },
+                ],
+              },
+            },
+          };
+        },
+        async getSecretsStore() {
+          return {
+            async revealSecret(id: string) {
+              expect(id).toBe("cron-token");
+              return { key: id, plaintextValue: "materialized-cron-secret" };
+            },
+          };
+        },
+      } as unknown as TaskStore;
+
+      const executor = await createAiPromptExecutor("/test/project", store);
+      await executor("Summarize this");
+
+      expect(capturedOptions.mcpServers).toEqual([
+        {
+          name: "cron-tools",
+          transport: "stdio",
+          command: "node",
+          env: { MCP_TOKEN: "materialized-cron-secret" },
+        },
+      ]);
+    });
+
+    it("keeps scheduled AI prompt sessions working without a store", async () => {
+      let capturedOptions: any;
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions = options;
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Summarize this");
+
+      expect(capturedOptions.mcpServers).toBeUndefined();
+    });
+
+    it("returns response text even when session disposal throws", async () => {
+      piModuleMocks.createFnAgent.mockImplementation(async (options: { onText?: (delta: string) => void }) => {
+        options.onText?.("hello ");
+        options.onText?.("world");
+        return {
+          session: {
+            dispose: () => {
+              throw new Error("dispose failed");
+            },
+          },
+        };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      const result = await executor("Summarize this");
+
+      expect(result).toBe("hello world");
+      expect(piModuleMocks.promptWithFallback).toHaveBeenCalledTimes(1);
+      expect(cronLoggerSpies.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Session disposal failed: dispose failed"),
+      );
+    });
+  });
+
+  describe("tick", () => {
+    it("skips when globalPause is true", async () => {
+      const store = createMockStore({ globalPause: true });
+      const automationStore = createMockAutomationStore([createMockSchedule()]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).not.toHaveBeenCalled();
+    });
+
+    it("skips when enginePaused is true", async () => {
+      const store = createMockStore({ enginePaused: true });
+      const automationStore = createMockAutomationStore([createMockSchedule()]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).not.toHaveBeenCalled();
+    });
+
+    it("does nothing when no schedules are due", async () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).toHaveBeenCalledTimes(1);
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("handles errors in tick gracefully", async () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([createMockSchedule()]);
+      
+      // Make getDueSchedules throw an error
+      (automationStore.getDueSchedules as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("Database error")
+      );
+      
+      runner = new CronRunner(store, automationStore);
+
+      // Should not throw
+      await expect(runner.tick()).resolves.toBeUndefined();
+    });
+
+    it("executes due schedules", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo test-output" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.claimDueSchedule).toHaveBeenCalledWith(schedule.id, schedule.nextRunAt);
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [id, result] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(id).toBe(schedule.id);
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("test-output");
+    });
+
+    it("skips due schedules when the atomic claim is lost", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo should-not-run" });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.claimDueSchedule as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.claimDueSchedule).toHaveBeenCalledTimes(1);
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("does not claim or execute schedules missing nextRunAt", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ nextRunAt: undefined });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.claimDueSchedule).not.toHaveBeenCalled();
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("executes a legacy-command due window at most once across two runners", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo legacy-once" });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.claimDueSchedule as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      const runnerA = new CronRunner(store, automationStore);
+      const runnerB = new CronRunner(store, automationStore);
+
+      await Promise.all([runnerA.tick(), runnerB.tick()]);
+
+      expect(automationStore.claimDueSchedule).toHaveBeenCalledTimes(2);
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [, result] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(result.output).toContain("legacy-once");
+    });
+
+    it("executes a step-based due window at most once across two runners", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeStep({ name: "Only step", command: "echo step-once" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.claimDueSchedule as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      const runnerA = new CronRunner(store, automationStore);
+      const runnerB = new CronRunner(store, automationStore);
+
+      await Promise.all([runnerA.tick(), runnerB.tick()]);
+
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [, result] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.output).toContain("step-once");
+    });
+
+    it("executes an in-process legacy intercept at most once across two runners", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "fn backup --create" });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.claimDueSchedule as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      const runnerA = new CronRunner(store, automationStore);
+      const runnerB = new CronRunner(store, automationStore);
+
+      await Promise.all([runnerA.tick(), runnerB.tick()]);
+
+      expect(coreModuleMocks.runBackupCommand).toHaveBeenCalledTimes(1);
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("deduplicates overlapping all-scope and project-scope pollers via the claim", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ scope: "project", command: "echo scoped-once" });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.claimDueSchedule as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      const allRunner = new CronRunner(store, automationStore, { scope: "all" });
+      const projectRunner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await Promise.all([allRunner.tick(), projectRunner.tick()]);
+
+      expect(automationStore.getDueSchedulesAllScopes).toHaveBeenCalledTimes(1);
+      expect(automationStore.getDueSchedules).toHaveBeenCalledWith("project");
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-entrance guard prevents overlapping ticks", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "sleep 0.1 && echo done" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      // Start first tick
+      const tick1 = runner.tick();
+      // Attempt second tick immediately
+      const tick2 = runner.tick();
+
+      await Promise.all([tick1, tick2]);
+
+      // Should only have recorded one run (second tick was a no-op)
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("executeSchedule", () => {
+    it("records successful execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("success");
+      expect(result.startedAt).toBeTruthy();
+      expect(result.completedAt).toBeTruthy();
+    });
+
+    it("records failed execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "exit 1" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
+    });
+
+    it("records timeout execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "sleep 60",
+        timeoutMs: 100, // very short timeout
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("timed out");
+    }, 10000);
+
+    it("prevents concurrent runs of the same schedule", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "sleep 0.2 && echo done" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      // Start execution
+      const exec1 = runner.executeSchedule(schedule);
+
+      // in-flight set should contain the schedule
+      expect(runner["inFlight"].has(schedule.id)).toBe(true);
+
+      await exec1;
+
+      // After completion, in-flight should be cleared
+      expect(runner["inFlight"].has(schedule.id)).toBe(false);
+    });
+
+    it("calls recordRun on automation store", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo recorded" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(automationStore.recordRun).toHaveBeenCalledWith(
+        schedule.id,
+        expect.objectContaining({
+          success: true,
+          output: expect.stringContaining("recorded"),
+        }),
+      );
+    });
+
+    it("clears inFlight even when recordRun throws", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo in-flight-cleanup" });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.recordRun as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("record failed"));
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(runner["inFlight"].has(schedule.id)).toBe(false);
+    });
+
+    it("captures stderr output", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo err >&2" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("err");
+    });
+
+    it("calls recordRun before callback on success", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const callOrder: string[] = [];
+      const onProcessed = vi.fn().mockImplementation(() => {
+        callOrder.push("callback");
+      });
+
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+      await runner.executeSchedule(schedule);
+
+      expect(callOrder).toContain("callback");
+      // recordRun should have been called first
+      expect(automationStore.recordRun).toHaveBeenCalledBefore(onProcessed);
+    });
+
+    it("invokes callback on successful execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn();
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      await runner.executeSchedule(schedule);
+
+      expect(onProcessed).toHaveBeenCalledTimes(1);
+      expect(onProcessed).toHaveBeenCalledWith(
+        schedule,
+        expect.objectContaining({ success: true }),
+      );
+    });
+
+    it("invokes callback on failed execution", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "exit 1" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn();
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      await runner.executeSchedule(schedule);
+
+      expect(onProcessed).toHaveBeenCalledTimes(1);
+      expect(onProcessed).toHaveBeenCalledWith(
+        schedule,
+        expect.objectContaining({ success: false }),
+      );
+    });
+
+    it("does not invoke callback when not provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo test" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      // Should not throw
+      await runner.executeSchedule(schedule);
+    });
+
+    it("callback errors do not throw or alter returned result", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo success" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn().mockRejectedValue(new Error("callback failed"));
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      // Should not throw
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("success");
+    });
+
+    it("callback errors do not prevent recordRun", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo test" });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      const onProcessed = vi.fn().mockRejectedValue(new Error("callback failed"));
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+
+      await runner.executeSchedule(schedule);
+
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes schedule and result to callback", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        id: "custom-id",
+        name: "Custom Schedule",
+        command: "echo custom",
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+
+      let receivedSchedule: ScheduledTask | undefined;
+      let receivedResult: AutomationRunResult | undefined;
+      const onProcessed = vi.fn().mockImplementation((s: ScheduledTask, r: AutomationRunResult) => {
+        receivedSchedule = s;
+        receivedResult = r;
+      });
+
+      runner = new CronRunner(store, automationStore, { onScheduleRunProcessed: onProcessed });
+      await runner.executeSchedule(schedule);
+
+      expect(receivedSchedule).toEqual(schedule);
+      expect(receivedResult).toBeDefined();
+      expect(receivedResult!.success).toBe(true);
+    });
+  });
+
+  describe("concurrent schedule prevention in tick", () => {
+    it("skips schedule already in-flight during tick", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "sleep 0.3 && echo done" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      // Start first execution (will block for 300ms)
+      const exec1 = runner.executeSchedule(schedule);
+
+      // Tick while execution in progress — should skip the in-flight schedule
+      await runner.tick();
+
+      await exec1;
+
+      // Should only have recorded one run (tick skipped it)
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("mid-tick pause detection", () => {
+    it("stops executing schedules when pause is detected mid-tick", async () => {
+      const store = createMockStore();
+      const schedules = [
+        createMockSchedule({ id: "s1", name: "First", command: "echo first" }),
+        createMockSchedule({ id: "s2", name: "Second", command: "echo second" }),
+      ];
+      const automationStore = createMockAutomationStore(schedules);
+
+      // Mock getSettings to return paused AFTER first two calls
+      // (1st call = initial tick check, 2nd call = before first schedule)
+      let callCount = 0;
+      (store.getSettings as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        callCount++;
+        return {
+          ...DEFAULT_SETTINGS,
+          globalPause: callCount > 2, // pause before second schedule
+        };
+      });
+
+      runner = new CronRunner(store, automationStore);
+      await runner.tick();
+
+      // Should only execute first schedule, not second
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [id] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(id).toBe("s1");
+    });
+  });
+
+  describe("multiple schedules", () => {
+    it("executes all due schedules in a single tick", async () => {
+      const store = createMockStore();
+      const schedules = [
+        createMockSchedule({ id: "s1", name: "First", command: "echo first" }),
+        createMockSchedule({ id: "s2", name: "Second", command: "echo second" }),
+      ];
+      const automationStore = createMockAutomationStore(schedules);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.tick();
+
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("output truncation", () => {
+    it("truncates large output to prevent memory exhaustion", async () => {
+      const store = createMockStore();
+      // Generate output larger than 10KB using printf
+      const schedule = createMockSchedule({
+        command: "python3 -c \"print('x' * 15000)\"",
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      // MAX_OUTPUT_LENGTH = 10 * 1024 = 10240
+      expect(result.output.length).toBeLessThanOrEqual(10240 + 20);
+      expect(result.output).toContain("[output truncated]");
+    });
+  });
+
+  describe("error handling", () => {
+    it("continues to next schedule when recordRun fails", async () => {
+      const store = createMockStore();
+      const schedules = [
+        createMockSchedule({ id: "s1", name: "First", command: "echo first" }),
+        createMockSchedule({ id: "s2", name: "Second", command: "echo second" }),
+      ];
+      const automationStore = createMockAutomationStore(schedules);
+
+      // Make recordRun fail for first schedule
+      let recordCalls = 0;
+      (automationStore.recordRun as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        recordCalls++;
+        if (recordCalls === 1) throw new Error("Storage error");
+        return undefined;
+      });
+
+      runner = new CronRunner(store, automationStore);
+      await runner.tick();
+
+      // Should still have attempted both schedules
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("poll interval", () => {
+    it("enforces minimum poll interval of 10 seconds", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore();
+      runner = new CronRunner(store, automationStore, { pollIntervalMs: 1000 });
+
+      expect(runner["pollIntervalMs"]).toBe(10000);
+    });
+
+    it("defaults to 60 seconds", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore();
+      runner = new CronRunner(store, automationStore);
+
+      expect(runner["pollIntervalMs"]).toBe(60000);
+    });
+  });
+
+  // ── Multi-step execution ──────────────────────────────────────────
+
+  describe("multi-step execution", () => {
+    function makeStep(overrides: Partial<AutomationStep> = {}): AutomationStep {
+      return {
+        id: randomUUID(),
+        type: "command",
+        name: "Test step",
+        command: "echo step-output",
+        ...overrides,
+      };
+    }
+
+    it("legacy single-command mode still works when no steps are defined", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo legacy-mode" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("legacy-mode");
+      expect(result.stepResults).toBeUndefined();
+    });
+
+    it("falls back to legacy mode when steps array is empty", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "echo empty-steps-fallback",
+        steps: [],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("empty-steps-fallback");
+      expect(result.stepResults).toBeUndefined();
+    });
+
+    it("executes multiple command steps sequentially", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Step 1", command: "echo first" }),
+          makeStep({ name: "Step 2", command: "echo second" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(2);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("first");
+      expect(result.stepResults![1].success).toBe(true);
+      expect(result.stepResults![1].output).toContain("second");
+    });
+
+    it("stops on step failure when continueOnFailure is false", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Failing step", command: "exit 1" }),
+          makeStep({ name: "Should not run", command: "echo should-not-run" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1); // Only the first step ran
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.error).toContain("1 step(s) failed");
+      expect(result.error).toContain("execution stopped");
+    });
+
+    it("continues after failure when continueOnFailure is true", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Failing step", command: "exit 1", continueOnFailure: true }),
+          makeStep({ name: "Should still run", command: "echo continued" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false); // Overall failure
+      expect(result.stepResults).toHaveLength(2); // Both steps ran
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![1].success).toBe(true);
+      expect(result.stepResults![1].output).toContain("continued");
+    });
+
+    it("continueOnFailure also advances after a create-task failure", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "create-task",
+            name: "Invalid create task",
+            taskDescription: "",
+            continueOnFailure: true,
+            command: undefined,
+          }),
+          makeStep({ name: "Still runs", command: "echo still-ran" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(2);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![1].success).toBe(true);
+      expect(result.stepResults![1].output).toContain("still-ran");
+    });
+
+    it("uses per-step timeout override", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        timeoutMs: 30000, // schedule-level timeout (large)
+        steps: [
+          makeStep({ name: "Slow step", command: "sleep 60", timeoutMs: 100 }), // step-level timeout (tiny)
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].error).toContain("timed out");
+    }, 10000);
+
+    it("falls back to schedule-level timeout when step has no timeout", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        timeoutMs: 100, // tiny schedule-level timeout
+        steps: [
+          makeStep({ name: "Slow step", command: "sleep 60" }), // no step-level timeout
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("timed out");
+    }, 10000);
+
+    it("handles AI prompt step execution with executor", async () => {
+      const store = createMockStore();
+      const mockFn = vi.fn()
+        .mockResolvedValue("AI analysis complete: no issues found");
+      const mockExecutor = mockFn as unknown as AiPromptExecutor;
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "AI Analysis",
+            prompt: "Analyze the codebase",
+            modelProvider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("AI analysis complete");
+      // Verify executor was called with correct model params from step
+      expect(mockExecutor).toHaveBeenCalledWith(
+        "Analyze the codebase",
+        "anthropic",
+        "claude-sonnet-4-5",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("fails AI prompt step when no prompt is provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Empty prompt",
+            prompt: "",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("no prompt specified");
+    });
+
+    it("fails command step when no command is provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Empty command", command: "" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("no command specified");
+    });
+
+    it("handles unknown step type gracefully", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Unknown step", type: "unknown-type" as any }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![0].error).toContain("Unknown step type");
+    });
+
+    it("aggregates output from all steps with headers", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Alpha", command: "echo alpha-output" }),
+          makeStep({ name: "Beta", command: "echo beta-output" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.output).toContain("Step 1: Alpha");
+      expect(result.output).toContain("alpha-output");
+      expect(result.output).toContain("Step 2: Beta");
+      expect(result.output).toContain("beta-output");
+    });
+
+    it("records run result with stepResults to automation store", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeStep({ name: "S1", command: "echo ok" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(automationStore.recordRun).toHaveBeenCalledWith(
+        schedule.id,
+        expect.objectContaining({
+          success: true,
+          stepResults: expect.arrayContaining([
+            expect.objectContaining({
+              stepName: "S1",
+              success: true,
+            }),
+          ]),
+        }),
+      );
+    });
+
+    it("mixed step types execute correctly", async () => {
+      const store = createMockStore();
+      const mockFn = vi.fn()
+        .mockResolvedValue("Summary: all good");
+      const mockExecutor = mockFn as unknown as AiPromptExecutor;
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Build", command: "echo build-done" }),
+          makeStep({
+            type: "ai-prompt",
+            name: "Summarize",
+            prompt: "Summarize results",
+            command: undefined,
+          }),
+          makeStep({ name: "Deploy", command: "echo deployed" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(3);
+      expect(result.stepResults![0].stepName).toBe("Build");
+      expect(result.stepResults![1].stepName).toBe("Summarize");
+      expect(result.stepResults![2].stepName).toBe("Deploy");
+      expect(result.stepResults![1].output).toContain("Summary: all good");
+    });
+
+    // ── AI prompt step execution ────────────────────────────────────────
+
+    function createAiMockExecutor(
+      response: string = "mock AI response",
+    ): AiPromptExecutor {
+      const fn = vi.fn().mockResolvedValue(response);
+      return fn as unknown as AiPromptExecutor;
+    }
+
+    it("returns success with AI response when executor is configured", async () => {
+      const store = createMockStore();
+      const mockExecutor = createAiMockExecutor("Analysis complete: 3 findings");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Code Review",
+            prompt: "Review the code for issues",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("Analysis complete: 3 findings");
+    });
+
+    it("passes step allowedTools to executor", async () => {
+      const store = createMockStore();
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Step with tools",
+            prompt: "Use selected tools",
+            allowedTools: ["Read", "Grep"],
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenCalledWith("Use selected tools", "anthropic", "claude-sonnet-4-5", ["Read", "Grep"], undefined);
+    });
+
+    it("passes explicit step thinkingLevel to executor and leaves omitted level unset", async () => {
+      const store = createMockStore();
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "High thinking",
+            prompt: "Think deeply",
+            thinkingLevel: "high",
+            command: undefined,
+          }),
+          makeStep({
+            type: "ai-prompt",
+            name: "Default thinking",
+            prompt: "Use default",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenNthCalledWith(1, "Think deeply", "anthropic", "claude-sonnet-4-5", undefined, "high");
+      expect(mockExecutor).toHaveBeenNthCalledWith(2, "Use default", "anthropic", "claude-sonnet-4-5", undefined, undefined);
+    });
+
+    it("inherits scheduled AI prompt thinking from the execution lane hierarchy", async () => {
+      const store = createMockStore({
+        executionThinkingLevel: "medium",
+        executionGlobalThinkingLevel: "high",
+        selectedWorkflowModelLanes: { executionThinkingLevel: "low" },
+        defaultThinkingLevel: "xhigh",
+      });
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeStep({ type: "ai-prompt", name: "Inherited thinking", prompt: "Think", command: undefined })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        "Think",
+        "anthropic",
+        "claude-sonnet-4-5",
+        undefined,
+        "medium",
+      );
+    });
+
+    it("passes step model provider and model ID to executor", async () => {
+      const store = createMockStore();
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Step with model",
+            prompt: "Do something",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenCalledWith("Do something", "openai", "gpt-4o", undefined, undefined);
+    });
+
+    it("falls back to settings defaults when step has no model", async () => {
+      const store = createMockStore({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Step without model",
+            prompt: "Use defaults",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenCalledWith("Use defaults", "anthropic", "claude-sonnet-4-5", undefined, undefined);
+    });
+
+    it("returns configuration error when no executor is provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "No executor",
+            prompt: "This should fail",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![0].error).toContain("AI execution is not configured");
+      expect(result.stepResults![0].output).toBe("");
+    });
+
+    it("fails early when prompt is empty even with executor configured", async () => {
+      const store = createMockStore();
+      const mockExecutor = createAiMockExecutor("should not be called");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Empty prompt",
+            prompt: "   ",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("no prompt specified");
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it("handles timeout by returning failure", async () => {
+      const store = createMockStore();
+      const mockFn = vi.fn()
+        .mockImplementation(() => new Promise((resolve) => {
+          setTimeout(() => resolve("too late"), 5000);
+        }));
+      const mockExecutor = mockFn as unknown as AiPromptExecutor;
+      const schedule = createMockSchedule({
+        command: "",
+        timeoutMs: 100,
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Slow AI",
+            prompt: "Take your time",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![0].error).toContain("timed out");
+    });
+
+    it("handles executor throwing an error", async () => {
+      const store = createMockStore();
+      const mockFn = vi.fn()
+        .mockRejectedValue(new Error("API rate limit exceeded"));
+      const mockExecutor = mockFn as unknown as AiPromptExecutor;
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Failing AI",
+            prompt: "Cause an error",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![0].error).toContain("API rate limit exceeded");
+    });
+
+    it("truncates output when AI response exceeds MAX_OUTPUT_LENGTH", async () => {
+      const store = createMockStore();
+      const longResponse = "x".repeat(15_000);
+      const mockExecutor = createAiMockExecutor(longResponse);
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Verbose AI",
+            prompt: "Give me lots of text",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("[output truncated]");
+      expect(result.stepResults![0].output.length).toBeLessThanOrEqual(10 * 1024 + 50);
+    });
+
+    it("uses per-step timeout override over schedule timeout", async () => {
+      const store = createMockStore();
+      const mockFn = vi.fn()
+        .mockImplementation(() => new Promise((resolve) => {
+          setTimeout(() => resolve("too late"), 5000);
+        }));
+      const mockExecutor = mockFn as unknown as AiPromptExecutor;
+      const schedule = createMockSchedule({
+        command: "",
+        timeoutMs: 30000,
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Slow AI",
+            prompt: "Take your time",
+            timeoutMs: 100,
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("timed out");
+    });
+  });
+
+  // ── Create-task step execution ─────────────────────────────────────────
+
+  describe("create-task step execution", () => {
+    function makeCreateTaskStep(overrides: Partial<AutomationStep> = {}): AutomationStep {
+      return {
+        id: randomUUID(),
+        type: "create-task",
+        name: "Create task step",
+        taskDescription: "Review dependencies for security vulnerabilities",
+        ...overrides,
+      };
+    }
+
+    it("successfully creates a task when taskDescription is provided", async () => {
+      const mockTask = { id: "FN-1234", title: "Review", description: "Review dependencies" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskDescription: "Check npm packages" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("Created task FN-1234");
+      expect(createTaskMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns error when taskDescription is missing", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskDescription: "" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![0].error).toContain("no task description specified");
+    });
+
+    it("passes taskTitle, taskColumn, modelProvider, modelId to store.createTask()", async () => {
+      const mockTask = { id: "FN-5678", title: "Weekly Review", description: "Check packages" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({
+          taskTitle: "Weekly Review",
+          taskDescription: "Check packages",
+          taskColumn: "todo",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenCalledWith({
+        title: "Weekly Review",
+        description: "Check packages",
+        column: "todo",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        thinkingLevel: undefined,
+        source: {
+          sourceType: "cron",
+          sourceMetadata: { scheduleId: "test-schedule-id", stepId: expect.any(String) },
+        },
+      });
+    });
+
+    it("maps explicit create-task thinkingLevel and leaves omitted level unset", async () => {
+      const mockTask = { id: "FN-7788", title: "", description: "Some task" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeCreateTaskStep({ taskDescription: "High effort task", thinkingLevel: "high" }),
+          makeCreateTaskStep({ taskDescription: "Inherited effort task" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }));
+      expect(createTaskMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
+    });
+
+    /*
+    FNXC:Automations 2026-07-30-17:05 (greptile #2652 — this test PINNED the defect):
+    Was "defaults column to triage when taskColumn is not set", asserting `column: "triage"`. That is
+    the bug written down as a contract: U11 deletes `triage` from the default workflow, so a scheduled
+    create-task step with no column created its task into a column the board does not declare.
+
+    An EXPLICIT column also bypasses the workflow entry-column resolution added for column-less creates,
+    so substituting `todo` instead would be the same mistake one column over — a custom workflow
+    declaring no `todo` is stranded just as surely. The corrected invariant is that the runner sends NO
+    column and `createTask` resolves each workflow's own intake.
+    */
+    it("sends NO column when taskColumn is not set, so workflow intake resolves it", async () => {
+      const mockTask = { id: "FN-9999", title: "", description: "Some task" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskDescription: "Some task" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenCalledWith(
+        expect.objectContaining({ column: undefined }),
+      );
+      expect(createTaskMock.mock.calls[0][0].column, "not `triage`, and not a substituted `todo`").toBeUndefined();
+    });
+
+    it("still honours an explicit taskColumn", async () => {
+      // The fix must not stop an operator from naming a column deliberately.
+      const createTaskMock = vi.fn().mockResolvedValue({ id: "FN-9998", title: "", description: "Explicit" });
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskDescription: "Explicit", taskColumn: "in-progress" })],
+      });
+      runner = new CronRunner(store, createMockAutomationStore([schedule]));
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({ column: "in-progress" }));
+    });
+
+    it("handles store.createTask() errors gracefully", async () => {
+      const createTaskMock = vi.fn().mockRejectedValue(new Error("Database constraint violation"));
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskDescription: "This will fail" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![0].error).toContain("Database constraint violation");
+    });
+
+    it("trims whitespace from task fields", async () => {
+      const mockTask = { id: "FN-0001", title: "Cleaned", description: "Trimmed" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({
+          taskTitle: "  Cleaned  ",
+          taskDescription: "  Trimmed  ",
+          modelProvider: "  anthropic  ",
+          modelId: "  claude-sonnet-4-5  ",
+        })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Cleaned",
+          description: "Trimmed",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        }),
+      );
+    });
+
+    it("sets title to undefined when taskTitle is not provided", async () => {
+      const mockTask = { id: "FN-0002", title: "", description: "Minimal task" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskTitle: undefined })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      // When taskTitle is undefined, title should be undefined in the input
+      const callArg = createTaskMock.mock.calls[0][0];
+      expect(callArg.title).toBeUndefined();
+    });
+  });
+
+  // ── Scoped lane regression tests (FN-1766) ─────────────────────────────────
+
+  describe("scoped lane polling", () => {
+    it("scope='project' calls getDueSchedules with 'project'", async () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).toHaveBeenCalledWith("project");
+      expect(automationStore.getDueSchedulesAllScopes).not.toHaveBeenCalled();
+    });
+
+    it("scope='global' calls getDueSchedules with 'global'", async () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([]);
+      runner = new CronRunner(store, automationStore, { scope: "global" });
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).toHaveBeenCalledWith("global");
+      expect(automationStore.getDueSchedulesAllScopes).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' calls getDueSchedulesAllScopes", async () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedulesAllScopes).toHaveBeenCalled();
+      expect(automationStore.getDueSchedules).not.toHaveBeenCalled();
+    });
+
+    it("scope='project' skips global-scoped schedules", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-schedule", scope: "global" });
+      const automationStore = createMockAutomationStore([globalSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      // Should NOT execute the global schedule
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("scope='global' skips project-scoped schedules", async () => {
+      const store = createMockStore();
+      const projectSchedule = createMockSchedule({ id: "project-schedule", scope: "project" });
+      const automationStore = createMockAutomationStore([projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "global" });
+
+      await runner.tick();
+
+      // Should NOT execute the project schedule
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' executes both global and project schedules", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-sched", name: "Global", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "project-sched", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Should execute both schedules
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+    });
+
+    it("scope='all' deduplicates by schedule ID — no double execution", async () => {
+      const store = createMockStore();
+      // Same schedule ID in both scopes
+      const scheduleInBothScopes = createMockSchedule({ id: "shared-id", name: "Shared", scope: "project", command: "echo shared" });
+      const automationStore = createMockAutomationStore([scheduleInBothScopes]);
+      // getDueSchedulesAllScopes returns it once
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([scheduleInBothScopes]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Should only execute once
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("scope='all' skips schedule from wrong scope after scope mismatch", async () => {
+      const store = createMockStore();
+      // Schedule says global but runner is polling project scope
+      const mismatchedSchedule = createMockSchedule({ id: "mismatch", name: "Mismatched", scope: "global", command: "echo wrong" });
+      const automationStore = createMockAutomationStore([mismatchedSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      // Should NOT execute - schedule is global but runner is in project scope
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' includes lane tag in execution log context", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-log", name: "Global", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "project-log", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Both schedules executed
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      expect(automationStore.recordRun).toHaveBeenCalledWith("global-log", expect.any(Object));
+      expect(automationStore.recordRun).toHaveBeenCalledWith("project-log", expect.any(Object));
+    });
+
+    it("scope='project' default when not specified", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([]);
+      runner = new CronRunner(store, automationStore);
+
+      expect(runner["scope"]).toBe("project");
+    });
+  });
+
+  describe("scoped lane pause regressions", () => {
+    it("scope='project' skips when initially paused", async () => {
+      const store = createMockStore({ globalPause: true });
+      const schedule = createMockSchedule({ scope: "project" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).not.toHaveBeenCalled();
+    });
+
+    it("scope='global' skips when initially paused", async () => {
+      const store = createMockStore({ enginePaused: true });
+      const schedule = createMockSchedule({ scope: "global" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { scope: "global" });
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedules).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' skips when initially paused", async () => {
+      const store = createMockStore({ globalPause: true });
+      const globalSchedule = createMockSchedule({ scope: "global" });
+      const projectSchedule = createMockSchedule({ scope: "project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      expect(automationStore.getDueSchedulesAllScopes).not.toHaveBeenCalled();
+    });
+
+    it("scope='project' halts mid-tick when pause flips", async () => {
+      const schedules = [
+        createMockSchedule({ id: "s1", name: "First", scope: "project", command: "echo first" }),
+        createMockSchedule({ id: "s2", name: "Second", scope: "project", command: "echo second" }),
+      ];
+      const automationStore = createMockAutomationStore(schedules);
+
+      // Mock getSettings to pause after first schedule executes
+      // Initial check (1), check before s1 (2), check after s1 starts (3) = pause
+      let getSettingsCalls = 0;
+      const mockStore: TaskStore = {
+        getSettings: vi.fn().mockImplementation(async () => {
+          getSettingsCalls++;
+          // Pause is detected on 3rd call: initial check, before s1, then before s2
+          return {
+            ...DEFAULT_SETTINGS,
+            globalPause: getSettingsCalls >= 3, // Pause on 3rd call (before s2)
+          };
+        }),
+        on: vi.fn(),
+        off: vi.fn(),
+      } as unknown as TaskStore;
+
+      runner = new CronRunner(mockStore, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      // Should only execute first schedule (s1 executes, s2 is skipped due to pause)
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [id] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(id).toBe("s1");
+    });
+  });
+
+  describe("scoped lane ID-overlap regressions", () => {
+    it("identical IDs across global and project scopes must not cross lane boundaries", async () => {
+      const store = createMockStore();
+      // Same ID in both scopes - store returns both
+      const globalSchedule = createMockSchedule({ id: "overlap-id", name: "Global Overlap", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "overlap-id", name: "Project Overlap", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      // getDueSchedulesAllScopes returns both (simulating both lanes having schedules with same ID)
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // With scope="all", both schedules share the same ID
+      // The runner should execute once (first occurrence wins due to deduplication)
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      // The ID should be "overlap-id"
+      const [id] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(id).toBe("overlap-id");
+    });
+
+    it("scope='project' with overlapping ID only processes project-scoped version", async () => {
+      const store = createMockStore();
+      // Only the project-scoped version should be processed
+      const projectSchedule = createMockSchedule({ id: "overlap-id", name: "Project Only", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [id] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(id).toBe("overlap-id");
+    });
+
+    it("scope='global' with overlapping ID only processes global-scoped version", async () => {
+      const store = createMockStore();
+      // Only the global-scoped version should be processed
+      const globalSchedule = createMockSchedule({ id: "overlap-id", name: "Global Only", scope: "global", command: "echo global" });
+      const automationStore = createMockAutomationStore([globalSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "global" });
+
+      await runner.tick();
+
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+      const [id] = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls[0] as [string, AutomationRunResult];
+      expect(id).toBe("overlap-id");
+    });
+  });
+
+  describe("utility-lane semaphore boundary", () => {
+    it("CronRunner does not use task-lane semaphore operations", async () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore([]);
+      runner = new CronRunner(store, automationStore);
+
+      // Cast to any to access internal state for semaphore trap
+      const runnerAny = runner as any;
+
+      // Verify no semaphore-related methods exist on the runner
+      expect(runnerAny.acquire).toBeUndefined();
+      expect(runnerAny.release).toBeUndefined();
+      expect(runnerAny.run).toBeUndefined();
+      expect(runnerAny.semaphore).toBeUndefined();
+      expect(runnerAny["_semaphore"]).toBeUndefined();
+    });
+
+    it("CronRunner constructor does not accept semaphore parameter", () => {
+      const store = createMockStore();
+      const automationStore = createMockAutomationStore();
+      runner = new CronRunner(store, automationStore);
+
+      // Verify internal state doesn't have semaphore references
+      const keys = Object.keys(runner);
+      const hasSemaphore = keys.some(k => k.toLowerCase().includes("semaphore") || k.toLowerCase().includes("acquire"));
+      expect(hasSemaphore).toBe(false);
+    });
+  });
+
+  // ── Cross-package integration tests (FN-1743) ─────────────────────────────────
+  //
+  // These tests verify end-to-end scoped scheduling wiring across packages.
+  // They ensure that:
+  // 1. CronRunner bound to a project store executes scoped schedules only for that project lane
+  // 2. CronRunner with both global and project stores executes both lanes in the same tick
+  // 3. Execution logs contain lane identity (scope tag + projectId)
+  // 4. Pause behavior applies uniformly across both lanes
+  // 5. Lane diagnostics are verifiable in test assertions
+
+  describe("cross-package dual-lane execution integration", () => {
+    it("scope='all' executes both global and project lanes in the same tick with correct order", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({
+        id: "global-1",
+        name: "Global Schedule",
+        scope: "global",
+        command: "echo global",
+      });
+      const projectSchedule = createMockSchedule({
+        id: "project-1",
+        name: "Project Schedule",
+        scope: "project",
+        command: "echo project",
+      });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      // getDueSchedulesAllScopes returns both lanes
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Both schedules should be executed in the same tick
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      // Verify order: global first, then project (based on getDueSchedulesAllScopes result order)
+      const calls = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[0][0]).toBe("global-1");
+      expect(calls[1][0]).toBe("project-1");
+    });
+
+    it("scope='all' lane identity is preserved in execution context", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({
+        id: "global-lane-test",
+        name: "Global Lane",
+        scope: "global",
+        command: "echo global-lane",
+      });
+      const projectSchedule = createMockSchedule({
+        id: "project-lane-test",
+        name: "Project Lane",
+        scope: "project",
+        command: "echo project-lane",
+      });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Verify both lanes were executed
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      const calls = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls;
+      // Each call receives the schedule ID and result
+      expect(calls[0][0]).toBe("global-lane-test");
+      expect(calls[1][0]).toBe("project-lane-test");
+    });
+
+    it("pause applies uniformly across both lanes when scope='all'", async () => {
+      const store = createMockStore({ globalPause: true });
+      const globalSchedule = createMockSchedule({ id: "global-pause", name: "Global", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "project-pause", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Neither lane should execute when paused
+      expect(automationStore.getDueSchedulesAllScopes).not.toHaveBeenCalled();
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("identical schedule IDs across global and project lanes execute once (deduplication)", async () => {
+      const store = createMockStore();
+      // Same ID in both scopes
+      const globalSchedule = createMockSchedule({
+        id: "shared-schedule",
+        name: "Shared Global",
+        scope: "global",
+        command: "echo shared-global",
+      });
+      const projectSchedule = createMockSchedule({
+        id: "shared-schedule",
+        name: "Shared Project",
+        scope: "project",
+        command: "echo shared-project",
+      });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Only one execution should occur due to deduplication
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("cross-package scoped isolation integration", () => {
+    it("CronRunner bound to project store never executes global-lane schedules", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-iso", name: "Global", scope: "global", command: "echo global" });
+      const automationStore = createMockAutomationStore([globalSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "project" });
+
+      await runner.tick();
+
+      // Project-scoped runner should not execute global schedule
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("CronRunner bound to global store never executes project-lane schedules", async () => {
+      const store = createMockStore();
+      const projectSchedule = createMockSchedule({ id: "project-iso", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "global" });
+
+      await runner.tick();
+
+      // Global-scoped runner should not execute project schedule
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+    });
+
+    it("scope='all' executes schedules from both lanes but never crosses lane boundaries", async () => {
+      const store = createMockStore();
+      const globalSchedule = createMockSchedule({ id: "global-boundary", name: "Global", scope: "global", command: "echo global" });
+      const projectSchedule = createMockSchedule({ id: "project-boundary", name: "Project", scope: "project", command: "echo project" });
+      const automationStore = createMockAutomationStore([globalSchedule, projectSchedule]);
+      (automationStore.getDueSchedulesAllScopes as ReturnType<typeof vi.fn>).mockResolvedValue([globalSchedule, projectSchedule]);
+      runner = new CronRunner(store, automationStore, { scope: "all" });
+
+      await runner.tick();
+
+      // Both lanes should execute
+      expect(automationStore.recordRun).toHaveBeenCalledTimes(2);
+      // But each schedule is executed exactly once (no double execution)
+      const calls = (automationStore.recordRun as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[0][0]).toBe("global-boundary");
+      expect(calls[1][0]).toBe("project-boundary");
+    });
+  });
+
+  describe("isInProcessBackupCommand", () => {
+    const positives = [
+      // Bare binary forms.
+      "fn backup --create",
+      "fusion backup --create",
+      "runfusion.ai backup --create",
+      "runfusion backup --create",
+      "@runfusion/fusion backup --create",
+      // npx prefix without flags.
+      "npx runfusion.ai backup --create",
+      "npx @runfusion/fusion backup --create",
+      // npx with flags — including the canonical `npx -y runfusion.ai`
+      // form FN_NPX_INVOCATION emits.
+      "npx -y runfusion.ai backup --create",
+      "npx --yes runfusion.ai backup --create",
+      "npx -y -p runfusion.ai runfusion.ai backup --create",
+      "npx --package=runfusion.ai runfusion.ai backup --create",
+      // Whitespace / case tolerance.
+      "FN BACKUP --CREATE",
+      "fn backup --create --some-other-flag",
+      "  fn backup --create  ",
+    ];
+
+    const negatives: Array<string | undefined> = [
+      // Wrong subcommand — must not be intercepted, the in-process path
+      // only does create+cleanup and would silently swallow these.
+      "fn backup --list",
+      "fn backup --restore /tmp/old.db",
+      "fn backup --cleanup",
+      "fn backup",
+      "fn task list",
+      "echo hello",
+      "fn-other backup --create",
+      "fnbackup --create",
+      "fnext backup --create",
+      "",
+      undefined,
+      // Shell continuations after --create encode user-authored side
+      // effects we cannot mirror in-process; let them shell out.
+      "fn backup --create && notify-send done",
+      "fn backup --create || echo failed",
+      "fn backup --create | tee /tmp/log",
+      "fn backup --create ; rm -rf /tmp/garbage",
+      "fn backup --create > /tmp/out.txt",
+      "fn backup --create 2> /tmp/err.txt",
+      "fn backup --create `whoami`",
+      "fn backup --create $(date)",
+      // Trailing positional arguments aren't `--flag`s — refuse.
+      "fn backup --create extra-positional",
+    ];
+
+    for (const cmd of positives) {
+      it(`intercepts: ${cmd}`, () => {
+        expect(isInProcessBackupCommand(cmd)).toBe(true);
+      });
+    }
+
+    for (const cmd of negatives) {
+      it(`does NOT intercept: ${JSON.stringify(cmd)}`, () => {
+        expect(isInProcessBackupCommand(cmd)).toBe(false);
+      });
+    }
+  });
+
+  describe("isInProcessMemoryBackupCommand", () => {
+    const positives = [
+      "fn memory-backup --create",
+      "npx runfusion.ai memory-backup --create",
+      "  fn memory-backup --create  ",
+      "FN MEMORY-BACKUP --CREATE",
+    ];
+
+    const negatives: Array<string | undefined> = [
+      "fn memory-backup --list",
+      "fn memory-backup",
+      "fn backup --create",
+      "",
+      undefined,
+    ];
+
+    for (const cmd of positives) {
+      it(`intercepts: ${cmd}`, () => {
+        expect(isInProcessMemoryBackupCommand(cmd)).toBe(true);
+      });
+    }
+
+    for (const cmd of negatives) {
+      it(`does NOT intercept: ${JSON.stringify(cmd)}`, () => {
+        expect(isInProcessMemoryBackupCommand(cmd)).toBe(false);
+      });
+    }
+  });
+
+  describe("backup in-process dispatch", () => {
+    it("routes fn backup --create through runBackupCommand", async () => {
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      const schedule = createMockSchedule({ id: "db-bk", command: "fn backup --create" });
+      runner = new CronRunner(store, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+
+      // FNXC:EngineTests 2026-07-17-06:10: backups resolve the shared cluster root via getGlobalSettingsDir.
+      expect(coreModuleMocks.runBackupCommand).toHaveBeenCalledWith("/tmp/fusion-test-global", expect.any(Object));
+      expect(runResult.success).toBe(true);
+      expect(runResult.output).toContain("fusion-central-");
+    });
+
+    it("normalizes empty runBackupCommand failure output for legacy schedules", async () => {
+      coreModuleMocks.runBackupCommand.mockResolvedValueOnce({ success: false, output: "" });
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      const schedule = createMockSchedule({ id: "db-bk-empty", command: "fn backup --create" });
+      runner = new CronRunner(store, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+
+      expect(runResult.success).toBe(false);
+      expect(runResult.error).toBe("project PostgreSQL run backup command failed; project state: /tmp/.fusion; cause: unknown error");
+      expect(runResult.output).toBe("");
+    });
+
+    it("normalizes empty thrown errors for backup command steps", async () => {
+      coreModuleMocks.runBackupCommand.mockRejectedValueOnce(new Error(""));
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      runner = new CronRunner(store, createMockAutomationStore());
+      const step: AutomationStep = {
+        id: "step-db-bk",
+        name: "Database Backup",
+        type: "command",
+        command: "fn backup --create",
+      };
+
+      const stepResult = await (runner as unknown as { executeCommandStep: (s: AutomationStep, i: number, t: number, startedAt: string) => Promise<AutomationRunResult> })
+        .executeCommandStep(step, 0, 30_000, new Date().toISOString());
+
+      expect(stepResult.success).toBe(false);
+      expect(stepResult.error).toBe("project PostgreSQL run backup command failed; project state: /tmp/.fusion; cause: unknown error");
+      expect(stepResult.output).toBe("");
+    });
+  });
+
+  describe("memory backup in-process dispatch", () => {
+    it("routes fn memory-backup --create through runMemoryBackupCommand", async () => {
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      const schedule = createMockSchedule({ id: "mem-bk", command: "fn memory-backup --create" });
+      runner = new CronRunner(store, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+
+      expect(coreModuleMocks.runMemoryBackupCommand).toHaveBeenCalledWith("/tmp/.fusion", expect.any(Object));
+      expect(runResult.success).toBe(true);
+      expect(runResult.output).toContain("memory backup ok");
+    });
+  });
+
+  describe("isInProcessScheduledEvalCommand", () => {
+    it("matches canonical scheduled eval command", () => {
+      expect(isInProcessScheduledEvalCommand("fn eval --scheduled-batch")).toBe(true);
+      expect(isInProcessScheduledEvalCommand("fusion eval --scheduled-batch --flag")).toBe(true);
+    });
+
+    it("rejects non-canonical and shell-metachar commands", () => {
+      expect(isInProcessScheduledEvalCommand("fn eval")).toBe(false);
+      expect(isInProcessScheduledEvalCommand("fn eval --scheduled-batch && echo x")).toBe(false);
+      expect(isInProcessScheduledEvalCommand("echo fn eval --scheduled-batch")).toBe(false);
+    });
+  });
+
+  describe("scheduled eval command feature gating", () => {
+    it("returns a disabled result when evalsView experimental feature is off", async () => {
+      const store = createMockStore({ experimentalFeatures: { evalsView: false } as Settings["experimentalFeatures"] });
+      const schedule = createMockSchedule({ id: "eval-off", command: "fn eval --scheduled-batch" });
+      runner = new CronRunner(store, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+      expect(runResult.success).toBe(false);
+      expect(runResult.output).toBe("evals-experimental-disabled");
+      expect(runResult.error).toBe("Evals experimental feature is disabled");
+    });
+
+    it("does not return the disabled sentinel when evalsView experimental feature is on", async () => {
+      const store = createMockStore({ experimentalFeatures: { evalsView: true } as Settings["experimentalFeatures"] }) as unknown as {
+        getEvalStore: () => {
+          listRuns: () => Array<{ id: string; status: string; metadata?: Record<string, unknown>; window: { until?: string } }>;
+          createRun: (input: { projectId: string; trigger: string; scope: string; window: { since?: string; until: string }; metadata: Record<string, unknown> }) => { id: string; startedAt?: string; window: { until: string } };
+          appendRunEvent: (runId: string, event: Record<string, unknown>) => void;
+          updateRun: (runId: string, patch: Record<string, unknown>) => void;
+        };
+        listTasks: (opts: { column: string }) => Promise<Array<{ id: string; column: string; createdAt: string; updatedAt: string; executionCompletedAt?: string; title: string; summary?: string }>>;
+      };
+
+      store.getEvalStore = () => ({
+        listRuns: () => [],
+        createRun: () => ({ id: "run-1", window: { until: new Date().toISOString() } }),
+        appendRunEvent: () => {},
+        updateRun: () => {},
+      });
+      store.listTasks = async () => [];
+
+      const schedule = createMockSchedule({ id: "eval-on", command: "fn eval --scheduled-batch" });
+      runner = new CronRunner(store as unknown as TaskStore, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+      expect(runResult.output).not.toBe("evals-experimental-disabled");
+    });
+  });
+});
+

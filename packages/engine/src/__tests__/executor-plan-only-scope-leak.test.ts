@@ -1,0 +1,196 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import "./executor-test-helpers.js";
+import { TaskExecutor } from "../executor.js";
+import { executorLog } from "../logger.js";
+import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+
+function baseTask(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "FN-4482",
+    title: "Scope leak guard",
+    description: "",
+    prompt: "## Review Level: 1",
+    column: "in-progress",
+    worktree: "/repo/.worktrees/swift-falcon",
+    branch: "fusion/fn-4482",
+    baseCommitSha: "abc123",
+    taskDoneRetryCount: 0,
+    steps: [{ name: "Step 1", status: "in-progress" as const }],
+    currentStep: 0,
+    dependencies: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+async function setup(params?: {
+  reviewLevel?: number;
+  enforcement?: "off" | "warn" | "block";
+  scope?: string[];
+  scopeOverride?: boolean;
+  unstaged?: string[];
+  staged?: string[];
+  committed?: string[];
+  gitFailure?: boolean;
+}) {
+  const store = createMockStore();
+  let task = baseTask({
+    prompt: `## Review Level: ${params?.reviewLevel ?? 1}`,
+    scopeOverride: params?.scopeOverride,
+  });
+  let tool: any;
+
+  store.getTask.mockImplementation(async () => ({ ...task, steps: task.steps.map((s: any) => ({ ...s })) }));
+  store.parseFileScopeFromPrompt.mockResolvedValue(params?.scope ?? ["docs/foo.md"]);
+  store.getSettings.mockResolvedValue({
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 15000,
+    groupOverlappingFiles: false,
+    autoMerge: false,
+    worktreeInitCommand: undefined,
+    planOnlyScopeLeakEnforcement: params?.enforcement ?? "warn",
+  });
+
+  mockedExecSync.mockImplementation((cmd: string) => {
+    if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/swift-falcon\n");
+    if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-4482\n");
+    if (cmd.includes("rev-list --count")) return Buffer.from("1\n");
+    if (cmd.includes("git diff --name-only --cached")) {
+      if (params?.gitFailure) throw new Error("git failed");
+      return Buffer.from(`${(params?.staged ?? []).join("\n")}\n`);
+    }
+    if (cmd.includes("git diff --name-only abc123..HEAD")) {
+      return Buffer.from(`${(params?.committed ?? []).join("\n")}\n`);
+    }
+    if (cmd.includes("git diff --name-only")) {
+      if (params?.gitFailure) throw new Error("git failed");
+      return Buffer.from(`${(params?.unstaged ?? []).join("\n")}\n`);
+    }
+    return Buffer.from("");
+  });
+
+  mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
+    tool = customTools.find((t: any) => t.name === "fn_task_done");
+    return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
+  });
+
+  const executor = new TaskExecutor(store as any, "/repo");
+  await executor.execute(task as any);
+
+  return { store, tool, executor };
+}
+
+describe("FN-4482 plan-only scope leak guard", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+  });
+
+  it("allows plan-only completion when edits are in-scope", async () => {
+    const { store, tool } = await setup({ unstaged: ["docs/foo.md"] });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel="))).toBe(false);
+  });
+
+  it("warns but allows plan-only off-scope edits in default warn mode", async () => {
+    const { store, tool } = await setup({ unstaged: ["packages/core/src/db.ts"] });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel=1 enforcement=warn"))).toBe(true);
+  });
+
+  it("blocks plan-only off-scope edits when enforcement is block", async () => {
+    const { store, tool } = await setup({ enforcement: "block", unstaged: ["packages/core/src/db.ts"] });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Plan-Only scope-leak guard refused fn_task_done");
+    expect(result.content[0].text).toContain("packages/core/src/db.ts");
+    /*
+    FNXC:EngineTests 2026-07-19-16:30 (U10b):
+    The requirement is that a refused fn_task_done advances nothing: no step is marked done and
+    the task never reaches the in-review merge boundary. Assert that directly on the step STATUS
+    rather than on "updateStep was never called at all" — under graph ownership the graph itself
+    marks the step `in-progress` when it enters the implementation node, which is setup, not
+    completion.
+    */
+    expect(store.updateStep.mock.calls.some((call: unknown[]) => call[2] === "done")).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4482", "in-review", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4482", "in-review");
+  });
+
+  it("attributes FN-4999 scope-leak logs to the current task runContext during overlap", async () => {
+    const { store, executor } = await setup({ unstaged: ["packages/core/src/db.ts"] });
+    (executor as any).currentRunContexts.set("FN-4482", { runId: "exec-FN-4482-777", agentId: "executor" });
+    (executor as any).currentRunContexts.set("FN-OTHER", { runId: "exec-FN-OTHER-123", agentId: "executor" });
+
+    await store.logEntry(
+      "FN-4482",
+      "[scope-leak] reviewLevel=1 enforcement=warn off-scope touched files [\"packages/core/src/db.ts\"]; total off-scope=1 total scope=1",
+      undefined,
+      (executor as any).getRunContextFor("FN-4482"),
+    );
+
+    const scopeLeakCall = store.logEntry.mock.calls.find((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel=1 enforcement=warn off-scope touched files"));
+    expect(scopeLeakCall?.[3]).toEqual(expect.objectContaining({ runId: expect.stringMatching(/^exec-FN-4482-/) }));
+  });
+
+  it("truncates scope-leak output when off-scope list or declared scope exceeds 10 entries", async () => {
+    const scope = Array.from({ length: 15 }, (_, i) => `docs/scope-${i + 1}.md`);
+    const unstaged = Array.from({ length: 15 }, (_, i) => `packages/core/src/off-scope-${i + 1}.ts`);
+    const { store, tool } = await setup({ scope, unstaged });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+
+    const scopeLeakEntry = store.logEntry.mock.calls.find((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel=1 enforcement=warn"));
+    expect(scopeLeakEntry).toBeTruthy();
+    const entryText = String(scopeLeakEntry?.[1]);
+    expect(entryText).toContain("… (+5 more)");
+    expect(entryText).toContain("total off-scope=15");
+    expect(entryText).toContain("total scope=15");
+    expect(entryText).not.toContain("packages/core/src/off-scope-11.ts");
+    expect(entryText).not.toContain("packages/core/src/off-scope-15.ts");
+    expect(entryText).not.toContain("docs/scope-11.md");
+    expect(entryText).not.toContain("docs/scope-15.md");
+  });
+
+  it("truncates block refusal message when off-scope list exceeds 10 entries", async () => {
+    const unstaged = Array.from({ length: 15 }, (_, i) => `packages/core/src/off-scope-${i + 1}.ts`);
+    const { tool } = await setup({ enforcement: "block", unstaged });
+    const result = await tool.execute("id", {});
+    const refusalText = result.content[0].text;
+    expect(refusalText).toContain("Plan-Only scope-leak guard refused fn_task_done");
+    expect(refusalText).toContain("… (+5 more)");
+    expect(refusalText).not.toContain("packages/core/src/off-scope-11.ts");
+    expect(refusalText).not.toContain("packages/core/src/off-scope-15.ts");
+  });
+
+  it("bypasses guard when scopeOverride=true", async () => {
+    const { store, tool } = await setup({ scopeOverride: true, unstaged: ["packages/core/src/db.ts"] });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => call[1] === "[scope-leak] scope guard bypassed via task.scopeOverride")).toBe(true);
+  });
+
+  it("skips checks when planOnlyScopeLeakEnforcement=off", async () => {
+    const { store, tool } = await setup({ enforcement: "off", unstaged: ["packages/core/src/db.ts"] });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel="))).toBe(false);
+  });
+
+  it.each([0, 2])("uses warn-only behavior for non-plan-only review level %s", async (reviewLevel) => {
+    const { store, tool } = await setup({ reviewLevel, enforcement: "block", unstaged: ["packages/core/src/db.ts"] });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes(`[scope-leak] reviewLevel=${reviewLevel} enforcement=warn`))).toBe(true);
+  });
+
+  it("fails open on git capture failure", async () => {
+    const { store, tool } = await setup({ gitFailure: true });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect((executorLog.warn as any).mock.calls.some(([message]: [string]) => message.includes("Failed to capture uncommitted modified files"))).toBe(true);
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel="))).toBe(false);
+  });
+});

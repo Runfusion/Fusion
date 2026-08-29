@@ -1,0 +1,124 @@
+/* SettingsHelpTip — "?" affordance beside a settings label, revealing its help copy. */
+
+.settings-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  /* Sits on the label's line, so it must not stretch the row's leading. */
+  line-height: 0;
+}
+
+/*
+FNXC:SettingsHelp 2026-07-15-21:10:
+The trigger is icon-sized but carries a 24px hit area: on a phone an operator taps a ~13px glyph, and anything under ~24px is a coin-flip. Padding grows the target while the negative margin keeps the glyph optically adjacent to the label instead of pushed away by its own hit area.
+*/
+.settings-help-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin: -6px 0 -6px -4px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--duration-fast) ease;
+}
+
+.settings-help-trigger:hover,
+.settings-help-trigger:focus-visible {
+  color: var(--text);
+}
+
+.settings-help[data-open="true"] .settings-help-trigger {
+  color: var(--accent, #7c5cbf);
+}
+
+/*
+FNXC:SettingsHelp 2026-07-15-21:10:
+The bubble is ALWAYS laid out and only fades in. Hiding it with `display:none` / `visibility:hidden` / an sr-only clip would drop the copy from the accessibility tree, breaking the trigger's `aria-describedby` and in-page find — the copy is deferred visually, not removed. `opacity` leaves it in the tree; `pointer-events: none` stops the invisible box from eating clicks meant for the row.
+Revealing therefore toggles exactly two properties, so the click state and the hover state cannot drift apart in a long duplicated rule.
+`max-width: min(320px, ...)` clamps against the viewport because the settings modal is near full-bleed on a phone, where a fixed-width bubble on a narrow row would be cut off at the screen edge.
+*/
+.settings-help-bubble {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  inset-inline-start: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(320px, calc(100vw - var(--space-xl) * 2));
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: start;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) ease;
+}
+
+/* Click/tap — the baseline, and the only interaction a touch device has. */
+.settings-help[data-open="true"] .settings-help-bubble {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/*
+FNXC:SettingsHelp 2026-07-15-21:10:
+Hover/focus reveal is gated to real pointers. Touch browsers synthesise `:hover` on tap and hold it until the user taps elsewhere, so an unguarded rule would strand an open bubble on mobile. Click already covers touch; this is the pointer-device convenience only.
+`:focus-within` keeps it keyboard-reachable — tabbing to the trigger shows the tip without pressing Enter.
+*/
+@media (hover: hover) and (pointer: fine) {
+  .settings-help:hover .settings-help-bubble,
+  .settings-help:focus-within .settings-help-bubble {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* FNXC:SettingsHelp 2026-07-15-21:10: The fade is decoration; a reduced-motion operator gets the same reveal instantly. */
+@media (prefers-reduced-motion: reduce) {
+  .settings-help-bubble {
+    transition: none;
+  }
+}
+
+/*
+FNXC:SettingsHelp 2026-07-15-21:55:
+On a narrow viewport the bubble anchors to the ROW, not to the trigger, and spans the row's width.
+Anchoring to the trigger fails wherever the trigger sits away from the left edge: the label line reads "Name [scope] ?", so the "?" is often near the right of a 390px screen, and a bubble starting there runs off-screen no matter how tightly `max-width` clamps it. Measured on an iPhone-sized viewport before this rule: the bubble spanned x=338→658 against a 390px screen — 268px of it unreachable.
+Neutralising `.settings-help`'s own positioning makes the row the nearest positioned ancestor, so `inset-inline: 0` resolves against the full row and the bubble simply cannot be clipped horizontally. It lands under the whole row rather than under the icon, which on a phone reads better anyway.
+The row selectors cover both idioms: `.settings-field-row` (shared primitive) and `.form-group` (rows that deliberately stay bespoke).
+
+FNXC:SettingsHelp 2026-07-16-12:40:
+Every container that hosts a bespoke SettingsHelpTip must be in this positioned-ancestor list. The ntfy/webhook card headers (`.notification-provider-header`) were missing, so on a phone their bubble anchored to the page shell and rendered at top:100% of it — below the viewport, unreachable (the ntfy "Enable" tip opened with no visible bubble). `.settings-field-label-row` is included for bespoke label lines that sit outside a `.form-group` (e.g. card bodies), so a tip hosted there can never regress the same way.
+*/
+@media (max-width: 768px) {
+  .settings-field-row,
+  .settings-content .form-group,
+  .settings-field-label-row,
+  .notification-provider-header {
+    position: relative;
+  }
+
+  .settings-help {
+    position: static;
+  }
+
+  .settings-help-bubble {
+    inset-inline: 0;
+    width: auto;
+    max-width: none;
+  }
+}

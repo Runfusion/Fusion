@@ -1,0 +1,11 @@
+.loading-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+}
+
+/* Keep the label on the spinner's baseline regardless of the host container. */
+.loading-spinner__label {
+  line-height: 1.2;
+}

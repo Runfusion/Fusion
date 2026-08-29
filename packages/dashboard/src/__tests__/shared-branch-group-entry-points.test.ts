@@ -1,0 +1,330 @@
+// @vitest-environment node
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import express from "express";
+import { createApiRoutes } from "../routes.js";
+import type { TaskStore, TaskCreateInput, TaskBranchContext } from "@fusion/core";
+import { request as performRequest } from "../test-request.js";
+
+const { mockExecFile, mockExecSync } = vi.hoisted(() => ({
+  mockExecFile: vi.fn(),
+  mockExecSync: vi.fn(),
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  mockExecSync.mockImplementation(((...args: Parameters<typeof actual.execSync>) => actual.execSync(...args)) as typeof actual.execSync);
+  mockExecFile.mockImplementation((...callArgs: unknown[]) => {
+    const [file, argsOrCb, maybeOptions, maybeCb] = callArgs as [string, unknown, unknown, unknown];
+    const args = Array.isArray(argsOrCb) ? argsOrCb : [];
+    const cb =
+      typeof maybeCb === "function"
+        ? (maybeCb as (err: unknown, stdout?: string, stderr?: string) => void)
+        : typeof maybeOptions === "function"
+          ? (maybeOptions as (err: unknown, stdout?: string, stderr?: string) => void)
+          : typeof argsOrCb === "function"
+            ? (argsOrCb as (err: unknown, stdout?: string, stderr?: string) => void)
+            : null;
+
+    if (file === "pgrep" && args[0] === "-f" && args[1] === "vitest") {
+      if (cb) queueMicrotask(() => cb(null, "", ""));
+      return;
+    }
+
+    return (actual.execFile as (...innerArgs: unknown[]) => unknown)(...callArgs);
+  });
+  return {
+    ...actual,
+    execSync: mockExecSync,
+    execFile: mockExecFile,
+  };
+});
+
+vi.mock("@fusion/core", async (importOriginal) => {
+  const { createCoreMock } = await import("../test/mockCoreEngine.js");
+  return createCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
+    resolveGlobalDir: vi.fn().mockReturnValue("/tmp/fusion-test"),
+    isGhAvailable: vi.fn(),
+    isGhAuthenticated: vi.fn(),
+    isQmdAvailable: vi.fn().mockResolvedValue(false),
+    CentralCore: vi.fn().mockImplementation(function () { return {
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      listProjects: vi.fn().mockResolvedValue([]),
+      reconcileProjectStatuses: vi.fn().mockResolvedValue(undefined),
+    }; }),
+  });
+});
+
+vi.mock("@fusion/engine", async () => {
+  const { createEngineMock } = await import("../test/mockCoreEngine.js");
+  return createEngineMock({
+    createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void }) => ({
+      session: {
+        state: { messages: [] as Array<{ role: string; content: string }> },
+        prompt: vi.fn(async function (this: { state?: { messages?: Array<{ role: string; content: string }> } }, message: string) {
+          options?.onText?.("mock-ai-output");
+          const messages = this.state?.messages ?? [];
+          messages.push({ role: "user", content: message });
+          messages.push({
+            role: "assistant",
+            content: JSON.stringify({
+              subtasks: [
+                { id: "subtask-1", title: "Auth backend", description: "Implement backend", suggestedSize: "M", dependsOn: [] },
+                { id: "subtask-2", title: "Auth UI", description: "Implement UI", suggestedSize: "S", dependsOn: ["subtask-1"] },
+              ],
+            }),
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    })),
+    promptWithFallback: vi.fn(async (session: { prompt: (message: string) => Promise<void> }, prompt: string) => {
+      await session.prompt(prompt);
+    }),
+  });
+});
+
+type BranchGroup = {
+  id: string;
+  sourceType: "planning" | "mission" | "new-task";
+  sourceId: string;
+  branchName: string;
+  autoMerge: boolean;
+  prState: "none";
+  status: "open";
+  createdAt: number;
+  updatedAt: number;
+};
+
+function createMockStore(): TaskStore {
+  const tasks = new Map<string, { id: string; title?: string; description: string; branch?: string; branchContext?: TaskBranchContext }>();
+  const branchGroupsBySource = new Map<string, BranchGroup>();
+  const branchGroupsByBranch = new Map<string, BranchGroup>();
+  let seq = 7000;
+
+  const store = {
+    getTask: vi.fn(async (id: string) => tasks.get(id) ?? null),
+    listTasks: vi.fn().mockResolvedValue([]),
+    searchTasks: vi.fn().mockResolvedValue([]),
+    findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
+    createTask: vi.fn(async (input: TaskCreateInput) => {
+      seq += 1;
+      const id = `FN-${seq}`;
+      const created = {
+        id,
+        title: input.title,
+        description: input.description,
+        column: input.column ?? "triage",
+        dependencies: input.dependencies ?? [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        branch: input.branch,
+        branchContext: input.branchContext,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      tasks.set(id, created);
+      return created;
+    }),
+    createTaskWithReservedId: undefined,
+    moveTask: vi.fn(),
+    updateTask: vi.fn(async (id: string, patch: { branch?: string; branchContext?: TaskBranchContext }) => {
+      const existing = tasks.get(id);
+      if (!existing) throw new Error("missing");
+      const next = { ...existing, ...patch };
+      tasks.set(id, next);
+      return next;
+    }),
+    updateStep: vi.fn(),
+    deleteTask: vi.fn(),
+    mergeTask: vi.fn(),
+    archiveTask: vi.fn(),
+    unarchiveTask: vi.fn(),
+    getSettings: vi.fn().mockResolvedValue({ defaultBranch: "main", autoMerge: false }),
+    getSettingsFast: vi.fn().mockResolvedValue({ defaultBranch: "main", autoMerge: false }),
+    updateSettings: vi.fn(),
+    updateGlobalSettings: vi.fn(),
+    getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
+    getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
+    getGlobalSettingsStore: vi.fn().mockReturnValue({
+      getSettings: vi.fn().mockResolvedValue({}),
+      updateSettings: vi.fn().mockResolvedValue({}),
+      getSettingsPath: vi.fn().mockReturnValue("/fake/home/.fusion/settings.json"),
+      init: vi.fn().mockResolvedValue(false),
+      invalidateCache: vi.fn(),
+    }),
+    logEntry: vi.fn().mockResolvedValue(undefined),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
+    addSteeringComment: vi.fn(),
+    addTaskComment: vi.fn(),
+    updateTaskComment: vi.fn(),
+    deleteTaskComment: vi.fn(),
+    getTaskDocuments: vi.fn().mockResolvedValue([]),
+    getTaskDocument: vi.fn().mockResolvedValue(null),
+    getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
+    getAllDocuments: vi.fn().mockResolvedValue([]),
+    upsertTaskDocument: vi.fn(),
+    deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
+    updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    updateIssueInfo: vi.fn().mockResolvedValue(undefined),
+    linkGithubIssue: vi.fn().mockResolvedValue(undefined),
+    recordActivity: vi.fn().mockResolvedValue(undefined),
+    getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    getDistributedTaskIdAllocator: vi.fn().mockReturnValue({
+      reserveDistributedTaskId: vi.fn().mockResolvedValue({ reservationId: "res-1", taskId: "FN-8001" }),
+      commitDistributedTaskIdReservation: vi.fn().mockResolvedValue({}),
+      abortDistributedTaskIdReservation: vi.fn().mockResolvedValue({}),
+    }),
+    ensureBranchGroupForSource: vi.fn((sourceType: "planning" | "mission" | "new-task", sourceId: string, init: { branchName: string; autoMerge?: boolean }) => {
+      const key = `${sourceType}:${sourceId}`;
+      const existing = branchGroupsBySource.get(key);
+      if (existing) return existing;
+      const group: BranchGroup = {
+        id: `BG-${sourceType}-${sourceId}`,
+        sourceType,
+        sourceId,
+        branchName: init.branchName,
+        autoMerge: Boolean(init.autoMerge),
+        prState: "none",
+        status: "open",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      branchGroupsBySource.set(key, group);
+      branchGroupsByBranch.set(init.branchName, group);
+      return group;
+    }),
+    getBranchGroupBySource: vi.fn((sourceType: "planning" | "mission" | "new-task", sourceId: string) => branchGroupsBySource.get(`${sourceType}:${sourceId}`) ?? null),
+    getBranchGroupByBranchName: vi.fn((name: string) => branchGroupsByBranch.get(name) ?? null),
+    setTaskBranchGroup: vi.fn(async (taskId: string, groupId: string) => {
+      const task = tasks.get(taskId);
+      if (!task) return;
+      const group = [...branchGroupsBySource.values()].find((candidate) => candidate.id === groupId);
+      if (!group) return;
+      tasks.set(taskId, {
+        ...task,
+        branchContext: {
+          groupId,
+          source: group.sourceType,
+          assignmentMode: "shared",
+        },
+      });
+    }),
+    listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    createWorkflowStep: vi.fn(),
+    getWorkflowStep: vi.fn(),
+    updateWorkflowStep: vi.fn(),
+    deleteWorkflowStep: vi.fn(),
+    getMissionStore: vi.fn().mockReturnValue({
+      listMissions: vi.fn().mockReturnValue([]),
+      createMission: vi.fn(),
+      getMissionWithHierarchy: vi.fn(),
+      updateMission: vi.fn(),
+      getMission: vi.fn(),
+      deleteMission: vi.fn(),
+      listMilestonesByMission: vi.fn().mockReturnValue([]),
+      createMilestone: vi.fn(),
+      updateMilestone: vi.fn(),
+      getMilestone: vi.fn(),
+      deleteMilestone: vi.fn(),
+      listTasksByMilestone: vi.fn().mockReturnValue([]),
+      createMissionTask: vi.fn(),
+      updateMissionTask: vi.fn(),
+      getMissionTask: vi.fn(),
+      deleteMissionTask: vi.fn(),
+    }),
+    /*
+    FNXC:PluginMcpServers 2026-07-24-02:05:
+    FN-8491 (3cd023fa4) made resolveProjectContext bind a project-scoped plugin
+    MCP provider on every getProjectContext call; a store exposing
+    getProjectScopedPluginMcpServers is treated as runtime-owned and skips the
+    binder (which would otherwise 500 on getPluginStore()).
+    */
+    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
+  };
+
+  return store as unknown as TaskStore;
+}
+
+async function REQUEST(app: express.Express, method: string, path: string, body?: unknown) {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const res = await performRequest(app, method, path, payload, { "Content-Type": "application/json" });
+  return { status: res.status, body: res.body };
+}
+
+/**
+ * ## Surface Enumeration
+ * Surfaces over which this regression spec proves the shared branch-group
+ * entry-point invariant (shared-mode tasks work on per-task-derived branches
+ * while the shared branch is only a merge target, and group membership identity
+ * is stamped consistently):
+ * - Providers / execution paths (dashboard entry points that create or assign
+ *   branch-group members): planning/subtasks streaming start, new-task creation
+ *   in shared mode, and the assignment paths exercised through
+ *   `store.createTask`, `ensureBranchGroupForSource`,
+ *   `getBranchGroupByBranchName`, `setTaskBranchGroup`, and `updateTask`.
+ * - Assignment modes / data states: shared, project-default, existing,
+ *   custom-new, auto-new, and per-task-derived sources.
+ * - Shared modules/helpers reusing the logic: the branch-name derivation and
+ *   `branchContext.groupId` membership-identity helpers shared with the core
+ *   entry-point spec, so the invariant cannot drift between dashboard and core.
+ * - Breakpoints/platforms: N/A — these are HTTP route/store invariants with no
+ *   UI rendering surface.
+ *
+ * NOTE: two per-task-derived-derivation cases in this file are known
+ * pre-existing failures tracked separately; this enumeration documents the
+ * intended surface coverage and does not alter those assertions.
+ */
+describe("shared branch-group entry-point invariants", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  /*
+  FNXC:BranchSelection 2026-08-23-23:50:
+  FN-074 (eb3eeb887a) deleted BOTH cases in this file because each opened with a `/api/subtasks/*` call, and that route was removed with task splitting. The new-task half of "preserves non-shared selection semantics" never depended on subtasks: project-default, existing, custom-new, and auto-new are live `POST /api/tasks` behavior, and their deletion left this describe with zero cases (which vitest fails as "No test found"). Restored without the removed planning/subtasks assertions.
+  */
+  it("preserves non-shared new-task selection semantics", async () => {
+    const app = buildApp();
+
+    await REQUEST(app, "POST", "/api/tasks", { description: "project default", branchSelection: { mode: "project-default" } });
+    await REQUEST(app, "POST", "/api/tasks", { description: "existing", branchSelection: { mode: "existing", branchName: "feature/existing", baseBranch: "main" } });
+    await REQUEST(app, "POST", "/api/tasks", { description: "custom", branchSelection: { mode: "custom-new", branchName: "feature/custom", baseBranch: "main" } });
+    await REQUEST(app, "POST", "/api/tasks", { title: "Auto task", description: "auto", branchSelection: { mode: "auto-new" } });
+
+    const calls = (store.createTask as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as TaskCreateInput);
+
+    expect(calls[0].branch).toBeUndefined();
+    expect(calls[0].branchContext).toBeUndefined();
+
+    expect(calls[1].branch).toBe("feature/existing");
+    expect(calls[1].branchContext).toBeUndefined();
+
+    expect(calls[2].branch).toBe("feature/custom");
+    expect(calls[2].branchContext).toBeUndefined();
+
+    // auto-new derives its branch after creation, in a follow-up updateTask that must declare an engine origin.
+    expect(calls[3].branch).toBeUndefined();
+    expect((store.updateTask as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toMatchObject({
+      branch: expect.stringMatching(/^fusion\/fn-/),
+      branchWriteOrigin: "engine",
+    });
+
+    // No non-shared mode may create or join a branch group.
+    expect(store.ensureBranchGroupForSource).not.toHaveBeenCalled();
+    expect(store.setTaskBranchGroup).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,118 @@
+# Localization (i18n) contributor guide
+
+Fusion's UI is localized with [react-i18next]. English (`en`) is the
+source-of-truth language; everything else is a translation of it. Both UI
+surfaces — the React dashboard and the Ink terminal UI — share one set of
+catalogs and config in the `@fusion/i18n` package.
+
+## Where things live
+
+| Path | What it is |
+| ---- | ---------- |
+| `packages/i18n/locales/{locale}/{namespace}.json` | Authored catalogs (translators edit here). `en` is the source. |
+| `packages/i18n/src/config.ts` | Shared i18next config: namespaces, fallback chain, plural setup. |
+| `packages/core` (`SUPPORTED_LOCALES`, `Locale`) | The single list of supported locale codes. |
+| `i18next.config.ts` (repo root) | `i18next-cli` workflow config. |
+
+Namespaces: `common` (shared), `app` (dashboard-only), `errors`, and `cli`
+(terminal-only). The dashboard loads `common`/`app`/`errors`; the CLI loads
+`common`/`cli`/`errors`.
+
+## The workflow
+
+All commands run from the repo root:
+
+```bash
+pnpm i18n:extract   # pull t()/<Trans> keys from source into the en catalogs
+pnpm i18n:sync      # propagate the en key structure to every other locale
+pnpm i18n:types     # regenerate key types from the en catalogs
+pnpm i18n:status    # key-parity gate: structure only, empty values allowed
+pnpm i18n:status:report # upstream completeness report (informational; may exit non-zero)
+pnpm i18n:lint      # flag hardcoded user-facing strings
+pnpm i18n:gen-cli   # regenerate the CLI static catalog import map
+```
+
+`pnpm i18n:status` must be green before landing catalog or extraction changes,
+but it only verifies that every secondary catalog has the same structural keys as
+`en`. Empty secondary-locale values (`""`) are expected placeholders and do not
+fail the gate because runtime falls back to English. Use
+`pnpm i18n:status:report` when you want the upstream completeness report that
+counts empty placeholders as untranslated; that report is informational and may
+exit non-zero until translations are filled.
+
+## Lint baseline policy
+
+`pnpm i18n:lint` is the hardcoded user-facing string guardrail and must stay
+green. Its file scope intentionally matches extraction: tests and stories are
+excluded because they are non-shipping fixtures and `extract` already ignores
+them. Suppress non-translatable token categories with narrow
+`lint.ignoredTags` / `lint.ignoredAttributes` entries, such as keyboard-key
+content in `<kbd>`, instead of hiding source directories.
+
+Any remaining user-facing copy must be localized with `t()` / `<Trans>` and an
+`en` catalog entry. A temporary deferral is only acceptable when it is scoped to
+specific files or a small cluster in `lint.ignore`, includes an `FNXC` rationale,
+and has a filed follow-up task that removes the ignore. The settings sections
+cluster is no longer deferred as of FN-6771; keep those files covered by lint.
+The production catalog currently has a clean lint baseline: `pnpm i18n:lint`
+must finish with `No issues found.`. Keep the executable regression alongside the
+catalog tests so future shipping copy cannot reintroduce debt:
+
+```bash
+pnpm --filter @fusion/i18n exec vitest run src/__tests__/i18n-lint-baseline.test.ts src/__tests__/i18n-gate-coverage.test.ts --silent=passed-only --reporter=dot
+```
+
+`i18n-lint-baseline.test.ts` imports the root `i18next.config.ts` and calls the
+installed `runLinter` API directly. It therefore checks the same production
+inputs as the CLI rather than relying on a mocked catalog or a source-text count.
+The `@fusion/i18n` regression tests also assert the lint-ignore scope and live
+catalog key parity so those guardrails cannot silently drift.
+
+## Translating an existing language
+
+1. Run `pnpm i18n:sync` so every catalog has the current `en` keys (untranslated
+   entries are empty strings).
+2. Fill the empty strings in `packages/i18n/locales/{locale}/*.json`.
+3. Keep interpolation placeholders verbatim: `{{brand}}`, `{{detail}}`,
+   `{{key}}`. Never translate a `[{{key}}]` keybinding accelerator — only the
+   words around it.
+4. Run `pnpm i18n:status` to confirm key parity still holds, then optionally run
+   `pnpm i18n:status:report` to inspect remaining untranslated placeholders.
+
+`zh-CN` and `zh-TW` are independent — different script **and** vocabulary. Do
+not machine-convert one into the other.
+
+## Adding a new language (near-zero code)
+
+1. Add the locale code to `SUPPORTED_LOCALES` in `packages/core/src/types.ts`
+   and to `locales` in `i18next.config.ts`.
+2. `pnpm i18n:sync` — scaffolds a full set of catalog files for the new locale
+   with the correct plural categories.
+3. `pnpm i18n:gen-cli` — adds the locale to the CLI's static import map.
+4. Run `pnpm i18n:status` to verify the new locale has the same key structure as
+   `en`. Translate the new catalogs as time allows, using
+   `pnpm i18n:status:report` as the informational completeness report.
+
+No feature code changes are required: the dashboard discovers the locale through
+the generated `app/locales/` tree, and the CLI through the regenerated import
+map. Add the language's endonym to `ENDONYMS` in
+`packages/dashboard/app/components/LanguageSelector.tsx` so it appears in the
+Settings switcher, add a prompt label to `LOCALE_LABELS` in
+`packages/dashboard/src/ai-translate.ts` (compile-enforced), and add a display
+name to `localeDisplayName` in
+`packages/core/src/i18n/detect-content-language.ts`. For Latin-script languages,
+also consider a stopword list in `LATIN_STOPWORDS` there so content-language
+detection can recognize the language (entries must be accent-stripped).
+
+## Using a non-English locale
+
+- **Dashboard / mobile:** Settings → Appearance → Language. The choice persists
+  to `localStorage` and to server settings.
+- **Terminal UI:** resolved from `--lang <code>` → the saved dashboard language
+  setting → the `LC_ALL`/`LC_MESSAGES`/`LANG`/`LANGUAGE` environment → `en`.
+
+  ```bash
+  fusion dashboard --lang zh-TW
+  ```
+
+[react-i18next]: https://react.i18next.com/

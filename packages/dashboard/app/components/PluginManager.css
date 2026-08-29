@@ -1,0 +1,903 @@
+/* ── Plugin Manager ─────────────────────────────────────────── */
+
+.plugin-manager,
+.plugin-manager-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding-inline: var(--space-xl);
+  padding-block: var(--space-md);
+}
+
+.plugin-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-sm);
+  border-bottom: var(--btn-border-width) solid var(--border);
+  gap: var(--space-sm);
+}
+
+.plugin-manager-header-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.plugin-manager-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.plugin-install-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plugin-install-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.plugin-install-hint code {
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  font-size: 0.85em;
+}
+
+.plugin-install-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.plugin-item:hover {
+  border-color: var(--text-dim);
+}
+
+.plugin-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.plugin-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plugin-copy-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.plugin-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-version {
+  font-size: 0.85rem;
+}
+
+.plugin-state-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+
+/* Detail view */
+
+.plugin-manager-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.plugin-detail-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.plugin-detail-title-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plugin-detail-name {
+  margin: 0;
+}
+
+.plugin-error-text {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.plugin-error-text--detail {
+  max-width: min(100%, 32rem);
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.plugin-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.plugin-detail-card {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.plugin-description {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.plugin-detail-meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.plugin-homepage {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.plugin-homepage a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-info);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.plugin-detail-section-heading {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 0.95rem;
+}
+
+.plugin-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  margin-top: var(--space-xs);
+}
+
+.plugin-settings-form .form-group {
+  padding: 0;
+  margin: 0;
+}
+
+.plugin-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.plugin-settings-group-heading {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.plugin-settings-array {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-settings-array-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.plugin-settings-array-item input {
+  flex: 1;
+}
+
+.plugin-security-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.plugin-security-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-security-header {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.plugin-security-summary {
+  margin: 0;
+}
+
+.plugin-security-badge {
+  font-weight: 700;
+}
+
+.plugin-security-badge--warning,
+.plugin-security-badge--unavailable {
+  color: var(--color-warning);
+}
+
+.plugin-security-badge--blocked,
+.plugin-security-badge--error {
+  color: var(--color-error);
+}
+
+.plugin-security-findings {
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.plugin-detail-actions {
+  display: flex;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: var(--btn-border-width) solid var(--border);
+  justify-content: flex-end;
+}
+
+/* Empty and loading states */
+.plugin-manager .empty-state,
+.plugin-manager .loading-state,
+.plugin-manager .settings-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-2xl);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.plugin-builtins-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-builtins-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.plugin-builtins-heading {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.plugin-builtins-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plugin-builtins-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.plugin-builtins-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plugin-builtins-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.plugin-builtins-name {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.plugin-builtins-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.plugin-builtins-status {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.plugin-builtins-status--installed {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+
+.plugin-builtins-status--available {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+
+.plugin-builtins-setup-status {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.plugin-builtins-setup-status--warning {
+  background: var(--status-in-review-bg);
+  color: var(--color-warning);
+}
+
+.plugin-builtins-setup-status--ready {
+  background: var(--status-done-bg);
+  color: var(--color-success);
+}
+
+.plugin-builtins-setup-status--pending {
+  background: var(--status-todo-bg);
+  color: var(--color-warning);
+}
+
+.plugin-builtins-setup-status--deferred {
+  background: var(--status-archived-bg);
+  color: var(--text-muted);
+}
+
+.plugin-builtins-description-text {
+  flex: 1 1 100%;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.plugin-builtins-metadata-only {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/*
+ * FNXC:PluginManager 2026-07-07-00:00:
+ * FN-7629 — runtime built-ins (Hermes/Paperclip/OpenClaw/Droid) must always expose a durable
+ * enable/disable control alongside the existing Install/Manage affordance, on both desktop and
+ * mobile, and never dead-end at a static label. Wrap the toggle + action button so both share the
+ * same alignment as the rest of the built-in row.
+ */
+.plugin-builtins-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.plugin-registry-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-registry-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.plugin-registry-heading-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plugin-registry-heading {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.plugin-registry-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plugin-registry-controls {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-end;
+}
+
+.plugin-registry-category-label,
+.plugin-registry-search-label {
+  display: flex;
+}
+
+.plugin-registry-category-label {
+  min-width: min(100%, 11rem);
+}
+
+.plugin-registry-search-label {
+  min-width: min(100%, 18rem);
+}
+
+.plugin-registry-category-select,
+.plugin-registry-search-input {
+  width: 100%;
+}
+
+.plugin-registry-search-input:focus-visible,
+.plugin-registry-action:focus-visible,
+.plugin-registry-retry:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.plugin-registry-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  max-height: min(60vh, 34rem);
+  overflow-y: auto;
+}
+
+.plugin-registry-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plugin-registry-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plugin-registry-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.plugin-registry-name {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.plugin-registry-version,
+.plugin-registry-author,
+.plugin-registry-description-text {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.plugin-registry-description-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.plugin-registry-badge,
+.plugin-registry-status,
+.plugin-registry-coming-soon {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.plugin-registry-badge {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+
+.plugin-registry-status--installed {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+
+.plugin-registry-coming-soon {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+
+.plugin-registry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.plugin-registry-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.plugin-registry-state--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--border));
+}
+
+.plugin-bundled-runtime-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.plugin-bundled-runtime-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plugin-bundled-runtime-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.plugin-bundled-runtime-name {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.plugin-bundled-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.plugin-bundled-runtime-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-bundled-runtime-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.plugin-bundled-runtime-heading {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.plugin-bundled-runtime-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plugin-bundled-runtime-status {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+@media (min-width: 769px) {
+  .plugin-builtins-status,
+  .plugin-bundled-runtime-status {
+    margin-left: auto;
+  }
+}
+
+.plugin-bundled-runtime-status--installed {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+
+.plugin-bundled-runtime-status--available {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+
+@media (max-width: 768px) {
+  .plugin-manager,
+  .plugin-manager-detail {
+    padding-inline: var(--space-sm);
+  }
+
+  .plugin-manager-detail-header {
+    gap: var(--space-sm);
+  }
+
+  .plugin-detail-title {
+    gap: var(--space-xs);
+  }
+
+  .plugin-detail-card {
+    padding: var(--space-md);
+    gap: var(--space-sm);
+  }
+
+  .plugin-list {
+    gap: var(--space-xs);
+  }
+
+  .plugin-item {
+    padding: var(--space-md);
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .plugin-info {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: var(--space-xs);
+  }
+
+  .plugin-name {
+    flex: 1 1 100%;
+    white-space: normal;
+  }
+
+  .plugin-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .plugin-actions .btn-icon,
+  .plugin-actions .toggle-switch {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .plugin-actions .toggle-switch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .plugin-security-row {
+    align-items: flex-start;
+  }
+
+  .plugin-detail-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .plugin-detail-actions button {
+    flex: 1 1 auto;
+    min-height: 36px;
+  }
+
+  .plugin-builtins-item,
+  .plugin-bundled-runtime-item,
+  .plugin-registry-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /*
+   * FNXC:PluginManager 2026-07-07-00:00:
+   * FN-7629 — keep the built-in runtime toggle at a 36x36 tap target on mobile, matching the
+   * installed-list `.plugin-actions .toggle-switch` convention, and let the actions row wrap
+   * below the metadata instead of squeezing the toggle + button onto one line.
+   */
+  .plugin-builtins-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .plugin-builtins-actions .toggle-switch {
+    min-width: 36px;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .plugin-registry-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .plugin-registry-controls {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .plugin-registry-category-label,
+  .plugin-registry-search-label {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .plugin-registry-list {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .plugin-registry-actions {
+    justify-content: stretch;
+  }
+
+  .plugin-registry-action,
+  .plugin-registry-retry {
+    min-height: 36px;
+  }
+
+  .plugin-builtins-item .btn,
+  .plugin-bundled-runtime-item .btn {
+    min-height: 36px;
+  }
+}

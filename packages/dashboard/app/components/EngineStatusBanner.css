@@ -1,0 +1,7 @@
+.engine-status-banner { margin: var(--space-md) var(--space-lg) 0; }
+.engine-status-banner__indicator { display: inline-flex; align-items: center; padding-top: calc(var(--space-xs) / 2); }
+.engine-status-banner__body, .engine-status-banner__error { margin: 0; line-height: 1.5; }
+.engine-status-banner__body code { background: color-mix(in srgb, var(--text) 6%, transparent); padding: 0 var(--space-xs); border-radius: var(--radius-sm); color: var(--text); }
+.engine-status-banner__error { color: var(--color-error); }
+.engine-status-banner__start { display: inline-flex; align-items: center; gap: var(--space-xs); white-space: nowrap; }
+@media (max-width: 768px) { .engine-status-banner { margin-inline: var(--space-md); } .engine-status-banner__start { width: 100%; justify-content: center; } }

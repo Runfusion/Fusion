@@ -1,0 +1,979 @@
+// -nocheck
+/* eslint-disable -eslint/no-unused-vars */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import "./executor-test-helpers.js";
+import { AgentSemaphore } from "../concurrency/concurrency.js";
+import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
+import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
+import { createFnAgent } from "../pi.js";
+import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
+import { execSync } from "node:child_process";
+import { findWorktreeUser, aiMergeTask } from "../merger.js";
+import { WorktreePool } from "../worktree/worktree-pool.js";
+import { generateWorktreeName, slugify } from "../worktree/worktree-names.js";
+import type { Task, TaskDetail } from "@fusion/core";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { StepSessionExecutor } from "../execution/step-session-executor.js";
+import { executorLog } from "../logger.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
+import { runVerificationCommand as mockedRunVerificationCommand } from "../execution/verification-utils.js";
+import {
+  createMockStore,
+  createWorkflowRoutingAgentStore,
+  mockedCreateFnAgent,
+  mockedSessionManager,
+  mockedGenerateWorktreeName,
+  mockedFindWorktreeUser,
+  mockedStepSessionExecutor,
+  mockedWithRateLimitRetry,
+  mockedExecSync,
+  mockedExistsSync,
+  selectImplementationSessionCall,
+  mockExecuteAll,
+  mockTerminateAllSessions,
+  mockCleanup,
+  resetExecutorMocks,
+} from "./executor-test-helpers.js";
+
+const mockedReviewStep = vi.mocked(mockedReviewStepFn);
+
+/*
+FNXC:WorkflowPrincipalRouting 2026-08-09-09:22:
+Graph ownership requires principal routing before an executor harness can open an agent session.
+This local fixture supplies only the durable executor role and capacity leases without bypassing
+admission; unlike createWorktreeExecutor it returns the fixture so a guard test can prove routing
+was reached rather than letting lifecycle assertions fail vacuously.
+*/
+function createRoutingExecutor(store: any, options: any = {}) {
+  const routing = createWorkflowRoutingAgentStore(store);
+  const executor = new TaskExecutor(store, "/tmp/test", { agentStore: routing.agentStore, ...options });
+  return { executor, routing };
+}
+
+/*
+FNXC:EngineTests 2026-07-19-16:30 (U10b):
+`moveTask` is now called by the workflow graph's merge boundary, which carries a metadata options
+argument (`workflowMoveSource`/`workflowMoveMetadata`). `toHaveBeenCalledWith(id, column)` matches
+argument lists EXACTLY, so the old two-argument form turned every negative "must not move to
+todo" assertion into a tautology once the third argument appeared. Match on destination only, so
+the requirement under test — WHICH column the task lands in, and that an engine pause never
+routes it back to `todo` — is asserted against the graph's real call shape.
+*/
+function moveTaskCallsTo(store: { moveTask: { mock: { calls: unknown[][] } } }, id: string, column: string) {
+  return store.moveTask.mock.calls.filter((call) => call[0] === id && call[1] === column);
+}
+
+describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("does NOT dispose active sessions when enginePaused transitions false→true", async () => {
+    const store = createMockStore();
+    const disposeFn = vi.fn();
+    let capturedCustomTools: any[] = [];
+
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = [...capturedCustomTools, ...(opts.customTools || [])];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: false },
+            });
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+            if (taskDoneTool) {
+              await taskDoneTool.execute("call-1", { summary: "done" });
+            }
+          }),
+          dispose: disposeFn,
+        },
+      };
+    }) as any);
+
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress" as const,
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    /*
+    FNXC:EngineTests 2026-07-19-16:30 (U10b):
+    The graph runs more than one agent session per task (the implementation session plus the
+    completion-summary node), so a hardcoded "dispose called once" no longer states the
+    requirement. The requirement is that each session is disposed exactly once on its own normal
+    completion and that the `settings:updated` engine-pause listener adds NO dispose of its own —
+    expressed as one dispose per created session.
+    */
+    expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThan(0);
+    expect(disposeFn).toHaveBeenCalledTimes(mockedCreateFnAgent.mock.calls.length);
+    // Task should complete normally and move to in-review, not todo
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+    expect(moveTaskCallsTo(store, "FN-001", "todo")).toHaveLength(0);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
+  });
+
+  it("keeps fn_task_done on the normal completion path when enginePaused becomes true", async () => {
+    const store = createMockStore();
+    const mutableSettings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      globalPause: false,
+      enginePaused: false,
+    };
+    let capturedCustomTools: any[] = [];
+    let taskDoneResult: any;
+
+    store.getSettings.mockImplementation(async () => ({ ...mutableSettings }));
+
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = [...capturedCustomTools, ...(opts.customTools || [])];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            mutableSettings.enginePaused = true;
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: false },
+            });
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+            if (taskDoneTool) {
+              taskDoneResult = await taskDoneTool.execute("call-1", { summary: "done" });
+            }
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        },
+      };
+    }) as any);
+
+    const { executor } = createRoutingExecutor(store);
+    const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
+
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(taskDoneResult.content[0].text).toBe(
+      "Task marked complete with summary. All steps done. Moving to in-review.",
+    );
+    expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ paused: false, pausedByAgentId: null, status: null }),
+    );
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+  });
+
+  it("does NOT move tasks to todo when enginePaused transitions false→true", async () => {
+    const store = createMockStore();
+    let capturedCustomTools: any[] = [];
+
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = [...capturedCustomTools, ...(opts.customTools || [])];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: false },
+            });
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+            if (taskDoneTool) {
+              await taskDoneTool.execute("call-1", { summary: "done" });
+            }
+          }),
+          dispose: vi.fn(),
+        },
+      };
+    }) as any);
+
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Task should complete normally (in-review), not be moved to todo
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+    expect(moveTaskCallsTo(store, "FN-001", "todo")).toHaveLength(0);
+  });
+
+  it("takes no action when enginePaused stays false (false→false)", async () => {
+    const store = createMockStore();
+    let capturedCustomTools: any[] = [];
+
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = [...capturedCustomTools, ...(opts.customTools || [])];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            store._trigger("settings:updated", {
+              settings: { enginePaused: false },
+              previous: { enginePaused: false },
+            });
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+            if (taskDoneTool) {
+              await taskDoneTool.execute("call-1", { summary: "done" });
+            }
+          }),
+          dispose: vi.fn(),
+        },
+      };
+    }) as any);
+
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Should move to in-review (normal completion), not todo
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+    expect(moveTaskCallsTo(store, "FN-001", "todo")).toHaveLength(0);
+  });
+
+  it("takes no action when enginePaused stays true (true→true)", async () => {
+    const store = createMockStore();
+    let capturedCustomTools: any[] = [];
+
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = [...capturedCustomTools, ...(opts.customTools || [])];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: true },
+            });
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+            if (taskDoneTool) {
+              await taskDoneTool.execute("call-1", { summary: "done" });
+            }
+          }),
+          dispose: vi.fn(),
+        },
+      };
+    }) as any);
+
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Should move to in-review (normal completion), not todo
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-001",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+    expect(moveTaskCallsTo(store, "FN-001", "todo")).toHaveLength(0);
+  });
+});
+
+describe("workflow routing fixture", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  /*
+  FNXC:WorkflowPrincipalRouting 2026-08-09-11:05:
+  FN-8883 observed 34 vacuous failures when an unrouted graph run opened zero createFnAgent
+  sessions and never exposed fn_task_done. These paired guards prove the accept path opens the
+  implementation session and the missing-agent-store path stays suspended rather than tolerated.
+  */
+  it("opens an implementation session and hands routed work to graph review", async () => {
+    const store = createMockStore();
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          const taskDoneTool = opts.customTools?.find((tool: any) => tool.name === "fn_task_done");
+          if (taskDoneTool) await taskDoneTool.execute("call-routing", { summary: "done" });
+        }),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-routing") },
+        state: {},
+      },
+    }) as any);
+    const { executor, routing } = createRoutingExecutor(store);
+
+    await executor.execute({
+      id: "FN-routing", title: "Routing fixture", description: "", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any);
+
+    expect(routing.agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
+    expect(selectImplementationSessionCall(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),
+    )).toBeDefined();
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-routing",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+  });
+
+  it("suspends an unrouted graph run before opening an implementation session", async () => {
+    const store = createMockStore();
+    // Explicit `agentStore: undefined` opts out of the harness's default routing agent store
+    // (executor-test-helpers fills it for bare constructions) so the unrouted suspend stays testable.
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore: undefined });
+
+    await executor.execute({
+      id: "FN-routing", title: "Routing fixture", description: "", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any);
+
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(moveTaskCallsTo(store, "FN-routing", "in-review")).toHaveLength(0);
+  });
+});
+
+// ── Code review verdict enforcement tests ────────────────────────────
+
+/**
+ * Helper: executes a task and captures the custom tools passed to createFnAgent.
+ * Returns a map of tool name → tool execute function for direct testing.
+ */
+async function captureTools(
+  settingsOverride?: Record<string, unknown>,
+  taskOverride?: Record<string, unknown>,
+): Promise<Record<string, (id: string, params: any) => Promise<any>>> {
+  const { tools } = await captureToolsWithStore(settingsOverride, taskOverride);
+  return tools;
+}
+
+async function captureToolsWithStore(
+  settingsOverride?: Record<string, unknown>,
+  taskOverride?: Record<string, unknown>,
+): Promise<{
+  tools: Record<string, (id: string, params: any) => Promise<any>>;
+  store: ReturnType<typeof createMockStore>;
+}> {
+  const store = createMockStore();
+  if (settingsOverride) {
+    store.getSettings.mockResolvedValue({ ...(await store.getSettings()), ...settingsOverride });
+  }
+  if (taskOverride && Object.keys(taskOverride).length > 0) {
+    await store.updateTask("FN-001", taskOverride);
+  }
+  mockedExistsSync.mockReturnValue(true);
+
+  let capturedTools: any[] = [];
+  mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+    capturedTools = [...capturedTools, ...(opts.customTools || [])];
+    return {
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: {
+          getLeafId: vi.fn().mockReturnValue("leaf-id"),
+          branchWithSummary: vi.fn(),
+        },
+        navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+      },
+    } as any;
+  });
+
+  /*
+  FNXC:EngineTests 2026-07-26-20:55:
+  Match the engine-pause harness shape that still reaches implementation sessions under
+  graph ownership (empty steps + harness default getTaskDocument/PROMPT.md). Over-specifying
+  frozen steps/worktree on execute has stranded this surface on plan-only sessions.
+  */
+  const { executor } = createRoutingExecutor(store);
+  await executor.execute({
+    id: "FN-001",
+    title: "Test",
+    description: "Test",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const tools: Record<string, any> = {};
+  for (const t of capturedTools) {
+    if (t?.name && typeof t.execute === "function" && tools[t.name] === undefined) {
+      tools[t.name] = t.execute;
+    }
+  }
+  return { tools, store };
+}
+
+describe("Code review verdict enforcement - fn_task_update blocking", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("registers research runtime tools in customTools when researchView experimental flag is enabled", async () => {
+    const tools = await captureTools({ experimentalFeatures: { researchView: true } });
+    expect(tools.fn_research_run).toBeTypeOf("function");
+    expect(tools.fn_research_list).toBeTypeOf("function");
+    expect(tools.fn_research_get).toBeTypeOf("function");
+    expect(tools.fn_research_cancel).toBeTypeOf("function");
+    expect(tools.fn_research_retry).toBeTypeOf("function");
+  });
+
+  it("does not register research runtime tools when researchView experimental flag is disabled", async () => {
+    const tools = await captureTools({ experimentalFeatures: { researchView: false } });
+    expect(tools.fn_research_run).toBeUndefined();
+    expect(tools.fn_research_list).toBeUndefined();
+    expect(tools.fn_research_get).toBeUndefined();
+    expect(tools.fn_research_cancel).toBeUndefined();
+    expect(tools.fn_research_retry).toBeUndefined();
+  });
+
+  it("omits research prompt guidance when researchView experimental flag is disabled", async () => {
+    let capturedSystemPrompt = "";
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+      capturedSystemPrompt = opts.systemPrompt || "";
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn(), branchWithSummary: vi.fn() },
+          navigateTree: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ ...(await store.getSettings()), experimentalFeatures: { researchView: false } });
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-SYS-NO-RESEARCH",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(capturedSystemPrompt).not.toContain("fn_research_run");
+  });
+
+  it("includes research prompt guidance when researchView experimental flag is enabled", async () => {
+    let capturedSystemPrompt = "";
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+      capturedSystemPrompt = opts.systemPrompt || "";
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn(), branchWithSummary: vi.fn() },
+          navigateTree: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ ...(await store.getSettings()), experimentalFeatures: { researchView: true } });
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-SYS-RESEARCH",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(capturedSystemPrompt).toContain("fn_research_run");
+  });
+
+  it("EXECUTOR_SYSTEM_PROMPT contains code review and full-suite enforcement language", async () => {
+    // Capture the system prompt passed to createFnAgent
+    let capturedSystemPrompt = "";
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+      capturedSystemPrompt = opts.systemPrompt || "";
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn(), branchWithSummary: vi.fn() },
+          navigateTree: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore();
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-SYS",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Verify enforcement language is present in system prompt
+    expect(capturedSystemPrompt).toContain("enforced");
+    expect(capturedSystemPrompt).toContain("will be rejected until the code review passes");
+    expect(capturedSystemPrompt).toContain("REVISE (plan review)");
+    expect(capturedSystemPrompt).toContain("advisory");
+    expect(capturedSystemPrompt).toContain("Do NOT run the full/workspace-wide test suite as your normal verification path");
+    expect(capturedSystemPrompt).toContain("A full/workspace-wide run is allowed ONLY when the task or workflow explicitly requires it");
+    expect(capturedSystemPrompt).toContain("allowFullSuite: true");
+    expect(capturedSystemPrompt).toContain("Do not call `fn_workflow_select` to change the workflow of the task you are executing");
+    expect(capturedSystemPrompt).toContain("The only exception is when the user explicitly requested a specific workflow for this task");
+    expect(capturedSystemPrompt).toContain("Implement required in-scope work directly here");
+    expect(capturedSystemPrompt).not.toContain("set the workflow on tasks you create");
+    expect(capturedSystemPrompt).toContain("Task-execution sessions structurally withhold `fn_task_create` and `fn_delegate_task`");
+  });
+
+  // Note: The EXECUTOR_SYSTEM_PROMPT constant is tested indirectly via the buildExecutionPrompt test.
+  // The direct test for EXECUTOR_SYSTEM_PROMPT is skipped because of module caching issues in vitest.
+  // The buildExecutionPrompt test verifies the CRITICAL language is included in execution prompts.
+
+});
+
+// ── RETHINK verdict handling tests ───────────────────────────────────
+
+// ── Plan RETHINK verdict handling tests ──────────────────────────────
+
+// ── E2E review pipeline sequence tests ─────────────────────────────
+
+describe("E2E review pipeline — multi-verdict sequence", () => {
+  /**
+   * Exercises the full review pipeline within a single task execution:
+   *   plan review → APPROVE
+   *   code review → REVISE (blocked)
+   *   code review → APPROVE (unblocked)
+   *   step done → success
+   *
+   * Verifies that verdicts compose correctly across the full lifecycle.
+   */
+
+  function makeStepResult(stepIndex: number, status: string) {
+    const steps = Array.from({ length: 3 }, (_, i) => ({
+      name: [`Preflight`, `Implement`, `Tests`][i],
+      status: i === stepIndex ? status : i < stepIndex ? "done" : "pending",
+    }));
+    return { steps };
+  }
+
+  async function captureE2ETools(store: any) {
+    let capturedTools: any[] = [];
+    const mockSessionManager = {
+      getLeafId: vi.fn().mockReturnValue("e2e-checkpoint"),
+      branchWithSummary: vi.fn(),
+    };
+    const mockNavigateTree = vi.fn().mockResolvedValue({ cancelled: false });
+    const mockSession = {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+      sessionManager: mockSessionManager,
+      navigateTree: mockNavigateTree,
+    };
+
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+      capturedTools = [...capturedTools, ...(opts.customTools || [])];
+      return { session: mockSession } as any;
+    });
+
+    const task = {
+      id: "FN-E2E",
+      title: "E2E Test",
+      description: "E2E pipeline test",
+      column: "in-progress" as const,
+      dependencies: [],
+      steps: [
+        { name: "Preflight", status: "pending" as const },
+        { name: "Implement", status: "pending" as const },
+        { name: "Tests", status: "pending" as const },
+      ],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockImplementation(async (id: string) => (id === task.id ? task : task));
+
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute(task);
+
+    const tools: Record<string, any> = {};
+    for (const t of capturedTools) {
+      tools[t.name] = t.execute;
+    }
+    return { tools, mockNavigateTree, mockSessionManager };
+  }
+
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("warns when fn_task_update marks a second step in-progress", async () => {
+    const store = createMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-E2E",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n### Step 1: Implement\n### Step 2: Verify",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "pending" as const },
+        { name: "Verify", status: "pending" as const },
+      ],
+    });
+    store.updateStep.mockImplementation(async (_id: string, step: number, status: string) => ({
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: step === 1 ? status : "pending" },
+        { name: "Verify", status: "pending" as const },
+      ],
+    }));
+
+    const { tools } = await captureE2ETools(store);
+    const result = await tools.fn_task_update("u-warn", { step: 1, status: "in-progress" });
+
+    expect(store.updateStep).toHaveBeenCalledWith("FN-E2E", 1, "in-progress");
+    expect(result.content[0].text).toContain("Step 1 (Implement) → in-progress");
+  });
+
+});
+
+// ── fn_task_add_dep tool tests ──────────────────────────────────────────
+
+describe("fn_task_add_dep tool", () => {
+  /**
+   * Helper: run executor with a customized mock store and capture custom tools.
+   * The mock store's getTask is configured to:
+   * - Return the executing task (KB-TEST) with configurable dependencies
+   * - Return a target task (KB-OTHER) when requested
+   * - Throw for unknown task IDs
+   */
+  async function captureAddDepTools(opts?: { existingDeps?: string[]; targetExists?: boolean }) {
+    const existingDeps = opts?.existingDeps ?? [];
+    const targetExists = opts?.targetExists ?? true;
+    const { tools, store } = await captureToolsWithStore(undefined, { dependencies: existingDeps });
+    if (targetExists) {
+      await store.updateTask("FN-OTHER", {
+        title: "Other task",
+        description: "Another task",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+      });
+    } else {
+      const baseGetTask = store.getTask.bind(store);
+      store.getTask.mockImplementation(async (id: string) => {
+        if (id === "FN-OTHER") throw new Error(`Task ${id} not found`);
+        return baseGetTask(id);
+      });
+    }
+    return { tools, store };
+  }
+
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("adds a valid dependency via store.updateTask when confirm=true", async () => {
+    const { tools, store } = await captureAddDepTools();
+
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
+
+    expect(result.content[0].text).toContain("Added dependency");
+    expect(result.content[0].text).toContain("triage");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      dependencies: ["FN-OTHER"],
+    });
+  });
+
+  it("returns error for self-dependency", async () => {
+    const { tools, store } = await captureAddDepTools();
+    store.updateTask.mockClear();
+
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-001" });
+
+    expect(result.content[0].text).toContain("Cannot add self-dependency");
+    expect(result.content[0].text).toContain("FN-001 cannot depend on itself");
+    // After mockClear, only tool-driven dependency writes remain.
+    const depUpdateCalls = store.updateTask.mock.calls.filter(
+      (call: any[]) => call[1]?.dependencies !== undefined,
+    );
+    expect(depUpdateCalls).toHaveLength(0);
+  });
+
+  it("returns error for non-existent target task", async () => {
+    const { tools, store } = await captureAddDepTools({ targetExists: false });
+    store.updateTask.mockClear();
+
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
+
+    expect(result.content[0].text).toContain("FN-OTHER not found");
+    expect(result.content[0].text).toContain("Cannot add dependency on a non-existent task");
+    const depUpdateCalls = store.updateTask.mock.calls.filter(
+      (call: any[]) => call[1]?.dependencies !== undefined,
+    );
+    expect(depUpdateCalls).toHaveLength(0);
+  });
+
+  it("returns informational message for duplicate dependency without duplicating", async () => {
+    const { tools, store } = await captureAddDepTools({ existingDeps: ["FN-OTHER"] });
+    store.updateTask.mockClear();
+
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
+
+    expect(result.content[0].text).toContain("already a dependency");
+    expect(result.content[0].text).toContain("No changes made");
+    const depUpdateCalls = store.updateTask.mock.calls.filter(
+      (call: any[]) => call[1]?.dependencies !== undefined,
+    );
+    expect(depUpdateCalls).toHaveLength(0);
+  });
+
+  it("logs the dependency addition via store.logEntry when confirm=true", async () => {
+    const { tools, store } = await captureAddDepTools();
+
+    await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
+
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Added dependency on FN-OTHER — stopping execution for re-planning");
+  });
+
+  it("appends to existing dependencies without overwriting when confirm=true", async () => {
+    const { tools, store } = await captureAddDepTools({ existingDeps: ["FN-001"] });
+
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
+
+    expect(result.content[0].text).toContain("Added dependency");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      dependencies: ["FN-001", "FN-OTHER"],
+    });
+  });
+
+  it("is registered in customTools array", async () => {
+    const { tools } = await captureAddDepTools();
+
+    expect(tools.fn_task_add_dep).toBeDefined();
+    expect(typeof tools.fn_task_add_dep).toBe("function");
+  });
+
+  it("returns warning without confirm=true and does NOT add dependency", async () => {
+    const { tools, store } = await captureAddDepTools();
+    store.updateTask.mockClear();
+    store.logEntry.mockClear();
+
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
+
+    expect(result.content[0].text).toContain("stop execution and discard current work");
+    expect(result.content[0].text).toContain("confirm=true");
+    // Should NOT have updated dependencies after the tool call
+    const depUpdateCalls = store.updateTask.mock.calls.filter(
+      (call: any[]) => call[1]?.dependencies !== undefined,
+    );
+    expect(depUpdateCalls).toHaveLength(0);
+    // Should NOT have logged any dep addition
+    const logCalls = store.logEntry.mock.calls.filter(
+      (call: any[]) => typeof call[1] === "string" && call[1].includes("Added dependency"),
+    );
+    expect(logCalls).toHaveLength(0);
+  });
+
+  it("validation errors (self-dep, not-found, dedup) return immediately without requiring confirm", async () => {
+    // Self-dep — no confirm needed
+    const { tools: tools1 } = await captureAddDepTools();
+    const selfResult = await tools1.fn_task_add_dep("call1", { task_id: "FN-001" });
+    expect(selfResult.content[0].text).toContain("Cannot add self-dependency");
+
+    // Not found — no confirm needed
+    const { tools: tools2 } = await captureAddDepTools({ targetExists: false });
+    const notFoundResult = await tools2.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
+    expect(notFoundResult.content[0].text).toContain("not found");
+
+    // Dedup — no confirm needed
+    const { tools: tools3 } = await captureAddDepTools({ existingDeps: ["FN-OTHER"] });
+    const dedupResult = await tools3.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
+    expect(dedupResult.content[0].text).toContain("already a dependency");
+  });
+
+  it("with confirm=true triggers depAborted and disposes session", async () => {
+    const store = createMockStore();
+    store.getTask.mockImplementation(async (id: string) => {
+      if (id === "FN-DEP") {
+        return {
+          id: "FN-DEP",
+          title: "Test",
+          description: "Test task",
+          column: "in-progress",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      if (id === "FN-TARGET") {
+        return {
+          id: "FN-TARGET",
+          title: "Target",
+          description: "Target task",
+          column: "todo",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          prompt: "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      throw new Error(`Task ${id} not found`);
+    });
+
+    mockedExistsSync.mockReturnValue(true);
+
+    const disposeFn = vi.fn();
+    let capturedTools: any[] = [];
+
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+      capturedTools = [...capturedTools, ...(opts.customTools || [])];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            /*
+            FNXC:EngineTests 2026-07-19-16:35 (U10b):
+            `fn_task_add_dep` is an IMPLEMENTATION-session tool. Under graph ownership this stub is
+            reused for the graph's review/summary sessions too, whose tool sets do not include it —
+            calling it unconditionally blew up the first non-implementation session and the task
+            never reached the abort path under test. Act only when the session actually owns the
+            tool; other sessions are no-ops.
+            */
+            const addDepTool = capturedTools.find((t: any) => t.name === "fn_task_add_dep");
+            if (!addDepTool) return;
+            // The agent calls fn_task_add_dep with confirm=true during execution
+            await addDepTool.execute("call1", { task_id: "FN-TARGET", confirm: true });
+            // After dispose is called, session.prompt throws
+            throw new Error("Session terminated");
+          }),
+          dispose: disposeFn,
+          sessionManager: {
+            getLeafId: vi.fn().mockReturnValue("leaf-id"),
+            branchWithSummary: vi.fn(),
+          },
+          navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+        },
+      } as any;
+    });
+
+    const { executor } = createRoutingExecutor(store);
+    await executor.execute({
+      id: "FN-DEP",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Worktree removal should have been attempted
+    const worktreeRemoveCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(worktreeRemoveCalls.length).toBeGreaterThan(0);
+
+    // Branch deletion should have been attempted
+    const branchDeleteCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("fusion/fn-dep"),
+    );
+    expect(branchDeleteCalls.length).toBeGreaterThan(0);
+
+    /*
+    FNXC:DepAbortRebound 2026-07-30-08:10 (lifecycle-column vocabulary):
+    The dep-abort cleanup no longer hardcodes a column: `handleDepAbortCleanup` moves the
+    card to `resolveReboundColumnFor(store, taskId)` (executor.ts:16576), which resolves
+    the task's OWN workflow rebound target by trait — hold, else intake, else the first
+    column — falling back to `todo`. For this fixture's default workflow that resolves to
+    `todo`, which post-U11 IS the merged Planning column; `triage` is no longer declared
+    on the default lineage at all, so the old literal expectation was asserting a column
+    the workflow does not have.
+
+    Asserted as the concrete resolved value rather than by re-calling the resolver:
+    deriving the expectation from the code under test makes the assertion agree with
+    whatever the resolver happens to return, which is how a broken rebound target would
+    slip through. Per-workflow resolution itself is covered by replan-target's own tests.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "todo");
+    // And explicitly NOT the retired legacy planner id.
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-DEP", "triage");
+
+    // Worktree and status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { worktree: null, status: null });
+
+    // Task should NOT be marked as failed
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-DEP", { status: "failed" });
+  });
+});
+
+// ── Usage limit detection in executor ────────────────────────────────
+
+import { UsageLimitPauser } from "../errors/usage-limit-detector.js";

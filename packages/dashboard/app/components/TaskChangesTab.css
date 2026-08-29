@@ -1,0 +1,51 @@
+.task-changes-file-list--compact {
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:TaskChangesDiff 2026-06-25-22:12:
+The inline task Changes diff should reclaim safe horizontal padding from the task detail body, especially on Android-width viewports, without changing the expanded diff modal or allowing page-level horizontal overflow.
+Keep the negative margins matched to the active .detail-body padding at desktop/tablet and mobile breakpoints.
+*/
+.task-changes-tab .changes-file-list.task-changes-file-list--compact {
+  margin-left: calc(-1 * calc(var(--space-lg) + var(--space-xs)));
+  margin-right: calc(-1 * calc(var(--space-lg) + var(--space-xs)));
+  max-width: calc(100% + (calc(var(--space-lg) + var(--space-xs)) * 2));
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .task-changes-tab .changes-file-list.task-changes-file-list--compact {
+    margin-left: calc(-1 * calc(var(--space-md) + var(--space-xs) / 2));
+    margin-right: calc(-1 * calc(var(--space-md) + var(--space-xs) / 2));
+    max-width: calc(100% + (calc(var(--space-md) + var(--space-xs) / 2) * 2));
+  }
+}
+
+.task-changes-file-list--compact .changes-file-header {
+  padding: calc(var(--space-sm) - var(--space-xs) / 2);
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
+}
+
+.task-changes-file-list--compact .changes-file-stat {
+  margin-left: var(--space-xs);
+}
+
+.task-changes-file-list--compact .changes-file-path {
+  direction: rtl;
+  text-overflow: ellipsis;
+}
+
+.changes-file-header--static {
+  cursor: default;
+}
+
+.changes-file-header--static:hover,
+.changes-file-header--static:active {
+  background: transparent;
+}
+
+.changes-file-header--static:focus-visible {
+  box-shadow: none;
+}
+

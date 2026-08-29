@@ -1,0 +1,1488 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
+import { TaskChangesTab } from "../TaskChangesTab";
+import type { MergeDetails, Column } from "@fusion/core";
+
+const mockFetchTaskDiff = vi.fn();
+
+vi.mock("../../api", () => ({
+  fetchTaskDiff: (...args: any[]) => mockFetchTaskDiff(...args),
+}));
+
+vi.mock("lucide-react", () => ({
+  FileCode: () => null,
+  ChevronDown: ({ size }: any) => <span data-testid="chevron-down" />,
+  ChevronRight: ({ size }: any) => <span data-testid="chevron-right" />,
+  ChevronLeft: ({ size }: any) => <span data-testid="chevron-left" />,
+  AlertCircle: () => null,
+  GitCommit: () => null,
+  WrapText: ({ size }: any) => <span data-testid="wrap-text-icon" />,
+  Maximize2: ({ size }: any) => <span data-testid="maximize-icon" />,
+}));
+
+vi.mock("../ChangesDiffModal", () => ({
+  ChangesDiffModal: ({ isOpen, onClose }: any) =>
+    isOpen ? <div data-testid="changes-diff-modal">Modal</div> : null,
+}));
+
+vi.mock("../../utils/highlightDiff", () => ({
+  highlightDiff: (diff: string) => diff,
+}));
+
+const DONE_TASK_DIFF = {
+  files: [
+    { path: "src/app.ts", status: "modified" as const, additions: 1, deletions: 0, patch: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1,2 @@\n import express from \"express\";\n+import cors from \"cors\";" },
+    { path: "src/new-file.ts", status: "added" as const, additions: 2, deletions: 0, patch: "diff --git a/src/new-file.ts b/src/new-file.ts\nnew file mode 100644\n@@ -0,0 +1,2 @@\n+export function hello() {}\n+export function world() {}" },
+  ],
+  stats: { filesChanged: 2, additions: 3, deletions: 0 },
+};
+
+const MERGE_DETAILS: MergeDetails = {
+  commitSha: "abc1234567890def",
+  filesChanged: 2,
+  insertions: 3,
+  deletions: 0,
+  mergeCommitMessage: "Merge branch 'fusion/fn-001' into main",
+  mergedAt: "2026-01-15T10:30:00Z",
+};
+
+beforeEach(() => {
+  mockFetchTaskDiff.mockReset();
+});
+
+describe("TaskChangesTab — worktree-backed (non-done tasks)", () => {
+  it("shows 'No worktree available' when no worktree and not done", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="in-progress"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No worktree available for this task.")).toBeTruthy();
+    });
+  });
+
+  it("renders fetched file rows for active task without worktree when branch fallback has files", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@" },
+      ],
+      stats: { filesChanged: 1, additions: 1, deletions: 0 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="in-progress"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("a.ts")).toBeTruthy();
+    });
+    expect(screen.queryByText("No worktree available for this task.")).toBeNull();
+  });
+
+  it("shows modifiedFiles fallback when an active task has no worktree diff", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="in-progress"
+        modifiedFiles={["packages/core/src/store.ts", "packages/core/src/types.ts"]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("2 files changed.")).toBeTruthy();
+    });
+    expect(screen.getByText("packages/core/src/store.ts")).toBeTruthy();
+    expect(screen.getByText("packages/core/src/types.ts")).toBeTruthy();
+  });
+
+  it("loads diff from fetchTaskDiff for in-progress task with worktree", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "src/app.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@" },
+      ],
+      stats: { filesChanged: 1, additions: 1, deletions: 0 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree="/path/to/worktree"
+        column="in-progress"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("loads diff from fetchTaskDiff for in-review task with worktree", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "src/app.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@" },
+      ],
+      stats: { filesChanged: 1, additions: 1, deletions: 0 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree="/path/to/worktree"
+        column="in-review"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+    expect(mockFetchTaskDiff).toHaveBeenCalled();
+  });
+
+  it("shows 'No files modified' when worktree diff returns empty", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [],
+      stats: { filesChanged: 0, additions: 0, deletions: 0 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree="/path/to/worktree"
+        column="in-progress"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No files modified.")).toBeTruthy();
+    });
+  });
+
+  it("shows error state when fetchTaskDiff fails", async () => {
+    mockFetchTaskDiff.mockRejectedValue(new Error("Network error"));
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree="/path/to/worktree"
+        column="in-progress"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error loading changes: Network error/)).toBeTruthy();
+    });
+  });
+
+  it("shows loading state initially", () => {
+    mockFetchTaskDiff.mockReturnValue(new Promise(() => {})); // never resolves
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree="/path/to/worktree"
+        column="in-progress"
+      />,
+    );
+    expect(screen.getByText("Loading changes...")).toBeTruthy();
+  });
+});
+
+// FNXC:Workspace 2026-06-25-00:40: a workspace task has no singular `worktree` — its changes come
+// from the backend's per-sub-repo aggregation (repo-prefixed paths). It must render those instead of
+// the single-repo "No worktree available" empty state.
+describe("TaskChangesTab — workspace tasks", () => {
+  it("renders aggregated repo-prefixed files for a workspace task (no singular worktree)", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "openvide/src/a.ts", status: "added", additions: 2, deletions: 0, patch: "@@ -0,0 +1,2 @@\n+a\n+aa" },
+        { path: "swarmclaw/lib/b.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n+b\n-old" },
+      ],
+      stats: { filesChanged: 2, additions: 3, deletions: 1 },
+    });
+
+    render(
+      <TaskChangesTab taskId="MULT-002" worktree={undefined} column={"in-review" as Column} isWorkspace />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("openvide/src/a.ts")).toBeTruthy();
+    });
+    expect(screen.getByText("swarmclaw/lib/b.ts")).toBeTruthy();
+    expect(screen.queryByText("No worktree available for this task.")).toBeNull();
+  });
+
+  it("does NOT show 'No worktree available' for an empty workspace task", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab taskId="MULT-002" worktree={undefined} column={"in-review" as Column} isWorkspace />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No files modified.")).toBeTruthy();
+    });
+    expect(screen.queryByText("No worktree available for this task.")).toBeNull();
+  });
+});
+
+describe("TaskChangesTab — commit-backed (done tasks)", () => {
+  it("loads diff from fetchTaskDiff for done task with commitSha", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("renders aggregated done-task file union and matching header count", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@" },
+        { path: "b.ts", status: "added", additions: 2, deletions: 0, patch: "@@" },
+        { path: "c.ts", status: "deleted", additions: 0, deletions: 1, patch: "@@" },
+        { path: "d.ts", status: "modified", additions: 3, deletions: 2, patch: "@@" },
+      ],
+      stats: { filesChanged: 4, additions: 6, deletions: 3 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (4)")).toBeTruthy();
+    });
+    expect(screen.getByText("a.ts")).toBeTruthy();
+    expect(screen.getByText("b.ts")).toBeTruthy();
+    expect(screen.getByText("c.ts")).toBeTruthy();
+    expect(screen.getByText("d.ts")).toBeTruthy();
+  });
+
+  it("shows commit metadata for done task", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("abc1234")).toBeTruthy(); // short SHA
+    });
+    expect(screen.getByText("Merge branch 'fusion/fn-001' into main")).toBeTruthy();
+    expect(screen.getByText(/Merged .+/)).toBeTruthy();
+  });
+
+  it("renders attribution notes for short-circuit and fallback merge details", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{
+          ...MERGE_DETAILS,
+          noOpVerifiedShortCircuit: true,
+          landedFilesCaptureFallback: "attribution-failed",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Verified short-circuit — work was already on main (rebase walked foreign commits)."))
+        .toBeTruthy();
+    });
+    expect(screen.getByText("Landed-files set may include foreign commits (attribution unavailable)."))
+      .toBeTruthy();
+  });
+
+  it("uses mergeDetails stats for summary", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+    expect(screen.getByText("+3")).toBeTruthy();
+    expect(screen.getByText("-0")).toBeTruthy();
+  });
+
+  it("renders stat summary on a separate line from Files Changed title", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    // The title and stats should be in a dedicated wrapper
+    const titleWrapper = container.querySelector(".task-changes-header-title");
+    expect(titleWrapper).toBeTruthy();
+
+    // The h4 should contain "Files Changed (N)" but NOT the stat summary
+    const h4 = titleWrapper?.querySelector("h4");
+    expect(h4).toBeTruthy();
+    expect(h4?.textContent).toContain("Files Changed (2)");
+    expect(h4?.querySelector(".changes-stat-summary")).toBeNull();
+
+    // The stat summary should be a sibling of h4, not a child
+    const statSummary = titleWrapper?.querySelector(".task-changes-stats");
+    expect(statSummary).toBeTruthy();
+    expect(statSummary?.querySelector(".diff-add")?.textContent).toBe("+3");
+    expect(statSummary?.querySelector(".diff-del")?.textContent).toBe("-0");
+  });
+
+  it("toggling file expansion shows/hides diff content", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // First file should be auto-expanded
+    let diffBlocks = container.querySelectorAll(".changes-file-content");
+    expect(diffBlocks.length).toBe(1);
+
+    // Click to collapse
+    fireEvent.click(screen.getByText("src/app.ts"));
+    diffBlocks = container.querySelectorAll(".changes-file-content");
+    expect(diffBlocks.length).toBe(0);
+
+    // Click on second file to expand
+    fireEvent.click(screen.getByText("src/new-file.ts"));
+    diffBlocks = container.querySelectorAll(".changes-file-content");
+    expect(diffBlocks.length).toBe(1);
+  });
+
+  it("shows 'No files modified' with commit-specific hint when patch is empty", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No files modified.")).toBeTruthy();
+    });
+    expect(screen.getByText("No file changes were recorded in the merge commit.")).toBeTruthy();
+  });
+
+  it("shows error state when fetchTaskDiff fails", async () => {
+    mockFetchTaskDiff.mockRejectedValue(new Error("Git error"));
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error loading changes: Git error/)).toBeTruthy();
+    });
+  });
+
+  it("renders commit SHA metadata even when only commitSha is set", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ commitSha: "abc1234567890def" }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // SHA metadata should render since commitSha is present
+    expect(container.querySelector(".commit-diff-meta")).toBeTruthy();
+    expect(screen.getByText("abc1234")).toBeTruthy(); // short SHA
+    // But message and timestamp should NOT be present since they're not set
+    expect(container.querySelector(".commit-diff-message")).toBeNull();
+    expect(container.querySelector(".commit-diff-timestamp")).toBeNull();
+  });
+});
+
+describe("TaskChangesTab — regression: non-done tasks and done-without-commitSha fallback parity", () => {
+  it("in-progress without worktree shows worktree empty state, not commit path", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="in-progress"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No worktree available for this task.")).toBeTruthy();
+    });
+  });
+
+  it("in-review without worktree shows worktree empty state", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="in-review"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No worktree available for this task.")).toBeTruthy();
+    });
+  });
+
+  it("todo task never loads diff even with mergeDetails", () => {
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="todo"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+    expect(screen.getByText("No worktree available for this task.")).toBeTruthy();
+    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+  });
+
+  it("done task without commitSha uses lineage-backed fetch and renders file list parity", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@" },
+        { path: "b.ts", status: "added", additions: 2, deletions: 0, patch: "@@" },
+        { path: "c.ts", status: "deleted", additions: 0, deletions: 1, patch: "@@" },
+        { path: "d.ts", status: "modified", additions: 3, deletions: 2, patch: "@@" },
+        { path: "e.ts", status: "modified", additions: 1, deletions: 1, patch: "@@" },
+        { path: "f.ts", status: "modified", additions: 4, deletions: 0, patch: "@@" },
+        { path: "g.ts", status: "added", additions: 5, deletions: 0, patch: "@@" },
+      ],
+      stats: { filesChanged: 7, additions: 16, deletions: 4 },
+    });
+
+    render(<TaskChangesTab taskId="FN-001" projectId="proj-1" worktree={undefined} column="done" mergeDetails={{}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (7)")).toBeTruthy();
+    });
+    for (const path of ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"]) {
+      expect(screen.getByText(path)).toBeTruthy();
+    }
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, "proj-1");
+  });
+
+  it("done task without commitSha shows summary fallback when diff resolves empty", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 3, insertions: 10, deletions: 2 }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("Final commit summary: 3 files changed, +10 additions, -2 deletions. Counts only the recorded merge/squash commit, not the full task lineage.")).toBeTruthy();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("done task without commitSha shows singular 'file' when filesChanged is 1", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 1, insertions: 5, deletions: 0 }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("Final commit summary: 1 file changed, +5 additions, -0 deletions. Counts only the recorded merge/squash commit, not the full task lineage.")).toBeTruthy();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("done task without commitSha prefers landedFiles over stale modifiedFiles", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 0, insertions: 0, deletions: 0, landedFiles: ["packages/cli/src/commands/__tests__/settings.test.ts"] }}
+        modifiedFiles={["packages/cli/src/commands/__tests__/settings.test.ts", "packages/cli/src/commands/__tests__/task.test.ts"]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1 file changed.")).toBeTruthy();
+    });
+    expect(screen.getByText("These are files captured from the merged commit metadata. The lineage-backed diff is unavailable for this task.")).toBeTruthy();
+    expect(screen.getByText("packages/cli/src/commands/__tests__/settings.test.ts")).toBeTruthy();
+    expect(screen.queryByText("packages/cli/src/commands/__tests__/task.test.ts")).toBeNull();
+    expect(screen.queryByText(/touched during execution/i)).toBeNull();
+    expect(screen.queryByText(/in the merged commit\b/i)).toBeNull();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(screen.queryByText("Files Changed (2)")).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("done task without commitSha falls back to modifiedFiles when landedFiles unavailable", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 0, insertions: 0, deletions: 0 }}
+        modifiedFiles={["packages/cli/src/commands/__tests__/settings.test.ts", "packages/cli/src/commands/__tests__/task.test.ts"]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("2 files changed.")).toBeTruthy();
+    });
+    expect(screen.getByText("These are files captured from the worktree during execution. They may differ from the files that actually landed on main. The lineage-backed diff is unavailable for this task.")).toBeTruthy();
+    expect(screen.getByText("packages/cli/src/commands/__tests__/settings.test.ts")).toBeTruthy();
+    expect(screen.getByText("packages/cli/src/commands/__tests__/task.test.ts")).toBeTruthy();
+    expect(screen.queryByText(/touched during execution/i)).toBeNull();
+    expect(screen.queryByText(/in the merged commit\b/i)).toBeNull();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(screen.queryByText("Files Changed (2)")).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("done task without commitSha and no mergeDetails shows fallback without summary", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("No merge commit was recorded for this task.")).toBeTruthy();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("done task without commitSha falls back gracefully when fetchTaskDiff rejects", async () => {
+    mockFetchTaskDiff.mockRejectedValue(new Error("Server unavailable"));
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 2, insertions: 4, deletions: 1 }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("Final commit summary: 2 files changed, +4 additions, -1 deletions. Counts only the recorded merge/squash commit, not the full task lineage.")).toBeTruthy();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+  });
+});
+
+describe("TaskChangesTab — status-to-class mapping", () => {
+  it("applies semantic status class for each file status", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // src/app.ts is modified, src/new-file.ts is added
+    const statusBadges = container.querySelectorAll(".changes-file-status");
+    expect(statusBadges.length).toBeGreaterThanOrEqual(2);
+
+    // Verify semantic status classes are present
+    const modifiedBadge = container.querySelector(".changes-file-status--modified");
+    expect(modifiedBadge).toBeTruthy();
+    expect(modifiedBadge?.textContent).toBe("M");
+
+    const addedBadge = container.querySelector(".changes-file-status--added");
+    expect(addedBadge).toBeTruthy();
+    expect(addedBadge?.textContent).toBe("A");
+  });
+
+  it("uses CSS classes instead of inline styles for status colors", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Status badges should NOT have inline style attributes (colors come from CSS)
+    const statusBadges = container.querySelectorAll(".changes-file-status");
+    for (const badge of Array.from(statusBadges)) {
+      expect(badge.getAttribute("style")).toBeNull();
+    }
+  });
+
+  it("renders stat summary with diff-add and diff-del classes", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    const statSummary = container.querySelector(".changes-stat-summary");
+    expect(statSummary).toBeTruthy();
+
+    const addStat = statSummary?.querySelector(".diff-add");
+    expect(addStat).toBeTruthy();
+
+    const delStat = statSummary?.querySelector(".diff-del");
+    expect(delStat).toBeTruthy();
+  });
+});
+
+describe("TaskChangesTab — file navigation", () => {
+  it("renders Previous and Next navigation buttons", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Previous file")).toBeTruthy();
+    expect(screen.getByLabelText("Next file")).toBeTruthy();
+  });
+
+  it("shows file position indicator in current/total format", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+  });
+
+  it("disables Previous button on first file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Previous file")).toBeDisabled();
+  });
+
+  it("enables Next button on first file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Next file")).not.toBeDisabled();
+  });
+
+  it("navigates to next file when Next is clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Click Next
+    fireEvent.click(screen.getByLabelText("Next file"));
+
+    // Indicator should update to 2/2
+    expect(screen.getByText("2/2")).toBeTruthy();
+  });
+
+  it("disables Next button on last file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Navigate to last file
+    fireEvent.click(screen.getByLabelText("Next file"));
+
+    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.getByLabelText("Next file")).toBeDisabled();
+    expect(screen.getByLabelText("Previous file")).not.toBeDisabled();
+  });
+
+  it("navigates back to previous file when Previous is clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Go to next, then back
+    fireEvent.click(screen.getByLabelText("Next file"));
+    expect(screen.getByText("2/2")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Previous file"));
+    expect(screen.getByText("1/2")).toBeTruthy();
+  });
+
+  it("expands only the navigated file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Initially only first file expanded
+    expect(container.querySelectorAll(".changes-file-content")).toHaveLength(1);
+
+    // Navigate to second file
+    fireEvent.click(screen.getByLabelText("Next file"));
+
+    // Still only one file expanded (the second one)
+    expect(container.querySelectorAll(".changes-file-content")).toHaveLength(1);
+  });
+});
+
+describe("TaskChangesTab — word wrap toggle", () => {
+  it("renders the word wrap toggle button", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Toggle word wrap")).toBeTruthy();
+    });
+  });
+
+  it("defaults to word wrap ON (btn-primary active)", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      const toggle = screen.getByLabelText("Toggle word wrap");
+      expect(toggle.className).toContain("btn-primary");
+    });
+  });
+
+  it("applies wrap CSS class when word wrap is ON", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const diffPatch = container.querySelector(".changes-diff-patch");
+    expect(diffPatch).toBeTruthy();
+    expect(diffPatch?.classList.contains("changes-diff-patch--wrap")).toBe(true);
+    expect(diffPatch?.classList.contains("changes-diff-patch--nowrap")).toBe(false);
+  });
+
+  it("toggles to nowrap when clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Default: wrap ON
+    let diffPatch = container.querySelector(".changes-diff-patch");
+    expect(diffPatch?.classList.contains("changes-diff-patch--wrap")).toBe(true);
+
+    // Click toggle
+    fireEvent.click(screen.getByLabelText("Toggle word wrap"));
+
+    // Now wrap should be OFF
+    diffPatch = container.querySelector(".changes-diff-patch");
+    expect(diffPatch?.classList.contains("changes-diff-patch--nowrap")).toBe(true);
+    expect(diffPatch?.classList.contains("changes-diff-patch--wrap")).toBe(false);
+
+    // Button should no longer have btn-primary
+    const toggle = screen.getByLabelText("Toggle word wrap");
+    expect(toggle.className).not.toContain("btn-primary");
+  });
+
+  it("updates tooltip based on wrap state", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const toggle = screen.getByLabelText("Toggle word wrap");
+    expect(toggle.getAttribute("title")).toBe("Disable word wrap");
+
+    // Click to toggle OFF
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("title")).toBe("Enable word wrap");
+  });
+});
+
+describe("TaskChangesTab — expand button", () => {
+  it("renders the expand button", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Expand diff view")).toBeTruthy();
+  });
+
+  it("opens the ChangesDiffModal when expand button is clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Modal should not be visible initially
+    expect(screen.queryByTestId("changes-diff-modal")).toBeNull();
+
+    // Click expand
+    fireEvent.click(screen.getByLabelText("Expand diff view"));
+
+    // Modal should now be visible
+    expect(screen.getByTestId("changes-diff-modal")).toBeTruthy();
+  });
+
+  it("keeps the expand button available when no files are loaded", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [],
+      stats: { filesChanged: 0, additions: 0, deletions: 0 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No files modified.")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Expand diff view")).toBeTruthy();
+  });
+});
+
+describe("TaskChangesTab — compact spacing class", () => {
+  it("reproduces the mobile inline diff surface inside a phone-width detail body", async () => {
+    const longPath = "packages/dashboard/app/components/task-detail/mobile/VeryLongInlineDiffPanelRegressionFile.tsx";
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        {
+          path: longPath,
+          status: "modified",
+          additions: 47,
+          deletions: 5,
+          patch: [
+            "diff --git a/packages/dashboard/app/components/task-detail/mobile/VeryLongInlineDiffPanelRegressionFile.tsx b/packages/dashboard/app/components/task-detail/mobile/VeryLongInlineDiffPanelRegressionFile.tsx",
+            "@@ -1,3 +1,6 @@",
+            "-const cramped = true;",
+            "+const inlineChangesPanelReclaimsTaskDetailPaddingWithoutPageOverflow = true;",
+            "+export const androidChromeWidthRepresentativeLine = inlineChangesPanelReclaimsTaskDetailPaddingWithoutPageOverflow;",
+          ].join("\n"),
+        },
+        {
+          path: "packages/dashboard/app/components/TaskChangesTab.css",
+          status: "modified",
+          additions: 3,
+          deletions: 0,
+          patch: "@@ -1 +1,3 @@\n+.task-changes-tab {}",
+        },
+      ],
+      stats: { filesChanged: 2, additions: 50, deletions: 5 },
+    });
+
+    const { container } = render(
+      <div className="detail-body" data-testid="mobile-detail-body" style={{ maxInlineSize: "430px", overflowX: "hidden" }}>
+        <div className="detail-body-content">
+          <TaskChangesTab
+            taskId="FN-6997"
+            worktree="/path/to/worktree"
+            column="in-progress"
+          />
+        </div>
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(longPath)).toBeTruthy();
+    });
+
+    const mobileDetailBody = screen.getByTestId("mobile-detail-body");
+    const taskTab = container.querySelector(".detail-body > .detail-body-content > .task-changes-tab");
+    const fileList = taskTab?.querySelector(".changes-file-list.task-changes-file-list--compact");
+    const diffPatch = fileList?.querySelector(".changes-diff-patch.changes-diff-patch--wrap");
+
+    expect(mobileDetailBody.style.maxInlineSize).toBe("430px");
+    expect(mobileDetailBody.style.overflowX).toBe("hidden");
+    expect(taskTab).toBeTruthy();
+    expect(fileList).toBeTruthy();
+    expect(diffPatch).toBeTruthy();
+    expect(diffPatch?.textContent).toContain("inlineChangesPanelReclaimsTaskDetailPaddingWithoutPageOverflow");
+    expect(fileList?.getAttribute("style")).toBeNull();
+    expect(diffPatch?.getAttribute("style")).toBeNull();
+  });
+
+  it("widens the desktop inline file list by reclaiming detail-body padding without inline styles", () => {
+    const css = loadAllAppCssBaseOnly();
+    const ruleMatch = css.match(/\.task-changes-tab\s+\.changes-file-list\.task-changes-file-list--compact\s*\{([^}]*)\}/);
+
+    expect(ruleMatch).toBeTruthy();
+    const rule = ruleMatch![1];
+    expect(rule).toContain("margin-left: calc(-1 * calc(var(--space-lg) + var(--space-xs)));");
+    expect(rule).toContain("margin-right: calc(-1 * calc(var(--space-lg) + var(--space-xs)));");
+    expect(rule).toContain("max-width: calc(100% + (calc(var(--space-lg) + var(--space-xs)) * 2));");
+  });
+
+  it("uses a 768px mobile breakpoint to reclaim the narrower mobile detail-body padding safely", () => {
+    const css = loadAllAppCss();
+    const mobileRuleMatch = css.match(/@media\s*\(max-width:\s*768px\)\s*\{\s*\.task-changes-tab\s+\.changes-file-list\.task-changes-file-list--compact\s*\{([\s\S]*?)\}/);
+
+    expect(mobileRuleMatch).toBeTruthy();
+    const rule = mobileRuleMatch![1];
+    expect(rule).toContain("margin-left: calc(-1 * calc(var(--space-md) + var(--space-xs) / 2));");
+    expect(rule).toContain("margin-right: calc(-1 * calc(var(--space-md) + var(--space-xs) / 2));");
+    expect(rule).toContain("max-width: calc(100% + (calc(var(--space-md) + var(--space-xs) / 2) * 2));");
+  });
+
+  it("keeps mobile widening equal and opposite to detail-body content padding while preserving overflow containment", () => {
+    const css = loadAllAppCss();
+    const detailBodyMobileRuleMatch = css.match(/\.detail-body\s*\{\s*padding:\s*0;([\s\S]*?)\}/);
+    const detailBodyContentMobileRuleMatch = css.match(/\.detail-body-content\s*\{\s*padding:\s*calc\(var\(--space-md\) \+ var\(--space-xs\) \/ 2\);([\s\S]*?)\}/);
+    const compactListMobileRuleMatch = css.match(/@media\s*\(max-width:\s*768px\)\s*\{\s*\.task-changes-tab\s+\.changes-file-list\.task-changes-file-list--compact\s*\{([\s\S]*?)\}/);
+
+    expect(detailBodyMobileRuleMatch).toBeTruthy();
+    expect(detailBodyContentMobileRuleMatch).toBeTruthy();
+    expect(compactListMobileRuleMatch).toBeTruthy();
+
+    const mobilePadding = "calc(var(--space-md) + var(--space-xs) / 2)";
+    expect(css).toContain("@media (max-width: 768px)");
+    expect(detailBodyMobileRuleMatch![0]).toContain("padding: 0;");
+    expect(detailBodyMobileRuleMatch![1]).toContain("overflow-x: hidden;");
+    expect(detailBodyContentMobileRuleMatch![0]).toContain(`padding: ${mobilePadding};`);
+    expect(compactListMobileRuleMatch![1]).toContain(`margin-left: calc(-1 * ${mobilePadding});`);
+    expect(compactListMobileRuleMatch![1]).toContain(`margin-right: calc(-1 * ${mobilePadding});`);
+    expect(compactListMobileRuleMatch![1]).toContain(`max-width: calc(100% + (${mobilePadding} * 2));`);
+  });
+
+  it("renders the file list with the compact modifier class", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const fileList = container.querySelector(".changes-file-list.task-changes-file-list--compact");
+    expect(fileList).toBeTruthy();
+  });
+
+  it("renders root element with task-changes-tab class for margin scoping", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // The task-changes-tab class on the root element enables the negative-margin
+    // CSS rule that reclaims horizontal space from .detail-body padding
+    const root = container.querySelector(".task-changes-tab");
+    expect(root).toBeTruthy();
+
+    // The compact file list should be a child of the root scoping element
+    const fileList = root?.querySelector(".changes-file-list.task-changes-file-list--compact");
+    expect(fileList).toBeTruthy();
+  });
+
+  it("diff patches have no extraneous inline padding styles", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Diff patches should not have inline style padding — all spacing comes from CSS classes
+    const diffPatches = container.querySelectorAll(".changes-diff-patch");
+    for (const patch of Array.from(diffPatches)) {
+      expect(patch.getAttribute("style")).toBeNull();
+    }
+
+    // File content containers should also have no inline padding
+    const fileContents = container.querySelectorAll(".changes-file-content");
+    for (const content of Array.from(fileContents)) {
+      expect(content.getAttribute("style")).toBeNull();
+    }
+  });
+});
+
+describe("TaskChangesTab — file path display", () => {
+  it("renders short file paths as full text in bdo wrappers with title tooltips", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const pathSpan = container.querySelector('.changes-file-path[title="src/app.ts"]');
+    expect(pathSpan).toBeTruthy();
+
+    const bdo = pathSpan?.querySelector("bdo");
+    expect(bdo).toBeTruthy();
+    expect(bdo?.getAttribute("dir")).toBe("ltr");
+    expect(bdo?.textContent).toBe("src/app.ts");
+  });
+
+  it("keeps full long path text inside the bdo element", async () => {
+    const longPath = "packages/dashboard/app/components/VeryLongComponentNameGoesHere.tsx";
+
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        {
+          path: longPath,
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: "@@ -1 +1,2 @@",
+        },
+      ],
+      stats: { filesChanged: 1, additions: 1, deletions: 0 },
+    });
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(longPath)).toBeTruthy();
+    });
+
+    const pathSpan = container.querySelector(`.changes-file-path[title="${longPath}"]`);
+    expect(pathSpan).toBeTruthy();
+    expect(pathSpan?.querySelector("bdo")?.textContent).toBe(longPath);
+  });
+
+  it("applies RTL ellipsis CSS for left truncation", () => {
+    const css = loadAllAppCss();
+    const ruleMatch = css.match(/\.task-changes-file-list--compact\s+\.changes-file-path\s*\{([^}]*)\}/);
+    expect(ruleMatch).toBeTruthy();
+
+    const rule = ruleMatch![1];
+    expect(rule).toContain("direction: rtl;");
+    expect(rule).toContain("text-overflow: ellipsis;");
+  });
+});
+
+describe("TaskChangesTab — header toolbar structure", () => {
+  it("keeps nav and controls grouped inside the header actions wrapper for populated diffs", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    const header = container.querySelector(".task-changes-tab .changes-header");
+    const actionsWrapper = header?.querySelector(".changes-header-actions-wrapper");
+    const primaryActions = actionsWrapper?.querySelector(".changes-header-actions");
+    const secondaryActions = actionsWrapper?.querySelector(".changes-header-actions-secondary");
+    const nav = primaryActions?.querySelector(".changes-nav");
+
+    expect(actionsWrapper).toBeTruthy();
+    expect(primaryActions).toBeTruthy();
+    expect(secondaryActions).toBeTruthy();
+    expect(nav).toBeTruthy();
+    expect(nav?.querySelector('[aria-label="Previous file"]')).toBeTruthy();
+    expect(nav?.querySelector('[aria-label="Next file"]')).toBeTruthy();
+    expect(nav?.querySelector(".changes-nav-indicator")?.textContent).toBe("1/2");
+    expect(screen.getByLabelText("Toggle word wrap").closest(".changes-header-actions")).toBe(primaryActions ?? null);
+    expect(screen.getByText("Refresh").closest(".changes-header-actions-secondary")).toBe(secondaryActions ?? null);
+    expect(screen.getByLabelText("Expand diff view").closest(".changes-header-actions-secondary")).toBe(secondaryActions ?? null);
+  });
+
+  it("renders the header controls without nav when the diff is empty", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [],
+      stats: { filesChanged: 0, additions: 0, deletions: 0 },
+    });
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree="/path/to/worktree"
+        column="in-progress"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No files modified.")).toBeTruthy();
+    });
+
+    const header = container.querySelector(".task-changes-tab .changes-header");
+    const actionsWrapper = header?.querySelector(".changes-header-actions-wrapper");
+
+    expect(header).toBeTruthy();
+    expect(actionsWrapper).toBeTruthy();
+    expect(header?.querySelector(".changes-nav")).toBeNull();
+    expect(screen.getByLabelText("Toggle word wrap")).toBeTruthy();
+    expect(screen.getByText("Refresh")).toBeTruthy();
+    expect(screen.getByLabelText("Expand diff view")).toBeTruthy();
+  });
+
+  it("keeps commit metadata above the header while preserving the actions structure", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    const taskTab = container.querySelector(".task-changes-tab");
+    const header = taskTab?.querySelector(":scope > .changes-header");
+    const commitMeta = taskTab?.querySelector(":scope > .commit-diff-meta");
+
+    expect(commitMeta).toBeTruthy();
+    expect(header).toBeTruthy();
+    expect(commitMeta?.nextElementSibling).toBe(header ?? null);
+    expect(header?.querySelector(".changes-header-actions-wrapper .changes-header-actions-secondary")).toBeTruthy();
+  });
+
+  it("defines task-scoped mobile toolbar overrides without changing shared desktop rules", () => {
+    const css = loadAllAppCss();
+    const mobileToolbarRule = css.match(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.task-changes-tab\s+\.changes-header-actions-wrapper\s*\{([\s\S]*?)\}/);
+
+    expect(mobileToolbarRule).toBeTruthy();
+    expect(mobileToolbarRule![1]).toContain("flex-direction: row;");
+    expect(mobileToolbarRule![1]).toContain("flex-wrap: wrap;");
+    expect(mobileToolbarRule![1]).toContain("width: 100%;");
+  });
+});
+
+describe("TaskChangesTab — action button sizing", () => {
+  it("keeps Refresh and expand buttons on the same compact height", () => {
+    const css = loadAllAppCss();
+
+    const sharedButtonRuleMatch = css.match(
+      /\.task-changes-tab\s+\.changes-header-actions-secondary\s*>\s*\.btn\s*\{([^}]*)\}/s,
+    );
+    expect(sharedButtonRuleMatch).toBeTruthy();
+    const sharedButtonRule = sharedButtonRuleMatch![1];
+    const heightMatch = sharedButtonRule.match(/height:\s*([^;]+);/);
+    expect(heightMatch).toBeTruthy();
+    const expectedHeight = heightMatch![1].trim();
+
+    const iconButtonRuleMatch = css.match(
+      /\.task-changes-tab\s+\.changes-header-actions-secondary\s*>\s*\.btn-icon\s*\{([^}]*)\}/s,
+    );
+    expect(iconButtonRuleMatch).toBeTruthy();
+    const iconButtonRule = iconButtonRuleMatch![1];
+
+    expect(iconButtonRule).toContain(`width: ${expectedHeight};`);
+    expect(iconButtonRule).toContain(`min-width: ${expectedHeight};`);
+    expect(iconButtonRule).toContain(`min-height: ${expectedHeight};`);
+  });
+});

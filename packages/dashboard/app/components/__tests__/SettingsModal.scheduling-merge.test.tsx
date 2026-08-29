@@ -1,0 +1,2030 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { cleanup, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
+import path from "path";
+import { SettingsModal } from "../SettingsModal";
+import {
+  mockFetchSettings,
+  mockFetchSettingsByScope,
+  mockExportSettings,
+  mockUpdateSettings,
+  mockUpdateGlobalSettings,
+  mockFetchAuthStatus,
+  mockLoginProvider,
+  mockLogoutProvider,
+  mockCancelProviderLogin,
+  mockSaveApiKey,
+  mockSubmitProviderManualCode,
+  mockFetchModels,
+  mockFetchWorkflow,
+  mockFetchWorkflowSettingValues,
+  mockUpdateWorkflowSettingValues,
+  mockFetchCustomProviders,
+  mockCreateCustomProvider,
+  mockUpdateCustomProvider,
+  mockDeleteCustomProvider,
+  mockTestNtfyNotification,
+  mockTestNotification,
+  mockFetchBackups,
+  mockCreateBackup,
+  mockImportSettings,
+  mockFetchMemoryFiles,
+  mockFetchMemoryFile,
+  mockSaveMemoryFile,
+  mockCompactMemory,
+  mockFetchGlobalConcurrency,
+  mockUpdateGlobalConcurrency,
+  mockFetchMemoryBackendStatus,
+  mockTestMemoryRetrieval,
+  mockInstallQmd,
+  mockFetchGitRemotes,
+  mockFetchGitRemotesDetailed,
+  mockFetchProjects,
+  mockFetchDashboardHealth,
+  mockCheckForUpdates,
+  mockInstallUpdate,
+  mockFetchRemoteSettings,
+  mockUpdateRemoteSettings,
+  mockFetchRemoteStatus,
+  mockInstallCloudflared,
+  mockStartRemoteTunnel,
+  mockStopRemoteTunnel,
+  mockKillExternalTunnel,
+  mockRegenerateRemotePersistentToken,
+  mockGenerateShortLivedRemoteToken,
+  mockFetchRemoteQr,
+  mockFetchRemoteUrl,
+  mockTriggerMemoryDreams,
+  mockFetchPluginUiSlots,
+  mockFetchDroidCliStatus,
+  mockSetDroidCliEnabled,
+  mockFetchCursorCliStatus,
+  mockSetCursorCliEnabled,
+  mockSetCursorCliBinaryPath,
+  mockUseWorkspaceFileBrowser,
+  mockConfirm,
+  mockUseWorktrunkInstallStatus,
+  mockUseMemoryBackendStatus,
+  mockUseMobileKeyboard,
+  defaultSettings,
+  renderModal,
+  waitForSettingsModalReady,
+  settingsModalUser,
+  installSettingsModalEnv,
+  flushSettingsAutoSave,
+} from "./SettingsModal.test-harness";
+
+vi.mock("../../api", async (importOriginal) => {
+  const { createDashboardApiMock } = await import("../../test/mockApi");
+  return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
+    fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
+    fetchSettingsByScope: (...args: unknown[]) => mockFetchSettingsByScope(...args),
+    updateSettings: (...args: unknown[]) => mockUpdateSettings(...args),
+    updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
+    exportSettings: (...args: unknown[]) => mockExportSettings(...args),
+    importSettings: (...args: unknown[]) => mockImportSettings(...args),
+    fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
+    loginProvider: (...args: unknown[]) => mockLoginProvider(...args),
+    logoutProvider: (...args: unknown[]) => mockLogoutProvider(...args),
+    cancelProviderLogin: (...args: unknown[]) => mockCancelProviderLogin(...args),
+    saveApiKey: (...args: unknown[]) => mockSaveApiKey(...args),
+    submitProviderManualCode: (...args: unknown[]) => mockSubmitProviderManualCode(...args),
+    fetchModels: (...args: unknown[]) => mockFetchModels(...args),
+    fetchWorkflow: (...args: unknown[]) => mockFetchWorkflow(...args),
+    fetchWorkflowSettingValues: (...args: unknown[]) => mockFetchWorkflowSettingValues(...args),
+    updateWorkflowSettingValues: (...args: unknown[]) => mockUpdateWorkflowSettingValues(...args),
+    fetchCustomProviders: (...args: unknown[]) => mockFetchCustomProviders(...args),
+    createCustomProvider: (...args: unknown[]) => mockCreateCustomProvider(...args),
+    updateCustomProvider: (...args: unknown[]) => mockUpdateCustomProvider(...args),
+    deleteCustomProvider: (...args: unknown[]) => mockDeleteCustomProvider(...args),
+    testNtfyNotification: (...args: unknown[]) => mockTestNtfyNotification(...args),
+    testNotification: (...args: unknown[]) => mockTestNotification(...args),
+    fetchBackups: (...args: unknown[]) => mockFetchBackups(...args),
+    createBackup: (...args: unknown[]) => mockCreateBackup(...args),
+    fetchMemoryFiles: (...args: unknown[]) => mockFetchMemoryFiles(...args),
+    fetchMemoryFile: (...args: unknown[]) => mockFetchMemoryFile(...args),
+    saveMemoryFile: (...args: unknown[]) => mockSaveMemoryFile(...args),
+    compactMemory: (...args: unknown[]) => mockCompactMemory(...args),
+    fetchGlobalConcurrency: (...args: unknown[]) => mockFetchGlobalConcurrency(...args),
+    updateGlobalConcurrency: (...args: unknown[]) => mockUpdateGlobalConcurrency(...args),
+    fetchMemoryBackendStatus: (...args: unknown[]) => mockFetchMemoryBackendStatus(...args),
+    testMemoryRetrieval: (...args: unknown[]) => mockTestMemoryRetrieval(...args),
+    installQmd: (...args: unknown[]) => mockInstallQmd(...args),
+    fetchGitRemotes: (...args: unknown[]) => mockFetchGitRemotes(...args),
+    fetchGitRemotesDetailed: (...args: unknown[]) => mockFetchGitRemotesDetailed(...args),
+    fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
+    fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
+    checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
+    installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
+    fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
+    updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
+    fetchRemoteStatus: (...args: unknown[]) => mockFetchRemoteStatus(...args),
+    installCloudflared: (...args: unknown[]) => mockInstallCloudflared(...args),
+    startRemoteTunnel: (...args: unknown[]) => mockStartRemoteTunnel(...args),
+    stopRemoteTunnel: (...args: unknown[]) => mockStopRemoteTunnel(...args),
+    killExternalTunnel: (...args: unknown[]) => mockKillExternalTunnel(...args),
+    regenerateRemotePersistentToken: (...args: unknown[]) => mockRegenerateRemotePersistentToken(...args),
+    generateShortLivedRemoteToken: (...args: unknown[]) => mockGenerateShortLivedRemoteToken(...args),
+    fetchRemoteQr: (...args: unknown[]) => mockFetchRemoteQr(...args),
+    fetchRemoteUrl: (...args: unknown[]) => mockFetchRemoteUrl(...args),
+    triggerMemoryDreams: (...args: unknown[]) => mockTriggerMemoryDreams(...args),
+    fetchPluginUiSlots: (...args: unknown[]) => mockFetchPluginUiSlots(...args),
+    fetchDroidCliStatus: (...args: unknown[]) => mockFetchDroidCliStatus(...args),
+    setDroidCliEnabled: (...args: unknown[]) => mockSetDroidCliEnabled(...args),
+    fetchCursorCliStatus: (...args: unknown[]) => mockFetchCursorCliStatus(...args),
+    setCursorCliEnabled: (...args: unknown[]) => mockSetCursorCliEnabled(...args),
+    setCursorCliBinaryPath: (...args: unknown[]) => mockSetCursorCliBinaryPath(...args),
+  });
+});
+
+// Mock the hook
+vi.mock("../../hooks/useMemoryBackendStatus", () => ({
+  useMemoryBackendStatus: (...args: unknown[]) => mockUseMemoryBackendStatus(...args),
+}));
+
+vi.mock("../../hooks/useMobileKeyboard", () => ({
+  useMobileKeyboard: (...args: unknown[]) => mockUseMobileKeyboard(...args),
+}));
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: (...args: unknown[]) => mockConfirm(...args) }),
+}));
+
+vi.mock("../../hooks/useViewportMode", () => ({
+  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
+  getViewportMode: () => "mobile",
+  isMobileViewport: () => true,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
+  useViewportMode: () => "mobile",
+}));
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
+  return {
+    ...actual,
+    Globe: () => <span data-testid="icon-globe" />,
+    Folder: () => <span data-testid="icon-folder" />,
+    RefreshCw: ({ className }: { className?: string }) => <span data-testid="icon-refresh" className={className} />,
+    Star: ({ size }: { size?: number }) => <span data-testid="icon-star" style={{ width: size, height: size }} />,
+    HelpCircle: ({ size }: { size?: number }) => <span data-testid="icon-help-circle" style={{ width: size, height: size }} />,
+    Loader2: ({ className }: { className?: string }) => <span data-testid="icon-loader2" className={className} />,
+  };
+});
+
+vi.mock("../PluginManager", () => ({
+  PluginManager: () => <div data-testid="plugin-manager">Plugin manager content</div>,
+}));
+
+vi.mock("../PiExtensionsManager", () => ({
+  PiExtensionsManager: () => <div data-testid="pi-extensions-manager">Pi extensions content</div>,
+}));
+
+
+vi.mock("../../hooks/useWorkspaceFileBrowser", () => ({
+  useWorkspaceFileBrowser: (...args: unknown[]) => mockUseWorkspaceFileBrowser(...args),
+}));
+
+vi.mock("../../hooks/useWorktrunkInstallStatus", () => ({
+  useWorktrunkInstallStatus: (...args: unknown[]) => mockUseWorktrunkInstallStatus(...args),
+}));
+
+vi.mock("../FileBrowser", () => ({
+  FileBrowser: ({ onSelectFile }: { onSelectFile: (path: string) => void }) => (
+    <div data-testid="mock-overlap-file-browser">
+      <button type="button" onClick={() => onSelectFile("README.md")}>Select README.md</button>
+    </div>
+  ),
+}));
+
+describe("SettingsModal", () => {
+  installSettingsModalEnv();
+
+  /*
+  FNXC:SettingsModalTests 2026-07-16-13:30:
+  The Advanced settings switch (FNXC:SettingsSimplification 2026-07-11) hides advanced-only nav items (memory, experimental, remote, scheduled-evals) and display:nones low-frequency form-groups (testMode, pushAfterMerge, commitAuthorEnabled, worktree plumbing) in Basic mode. These suites exercise exactly those controls, so they opt into Advanced mode the same way settings-mobile and models-auth do; installSettingsModalEnv()'s beforeEach clears localStorage first, so this must be re-set per test.
+  */
+  beforeEach(() => {
+    localStorage.setItem("fusion:settings:show-advanced", "true");
+  });
+
+  /*
+  FNXC:SettingsModalTests 2026-08-17-00:20:
+  Scheduling-tab tests open `initialSection: "scheduling"` instead of remounting Authentication
+  and clicking the sidebar. The 2026-08-16 findByRole nav wait existed because a fetch-called
+  signal can precede the nav-button commit; skipping that click removes the flake surface and
+  the extra section render. Tests that still need nav (proving the sidebar item exists) keep it.
+  */
+  describe("Scheduling overlap ignore paths", () => {
+    /*
+    FNXC:ExecutorToolFailureRetry 2026-08-06-15:10:
+    Exercise the SettingsModal API lifecycle, not only the SchedulingSection fallback.
+    An omitted project threshold must render as one, while an explicit operator value
+    must remain unchanged when another scheduling edit triggers the project save.
+    */
+    it("loads the first-error threshold default and saves an explicit threshold", async () => {
+      const { executorToolFailureThreshold: _omitted, ...settingsWithoutThreshold } = defaultSettings;
+      mockFetchSettings.mockResolvedValue(settingsWithoutThreshold);
+      mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutThreshold, project: {} });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const threshold = screen.getByLabelText("Consecutive tool failures") as HTMLInputElement;
+      expect(threshold.value).toBe("1");
+
+      fireEvent.change(threshold, { target: { value: "4" } });
+      expect(threshold.value).toBe("4");
+      await settingsModalUser.click(document.querySelector(".modal-close") as HTMLButtonElement);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      expect(mockUpdateSettings.mock.calls.map((call) => call[0])).toContainEqual(
+        expect.objectContaining({ executorToolFailureThreshold: 4 }),
+      );
+    });
+
+    it("does not overwrite an explicit threshold when saving another scheduling setting", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        executorToolFailureThreshold: 4,
+        engineerBacklogAutoClaim: false,
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { executorToolFailureThreshold: 4, engineerBacklogAutoClaim: false },
+      });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      expect((screen.getByLabelText("Consecutive tool failures") as HTMLInputElement).value).toBe("4");
+      await settingsModalUser.click(screen.getByLabelText("Let engineer agents auto-claim backlog tasks"));
+      await settingsModalUser.click(document.querySelector(".modal-close") as HTMLButtonElement);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.engineerBacklogAutoClaim).toBe(true);
+      expect(payload).not.toHaveProperty("executorToolFailureThreshold");
+    });
+
+    it("defaults hidden overlap path filtering checked when settings omit the key", async () => {
+      const { ignoreHiddenOverlapPaths: _omitted, ...settingsWithoutHiddenDefault } = defaultSettings;
+      mockFetchSettings.mockResolvedValue(settingsWithoutHiddenDefault);
+      mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutHiddenDefault, project: {} });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).toBeChecked();
+    });
+
+    it("renders saved false for hidden overlap path filtering", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        ignoreHiddenOverlapPaths: false,
+      });
+      mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: { ignoreHiddenOverlapPaths: false } });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).not.toBeChecked();
+    });
+
+    it("sends hidden overlap filtering false without disrupting explicit ignore paths", async () => {
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged. Fake timers must be enabled BEFORE the mutating edit so the debounce lands on the fake clock.
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
+      fireEvent.change(screen.getByPlaceholderText("docs/"), { target: { value: "generated/*" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.ignoreHiddenOverlapPaths).toBe(false);
+      expect(payload.overlapIgnorePaths).toEqual(["generated/*"]);
+    });
+
+    it("sends hidden overlap filtering true after toggling saved false", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        ignoreHiddenOverlapPaths: false,
+      });
+      mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: { ignoreHiddenOverlapPaths: false } });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      expect(mockUpdateSettings.mock.calls[0][0].ignoreHiddenOverlapPaths).toBe(true);
+    });
+
+    it("renders existing overlap ignore paths from settings", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        overlapIgnorePaths: ["docs/", "generated/*"],
+      });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
+    });
+
+    it("supports selecting ignore paths through the browse picker", async () => {
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
+
+      expect(await screen.findByRole("dialog", { name: /browse workspace path/i })).toBeInTheDocument();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Select README.md" }));
+
+      expect(screen.getByDisplayValue("README.md")).toBeInTheDocument();
+    });
+
+    it("includes overlapIgnorePaths in save payload", async () => {
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
+      // FNXC:SettingsModalTests 2026-08-16-03:46: the mocked FileBrowser dialog mounts synchronously on click; findBy* polling deadlocks under vitest fake timers, so query synchronously.
+      fireEvent.click(screen.getByRole("button", { name: "Select README.md" }));
+
+      fireEvent.click(screen.getByRole("button", { name: /add ignored path/i }));
+      const inputs = screen.getAllByPlaceholderText("docs/");
+      fireEvent.change(inputs[1], { target: { value: "generated/*" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.overlapIgnorePaths).toEqual(["README.md", "generated/*"]);
+    });
+
+    it("renders and saves heartbeat scope discipline", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        heartbeatScopeDiscipline: "lite",
+      });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
+      expect(select.value).toBe("lite");
+
+      vi.useFakeTimers();
+      fireEvent.change(select, { target: { value: "off" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.heartbeatScopeDiscipline).toBe("off");
+    });
+
+    it.each([
+      ["undefined", undefined, false],
+      ["false", false, false],
+      ["true", true, true],
+    ] as const)("renders engineer backlog auto-claim from %s project setting", async (_label, engineerBacklogAutoClaim, expectedChecked) => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        ...(engineerBacklogAutoClaim === undefined ? {} : { engineerBacklogAutoClaim }),
+      });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      expect((screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement).checked).toBe(expectedChecked);
+    });
+
+    it("routes enabled engineer backlog auto-claim through the project settings save payload", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        engineerBacklogAutoClaim: false,
+      });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
+      expect(toggle.checked).toBe(false);
+      vi.useFakeTimers();
+      fireEvent.click(toggle);
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.engineerBacklogAutoClaim).toBe(true);
+    });
+
+    it("routes disabled engineer backlog auto-claim through the project settings save payload", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        engineerBacklogAutoClaim: true,
+      });
+
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
+      expect(toggle.checked).toBe(true);
+      vi.useFakeTimers();
+      fireEvent.click(toggle);
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.engineerBacklogAutoClaim).toBe(false);
+    });
+  });
+
+  describe("Number input clearing", () => {
+    it("allows clearing maxConcurrent without leaving a stuck zero", async () => {
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const input = screen.getByLabelText("Max Concurrent Tasks") as HTMLInputElement;
+      expect(input).toBeDefined();
+      await waitFor(() => expect(input).not.toBeDisabled());
+
+      // Clear the input - the input should be empty, not show "0"
+      await settingsModalUser.clear(input);
+      expect(input.value).toBe("");
+    });
+
+    /*
+    FNXC:CapacityModel 2026-07-29-00:40 (drop the cross-project cap — settings half):
+    The "clearing Global Max Concurrent leaves it empty" case is DELETED with the
+    control it covered. It guarded a real bug — the field snapping to a stuck "0" —
+    but the machine-wide cap and its Scheduling · Global section are gone (capacity is
+    two numbers PER PROJECT). The same empty-not-zero invariant remains covered for
+    maxWorktrees and maxConcurrent, the fields that survive.
+    */
+
+    it("allows clearing pollIntervalMs without leaving a stuck zero", async () => {
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const input = screen.getByLabelText("Poll Interval (ms)") as HTMLInputElement;
+      expect(input).toBeDefined();
+
+      // Clear the input - the input should be empty, not show "0"
+      await settingsModalUser.clear(input);
+      expect(input.value).toBe("");
+    });
+
+    it("allows configuring stale high fan-out escalation threshold in hours", async () => {
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
+
+      const input = screen.getByLabelText("Stale High Fan-out Escalation (hours)") as HTMLInputElement;
+      expect(input).toBeDefined();
+      await settingsModalUser.clear(input);
+      await settingsModalUser.type(input, "3");
+      expect(input.value).toBe("3");
+    });
+
+    it("includes worktreesDir in save payload", async () => {
+      renderModal();
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Worktrees"));
+      const input = screen.getByLabelText("Worktrees Directory") as HTMLInputElement;
+      vi.useFakeTimers();
+      fireEvent.change(input, { target: { value: "~/.fn-worktrees/{repo}" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.worktreesDir).toBe("~/.fn-worktrees/{repo}");
+    });
+
+    it("adds, browses, de-duplicates, and saves worktree copy files", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        worktreeCopyFiles: [".env"],
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { worktreeCopyFiles: [".env"] },
+      });
+
+      renderModal({ initialSection: "worktrees" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByDisplayValue(".env")).toBeInTheDocument();
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Add file" }));
+      const inputs = screen.getAllByLabelText("File to copy into new worktrees") as HTMLInputElement[];
+      fireEvent.change(inputs[1], { target: { value: "  .env  " } });
+      fireEvent.click(screen.getAllByRole("button", { name: "Browse file to copy into new worktrees" })[1]);
+      // FNXC:SettingsModalTests 2026-08-16-03:46: the mocked FileBrowser dialog mounts synchronously on click; findBy* polling deadlocks under vitest fake timers, so query synchronously.
+      expect(screen.getByRole("dialog", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Select README.md" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Add file" }));
+      const updatedInputs = screen.getAllByLabelText("File to copy into new worktrees") as HTMLInputElement[];
+      fireEvent.change(updatedInputs[2], { target: { value: " README.md " } });
+
+      /*
+      FNXC:DashboardTests 2026-07-24-03:15:
+      Await the save that actually carries worktreeCopyFiles instead of assuming
+      it is calls[0]: under CI lane load an unrelated earlier updateSettings call
+      can land first (full-suite run 30083357210 saw calls[0] without the key).
+      The exact-value assertion is unchanged.
+      */
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(
+        mockUpdateSettings.mock.calls.some(
+          (call) => (call[0] as Record<string, unknown>).worktreeCopyFiles !== undefined,
+        ),
+      ).toBe(true);
+      const payload = mockUpdateSettings.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .find((candidate) => candidate.worktreeCopyFiles !== undefined)!;
+      expect(payload.worktreeCopyFiles).toEqual([".env", "README.md"]);
+    });
+
+    it("clears worktree copy files to an empty persisted list", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        worktreeCopyFiles: [".env"],
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { worktreeCopyFiles: [".env"] },
+      });
+
+      renderModal({ initialSection: "worktrees" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Remove copied worktree file" }));
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.worktreeCopyFiles).toEqual([]);
+    });
+
+    it("exposes worktree copy file controls via the mobile Settings Section picker", async () => {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        value: vi.fn().mockImplementation((query: string) => ({
+          matches: query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)",
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        })),
+      });
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        worktreeCopyFiles: [".env.local"],
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { worktreeCopyFiles: [".env.local"] },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const sectionPicker = screen.getByLabelText("Settings Section") as HTMLSelectElement;
+      expect(sectionPicker).toBeInTheDocument();
+      expect(sectionPicker.querySelector('option[value="worktrees"]')).toHaveTextContent("Worktrees");
+
+      await settingsModalUser.selectOptions(sectionPicker, "worktrees");
+
+      expect(screen.getByText("Files to copy into new worktrees")).toBeInTheDocument();
+      expect(screen.getByDisplayValue(".env.local")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add file" })).toBeInTheDocument();
+    });
+
+    it("allows clearing maxWorktrees without leaving a stuck zero", async () => {      renderModal();
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+      // Open Worktrees section
+      fireEvent.click(screen.getByText("Worktrees"));
+
+      const input = screen.getByLabelText("Max Worktrees") as HTMLInputElement;
+      expect(input).toBeDefined();
+
+      // Clear the input - the input should be empty, not show "0"
+      await settingsModalUser.clear(input);
+      expect(input.value).toBe("");
+    });
+  });
+
+  describe("Worktrunk integration", () => {
+    it("renders worktrunk controls in the Worktrees section only", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+
+      expect(screen.queryByLabelText("Enable worktrunk integration")).not.toBeInTheDocument();
+
+      await settingsModalUser.click(screen.getByText("Worktrees"));
+
+      expect(screen.getByRole("heading", { name: "Worktrunk integration" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Enable worktrunk integration")).toBeInTheDocument();
+      expect(screen.getByLabelText("Worktrunk binary path")).toBeInTheDocument();
+      expect(screen.getByLabelText("Worktrunk failure behavior")).toBeInTheDocument();
+    });
+
+    it("renders install affordance between enable toggle and binary path controls", async () => {
+      mockUseWorktrunkInstallStatus.mockReturnValue({
+        status: "missing",
+        requestInstall: vi.fn(),
+        requesting: false,
+        version: undefined,
+        installPath: undefined,
+        pendingApprovalId: undefined,
+        error: undefined,
+      });
+
+      renderModal({ initialSection: "worktrees" });
+      await waitForSettingsModalReady();
+
+      const enabledToggle = screen.getByLabelText("Enable worktrunk integration");
+      const installAffordance = screen.getByTestId("worktrunk-install-affordance");
+      const binaryPathInput = screen.getByLabelText("Worktrunk binary path");
+
+      const enableGroup = enabledToggle.closest(".form-group");
+      const binaryPathGroup = binaryPathInput.closest(".form-group");
+
+      expect(enableGroup).not.toBeNull();
+      expect(binaryPathGroup).not.toBeNull();
+
+      expect(enableGroup!.compareDocumentPosition(installAffordance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(installAffordance.compareDocumentPosition(binaryPathGroup!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("toggles disabled states and shows the worktreesDir precedence hint", async () => {
+      mockUseWorktrunkInstallStatus.mockReturnValue({
+        status: "installed",
+        requestInstall: vi.fn(),
+        requesting: false,
+        version: "v1.2.3",
+        installPath: "~/.fusion/bin/worktrunk",
+        pendingApprovalId: undefined,
+        error: undefined,
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByText("Worktrees"));
+
+      const enabledToggle = screen.getByLabelText("Enable worktrunk integration") as HTMLInputElement;
+      const binaryPathInput = screen.getByLabelText("Worktrunk binary path") as HTMLInputElement;
+      const onFailureSelect = screen.getByLabelText("Worktrunk failure behavior") as HTMLSelectElement;
+      const worktreesDirInput = screen.getByLabelText("Worktrees Directory") as HTMLInputElement;
+      const browseButton = screen.getByRole("button", { name: "Browse worktrees directory" });
+
+      expect(enabledToggle.checked).toBe(false);
+      expect(binaryPathInput).toBeDisabled();
+      expect(onFailureSelect).toBeDisabled();
+      expect(worktreesDirInput).not.toBeDisabled();
+      expect(browseButton).not.toBeDisabled();
+
+      await settingsModalUser.click(enabledToggle);
+
+      expect(binaryPathInput).not.toBeDisabled();
+      expect(onFailureSelect).not.toBeDisabled();
+      expect(worktreesDirInput).toBeDisabled();
+      expect(browseButton).toBeDisabled();
+      expect(screen.getByText(/Disabled because Worktrunk integration is enabled/i)).toBeInTheDocument();
+    });
+
+    it.each([
+      { status: "missing", button: "Install worktrunk binary", action: "request" },
+      { status: "pending-approval", button: "Open Approvals", action: "open" },
+      { status: "denied", button: "Try again", action: "request" },
+      { status: "installed", text: "installed at" },
+    ])("renders install affordance state %#", async (scenario) => {
+      const requestInstall = vi.fn();
+      const onOpenApprovals = vi.fn();
+      mockUseWorktrunkInstallStatus.mockReturnValue({
+        status: scenario.status,
+        requestInstall,
+        requesting: false,
+        version: "v1.2.3",
+        installPath: "~/.fusion/bin/worktrunk",
+        pendingApprovalId: "apr-1",
+        error: "Denied",
+      });
+
+      renderModal({ initialSection: "worktrees", onOpenApprovals });
+      await waitForSettingsModalReady();
+
+      if (scenario.text) {
+        expect(screen.getByText(/installed at/i)).toBeInTheDocument();
+        return;
+      }
+
+      const button = screen.getByRole("button", { name: scenario.button });
+      await settingsModalUser.click(button);
+
+      if (scenario.action === "request") {
+        expect(requestInstall).toHaveBeenCalledTimes(1);
+      } else {
+        expect(onOpenApprovals).toHaveBeenCalledWith("apr-1");
+      }
+    });
+
+    it.each(["missing", "installing", "pending-approval", "denied", "failed", "installed"])(
+      "gates worktrunk toggle enablement by install status (%s)",
+      async (status) => {
+        mockUseWorktrunkInstallStatus.mockReturnValue({
+          status,
+          requestInstall: vi.fn(),
+          requesting: false,
+          version: undefined,
+          installPath: undefined,
+          pendingApprovalId: undefined,
+          error: status === "denied" || status === "failed" ? "Denied" : undefined,
+        });
+
+        renderModal({ initialSection: "worktrees" });
+        await waitForSettingsModalReady();
+
+        const enabledToggle = screen.getByLabelText("Enable worktrunk integration") as HTMLInputElement;
+        expect(enabledToggle.disabled).toBe(status !== "installed");
+
+        if (status !== "installed") {
+          expect(screen.getByText("Install the worktrunk binary below to enable this integration.")).toBeInTheDocument();
+        } else {
+          expect(screen.queryByText("Install the worktrunk binary below to enable this integration.")).not.toBeInTheDocument();
+        }
+      },
+    );
+
+    it("keeps toggle enabled for recovery when worktrunk is already enabled but install is missing", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        worktrunk: {
+          enabled: true,
+          onFailure: "fail",
+        },
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: {},
+        project: {
+          worktrunk: {
+            enabled: true,
+            onFailure: "fail",
+          },
+        },
+      });
+      mockUseWorktrunkInstallStatus.mockReturnValue({
+        status: "missing",
+        requestInstall: vi.fn(),
+        requesting: false,
+        version: undefined,
+        installPath: undefined,
+        pendingApprovalId: undefined,
+        error: undefined,
+      });
+
+      renderModal({ initialSection: "worktrees" });
+      await waitForSettingsModalReady();
+
+      const enabledToggle = screen.getByLabelText("Enable worktrunk integration") as HTMLInputElement;
+      expect(enabledToggle.disabled).toBe(false);
+    });
+
+    it("clamps worktrunk enabled to false on save when install is not verified", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        worktrunk: {
+          enabled: true,
+          onFailure: "fail",
+        },
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: {},
+        project: {
+          worktrunk: {
+            enabled: true,
+            onFailure: "fail",
+          },
+        },
+      });
+      mockUseWorktrunkInstallStatus.mockReturnValue({
+        status: "missing",
+        // Save re-verifies when enabling-but-unverified; still not installed → stays clamped off.
+        refresh: vi.fn().mockResolvedValue({ status: "missing" }),
+        requestInstall: vi.fn(),
+        requesting: false,
+        version: undefined,
+        installPath: undefined,
+        pendingApprovalId: undefined,
+        error: undefined,
+      });
+
+      renderModal({ initialSection: "worktrees" });
+      await waitForSettingsModalReady();
+      // FNXC:SettingsAutoSave 2026-06-22-21:52: The removed footer Save action means this persistence assertion needs a real edit; changing the path exercises the same clamp.
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("Worktrunk binary path"), { target: { value: "/missing/worktrunk" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+      const payload = mockUpdateSettings.mock.calls[0][0] as {
+        worktrunk?: { enabled?: boolean };
+      };
+      expect(payload.worktrunk?.enabled).toBe(false);
+    });
+
+    it.each(["fail", "fallback-native"])("saves worktrunk payload and defaults onFailure on first enable (%s)", async (onFailure) => {
+      mockUseWorktrunkInstallStatus.mockReturnValue({
+        status: "installed",
+        requestInstall: vi.fn(),
+        requesting: false,
+        version: "v1.2.3",
+        installPath: "~/.fusion/bin/worktrunk",
+        pendingApprovalId: undefined,
+        error: undefined,
+      });
+      renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByText("Worktrees"));
+
+      const enabledToggle = screen.getByLabelText("Enable worktrunk integration");
+      vi.useFakeTimers();
+      fireEvent.click(enabledToggle);
+
+      const onFailureSelect = screen.getByLabelText("Worktrunk failure behavior") as HTMLSelectElement;
+      if (onFailure !== "fail") {
+        fireEvent.change(onFailureSelect, { target: { value: onFailure } });
+      }
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+      const payload = mockUpdateSettings.mock.calls[0][0] as {
+        worktrunk?: { enabled?: boolean; onFailure?: string; binaryPath?: string };
+      };
+      expect(payload.worktrunk).toMatchObject({ enabled: true, onFailure });
+    });
+  });
+
+  describe("Memory section", () => {
+    it("renders the Memory section in the sidebar", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      expect(await screen.findByText("Memory")).toBeDefined();
+    });
+
+    describe("with default Memory render", () => {
+      beforeEach(async () => {
+        renderModal({ initialSection: "memory" });
+        await screen.findByRole("checkbox", { name: /enable memory tools/i });
+      });
+
+      it("shows the memory toggle with default enabled", () => {
+        const checkbox = screen.getByRole("checkbox", { name: /enable memory tools/i });
+        expect(checkbox).toBeDefined();
+        expect(checkbox).toBeChecked();
+      });
+
+      it("toggles the memory setting when checkbox is clicked", async () => {
+        const checkbox = screen.getByRole("checkbox", { name: /enable memory tools/i });
+        expect(checkbox).toBeChecked();
+
+        await settingsModalUser.click(checkbox);
+        expect(checkbox).not.toBeChecked();
+
+        await settingsModalUser.click(checkbox);
+        expect(checkbox).toBeChecked();
+      });
+
+      it("loads and shows memory editor content when navigating to Memory", async () => {
+        await waitFor(() => {
+          expect(mockFetchMemoryFiles).toHaveBeenCalledWith(undefined);
+          expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
+        });
+
+        await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md");
+        expect(getMemoryEditorView(".fusion/memory/DREAMS.md").state.doc.toString()).toContain("Existing dreams");
+      });
+    });
+
+    it("shows memory toggle unchecked when memoryEnabled is false", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        memoryEnabled: false,
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      // Click the Memory section in the sidebar
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      const checkbox = screen.getByRole("checkbox", { name: /enable memory tools/i });
+      expect(checkbox).toBeDefined();
+      expect(checkbox).not.toBeChecked();
+    });
+
+    it("truncates long memory file option labels to keep native dropdown width bounded", async () => {
+      mockFetchMemoryFiles.mockResolvedValue({
+        files: [
+          {
+            path: ".fusion/memory/very/deep/path/that/keeps/growing/until/the/browser/native/select/dropdown/can-overflow-on-the-right-edge.md",
+            label: "Long-term memory",
+            layer: "long-term",
+            size: 42,
+            updatedAt: "2026-04-17T12:00:00.000Z",
+          },
+        ],
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      const option = await screen.findByRole("option", { name: /Long-term memory/ });
+      expect(option.textContent).toContain("…");
+      expect(option.textContent).not.toContain("dropdown/can-overflow-on-the-right-edge.md");
+    });
+
+    it("shows only loading copy while backend status is unresolved", async () => {
+      mockUseMemoryBackendStatus.mockReturnValue({
+        // Simulate stale negative payload while a refresh is still in-flight.
+        status: {
+          currentBackend: "readonly",
+          capabilities: {
+            readable: true,
+            writable: false,
+            supportsAtomicWrite: false,
+            hasConflictResolution: false,
+            persistent: true,
+          },
+          availableBackends: ["file", "readonly", "qmd"],
+          qmdAvailable: false,
+          qmdInstallCommand: "bun install -g @tobilu/qmd",
+        },
+        currentBackend: "readonly",
+        capabilities: {
+          readable: true,
+          writable: false,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        loading: true,
+        error: null,
+        refresh: vi.fn(),
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      expect(screen.getByText("Checking memory write access...")).toBeInTheDocument();
+      expect(screen.queryByText(/qmd is not installed\. Search will use local files\./i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Memory is configured with a read-only backend\./i)).not.toBeInTheDocument();
+    });
+
+    it("shows read-only warning after backend resolves as non-writable", async () => {
+      mockUseMemoryBackendStatus.mockReturnValue({
+        status: {
+          currentBackend: "readonly",
+          capabilities: {
+            readable: true,
+            writable: false,
+            supportsAtomicWrite: false,
+            hasConflictResolution: false,
+            persistent: true,
+          },
+          availableBackends: ["file", "readonly", "qmd"],
+          qmdAvailable: true,
+          qmdInstallCommand: "bun install -g @tobilu/qmd",
+        },
+        currentBackend: "readonly",
+        capabilities: {
+          readable: true,
+          writable: false,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      expect(screen.getByText(/Memory is configured with a read-only backend\./i)).toBeInTheDocument();
+    });
+
+    it("installs qmd from the missing qmd prompt", async () => {
+      const addToast = vi.fn();
+      const refresh = vi.fn(() => Promise.resolve());
+      mockUseMemoryBackendStatus.mockReturnValue({
+        status: {
+          currentBackend: "qmd",
+          capabilities: {
+            readable: true,
+            writable: true,
+            supportsAtomicWrite: false,
+            hasConflictResolution: false,
+            persistent: true,
+          },
+          availableBackends: ["file", "readonly", "qmd"],
+          qmdAvailable: false,
+          qmdInstallCommand: "bun install -g @tobilu/qmd",
+        },
+        currentBackend: "qmd",
+        capabilities: {
+          readable: true,
+          writable: true,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        loading: false,
+        error: null,
+        refresh,
+      });
+
+      renderModal({ addToast });
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      await settingsModalUser.click(await screen.findByRole("button", { name: "Install qmd" }));
+
+      await waitFor(() => {
+        expect(mockInstallQmd).toHaveBeenCalledWith(undefined);
+      });
+      expect(refresh).toHaveBeenCalled();
+      expect(addToast).toHaveBeenCalledWith("qmd installed successfully", "success");
+    });
+
+    const getMemoryEditorView = (path: string) => {
+      const host = screen.getByLabelText(`Editor for ${path}`);
+      const root = host.querySelector(".cm-editor") as HTMLElement | null;
+      if (!root) throw new Error(`Expected CodeMirror root for ${path}`);
+      const view = EditorView.findFromDOM(root);
+      if (!view) throw new Error(`Expected EditorView for ${path}`);
+      return view;
+    };
+
+    it("shows loading state while memory is being fetched", async () => {
+      let resolveMemory: ((value: { content: string }) => void) | undefined;
+      mockFetchMemoryFile.mockReturnValueOnce(
+        new Promise<{ content: string }>((resolve) => {
+          resolveMemory = resolve;
+        })
+      );
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      expect(screen.getByText("Loading memory…")).toBeDefined();
+
+      resolveMemory?.({ content: "# Loaded" });
+
+      expect(await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md")).toBeDefined();
+    });
+
+    it("supports editing and saving memory content", async () => {
+      const addToast = vi.fn();
+      renderModal({ addToast });
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      await waitFor(() => {
+        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
+      });
+
+      const select = await screen.findByLabelText("Memory File");
+      await settingsModalUser.selectOptions(select, ".fusion/memory/MEMORY.md");
+
+      await screen.findByLabelText("Editor for .fusion/memory/MEMORY.md");
+      const view = getMemoryEditorView(".fusion/memory/MEMORY.md");
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "# Updated memory\n- Reusable learning" } });
+
+      const saveButton = await screen.findByRole("button", { name: "Save Memory" });
+      await settingsModalUser.click(saveButton);
+
+      await waitFor(() => {
+        expect(mockSaveMemoryFile).toHaveBeenCalledWith(
+          ".fusion/memory/MEMORY.md",
+          "# Updated memory\n- Reusable learning",
+          undefined,
+        );
+      });
+      expect(addToast).toHaveBeenCalledWith("Memory saved", "success");
+    });
+
+    it("compacts the selected memory file in the editor", async () => {
+      const addToast = vi.fn();
+      renderModal({ addToast });
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      const compactButton = await screen.findByRole("button", { name: "Compact Selected File" });
+      await settingsModalUser.click(compactButton);
+
+      await waitFor(() => {
+        expect(mockCompactMemory).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
+      });
+
+      await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md");
+      expect(getMemoryEditorView(".fusion/memory/DREAMS.md").state.doc.toString()).toContain("Compacted Memory");
+      expect(addToast).toHaveBeenCalledWith("Memory file compacted", "success");
+    });
+
+    it("handles empty memory content from API", async () => {
+      mockFetchMemoryFile.mockResolvedValueOnce({ path: ".fusion/memory/DREAMS.md", content: "" });
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md");
+      expect(getMemoryEditorView(".fusion/memory/DREAMS.md").state.doc.toString()).toBe("");
+    });
+
+    it("switches between memory files in the editor", async () => {
+      mockFetchMemoryFile.mockImplementation((path: string) =>
+        Promise.resolve({
+          path,
+          content: path.endsWith("DREAMS.md") ? "# Dreams\n\n- Pattern" : "# Memory\n\n- Durable",
+        }),
+      );
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      await settingsModalUser.click(await screen.findByText("Memory"));
+
+      const select = await screen.findByLabelText("Memory File");
+      await settingsModalUser.selectOptions(select, ".fusion/memory/DREAMS.md");
+
+      await waitFor(() => {
+        expect(mockFetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/DREAMS.md", undefined);
+      });
+
+      await screen.findByLabelText("Editor for .fusion/memory/DREAMS.md");
+      expect(getMemoryEditorView(".fusion/memory/DREAMS.md").state.doc.toString()).toContain("Dreams");
+    });
+  });
+
+  describe("Merge section", () => {
+    describe("with default Merge render", () => {
+      beforeEach(async () => {
+        renderModal({ initialSection: "merge" });
+        await screen.findByRole("checkbox", { name: /push to remote after merge/i });
+      });
+
+      it("shows push-after-merge toggle and keeps Push Remote hidden by default", () => {
+        const pushAfterMergeToggle = screen.getByRole("checkbox", {
+          name: /push to remote after merge/i,
+        });
+        expect(pushAfterMergeToggle).not.toBeChecked();
+        expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
+      });
+
+      /*
+      FNXC:SettingsHelp 2026-07-15-23:20:
+      Merge's bespoke "More details" `<details>` disclosures were replaced by the shared help tip, so these two tests are re-pointed at the COPY and the tip's open/closed state rather than at the removed `<details>`/`<summary>` elements. The intent is unchanged: this help is deferred by default and revealed on demand.
+      Visibility is asserted via the trigger's `aria-expanded`, not `toBeVisible()`: the bubble's collapsed state is CSS-driven and the copy stays in the DOM at all times (so find-in-page, assistive tech, and settings search still reach it), which jsdom reports as visible either way.
+      */
+      it("merge option descriptions are hidden behind the help tip by default", () => {
+        const autoMergeDescription = screen.getByText(/When enabled, tasks that pass review are automatically merged/i);
+
+        expect(autoMergeDescription.closest(".settings-help-bubble")).toBeTruthy();
+        expect(screen.getByTestId("settings-help-autoMerge")).toHaveAttribute("aria-expanded", "false");
+      });
+
+      it("merge option descriptions are revealed when clicking the help tip", async () => {
+        const helpTrigger = screen.getByTestId("settings-help-autoMerge");
+        await settingsModalUser.click(helpTrigger);
+
+        expect(helpTrigger).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeInTheDocument();
+      });
+
+      it("no longer renders the moved workflow revision fork checkbox", () => {
+        // workflowRevisionForkOnScopeMismatch was hard-moved (U4) onto workflow
+        // settings; the Merge section must not expose it anymore.
+        expect(
+          screen.queryByRole("checkbox", {
+            name: /fork scope-mismatched workflow revisions into follow-up tasks/i,
+          }),
+        ).not.toBeInTheDocument();
+      });
+
+      it("renders a redirect stub for the moved review/verification settings", () => {
+        expect(
+          screen.getByText(/Review, verification auto-fix, and scope-enforcement settings now live on the workflow/i),
+        ).toBeInTheDocument();
+      });
+
+      it("shows Push Remote input when push-after-merge is enabled", async () => {
+        await settingsModalUser.click(
+          screen.getByRole("checkbox", { name: /push to remote after merge/i }),
+        );
+
+        expect(screen.getByLabelText("Push Remote")).toBeInTheDocument();
+        expect(screen.getByPlaceholderText("origin")).toBeInTheDocument();
+      });
+
+      it("includes pushAfterMerge and trimmed pushRemote in the save payload", async () => {
+        vi.useFakeTimers();
+        fireEvent.click(
+          screen.getByRole("checkbox", { name: /push to remote after merge/i }),
+        );
+
+        const pushRemoteInput = screen.getByLabelText("Push Remote");
+        fireEvent.change(pushRemoteInput, { target: { value: "  upstream main  " } });
+
+        await flushSettingsAutoSave();
+        vi.useRealTimers();
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+        const payload = mockUpdateSettings.mock.calls[0][0];
+        expect(payload.pushAfterMerge).toBe(true);
+        expect(payload.pushRemote).toBe("upstream main");
+      });
+
+      it("renders persisted push remote settings after save and reload", async () => {
+        cleanup();
+        vi.clearAllMocks();
+        mockFetchSettings.mockResolvedValueOnce({
+          ...defaultSettings,
+          pushAfterMerge: true,
+          pushRemote: "upstream main",
+        });
+        mockFetchSettingsByScope.mockResolvedValueOnce({
+          global: defaultSettings,
+          project: { pushAfterMerge: true, pushRemote: "upstream main" },
+        });
+
+        renderModal({ initialSection: "merge" });
+        await screen.findByRole("checkbox", { name: /push to remote after merge/i });
+
+        expect(screen.getByRole("checkbox", { name: /push to remote after merge/i })).toBeChecked();
+        expect(screen.getByLabelText("Push Remote")).toHaveValue("upstream main");
+      });
+
+      it("hides and clears stale Push Remote when push-after-merge is disabled", async () => {
+        cleanup();
+        vi.clearAllMocks();
+        mockFetchSettings.mockResolvedValueOnce({
+          ...defaultSettings,
+          pushAfterMerge: true,
+          pushRemote: "upstream main",
+        });
+        mockFetchSettingsByScope.mockResolvedValueOnce({
+          global: defaultSettings,
+          project: { pushAfterMerge: true, pushRemote: "upstream main" },
+        });
+
+        renderModal({ initialSection: "merge" });
+        const pushAfterMergeToggle = await screen.findByRole("checkbox", { name: /push to remote after merge/i });
+        expect(screen.getByLabelText("Push Remote")).toHaveValue("upstream main");
+
+        vi.useFakeTimers();
+        fireEvent.click(pushAfterMergeToggle);
+
+        expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
+        expect(screen.queryByText("Git remote to push to")).not.toBeInTheDocument();
+
+        await flushSettingsAutoSave();
+        vi.useRealTimers();
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+        const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+        expect(payload.pushAfterMerge).toBe(false);
+        expect(payload.pushRemote).toBeNull();
+      });
+
+      it("round-trips plan approval mode through project settings save", async () => {
+        const select = screen.getByLabelText("Plan approval mode");
+        expect(select).toHaveValue("workflow");
+
+        vi.useFakeTimers();
+        fireEvent.change(select, { target: { value: "require-all" } });
+
+        await flushSettingsAutoSave();
+        vi.useRealTimers();
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+
+        const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+        expect(payload.planApprovalMode).toBe("require-all");
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+        expect(mockUpdateGlobalSettings.mock.calls[0][0]).not.toHaveProperty("planApprovalMode");
+      });
+    });
+
+    describe("verificationFixRetries (moved to workflow settings)", () => {
+      // verificationFixRetries was hard-moved (U4) onto workflow settings. The
+      // Merge section must not expose it anymore — neither input nor save path.
+      it("no longer renders the verification auto-fix retries input", async () => {
+        renderModal({ initialSection: "merge" });
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByLabelText("Verification auto-fix retries")).not.toBeInTheDocument();
+      });
+
+      it("does not persist anything from a clean merge section", async () => {
+        renderModal({ initialSection: "merge" });
+        await waitForSettingsModalReady();
+
+        expect(mockUpdateSettings).not.toHaveBeenCalled();
+      });
+
+      it("opens workflow settings from the redirect stub", async () => {
+        const onOpenWorkflowSettings = vi.fn();
+        renderModal({ initialSection: "merge", onOpenWorkflowSettings });
+        await waitForSettingsModalReady();
+
+        const buttons = screen.getAllByRole("button", { name: "Open workflow settings" });
+        await settingsModalUser.click(buttons[0]);
+        expect(onOpenWorkflowSettings).toHaveBeenCalled();
+      });
+    });
+
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    GitHub authentication moved OUT of Merge into "Source Control · Project", joining the tracking controls that were already absent here. Merge must now hold neither: it owns the landing strategy, not the forge credentials it consumes.
+    */
+    it("keeps GitHub tracking AND GitHub authentication controls out of Merge", async () => {
+      renderModal({ initialSection: "merge" });
+      await waitForSettingsModalReady();
+
+      expect(screen.queryByLabelText("Default tracking mode for new tasks")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Project default tracking repo")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "GitHub Authentication" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("GitHub auth mode")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "GitLab Authentication" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("GitLab access token")).not.toBeInTheDocument();
+      // The duplicate `gitlabEnabled` toggle this section used to render is gone.
+      expect(screen.queryByLabelText("Enable GitLab integration")).not.toBeInTheDocument();
+    });
+
+    it("renders and saves GitHub authentication controls in Source Control", async () => {
+      renderModal({ initialSection: "source-control" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByRole("heading", { name: "GitHub Authentication" })).toBeInTheDocument();
+
+      const authModeSelect = screen.getByLabelText("GitHub auth mode") as HTMLSelectElement;
+      expect(authModeSelect.value).toBe("gh-cli");
+      expect(screen.queryByLabelText("GitHub personal access token")).not.toBeInTheDocument();
+
+      vi.useFakeTimers();
+      fireEvent.change(authModeSelect, { target: { value: "token" } });
+      fireEvent.change(screen.getByLabelText("GitHub personal access token"), { target: { value: "ghp_test_token" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.githubAuthMode).toBe("token");
+      expect(payload.githubAuthToken).toBe("ghp_test_token");
+    });
+
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    The GitLab URL disclosure and the GitLab auth disclosure merged into ONE disclosure with ONE `gitlabEnabled` toggle, so this reads the configuration disclosure (`project-gitlab-configuration-disclosure`) and opens it by its own summary title. The auth block keeps its heading inside that disclosure; only the second enable toggle went away.
+    */
+    it("renders GitLab authentication controls as secret-safe project settings", async () => {
+      renderModal({ initialSection: "source-control" });
+      await waitForSettingsModalReady();
+
+      const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
+      expect(disclosure).not.toHaveAttribute("open");
+      await settingsModalUser.click(within(disclosure).getByText("GitLab Configuration"));
+      expect(disclosure).toHaveAttribute("open");
+
+      // Exactly one enable toggle governs the whole GitLab block.
+      expect(screen.getAllByLabelText("Enable GitLab integration")).toHaveLength(1);
+      expect(screen.queryByTestId("project-gitlab-authentication-disclosure")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "GitLab Authentication" })).toBeInTheDocument();
+      const tokenInput = screen.getByLabelText("GitLab access token") as HTMLInputElement;
+      expect(tokenInput.type).toBe("password");
+      expect(screen.getByText(/Read-only GitLab operations need read_api or api/i)).toBeInTheDocument();
+      expect(screen.queryByText("glpat_test_token")).not.toBeInTheDocument();
+      expect((screen.getByLabelText("GitLab token type") as HTMLSelectElement).value).toBe("personal");
+    });
+
+    it.each(["personal", "project", "group"] as const)("saves a %s GitLab access token from Source Control", async (tokenType) => {
+      renderModal({ initialSection: "source-control" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("GitLab token type"), { target: { value: tokenType } });
+      fireEvent.change(screen.getByLabelText("GitLab access token"), { target: { value: " glpat_test_token " } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.gitlabAuthTokenType).toBe(tokenType);
+      expect(payload.gitlabAuthToken).toBe("glpat_test_token");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalledWith(expect.objectContaining({ gitlabAuthToken: expect.anything() }));
+    });
+
+    it("clears a saved project GitLab access token without clearing the selected type", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        gitlabAuthToken: "saved-token",
+        gitlabAuthTokenType: "group",
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { gitlabAuthToken: "saved-token", gitlabAuthTokenType: "group" },
+      });
+
+      renderModal({ initialSection: "source-control" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("GitLab access token"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("GitLab token type"), { target: { value: "project" } });
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.gitlabAuthToken).toBeNull();
+      expect(payload.gitlabAuthTokenType).toBe("project");
+    });
+  });
+
+  describe("Experimental Features section", () => {
+    const openExperimentalFeaturesSection = async () => {
+      const sectionLabel = await screen.findByText("Experimental Features");
+      await settingsModalUser.click(sectionLabel);
+    };
+
+    it("renders the Experimental Features section in the sidebar", async () => {
+      renderModal();
+
+      expect(await screen.findByText("Experimental Features")).toBeInTheDocument();
+    });
+
+    // Read-only feature-list assertions share one render + section open.
+    // All pure label-presence checks are asserted against a single rendered
+    // instance to avoid re-rendering the full modal per feature.
+    it("shows known features and the full experimental feature list with a single Dev Server toggle", async () => {
+      renderModal();
+      await openExperimentalFeaturesSection();
+
+      // Known features that remain experimental are shown even with no custom features configured.
+      expect(screen.queryByText("Insights")).not.toBeInTheDocument();
+      // FNXC:SettingsExperimental 2026-06-22-18:50: Roadmaps was removed from Experimental and must not render as a known or stale toggle.
+      expect(screen.queryByText("Roadmaps")).not.toBeInTheDocument();
+
+      for (const featureLabel of [
+        "Research View",
+        "Evals View",
+        "Sandbox (command isolation)",
+        "Planning-style Agent Onboarding",
+      ]) {
+        expect(screen.getByLabelText(featureLabel)).toBeInTheDocument();
+      }
+
+      expect(screen.queryByLabelText("Right Dock Panel")).not.toBeInTheDocument();
+
+      // Dev Server has a single canonical toggle (no legacy duplicate).
+      expect(screen.getAllByLabelText("Dev Server")).toHaveLength(1);
+    });
+
+    /*
+    FNXC:SubtaskBreakdownRemoval 2026-08-23-19:40:
+    Subtask Breakdown is no longer a dashboard flow (see useBackgroundSessions' removal note), so it
+    is no longer an Experimental toggle and must not be reinstated by a test.
+    */
+    it("does not offer a removed Subtask Breakdown toggle", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: {},
+      });
+
+      renderModal();
+      await openExperimentalFeaturesSection();
+
+      expect(screen.queryByLabelText("Subtask Breakdown")).not.toBeInTheDocument();
+    });
+
+    it("does not render duplicate Dev Server rows when legacy and canonical keys are both present", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { devServer: true, devServerView: true },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const devServerToggles = screen.getAllByLabelText("Dev Server");
+      expect(devServerToggles).toHaveLength(1);
+      expect(devServerToggles[0]).toBeChecked();
+    });
+
+    describe("section visibility behind experimental flags", () => {
+      it.each([
+        ["experimentalFeatures undefined", undefined],
+        ["experimentalFeatures empty", {}],
+        ["legacy remoteAccess false", { remoteAccess: false }],
+        ["legacy remoteAccess true", { remoteAccess: true }],
+      ] as const)("shows Remote Access nav item when %s", async (_label, experimentalFeatures) => {
+        const { experimentalFeatures: _omitted, ...settingsWithoutExperimentalFeatures } = defaultSettings;
+        mockFetchSettings.mockResolvedValue(
+          experimentalFeatures === undefined
+            ? settingsWithoutExperimentalFeatures
+            : {
+                ...defaultSettings,
+                experimentalFeatures,
+              },
+        );
+
+        renderModal();
+
+        expect(await screen.findByRole("button", { name: /Remote Access/i })).toBeInTheDocument();
+      });
+
+      it("labels the remote nav entry independently from the standalone Node Sync entry", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal();
+        await waitForSettingsModalReady();
+
+        // Desktop and mobile settings navs share SETTINGS_SECTIONS, so this single render guards the shared label source.
+        expect(screen.getByRole("button", { name: "Remote Access" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Remote Access & Node Sync/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /& Node Sync/i })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Node Sync" })).toBeInTheDocument();
+      });
+
+      it.each([
+        ["experimentalFeatures undefined", undefined],
+        ["experimentalFeatures empty", {}],
+        ["legacy remoteAccess false", { remoteAccess: false }],
+        ["legacy remoteAccess true", { remoteAccess: true }],
+      ] as const)("does not render a Remote Access experimental toggle when %s", async (_label, experimentalFeatures) => {
+        const { experimentalFeatures: _omitted, ...settingsWithoutExperimentalFeatures } = defaultSettings;
+        mockFetchSettings.mockResolvedValue(
+          experimentalFeatures === undefined
+            ? settingsWithoutExperimentalFeatures
+            : {
+                ...defaultSettings,
+                experimentalFeatures,
+              },
+        );
+
+        renderModal();
+
+        await openExperimentalFeaturesSection();
+
+        expect(screen.queryByLabelText("Remote Access")).not.toBeInTheDocument();
+      });
+
+      it("stays on the remote section when opening remote while remoteAccess is absent", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal({ initialSection: "remote" });
+
+        expect(await screen.findByRole("heading", { name: "Remote Access" })).toBeInTheDocument();
+      });
+
+      it("hides research settings nav items when experimentalFeatures.researchView is disabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal();
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByRole("button", { name: /Research · Global/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Research · Project/i })).not.toBeInTheDocument();
+      });
+
+      it("shows research settings nav items when experimentalFeatures.researchView is enabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: { researchView: true },
+        });
+
+        renderModal();
+        await waitForSettingsModalReady();
+
+        /*
+        FNXC:SettingsModalTests 2026-07-16-13:30:
+        The research nav entries are labeled "Research · Global" / "Research · Project" (settings.nav.researchGlobal/researchProject); "Research Defaults" and the bare "Research" matchers predate that rename.
+        */
+        expect(screen.getByRole("button", { name: /Research · Global/i })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Research · Project/i })).toBeInTheDocument();
+      });
+
+      it("falls back to the first selectable section when opening research settings while researchView is disabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal({ initialSection: "research-global" });
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByRole("button", { name: /Research · Global/i })).not.toBeInTheDocument();
+        /*
+        FNXC:SettingsNavigation 2026-07-16-01:10:
+        Authentication was the previous default landing section. The fallback requirement is unchanged: an unreachable section falls back to the configured default when it is selectable.
+
+        FNXC:SettingsNavigation 2026-07-16-13:40:
+        FN-8130 makes Appearance the configured default and the first selectable Preferences section, so feature-gated research settings fall back there.
+        */
+        expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+      });
+
+      it("hides scheduled evals nav item when experimentalFeatures.evalsView is disabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal();
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByRole("button", { name: /Scheduled Evals/i })).not.toBeInTheDocument();
+      });
+
+      it("shows scheduled evals nav item when experimentalFeatures.evalsView is enabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: { evalsView: true },
+        });
+
+        renderModal();
+        await waitForSettingsModalReady();
+
+        expect(screen.getByRole("button", { name: /Scheduled Evals/i })).toBeInTheDocument();
+      });
+
+      it("falls back to the first selectable section when opening scheduled evals while evalsView is disabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal({ initialSection: "scheduled-evals" });
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByRole("button", { name: /Scheduled Evals/i })).not.toBeInTheDocument();
+        // FNXC:SettingsNavigation 2026-07-16-13:40: FN-8130 falls back to Appearance, the configured default and first selectable Preferences section.
+        expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+      });
+    });
+
+    it("sends canonical devServerView=false and devServer=null when disabling legacy dev server flag", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { devServer: true },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const devServerToggle = screen.getByLabelText("Dev Server") as HTMLInputElement;
+      expect(devServerToggle).toBeChecked();
+
+      vi.useFakeTimers();
+      fireEvent.click(devServerToggle);
+      expect(devServerToggle).not.toBeChecked();
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ devServerView: false, devServer: null });
+    });
+
+    it("does not emit legacy alias null deletes when canonical key is absent", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText("my-feature"));
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ "my-feature": true });
+      expect(payload.experimentalFeatures.devServer).toBeUndefined();
+    });
+
+    it("hides graduated workflow flags while preserving stale persisted values on save", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: {
+          workflowColumns: false,
+          workflowGraphExecutor: false,
+          workflowInterpreterDualObserve: true,
+          insights: true,
+          "my-feature": false,
+        },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      expect(screen.queryByText("workflowColumns")).not.toBeInTheDocument();
+      expect(screen.queryByText("workflowGraphExecutor")).not.toBeInTheDocument();
+      expect(screen.queryByText(/dual-observe parity/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("Insights")).not.toBeInTheDocument();
+
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText("my-feature"));
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+
+      /*
+      FNXC:SettingsExperimental 2026-06-23-21:20:
+      Workflow runtime flags are hidden because the graph engine and workflow columns are default runtime paths. Saving unrelated Settings changes must preserve stale persisted keys instead of rewriting or resurrecting them as UI-controlled toggles; runtime helpers ignore those stale values.
+      */
+      expect(mockUpdateGlobalSettings.mock.calls[0][0].experimentalFeatures).toEqual({
+        workflowColumns: false,
+        workflowGraphExecutor: false,
+        workflowInterpreterDualObserve: true,
+        insights: true,
+        "my-feature": true,
+      });
+    });
+
+    it("checks Left Sidebar Navigation by default when its flag is unset", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: {},
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      expect(screen.getByLabelText("Left Sidebar Navigation")).toBeChecked();
+    });
+
+    it("persists an explicit leftSidebarNav=false opt-out when disabling the default-on toggle", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: {},
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const leftSidebarToggle = screen.getByLabelText("Left Sidebar Navigation") as HTMLInputElement;
+      expect(leftSidebarToggle).toBeChecked();
+
+      vi.useFakeTimers();
+      fireEvent.click(leftSidebarToggle);
+      expect(leftSidebarToggle).not.toBeChecked();
+
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ leftSidebarNav: false });
+    });
+
+    it("shows feature flags when experimentalFeatures is set", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": true, "another-feature": false },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      expect(screen.getByText("my-feature")).toBeInTheDocument();
+      expect(screen.getByText("another-feature")).toBeInTheDocument();
+    });
+
+    it("feature flags are unchecked when value is false", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+    });
+
+    it("feature flags are checked when value is true", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": true },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it("toggling a feature flag updates the form state", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+
+      // Toggle it
+      await settingsModalUser.click(checkbox);
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it("saving with toggled feature flag includes experimentalFeatures in payload", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "my-feature": false },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      // Toggle the feature
+      const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
+      vi.useFakeTimers();
+      fireEvent.click(checkbox);
+
+      // Save
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ "my-feature": true });
+    });
+
+    it("shows a global scope indicator for the Experimental Features section", async () => {
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      /*
+      FNXC:SettingsModalTests 2026-07-16-13:30:
+      The prose scope banner ("shared across all your Fusion projects") was removed from the section body; global scope is now conveyed by the navigation — the desktop nav item renders a globe scope icon (mocked here as icon-globe). The requirement is unchanged: the UI must tell the operator this section edits global state.
+      */
+      const experimentalNavButtons = screen.getAllByRole("button", { name: /Experimental Features/i });
+      expect(experimentalNavButtons.some((button) => within(button).queryByTestId("icon-globe"))).toBe(true);
+    });
+
+    it("handles undefined experimentalFeatures (falls back to empty) but still shows known features", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: undefined,
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      // Known features that remain experimental should always be shown regardless of settings.
+      expect(screen.getByText("Dev Server")).toBeInTheDocument();
+      expect(screen.queryByText("Insights")).not.toBeInTheDocument();
+      expect(screen.queryByText("Roadmaps")).not.toBeInTheDocument();
+    });
+
+    it("saves experimentalFeatures with multiple toggled flags", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { "feature-a": true, "feature-b": false },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      // Toggle feature-b to true
+      const checkboxB = screen.getByLabelText("feature-b") as HTMLInputElement;
+      vi.useFakeTimers();
+      fireEvent.click(checkboxB);
+
+      // Save
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": true });
+    });
+
+  });
+});
+

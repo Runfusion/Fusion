@@ -1,0 +1,4169 @@
+/* === Reset & Tokens === */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* === Global Scrollbar Theme ===
+   Low-specificity wildcard rules so all scrollable surfaces pick up the
+   dark theme by default. Per-component overrides (e.g. .board, .column-body,
+   .settings-sidebar, .settings-content, .planning-modal *) remain unaffected
+   because their class-level selectors have higher specificity than * . */
+* {
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox app-wide scrollbar via html element */
+html {
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+/* === Utility Classes === */
+.visually-hidden {
+  position: absolute;
+  /* Pin to the containing block's origin. Without offsets an absolute box
+     renders at its static-flow position; inside a horizontal scroller (e.g.
+     the kanban board) that position is off-screen-right, and because the
+     scroll container isn't a positioned containing block its overflow can't
+     clip the span — so it balloons documentElement.scrollWidth and triggers
+     iOS shrink-to-fit zoom-out + whole-page panning on mobile. */
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* === Touch Target Utility ===
+   Ensures interactive elements meet the 44px minimum touch target
+   recommended by Apple HIG and WCAG 2.5.8. Apply to interactive
+   elements that are too small on mobile (links, small buttons, icons). */
+.touch-target {
+  min-width: var(--touch-target-min-size);
+  min-height: var(--touch-target-min-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.status-dot--online {
+  background: var(--color-success);
+}
+
+.status-dot--offline,
+.status-dot--error {
+  background: var(--color-error);
+}
+
+.status-dot--connecting {
+  background: var(--color-warning);
+  animation: status-dot-pulse var(--duration-slow) ease-in-out infinite;
+}
+
+.status-dot--pending {
+  background: var(--color-warning);
+}
+
+@keyframes status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* === Design Tokens (Theme-Agnostic Defaults) === */
+:root {
+  /* Typography */
+  --font-primary: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /*
+  FNXC:DashboardStyling 2026-07-15-17:35:
+  The type scale must be complete and gap-free: every rung a component can name has to resolve to a real value.
+  `--font-size-sm` and `--font-size-md` were named by 12 declarations across AgentDetailView, DockTaskList, SetupWizardModal, and ModelOnboardingModal while never being defined anywhere, so those rules silently no-op and the elements inherit instead.
+  The command-center token-validity guard is the only gate that catches this class of omission, and it does not cover these files.
+  Rung semantics, derived from existing call sites: 2xs = badges/scope pills, xs = help and caption copy, sm = control labels and body, base = default body, md = card and section headings (h3/h4), lg = modal titles.
+  md is 1.125rem because unstyled h3 already renders at the 1.17em UA default here (no heading reset exists), so defining it holds current rendering rather than reflowing those views.
+  */
+  --font-size-2xs: 0.6875rem;
+  /* FNXC:DashboardStyling 2026-06-19-05:50: FN-6703 defines the xs font-size token so tokenized mobile mailbox tabs satisfy the dashboard CSS token-validity guard without relying on an undefined fallback. */
+  --font-size-xs: 0.8rem;
+  --font-size-sm: 0.875rem;
+  /* FNXC:DashboardStyling 2026-06-21-11:24: Dashboard components must use defined typography tokens so the raw CSS token-validity gate catches real missing custom properties instead of shared type-scale omissions. */
+  --font-size-base: 1rem;
+  --font-size-md: 1.125rem;
+  --font-size-lg: 1.25rem;
+  --line-height-tight: 1.25;
+  /* FNXC:DashboardStyling 2026-08-21-13:35: normal-body line-height token (was a raw 1.4 literal in ChatFocusSelector.css). */
+  --line-height-normal: 1.4;
+
+  /* Spacing Scale */
+  /* FNXC:DashboardStyling 2026-08-23-16:00: FN-9198 uses this 2px token for chat title-switcher focus-ring widths and offsets. */
+  --space-3xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  /*
+  FNXC:DashboardStyling 2026-07-23-13:05:
+  Mobile action controls need one shared minimum hit-area token so compact layouts can retain the
+  44px accessibility floor without embedding a raw dimension in component-specific rules.
+  */
+  --touch-target-min-size: 44px;
+  /*
+  FNXC:TaskModalResize 2026-07-26-10:40:
+  Task-modal resize targets use the accessibility floor as an explicit hit-area
+  contract. The painted grip remains compact; only the tablet-class touch guard
+  opts into this token so phones and desktop coarse-pointer layouts do not gain
+  invisible resize chrome.
+  */
+  --modal-resize-touch-target: var(--touch-target-min-size);
+
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-14:00:
+  FN-8147 pins Quick Add action-row control heights to literal values rather than
+  deriving them from --space-* so shadcn's tighter spacing scale cannot shrink
+  composer controls. These match the default resolved heights: 28px desktop and
+  36px mobile.
+  */
+  --quick-entry-action-row-height-desktop: 28px;
+  --quick-entry-action-row-height-mobile: 36px;
+
+  /* Border Radius Scale */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 10px;
+
+  /* Component-specific tokens */
+  --btn-padding: var(--space-sm) var(--space-lg);
+  --btn-border-width: 1px;
+  --card-padding: 10px 12px;
+  --modal-padding: var(--space-lg) 20px;
+  --header-padding: var(--space-md) var(--space-xl);
+  /*
+  FNXC:DashboardTheming 2026-06-23-19:10:
+  Divider chrome defaults to invisible for the cleaner app shell, but uses tokens instead of `border: none` so a theme can opt any participating header/sidebar/view divider back in by setting --chrome-divider-color or a component-specific alias.
+  */
+  --chrome-divider-width: 1px;
+  --chrome-divider-color: transparent;
+  --right-dock-shell-divider-color: var(--chrome-divider-color);
+  --right-dock-toolbar-divider-color: var(--chrome-divider-color);
+  --right-dock-view-header-divider-color: var(--chrome-divider-color);
+  --right-dock-expand-header-divider-color: var(--chrome-divider-color);
+  --right-dock-view-divider-color: var(--chrome-divider-color);
+  /*
+  FNXC:ViewHeader 2026-06-23-04:15:
+  Canonical main-content view-header height. Headers with btn-sm action buttons render taller (~61px border-box) than title-only headers (~54px), so every canonical header (ViewHeader, Missions, embedded Planning, Goals, Automations, Import Tasks) pins this min-height to stay pixel-identical regardless of whether actions are present.
+  FNXC:ViewHeader 2026-06-22-18:00:
+  The 1px reserve remains after removing header dividers so existing header height stays stable while the visible line disappears.
+  */
+  --view-header-min-height: calc(var(--space-lg) * 2 + 28px + 1px);
+  /*
+  FNXC:ViewHeader 2026-06-23-05:00:
+  Canonical content-row height (28px = btn-sm box: 4+4 padding + 1+1 border + ~18px line). ViewHeader bounds every action child to this so taller controls (touch-target 44px close buttons, view-toggle 32px segmented switches, base .btn 36px primary buttons) collapse to the canonical row instead of stretching the header past --view-header-min-height. Skills (was 77px / 44px touch-target), Goals (was 69px / 36px primary btn), and Agents (was 65px / 32px view-toggle) all clamp to ~61px without clipping their 16-18px icons, which stay centered.
+  */
+  --view-header-content-row: 28px;
+  --column-gap: var(--space-md);
+  --board-padding: var(--space-lg) var(--space-xl);
+  --icon-size-md: 16px;
+  --icon-size-sm: 14px;
+
+  /* Layout tokens for fixed footer (ExecutorStatusBar) */
+  --header-height: 57px;
+  --executor-footer-height: 0px;
+  --executor-footer-height-mobile: 0px;
+  --card-chip-height: 22px;
+  --card-chip-height-mobile: 20px;
+
+  /* PWA standalone mode bottom gap (FN-1626): extra breathing room for iOS home indicator */
+  --standalone-bottom-gap: 0px;
+
+  /* Shadow tokens */
+  /* FNXC:DashboardTheming 2026-06-15-00:00: Global token translucency uses color-mix(in srgb, var(--token) N%, transparent); raw RGB alpha color calls are banned outside var() fallbacks for FN-6489. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 10%, transparent);
+  --shadow-md: 0 4px 6px color-mix(in srgb, #000000 10%, transparent);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+
+  /*
+  FNXC:DashboardStyling 2026-07-19-14:00:
+  FN-8406 defines the report-menu/modal stacking scale because both components
+  previously referenced undefined tokens, silently resolving z-index to auto
+  and letting dashboard scroll owners clip or cover guided report actions.
+  */
+  /*
+  FNXC:DashboardStyling 2026-08-23-22:35:
+  FN-9202's shared `.banner--chrome` shell referenced `--z-sticky`, which nothing defined — the same
+  undefined-token defect FN-8406 records above, silently resolving z-index to auto so a sticky
+  top banner no longer sat in the documented stacking order. 30 restores the value the per-banner
+  shells carried before the unification, staying below the popover/modal scale and the 100
+  `.modal-overlay` floor that must cover it.
+  */
+  --z-sticky: 30;
+  --z-popover: 60;
+  --z-dropdown: 1000;
+  --z-modal: 1100;
+
+  /*
+  FNXC:PluginOverlayLayering 2026-07-23-01:21:
+  Plugin overlays need a stable ceiling above the dashboard's 10000–10001 page-overlay band, 10100+ session-monotonic utility-window stack, the 10500 toast/feedback layer, and the 11000 body-portaled model-combobox dropdown. The 11001 boot floor is available before JavaScript runs; floatingWindowStack.ts raises an inline documentElement value when its utility counter grows past this floor.
+  */
+  --fusion-max-z: 11001;
+
+  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
+  --glow-success: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --glow-warning: 0 0 8px color-mix(in srgb, #e3b541 30%, transparent);
+  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 15%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
+
+  /* Animation tokens.
+     --duration-* are bare durations, safe anywhere (animation shorthands,
+     animation-duration, calc()). --transition-* bundle duration + easing and
+     are ONLY valid in `transition` shorthands: substituting "0.3s ease" into
+     an `animation` shorthand that names its own easing (or into calc())
+     invalidates the whole declaration at computed-value time, silently
+     freezing the animation. Enforced by animation-duration-tokens.css.test.ts. */
+  --duration-instant: 0.1s;
+  --duration-fast: 0.15s;
+  --duration-normal: 0.2s;
+  --duration-slow: 0.3s;
+  --transition-instant: var(--duration-instant) ease;
+  --transition-fast: var(--duration-fast) ease;
+  --transition-normal: var(--duration-normal) ease;
+  --transition-slow: var(--duration-slow) ease;
+
+  /* Backward-compatible aliases */
+  --radius: var(--radius-md);
+  --shadow: var(--shadow-lg);
+
+  /* Mobile breakpoint tokens (documentation only): CSS custom properties cannot be used directly in @media query conditions. */
+  --mobile-breakpoint: 768px;
+  --tablet-breakpoint: 1024px;
+  --small-breakpoint: 480px;
+  --xsmall-breakpoint: 640px;
+}
+
+/*
+FNXC:LoadingIndicators 2026-06-25-00:00:
+Shared loading utilities must animate with the collision-proof `fusion-spinner-spin` keyframe instead of generic global `spin`. Dashboard modal/view CSS chunks load lazily and keyframes are global, so any later `@keyframes spin` can replace a shared spinner's motion and make pending operations look stalled.
+*/
+@keyframes fusion-spinner-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Global spinner animation — used by dashboard-wide Lucide and CSS-only loaders. Must live at the stylesheet top level so the utilities are available before lazy dashboard chunks render. */
+.animate-spin {
+  animation: fusion-spinner-spin 1s linear infinite;
+  transform-origin: center;
+}
+
+.spin {
+  animation: fusion-spinner-spin 1s linear infinite;
+  transform-origin: center;
+}
+
+.spinner,
+.spinning {
+  animation-name: fusion-spinner-spin;
+  animation-duration: 1s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  transform-origin: center;
+}
+
+/*
+FNXC:PlanningMode 2026-06-21-23:45:
+Lucide SVG loaders must rotate on the first Planning loading paint, before later streaming output forces a repaint.
+Use the painted geometry box for shared spinner utilities so `transform-origin: center` is resolved immediately instead of waiting on the SVG viewBox layout.
+*/
+svg.animate-spin,
+svg.spin,
+svg.spinner,
+svg.spinning {
+  transform-box: fill-box;
+}
+
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --card: #21262d;
+  --card-hover: #282e36;
+  /* Neutral transient hover/press surface. Theme contract: defined in :root, light mode, and every color-theme block. */
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  /* Semantic neutral surface tiers for subtle fills, section headers, compact chips, and emphasized hover states. */
+  --surface-subtle: color-mix(in srgb, var(--surface) 96%, var(--text) 4%);
+  --surface-muted: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
+  --surface-emphasis: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --surface-hover-strong: color-mix(in srgb, var(--surface) 88%, var(--text) 12%);
+  /*
+   FNXC:DashboardSurfaceTokens 2026-06-18-21:29:
+   FN-6678 defines neutral surface tiers and a subtle border because the command-center subtree, NewTaskModal, and related dashboard surfaces consume these tokens via bare var() calls. Keep them tokenized so light and dark modes cascade from each theme's --surface, --text, and --border values instead of resolving unset.
+  */
+  --surface-1: color-mix(in srgb, var(--surface) 97%, var(--text) 3%);
+  --surface-2: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
+  /* FNXC:DashboardThemeTokens 2026-06-25-13:15: --border-strong is a higher-contrast border (mixes --text into --border) for surfaces that need a visible outline, e.g. the workflow minimap node stroke. Defined so the var(--border-strong, var(--border)) reference is backed by a real token (token-validity guard). */
+  --border-strong: color-mix(in srgb, var(--border) 55%, var(--text) 45%);
+  --bg-secondary: color-mix(in srgb, var(--surface) 70%, var(--card));
+  --bg-tertiary: color-mix(in srgb, var(--surface) 40%, var(--card));
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --text-dim: #484f58;
+
+  --triage: #d29922;
+  --todo: #58a6ff;
+  --in-progress: #00e5ff;
+  --in-progress-rgb: 0, 229, 255;
+  --in-review: #3fb950;
+  --done: #8b949e;
+  --color-merged: #a371f7;
+
+  --color-success: #3fb950;
+  --color-error: #f85149;
+  --color-error-dark: #da3633;
+  --color-muted: #8b949e;
+  --color-info: #1f6feb;
+  --color-warning: #ca8a04;
+
+  /* Workflow Step type / state colors */
+  --ws-pre-merge: #3b82f6;
+  --ws-post-merge: #0ea58c;
+  --ws-info: #06b6d4;
+  --ws-warning: #ca8a04;
+  --ws-success: #22c55e;
+  --ws-error: #ef4444;
+  --ws-error-dark: #dc2626;
+  --ws-teal: #0ea58c;
+  --ws-quality: #3b82f6;
+  --ws-security: #ef4444;
+
+  /* Status background tokens (theme-aware via color-mix) */
+  --status-triage-bg: color-mix(in srgb, var(--triage) 15%, transparent);
+  --status-triage-bg-deep: color-mix(in srgb, var(--triage) 20%, transparent);
+  --status-todo-bg: color-mix(in srgb, var(--todo) 15%, transparent);
+  --status-in-progress-bg: color-mix(in srgb, var(--in-progress) 15%, transparent);
+  --status-in-review-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
+  --status-done-bg: color-mix(in srgb, var(--done) 15%, transparent);
+  --status-archived-bg: color-mix(in srgb, var(--text-muted, #8b949e) 10%, transparent);
+  --status-done-bg-deep: color-mix(in srgb, var(--done) 20%, transparent);
+  --status-error-bg: color-mix(in srgb, var(--color-error-dark, #da3633) 15%, transparent);
+  --status-error-bg-deep: color-mix(in srgb, var(--color-error-dark, #da3633) 20%, transparent);
+
+  /* Executor status bar state accents */
+  --executor-status-error-bg: color-mix(in srgb, var(--color-error) 8%, transparent);
+
+  /* Logo & branding tokens */
+  --logo-accent: var(--todo);
+
+  /* Provider brand tokens used by ProviderIcon in settings/onboarding auth flows. */
+  --provider-anthropic: #d4a27f;
+  --provider-openai: #10a37f;
+  --provider-gemini: #4285f4;
+  --provider-openrouter: #6f4cff;
+  --provider-orcarouter: #0e7c86;
+  --provider-brave: #fb542b;
+  --provider-tavily: #4f46e5;
+  --provider-minimax: #e73562;
+  --provider-zai: #1a6dff;
+  --provider-xiaomi: #ff6900;
+  --provider-kimi: #6c5ce7;
+  --provider-bedrock: #ff9900;
+  --provider-opencode: #38bdf8;
+  --provider-deepseek: #4d6bfe;
+  --provider-cloudflare: #f38020;
+  --provider-qwen: #6149e1;
+  --provider-lmstudio: #ec4899;
+  --provider-huggingface: #ffd21e;
+  --provider-mistral: #ff7000;
+  --provider-azure: #0078d4;
+  --provider-fireworks: #5019c5;
+  --provider-cerebras: #f1592a;
+  --provider-groq: #f55036;
+  --provider-vercel: var(--text);
+  --provider-droid-cli: var(--text);
+  --provider-cursor-cli: #7c3aed;
+  --provider-ollama: #d4a27f;
+  /* Runtime-plugin marks. */
+  --provider-omp-gradient-start: #ed4abf;
+  --provider-omp-gradient-mid: #9b4dff;
+  --provider-omp-gradient-end: #5ad8e6;
+  --provider-omp: var(--provider-omp-gradient-mid);
+  --provider-hermes: #d4961c;
+  --provider-openclaw: #ff4f40;
+  --provider-openclaw-outline: #3a0a0d;
+  --provider-openclaw-highlight: #ff775f;
+  --provider-openclaw-eye: #081016;
+  --provider-openclaw-eye-highlight: #f5fbff;
+  --provider-paperclip: var(--text);
+  --provider-icon-contrast: var(--bg);
+
+  /* Task-creation CTA tokens */
+  --cta-bg: #238636;
+  --cta-border: #2ea043;
+  --cta-text: #fff;
+  --cta-bg-hover: #2ea043;
+  --cta-border-hover: #3fb950;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+
+  /* Toast status text tokens */
+  --toast-text: var(--text);
+  --toast-error-text: #fff;
+  --toast-info-text: #fff;
+
+  /* === Agent State Colors === */
+  --state-idle-bg: color-mix(in srgb, var(--state-idle-text) 15%, transparent);
+  --state-idle-text: #8b949e;
+  --state-idle-border: #8b949e;
+  --state-active-bg: color-mix(in srgb, var(--cta-border) 15%, transparent);
+  --state-active-text: #3fb950;
+  --state-active-border: #3fb950;
+  --state-paused-bg: color-mix(in srgb, var(--state-paused-text) 15%, transparent);
+  --state-paused-text: #e3b541;
+  --state-paused-border: #e3b541;
+  --state-error-bg: color-mix(in srgb, var(--state-error-text) 15%, transparent);
+  --state-error-text: #f85149;
+  --state-error-border: #f85149;
+
+  /* === Mission & Milestone Status Colors === */
+  --mission-planning-bg: color-mix(in srgb, var(--triage) 15%, transparent);
+  --mission-planning-text: var(--triage);
+  --mission-active-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
+  --mission-active-text: var(--in-review);
+  --mission-blocked-bg: color-mix(in srgb, var(--color-error) 15%, transparent);
+  --mission-blocked-text: var(--color-error);
+  --mission-complete-bg: color-mix(in srgb, #3b82f6 15%, transparent);
+  --mission-complete-text: #3b82f6;
+  --mission-archived-bg: var(--bg-tertiary);
+  --mission-archived-text: var(--text-dim);
+
+  /* === Slice Status Colors === */
+  --slice-pending-bg: color-mix(in srgb, var(--triage) 15%, transparent);
+  --slice-pending-text: var(--triage);
+  --slice-active-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
+  --slice-active-text: var(--in-review);
+  --slice-complete-bg: color-mix(in srgb, #3b82f6 15%, transparent);
+  --slice-complete-text: #3b82f6;
+
+  /* === Feature (Task) Status Colors === */
+  --feature-defined-bg: color-mix(in srgb, var(--triage) 15%, transparent);
+  --feature-defined-text: var(--triage);
+  --feature-triaged-bg: color-mix(in srgb, #a855f7 15%, transparent);
+  --feature-triaged-text: #a855f7;
+  --feature-in-progress-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
+  --feature-in-progress-text: var(--in-review);
+  --feature-done-bg: color-mix(in srgb, #3b82f6 15%, transparent);
+  --feature-done-text: #3b82f6;
+
+  /* === Autopilot State Colors === */
+  --autopilot-inactive-bg: color-mix(in srgb, #94a3b8 15%, transparent);
+  --autopilot-inactive-text: #94a3b8;
+  --autopilot-watching-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
+  --autopilot-watching-text: var(--in-review);
+  --autopilot-activating-bg: color-mix(in srgb, #3b82f6 15%, transparent);
+  --autopilot-activating-text: #3b82f6;
+  --autopilot-completing-bg: color-mix(in srgb, #a855f7 15%, transparent);
+  --autopilot-completing-text: #a855f7;
+
+  /* === Loop State Colors === */
+  --loop-idle-bg: var(--bg-tertiary);
+  --loop-idle-text: var(--text-muted);
+  --loop-idle-indicator: var(--text-dim);
+  --loop-implementing-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
+  --loop-implementing-text: var(--in-review);
+  --loop-implementing-indicator: var(--in-review);
+  --loop-validating-bg: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  --loop-validating-text: var(--color-warning);
+  --loop-validating-indicator: var(--color-warning);
+  --loop-needs-fix-bg: color-mix(in srgb, #f97316 15%, transparent);
+  --loop-needs-fix-text: #f97316;
+  --loop-needs-fix-indicator: #f97316;
+  --loop-passed-bg: color-mix(in srgb, var(--color-success) 15%, transparent);
+  --loop-passed-text: var(--color-success);
+  --loop-passed-indicator: var(--color-success);
+  --loop-blocked-bg: color-mix(in srgb, var(--color-error) 15%, transparent);
+  --loop-blocked-text: var(--color-error);
+  --loop-blocked-indicator: var(--color-error);
+
+  /* === Assertion Status Colors === */
+  --assertion-pending-bg: color-mix(in srgb, var(--triage) 15%, transparent);
+  --assertion-pending-text: var(--triage);
+  --assertion-passed-bg: color-mix(in srgb, var(--color-success) 15%, transparent);
+  --assertion-passed-text: var(--color-success);
+  --assertion-failed-bg: color-mix(in srgb, var(--color-error) 15%, transparent);
+  --assertion-failed-text: var(--color-error);
+  --assertion-blocked-bg: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  --assertion-blocked-text: var(--color-warning);
+
+  /* === Interview Modal Icon Colors === */
+  --icon-milestone: var(--triage);
+  --icon-slice: var(--in-review);
+  --icon-feature: #3b82f6;
+
+  /* === Accent Color === */
+  --accent: #7c5cbf;
+  /* Foreground for content rendered on `--accent` (e.g., user chat bubble, primary FAB icon). Choose a value with WCAG AA contrast against the paired `--accent` in the same block. */
+  --accent-text: #ffffff;
+
+  /*
+   * FNXC:DashboardTokenHygiene 2026-07-18-04:07:
+   * Workflow-status step chips use --ws-*, --color-merged, and --triage backgrounds.
+   * Their foreground must remain white across themes, unlike --accent-text, which only pairs with --accent and may be theme-variant.
+   */
+  --workflow-chip-foreground: #ffffff;
+
+  /*
+   * FNXC:DashboardPreviewCanvas 2026-07-18-04:07:
+   * Agent HTML mockups assume a light page background, so this canvas stays white in every theme.
+   */
+  --preview-page-bg: #ffffff;
+
+  /* === Log Entry Background Tokens === */
+  --log-tool-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+  --log-success-bg: color-mix(in srgb, var(--color-success) 6%, transparent);
+  --log-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
+
+  /* === Mailbox compose FAB & badges === */
+  --fab-bg: var(--todo);
+  --fab-text: #fff;
+
+  /* === Mission autopilot indicators === */
+  --autopilot-pulse: var(--color-success);
+  --autopilot-icon: #eab308;
+  --autopilot-shadow: color-mix(in srgb, var(--color-success) 40%, transparent);
+
+  /* === Mission toggle & badge backgrounds === */
+  --toggle-checked-bg: color-mix(in srgb, var(--color-success) 20%, transparent);
+  --meta-badge-bg: color-mix(in srgb, var(--color-success) 10%, transparent);
+
+  /* === Mission event type colors (semantic — adapted for light in [data-theme="light"]) === */
+  --event-error-text: #fca5a5;
+  --event-state-text: #93c5fd;
+  --event-task-text: #6ee7b7;
+  --event-slice-text: #fcd34d;
+  --event-autopilot-text: #d8b4fe;
+  --event-error-bg: color-mix(in srgb, #ef4444 15%, transparent);
+  --event-state-bg: color-mix(in srgb, #3b82f6 15%, transparent);
+  --event-task-bg: color-mix(in srgb, #10b981 15%, transparent);
+  --event-slice-bg: color-mix(in srgb, #f59e0b 15%, transparent);
+  --event-autopilot-bg: color-mix(in srgb, #a855f7 15%, transparent);
+
+  /* === Card mission badge === */
+  --badge-mission-text: #a78bfa;
+  --badge-mission-text-hover: #c4b5fd;
+  --badge-mission-bg: color-mix(in srgb, var(--badge-mission-text) 12%, transparent);
+  --badge-mission-bg-hover: color-mix(in srgb, var(--badge-mission-text-hover) 22%, transparent);
+
+  /* === Terminal background === */
+  --terminal-bg: #1e1e1e;
+
+  /* === Model combobox favorite star === */
+  --star-idle: #6b7280;
+  --star-active: #f59e0b;
+}
+
+/* Default light-mode token contract.
+   NOTE: color-theme-specific light overrides live in public/theme-data.css.
+   This block is the source of truth for non-color-theme light mode. */
+:root[data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --surface-subtle: color-mix(in srgb, var(--surface) 98%, var(--text) 2%);
+  --surface-muted: color-mix(in srgb, var(--surface) 97%, var(--text) 3%);
+  --surface-emphasis: color-mix(in srgb, var(--surface) 95%, var(--text) 5%);
+  --surface-hover-strong: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
+  --surface-1: color-mix(in srgb, var(--surface) 98%, var(--text) 2%);
+  --surface-2: color-mix(in srgb, var(--surface) 95%, var(--text) 5%);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
+  /* FNXC:DashboardThemeTokens 2026-06-25-13:15: --border-strong is a higher-contrast border (mixes --text into --border) for surfaces that need a visible outline, e.g. the workflow minimap node stroke. Defined so the var(--border-strong, var(--border)) reference is backed by a real token (token-validity guard). */
+  --border-strong: color-mix(in srgb, var(--border) 55%, var(--text) 45%);
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --card: #ffffff;
+  --card-hover: #f3f4f6;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --text-muted: #656d76;
+  --text-dim: #8c959f;
+  --triage: #9a6700;
+  --todo: #0969da;
+  --in-progress: #00bcd4;
+  --in-progress-rgb: 0, 188, 212;
+  --in-review: #1a7f37;
+  --done: #6e7781;
+  --color-merged: #8250df;
+  --color-success: #1a7f37;
+  --color-error: #cf222e;
+  --color-muted: #6e7781;
+  --color-warning: #9a6700;
+  --executor-status-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
+  --status-color-added: #1a7f37;
+  --status-color-modified: #0969da;
+  --status-color-deleted: #cf222e;
+  --status-color-unknown: #6e7781;
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: 0 4px 6px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 15%, transparent);
+  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 18%, transparent);
+  --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
+  --glow-warning: 0 0 8px color-mix(in srgb, var(--color-warning) 30%, transparent);
+  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 12%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
+  --cta-bg: #1a7f37;
+  --cta-border: #1f883d;
+  --cta-text: #fff;
+  --cta-bg-hover: #1f883d;
+  --cta-border-hover: #2ea043;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
+  --color-info: #0969da;
+  --ws-pre-merge: #2563eb;
+  --ws-post-merge: #0d9488;
+  --ws-info: #0891b2;
+  --ws-warning: #a16207;
+  --ws-success: #16a34a;
+  --ws-error: #dc2626;
+  --ws-error-dark: #b91c1c;
+  --ws-teal: #0d9488;
+  --ws-quality: #2563eb;
+  --ws-security: #dc2626;
+  --color-error-dark: #a40e26;
+  --status-error-bg: color-mix(in srgb, var(--color-error-dark) 15%, transparent);
+  --status-error-bg-deep: color-mix(in srgb, var(--color-error-dark) 20%, transparent);
+  --logo-accent: var(--todo);
+  --accent: #6a4fa0;
+  --log-tool-bg: color-mix(in srgb, var(--accent) 6%, transparent);
+  --log-success-bg: color-mix(in srgb, var(--color-success) 5%, transparent);
+  --log-error-bg: color-mix(in srgb, var(--color-error) 5%, transparent);
+  --shadow: var(--shadow-lg);
+  --fab-text: #fff;
+  --autopilot-icon: #ca8a04;
+  --autopilot-shadow: color-mix(in srgb, var(--color-success) 40%, transparent);
+  --terminal-bg: #f6f8fa;
+  --badge-mission-text: #7c3aed;
+  --badge-mission-text-hover: #8b5cf6;
+  --badge-mission-bg: color-mix(in srgb, var(--badge-mission-text) 12%, transparent);
+  --badge-mission-bg-hover: color-mix(in srgb, var(--badge-mission-text-hover) 22%, transparent);
+  --event-error-text: #dc2626;
+  --event-state-text: #2563eb;
+  --event-task-text: #059669;
+  --event-slice-text: #d97706;
+  --event-autopilot-text: #9333ea;
+  --event-error-bg: color-mix(in srgb, var(--event-error-text) 12%, transparent);
+  --event-state-bg: color-mix(in srgb, var(--event-state-text) 12%, transparent);
+  --event-task-bg: color-mix(in srgb, var(--event-task-text) 12%, transparent);
+  --event-slice-bg: color-mix(in srgb, var(--event-slice-text) 12%, transparent);
+  --event-autopilot-bg: color-mix(in srgb, var(--event-autopilot-text) 12%, transparent);
+  --toggle-checked-bg: color-mix(in srgb, var(--color-success) 15%, transparent);
+  --meta-badge-bg: color-mix(in srgb, var(--color-success) 8%, transparent);
+  --star-idle: #9ca3af;
+  --star-active: #d97706;
+}
+
+html,
+html *,
+html *::before,
+html *::after {
+  transition:
+    background-color var(--transition-normal),
+    color var(--transition-normal),
+    border-color var(--transition-normal),
+    box-shadow var(--transition-normal);
+}
+
+[data-theme="light"] .agent-dialog-overlay,
+[data-theme="light"] .chat-new-dialog-backdrop {
+  background: transparent;
+}
+
+[data-theme="light"] .modal-header {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+[data-theme="light"] .modal-actions {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+[data-theme="light"] .settings-navigation .settings-sidebar {
+  background: transparent;
+}
+
+[data-theme="light"] .toast-success {
+  background: var(--cta-bg);
+  color: var(--cta-text);
+}
+
+[data-theme="light"] .toast-error {
+  background: var(--color-error-dark);
+}
+
+[data-theme="light"] .toast-info {
+  background: var(--color-info);
+}
+
+[data-theme="light"] .btn-task-create,
+[data-theme="light"] .btn-primary {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+}
+
+[data-theme="light"] .btn-task-create:hover,
+[data-theme="light"] .btn-primary:hover {
+  background: var(--cta-bg-hover);
+  border-color: var(--cta-border-hover);
+  box-shadow: var(--cta-glow);
+}
+
+[data-theme="light"] .btn-danger {
+  background: var(--color-error);
+  border-color: var(--color-error-dark);
+}
+
+[data-theme="light"] .btn-danger:hover {
+  background: var(--color-error-dark);
+  box-shadow: var(--glow-danger);
+}
+
+[data-theme="light"] .btn-warning {
+  background: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 70%, black);
+}
+
+[data-theme="light"] .btn-warning:hover {
+  background: color-mix(in srgb, var(--triage) 70%, black);
+  box-shadow: var(--glow-warning);
+}
+
+[data-theme="light"] .btn-secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+[data-theme="light"] .btn-secondary:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+[data-theme="light"] .btn-secondary:active {
+  transform: scale(0.97);
+}
+[data-theme="light"] .btn-secondary:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
+
+/* -------------------------------------------------------------------------
+ * Runtime provider settings card — unified layout used by Hermes / OpenClaw /
+ * Paperclip cards. Header (large logo + name + status), description, form,
+ * footer action row.
+ * FNXC:DashboardStyling 2026-06-19-05:50: Runtime-card font-size values remain intentionally raw; --font-size-xs is now the defined dashboard token used by mobile mailbox tabs where token-validity tests require a real custom property.
+ * ------------------------------------------------------------------------- */
+
+.runtime-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.runtime-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.runtime-card__logo {
+  flex: 0 0 auto;
+  width: calc(var(--space-xl) + var(--space-xl) - var(--space-xs));
+  height: calc(var(--space-xl) + var(--space-xl) - var(--space-xs));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--provider-icon-color, currentColor) 8%, transparent);
+}
+
+.runtime-card__title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1;
+  min-width: 0;
+}
+
+.runtime-card__name {
+  margin: 0;
+  font-weight: 600;
+}
+
+.runtime-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.runtime-card__status--ok {
+  color: var(--color-success);
+}
+
+.runtime-card__status--err {
+  color: var(--color-error);
+}
+
+.runtime-card__status--neutral {
+  color: var(--text-muted);
+}
+
+.runtime-card__learn-more {
+  flex: 0 0 auto;
+}
+
+.runtime-card__description {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.runtime-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.runtime-card__form .form-group {
+  margin: 0;
+}
+
+.runtime-card__tabs {
+  display: flex;
+  gap: var(--space-xs);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-sm);
+}
+
+.runtime-card__tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: calc(var(--space-xs) / 2) solid transparent;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-bottom: calc(var(--space-xs) / -4);
+}
+
+.runtime-card__tab:hover {
+  color: var(--text);
+}
+
+.runtime-card__tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.runtime-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.runtime-card__toast {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.runtime-card__toast--ok {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.runtime-card__toast--err {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.runtime-card__cobrand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.runtime-card__cobrand-mark {
+  width: calc(var(--space-sm) + (var(--space-xs) / 2));
+  height: calc(var(--space-sm) + (var(--space-xs) / 2));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: currentColor;
+  color: var(--text-muted);
+  border-radius: calc(var(--radius-sm) / 2);
+  flex: 0 0 auto;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-primary);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* === Buttons === */
+.btn {
+  padding: var(--btn-padding);
+  border-style: solid;
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.btn:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+.btn:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+  outline: none;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+
+/* Primary buttons use CTA tokens so colors adapt to the selected color theme */
+.btn-primary {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+  color: var(--cta-text);
+}
+.btn-primary:hover {
+  background: var(--cta-bg-hover);
+  border-color: var(--cta-border-hover);
+  box-shadow: var(--cta-glow);
+}
+
+/* Theme-driven task-creation CTA — uses tokens so every color theme updates consistently */
+.btn-task-create {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+  color: var(--cta-text);
+}
+.btn-task-create:hover {
+  background: var(--cta-bg-hover);
+  border-color: var(--cta-border-hover);
+  box-shadow: var(--cta-glow);
+}
+
+.btn-danger {
+  background: var(--color-error-dark);
+  border-color: var(--color-error);
+  color: #fff;
+}
+.btn-danger:hover {
+  background: var(--color-error);
+  box-shadow: var(--glow-danger);
+}
+
+.btn-warning {
+  background: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 80%, white);
+  color: #fff;
+}
+.btn-warning:hover {
+  background: color-mix(in srgb, var(--triage) 80%, white);
+  box-shadow: var(--glow-warning);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.btn-secondary:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+.btn-secondary:active {
+  transform: scale(0.97);
+}
+.btn-secondary:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-icon {
+  --btn-icon-size: var(--icon-size-md);
+  line-height: 0;
+}
+
+.btn-icon > svg {
+  width: var(--btn-icon-size);
+  height: var(--btn-icon-size);
+  flex-shrink: 0;
+}
+
+.btn.btn-icon.btn-sm,
+.btn.btn-icon.btn--sm,
+.btn-icon.btn-sm,
+.btn-icon.btn--sm {
+  --btn-icon-size: var(--icon-size-sm);
+}
+
+/* === Button Modifiers (BEM style) === */
+.btn--sm {
+  padding: 4px 8px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn--primary {
+  background: var(--todo);
+  color: var(--bg);
+  border-color: var(--todo);
+}
+
+.btn--primary:hover {
+  background: color-mix(in srgb, var(--todo) 80%, white);
+  border-color: color-mix(in srgb, var(--todo) 80%, white);
+}
+
+.btn--danger {
+  background: var(--color-error);
+  color: #fff;
+  border-color: var(--color-error);
+}
+
+.btn--danger:hover {
+  background: var(--color-error-dark);
+  border-color: var(--color-error-dark);
+}
+
+.btn--warning {
+  background: var(--triage);
+  color: var(--bg);
+  border-color: var(--triage);
+}
+
+.btn--warning:hover {
+  opacity: 0.9;
+}
+
+/* === Board === */
+/*
+FNXC:BoardNavigation 2026-07-24-10:05:
+Desktop board scrolling must be free-panning: no scroll snapping at all. Trackpad/wheel scrolls
+were being captured by the browser's proximity-snap settle animation, which reads as a slow,
+sticky drag toward a column center. Snapping stays a phone-tier affordance only (re-declared in
+the mobile media block alongside the JS column pager), so the base rule turns it off explicitly
+rather than relying on the absence of a declaration.
+*/
+.board {
+  box-sizing: border-box;
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(6, minmax(300px, 1fr));
+  gap: var(--column-gap);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--board-padding);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: none;
+  scroll-padding-inline: 50%;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.board::-webkit-scrollbar {
+  height: 6px;
+}
+.board::-webkit-scrollbar-track {
+  background: transparent;
+}
+.board::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  transition: border-color var(--transition-normal);
+  scroll-snap-align: center;
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: calc(var(--space-lg) - 2px) calc(var(--space-lg) - 2px) 0;
+  min-width: 0;
+}
+
+.column-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.dot-triage {
+  background: var(--triage);
+}
+
+/*
+FNXC:CodingIdeasWorkflow 2026-07-21-23:42:
+The non-legacy Coding (Ideas) manual-intake ID already uses the shared Column dot.
+Map it to the established triage token so the decorative header indicator remains visible across themes.
+*/
+.dot-ideas {
+  background: var(--triage);
+}
+.dot-todo {
+  background: var(--todo);
+}
+.dot-in-progress {
+  background: var(--in-progress);
+}
+.dot-in-review {
+  background: var(--in-review);
+}
+.dot-done {
+  background: var(--done);
+}
+.dot-archived {
+  background: var(--text-muted);
+}
+
+.column-header h2 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--card);
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-xl);
+  min-width: 24px;
+  text-align: center;
+}
+
+@keyframes count-flash-bg {
+  from {
+    background: var(--color-success);
+  }
+  to {
+    background: var(--card);
+  }
+}
+
+.column-count.count-flash {
+  animation: count-flash-bg 1400ms ease-out;
+}
+
+/*
+FNXC:WorkflowColumnDescriptions 2026-07-22-12:35:
+Custom workflow descriptions are author-entered explanatory text shared by selected,
+aggregate, and archived board columns. Preserve explicit line breaks and break long
+unspaced values so narrow desktop and mobile lanes do not clip the copy.
+*/
+.column-desc {
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  padding: var(--space-xs) calc(var(--space-lg) - 2px) calc(var(--space-md) - 2px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.column-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-xs) var(--space-sm) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-sm) - 2px);
+}
+
+.column-body::-webkit-scrollbar {
+  width: 4px;
+}
+.column-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.column-body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+
+
+/* === Modals === */
+/*
+FNXC:ModalChrome 2026-06-23-21:36:
+Modal and dock pop-out surfaces should not darken or blur the app behind them. Keep the overlay for positioning, stacking, and click/escape dismissal, but make it visually transparent; panel depth comes from each `.modal` box-shadow instead of a dimmed backdrop. This shared contract covers Git Manager, Terminal, Dev Server, Secrets, and future sidebar/tool modals without per-modal overrides.
+*/
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* Must remain above sticky top banners (e.g. onboarding/session resume cards). */
+  z-index: 100;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: var(--overlay-padding-top, 10vh);
+}
+.modal-overlay.open {
+  display: flex;
+}
+
+/*
+FNXC:DashboardTheming 2026-08-20-00:49:
+Operator feedback requires one readable pixel face for ordinary prose, links, dates, and native or role-based controls. Scope the override to those UI semantics rather than every descendant, so direct mono contracts for paths, identifiers, logs, code, editors, and terminals continue to describe machine-readable content.
+*/
+[data-color-theme="medieval"] {
+  font-family: var(--font-primary);
+}
+
+[data-color-theme="medieval"] :where(a, time, button, label, input, textarea, select, option, [role="button"], [role="link"], [role="textbox"], [role="option"]) {
+  font-family: var(--font-primary);
+}
+
+[data-color-theme="medieval"] :is(pre, pre *, code, code *, kbd, kbd *, samp, samp *, .cm-editor, .cm-editor *, .xterm, .xterm *, .terminal, .terminal *, .session-terminal, .session-terminal *) {
+  font-family: var(--font-mono) !important;
+}
+
+.modal {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 480px;
+  max-height: 80vh;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+FNXC:DashboardTheming 2026-08-20-00:29:
+Medieval modal chrome must follow the generic modal shorthand reset so its border-box grain remains visible. Paint-only layers keep sizing, dismissal, focus, touch, and mobile behavior owned by the existing modal contract.
+*/
+[data-color-theme="medieval"] .modal {
+  border-color: transparent;
+  border-width: var(--btn-border-width);
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--surface), var(--surface)),
+    repeating-linear-gradient(90deg, var(--medieval-wood-dark) 0, var(--medieval-wood-light) var(--space-xs), var(--medieval-wood-dark) var(--space-sm), var(--medieval-wood-light) var(--space-md));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-resize-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: var(--space-lg);
+  height: var(--space-lg);
+  cursor: se-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.modal-resize-grip--touch-target {
+  width: var(--modal-resize-touch-target);
+  height: var(--modal-resize-touch-target);
+  right: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  bottom: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  z-index: 3;
+}
+
+.modal-resize-grip::after {
+  content: "";
+  position: absolute;
+  right: var(--space-xs);
+  bottom: var(--space-xs);
+  width: var(--space-md);
+  height: var(--space-md);
+  border-right: var(--btn-border-width) solid var(--border);
+  border-bottom: var(--btn-border-width) solid var(--border);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.modal-resize-grip:hover::after,
+.modal-resize-grip:focus-visible::after,
+.modal-resize-grip:active::after {
+  opacity: 1;
+}
+.modal-lg {
+  width: 640px;
+}
+
+.modal-md {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--modal-padding);
+  background: var(--surface);
+}
+.modal-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.modal-close:hover {
+  color: var(--text);
+}
+.modal-close:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+  border-radius: var(--radius-sm);
+}
+
+.modal-send-to-background {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.modal-send-to-background:hover {
+  color: var(--text);
+}
+
+.modal-send-to-background:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: var(--modal-padding);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.modal-actions-left {
+  display: flex;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.modal-actions-right {
+  display: flex;
+  gap: 10px;
+}
+
+.modal-body {
+  padding: var(--space-lg) 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.import-preview-list {
+  margin: 8px 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.import-preview-list li {
+  margin: 4px 0;
+}
+
+/* === Forms === */
+.form-group {
+  padding: 0 var(--space-xl);
+  margin-top: var(--space-lg);
+}
+.form-group:last-of-type {
+  margin-bottom: var(--space-sm);
+}
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.optional {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.form-group input:not([type="checkbox"]),
+.form-group textarea {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.form-group input:not([type="checkbox"]):focus,
+.form-group textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+.form-group input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--todo);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: box-shadow var(--transition-fast);
+}
+.form-group input[type="checkbox"]:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: var(--space-sm);
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 500 !important;
+  color: var(--text) !important;
+  font-size: 13px !important;
+  cursor: pointer;
+}
+.form-group textarea {
+  resize: vertical;
+}
+
+/* === Select Styling === */
+.form-group select {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b949e' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.form-group select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+.form-group select:hover:not(:focus) {
+  border-color: var(--text-dim);
+}
+.form-group select optgroup {
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.form-group select option {
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* === Global Input & Select Classes === */
+.input,
+.form-input {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: var(--font-primary);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.input:focus,
+.form-input:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+.input::placeholder,
+.form-input::placeholder {
+  color: var(--text-dim);
+}
+
+.select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: var(--font-primary);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+/* === Helper Text & Field Errors === */
+.form-group small {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.form-group .field-error {
+  color: var(--color-error);
+  font-weight: 500;
+}
+
+.task-form-node-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* === Heartbeat Multiplier === */
+.heartbeat-multiplier-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.heartbeat-multiplier-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.heartbeat-multiplier-slider {
+  flex: 1;
+  min-height: calc(var(--space-2xl) + var(--space-md));
+}
+
+.heartbeat-multiplier-value {
+  min-width: calc(var(--space-2xl) + var(--space-xl));
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--space-md);
+  text-align: right;
+}
+
+.heartbeat-multiplier-preset {
+  max-width: calc(var(--space-2xl) * 4);
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: calc(var(--space-sm) - var(--space-xs) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: calc(var(--space-lg) + var(--space-xs) / 2);
+  height: calc(var(--space-lg) + var(--space-xs) / 2);
+  border-radius: var(--radius-pill);
+  background: var(--todo);
+  border: var(--btn-border-width) solid var(--surface);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: calc(var(--space-lg) + var(--space-xs) / 2);
+  height: calc(var(--space-lg) + var(--space-xs) / 2);
+  border-radius: var(--radius-pill);
+  background: var(--todo);
+  border: var(--btn-border-width) solid var(--surface);
+  cursor: pointer;
+}
+
+input[type="range"]:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* === Settings Layout === */
+.settings-layout {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-mobile-section-picker {
+  display: none;
+}
+
+/*
+FNXC:Settings 2026-07-11-18:45:
+FN-7825 makes .settings-navigation the sole owner of Settings rail width and removes the old nested sidebar divider. Keep this global fallback structural only so embedded and modal Settings do not fight competing width/border/background rules.
+*/
+.settings-sidebar {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-md) var(--space-sm);
+  gap: calc(var(--space-xs) / 2);
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.settings-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-sidebar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.settings-sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: 36px;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+.settings-nav-item:hover {
+  background: var(--bg);
+  color: var(--text);
+  border-left-color: var(--border);
+}
+.settings-nav-item:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+.settings-nav-item.active {
+  background: var(--bg);
+  color: var(--todo);
+  font-weight: 600;
+  border-left-color: var(--todo);
+}
+
+/* Settings group headers - visual separators between global and project sections */
+.settings-group-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: var(--space-md) var(--space-md) var(--space-xs);
+  margin-top: var(--space-sm);
+  user-select: none;
+}
+.settings-group-header:first-child {
+  margin-top: 0;
+}
+
+.settings-content {
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px 0 12px;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.settings-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.settings-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+.settings-content > * {
+  animation: settingsFadeIn var(--transition-normal);
+}
+@keyframes settingsFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.settings-section-heading {
+  font-size: 14px;
+  font-weight: 600;
+  padding: var(--space-lg) 0 var(--space-md);
+  margin: 0;
+  color: var(--text);
+  margin-bottom: var(--space-xs);
+}
+
+/* Spacing modifier for settings-section-heading that need extra top margin */
+.settings-section-heading--spaced {
+  margin-top: var(--space-xl);
+}
+
+
+/* Scope banner above section content */
+
+/* Helper note styling for Settings sections — aligns with form-group horizontal gutters */
+.settings-note {
+  display: block;
+  padding: 0 var(--space-xl);
+  margin-top: var(--space-xs);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .settings-note {
+    padding: 0 var(--space-lg);
+  }
+}
+
+/* === Notifications Settings === */
+.ntfy-advanced-disclosure {
+  margin-top: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.ntfy-advanced-disclosure > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ntfy-advanced-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ntfy-advanced-content {
+  padding: 0 var(--space-md) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* === Memory Settings === */
+.memory-status-message {
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.memory-status-message span {
+  min-width: 0;
+}
+
+.memory-retrieval-test {
+  margin-top: var(--space-lg);
+}
+
+.memory-test-result {
+  margin: 0 var(--space-xl) var(--space-lg);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.memory-test-result strong,
+.memory-test-result span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.memory-test-result small {
+  display: block;
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.memory-test-result ul {
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-test-result li {
+  padding-top: var(--space-sm);
+  border-top: var(--btn-border-width) solid var(--border);
+}
+
+.memory-test-result li + li {
+  margin-top: var(--space-sm);
+}
+
+.memory-test-result p {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.memory-editor-section {
+  margin-top: var(--space-lg);
+}
+
+.memory-file-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-xs) var(--space-md);
+  align-items: center;
+  margin: 0 var(--space-xl) var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.memory-file-summary span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.memory-file-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.memory-file-summary small {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.memory-editor-frame {
+  min-height: 50vh;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* === Auth Provider Cards === */
+.auth-section-hint {
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-muted);
+  border-left: 3px solid var(--text-muted);
+}
+.auth-provider-group {
+  margin-bottom: 16px;
+}
+.auth-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.auth-provider-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+  overflow: hidden;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.auth-provider-card:hover {
+  border-color: var(--text-dim);
+}
+.auth-provider-card--authenticated {
+  border-color: color-mix(in srgb, var(--color-success) 40%, var(--border));
+  background: color-mix(in srgb, var(--color-success) 5%, var(--surface));
+}
+.auth-provider-card--authenticated:hover {
+  border-color: color-mix(in srgb, var(--color-success) 60%, var(--border));
+}
+.auth-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  gap: 12px;
+}
+.auth-provider-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.auth-provider-info strong {
+  font-weight: 500;
+  color: var(--text);
+}
+.auth-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.auth-status-badge.authenticated {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+.auth-status-badge.not-authenticated {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+/* === Provider Connection Status Badges (FN-1901) === */
+.auth-status-badge.connected {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+
+.auth-status-badge.pending {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.auth-status-badge.not-connected {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.auth-status-badge.skipped {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.auth-status-badge.retry {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+  cursor: pointer;
+}
+
+.settings-empty-state {
+  padding: 12px 20px;
+  font-size: 13px;
+}
+.settings-muted {
+  color: var(--text-muted);
+}
+.settings-loading {
+  text-align: center;
+}
+
+
+/* === PR Section === */
+.pr-section-icon {
+  display: inline-flex;
+}
+
+.pr-hint--muted {
+  opacity: 0.8;
+  font-size: 0.8125rem;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+
+.pr-hint--subtle {
+  margin-top: var(--space-sm);
+  opacity: 0.7;
+  font-size: 0.75rem;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+
+.pr-card {
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.pr-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pr-status-icon {
+  align-items: center;
+  display: inline-flex;
+}
+
+.pr-status-badge {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+/* PR status badge theme-aware colors */
+.pr-status-badge--open {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+.pr-status-badge--closed {
+  background: var(--status-error-bg);
+  color: var(--color-error-dark);
+}
+.pr-status-badge--merged {
+  background: color-mix(in srgb, var(--in-progress) 15%, transparent);
+  color: var(--in-progress);
+}
+
+/* PR card status background */
+.pr-card--status-open {
+  background: var(--status-in-review-bg);
+}
+.pr-card--status-closed {
+  background: var(--status-error-bg);
+}
+.pr-card--status-merged {
+  background: color-mix(in srgb, var(--in-progress) 15%, transparent);
+}
+
+/* GitHub badge base styles */
+.card-github-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  gap: var(--space-xs);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  font-family: var(--font-mono);
+  padding: var(--space-xs) var(--space-sm);
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  border-radius: var(--radius-pill);
+  /*
+  FNXC:TaskCardParity 2026-07-31-01:05:
+  TOKENIZED so chip geometry survives a theme change. This was a hardcoded `1px` while the sibling
+  chips (.card-time-indicator and friends, TaskCard.css) use `var(--btn-border-width)`. The default
+  token IS 1px, so the two matched on the default theme — but `factory` and `factory-mono` set
+  --btn-border-width: 2px (theme-data.css), and under those themes the timer chip grew to 2px while
+  this badge stayed at 1px. That is exactly the footer-chip misalignment FN-4511 exists to prevent,
+  and it was invisible to the parity test because the fixture does not mount theme-data.css.
+  Found via greptile on PR #2782.
+  */
+  border: var(--btn-border-width) solid transparent;
+  box-sizing: border-box;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast), filter var(--transition-fast);
+}
+
+@media (max-width: 768px) {
+  .card-github-badge {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.625rem;
+    height: var(--card-chip-height-mobile);
+    min-height: var(--card-chip-height-mobile);
+  }
+}
+
+.card-github-badge:hover {
+  filter: brightness(1.08);
+}
+
+.card-github-badge:focus-visible {
+  outline: none;
+  border-color: currentColor;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+ FNXC:PRBadgeStatusColor 2026-06-27-00:00:
+ PR badge modifiers map live GitHub status to theme tokens in both dark and light roots: open=green, draft=gray, merged=purple, closed=red, and conflicting/blocked=red-caution via --color-error. The existing mobile .card-github-badge base rule controls badge sizing, so modifiers need no breakpoint-specific overrides.
+*/
+.card-github-badge--open {
+  background: color-mix(in srgb, var(--in-review) 20%, transparent);
+  color: var(--in-review);
+}
+.card-github-badge--closed {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+.card-github-badge--merged {
+  background: color-mix(in srgb, var(--color-merged) 20%, transparent);
+  color: var(--color-merged);
+}
+.card-github-badge--conflicting {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+.card-github-badge--draft {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-muted);
+}
+.card-github-badge__check {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-xs);
+}
+.card-github-badge__check--success {
+  color: var(--color-success);
+}
+.card-github-badge__check--failure {
+  color: var(--color-error);
+}
+.card-github-badge__check--pending {
+  color: var(--color-warning);
+}
+.card-github-badge--completed {
+  background: color-mix(in srgb, var(--in-progress) 20%, transparent);
+  color: var(--in-progress);
+}
+.card-github-badge--not-planned {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
+/*
+FNXC:GitLabTracking 2026-07-02-00:00:
+Task cards reuse the compact badge chip dimensions for GitLab links, but stale GitLab sync metadata must use the warning token so operators can distinguish stale tracker snapshots from open/closed GitHub status.
+*/
+.card-gitlab-badge--stale {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+}
+
+.pr-number {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.pr-spacer {
+  flex: 1;
+}
+
+.pr-refresh-btn {
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.pr-title {
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.pr-meta {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 0.75rem;
+  gap: var(--space-xs);
+}
+
+.pr-hint--info {
+  font-size: 0.8125rem;
+}
+
+.pr-footer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  justify-content: space-between;
+}
+
+.pr-comments {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 0.75rem;
+  gap: var(--space-xs);
+}
+
+.pr-link {
+  align-items: center;
+  color: var(--color-info);
+  display: flex;
+  font-size: 0.75rem;
+  font-weight: 500;
+  gap: var(--space-xs);
+  text-decoration: none;
+}
+
+.pr-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .pr-card {
+    padding: var(--space-sm);
+  }
+}
+
+/* === Merge Details Card === */
+.merge-details-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+/* === Markdown Prose === */
+.markdown-body {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  color: var(--text);
+  font-weight: 600;
+  margin-top: 1.2em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+.markdown-body h1 {
+  font-size: 1.4em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.markdown-body h2 {
+  font-size: 1.2em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.markdown-body h3 {
+  font-size: 1.05em;
+}
+.markdown-body h4 {
+  font-size: 1em;
+  color: var(--text-muted);
+}
+.markdown-body h1:first-child,
+.markdown-body h2:first-child,
+.markdown-body h3:first-child,
+.markdown-body h4:first-child {
+  margin-top: 0;
+}
+
+.markdown-body p {
+  margin: 0.6em 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.6em;
+  margin: 0.5em 0;
+}
+.markdown-body ul {
+  list-style: disc;
+}
+.markdown-body ol {
+  list-style: decimal;
+}
+.markdown-body li {
+  margin: 0.25em 0;
+}
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin: 0.15em 0;
+}
+
+.markdown-body code {
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  padding: 0.15em 0.4em;
+  font-size: 0.9em;
+  font-family: var(--font-mono);
+}
+
+.markdown-body pre {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.markdown-body pre > code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.85em;
+}
+
+.markdown-body a {
+  color: var(--todo);
+  text-decoration: none;
+}
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid var(--border);
+  padding: 0.3em 0.8em;
+  margin: 0.6em 0;
+  color: var(--text-muted);
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6em 0;
+  font-size: 0.9em;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.markdown-body th {
+  background: var(--card);
+  font-weight: 600;
+}
+
+.markdown-body input[type="checkbox"] {
+  margin-right: 0.4em;
+  vertical-align: middle;
+  accent-color: var(--todo);
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+
+.markdown-body strong {
+  color: var(--text);
+}
+.markdown-body em {
+  font-style: italic;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}
+
+.detail-deps {
+  margin-top: var(--space-lg);
+}
+.detail-deps h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.detail-dep-list {
+  list-style: none;
+  font-size: 13px;
+}
+
+.detail-dep-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.detail-dep-link {
+  color: var(--todo);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: text-decoration var(--transition-fast);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.detail-dep-link:hover {
+  text-decoration: underline;
+}
+
+.detail-dep-link:focus {
+  outline: 1px solid var(--todo);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.detail-dep-id {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.detail-dep-label {
+  color: var(--text-muted);
+  font-family: var(--font-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-agent-section {
+  margin-top: var(--space-lg);
+}
+
+.detail-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.detail-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-meta-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.detail-agent-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.detail-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.detail-agent-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.detail-agent-clear:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.detail-agent-actions > .agent-picker-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 220;
+  box-shadow: var(--shadow-lg);
+}
+
+.agent-picker-loading,
+.agent-picker-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-picker-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.agent-picker-item:hover,
+.agent-picker-item.selected {
+  background: var(--card-hover);
+}
+
+.agent-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.agent-picker-role {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* === Step Progress === */
+.detail-step-progress {
+  margin-top: var(--space-lg);
+}
+
+.detail-step-progress h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.step-progress-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.step-progress-bar {
+  flex: 1;
+  display: flex;
+  gap: 2px;
+  height: 8px;
+}
+
+.step-progress-segment {
+  flex: 1;
+  height: 100%;
+  border-radius: 2px;
+  transition: filter 0.15s ease, transform 0.15s ease;
+  cursor: pointer;
+  position: relative;
+}
+
+.step-progress-segment:hover {
+  filter: brightness(1.2);
+  transform: scaleY(1.1);
+}
+
+.step-progress-segment[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  margin-bottom: var(--space-xs);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 20%, transparent);
+}
+
+.step-progress-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.step-progress-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+/* === Activity Timeline === */
+.detail-activity {
+  margin-top: 20px;
+}
+
+.detail-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.detail-log-truncated {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.detail-log-entry {
+  padding: 8px 0 8px 14px;
+  border-left: 2px solid var(--border);
+  position: relative;
+}
+
+.detail-log-entry::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.detail-log-entry:first-child::before {
+  background: var(--todo);
+}
+
+.detail-log-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-log-timestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.detail-log-action {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.detail-log-outcome {
+  margin-top: 6px;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-left: 3px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detail-log-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 12px 0;
+}
+
+/*
+FNXC:PluginOverlayLayering 2026-07-23-01:21:
+The supported plugin overlay mount spans the viewport in the root stacking context and follows the live dashboard ceiling through --fusion-max-z. It is empty and click-through by default, so existing layout and interactions remain unchanged; interactive plugin children must opt back into pointer events.
+*/
+#plugin-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--fusion-max-z, 11001) + 1);
+  pointer-events: none;
+}
+
+/* === Toasts === */
+/*
+FNXC:ToastTheming 2026-06-21-00:00:
+Toast text must contrast its status background across every dashboard theme and mode. Success toasts default to --cta-text because Shadcn dark themes can pair a near-white --cta-bg with dark CTA copy; Shadcn color-family success/info overrides choose existing page text tokens when the family CTA/info token pairs are below AA contrast.
+*/
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-sm);
+}
+
+.toast {
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--toast-text);
+  animation: toast-in 0.25s ease-out;
+  box-shadow: var(--shadow);
+}
+.toast-success {
+  background: var(--cta-bg);
+  color: var(--cta-text);
+}
+.toast-error {
+  background: var(--color-error-dark);
+  color: var(--toast-error-text);
+}
+.toast-info {
+  background: var(--color-info);
+  color: var(--toast-info-text);
+}
+
+[data-color-theme^="shadcn"] .toast-success,
+[data-color-theme^="shadcn"] .toast-info {
+  color: var(--bg);
+}
+
+[data-color-theme="shadcn-gray"]:not([data-theme="light"]) .toast-success,
+[data-color-theme="shadcn-gray-blue"]:not([data-theme="light"]) .toast-success,
+[data-color-theme="shadcn-gray-blue"]:not([data-theme="light"]) .toast-info {
+  color: var(--text);
+}
+
+[data-color-theme^="shadcn"][data-theme="light"] .toast-success,
+[data-color-theme^="shadcn"][data-theme="light"] .toast-info {
+  color: var(--bg);
+}
+
+/* FNXC:ToastTheming 2026-06-25-13:15: shadcn-custom light info toast must use dark --text, not white --bg. Its info background (#0284c7 sky-600) only reaches 4.10 contrast against white but ~4.85 against --text, so enroll it in the light-mode dark-text correction list to satisfy WCAG AA. */
+[data-color-theme="shadcn-custom"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-green"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-green"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-orange"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-orange"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-yellow"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-yellow"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-mono-green"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-mono-orange"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-mono-yellow"][data-theme="light"] .toast-success {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .toast-container {
+    top: calc(var(--header-height, 57px) + env(safe-area-inset-top, 0px) + var(--space-sm));
+    bottom: auto;
+    right: var(--space-sm);
+    left: var(--space-sm);
+  }
+
+  .toast {
+    width: 100%;
+    font-size: 14px;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* === Worktree Groups === */
+.worktree-group {
+  background: var(--surface);
+  border-left: 3px solid var(--in-progress);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.worktree-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
+
+.worktree-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.worktree-label {
+  font-family: var(--font-mono);
+}
+
+/* Queued preview cards */
+.card.queued {
+  opacity: 0.55;
+  border-style: dashed;
+  cursor: default;
+}
+.card.queued:hover {
+  cursor: default;
+}
+.card.queued:active {
+  cursor: default;
+}
+
+/* === Dependency Dropdown (shared: InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm) === */
+.dep-trigger-wrap {
+  position: relative;
+}
+
+.agent-trigger-wrap {
+  position: relative;
+}
+
+.dep-trigger,
+.inline-create-model-trigger {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.dep-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 280px;
+  max-width: 400px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Portal-rendered dependency dropdown - uses fixed positioning from JS */
+.dep-dropdown--portal {
+  position: fixed !important;
+  top: auto;
+  left: auto;
+  margin-top: 0;
+}
+
+/* Portal-rendered agent picker dropdown - uses fixed positioning from JS */
+.agent-picker-dropdown--portal {
+  position: fixed !important;
+  top: auto;
+  left: auto;
+  margin-top: 0;
+  z-index: 201;
+}
+
+.dep-dropdown-search-header {
+  position: sticky;
+  top: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+
+.dep-dropdown-search {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--surface);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  outline: none;
+  z-index: 1;
+}
+
+.dep-dropdown-search::placeholder {
+  color: var(--text-dim);
+}
+
+.dep-dropdown-search:focus {
+  border-bottom-color: var(--accent, #58a6ff);
+}
+
+.dep-dropdown-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.dep-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.dep-dropdown-item:hover {
+  background: var(--card-hover);
+}
+.dep-dropdown-item.selected {
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.dep-dropdown-id {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.dep-dropdown-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === AI Refine Menu === */
+.refine-trigger-wrap {
+  position: relative;
+}
+
+.refine-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 15%, transparent);
+  min-width: 200px;
+  max-width: 280px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.refine-menu--portal {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  max-width: calc(100vw - 16px);
+  margin-top: 0;
+}
+
+.refine-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.refine-button--loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.refine-menu-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-bottom: 1px solid var(--border);
+}
+
+.refine-menu-item:last-child {
+  border-bottom: none;
+}
+
+.refine-menu-item:hover {
+  background: var(--card-hover);
+}
+
+.refine-menu-item-title {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.refine-menu-item-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* NewTaskModal description with refine button */
+.description-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.description-auto-save-status {
+  font-size: 11px;
+  color: var(--color-success);
+  opacity: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.description-auto-save-status.is-visible {
+  opacity: 1;
+}
+
+.description-with-refine {
+  position: relative;
+}
+
+/* Description expand button positioning.
+   The expand button sits in the top-right corner of the description textarea.
+   When the Refine button is visible (non-empty description), the expand button
+   is offset left (right: 40px) to avoid overlap. When Refine is absent (empty
+   description), the expand button sits flush in the corner (right: 8px). */
+.description-expand-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px; /* Default: flush placement when Refine is absent */
+}
+
+/* Offset placement when Refine button is visible (non-empty description) */
+.description-expand-btn--offset {
+  right: 40px;
+}
+
+.description-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.description--fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: var(--surface);
+  /* iOS PWA: pad inwards from notches / status bar / home indicator. */
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0px))
+           max(var(--space-lg), env(safe-area-inset-right, 0px))
+           max(var(--space-lg), env(safe-area-inset-bottom, 0px))
+           max(var(--space-lg), env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+}
+
+.description--fullscreen textarea {
+  flex: 1;
+  padding-right: 70px;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.description--fullscreen .refine-button {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  z-index: 10001;
+}
+
+.description--fullscreen .description-expand-btn {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top, 0px));
+  right: calc(max(8px, env(safe-area-inset-right, 0px)) + 32px);
+  z-index: 10001;
+}
+
+/* AI-assisted description actions — sits directly below description in TaskForm */
+.task-form-description-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.description-with-refine .refine-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.description-with-refine textarea {
+  padding-right: 70px; /* Make room for the refine button */
+}
+
+.refine-menu--modal {
+  right: 0;
+  left: auto;
+  top: calc(100% + 4px);
+}
+
+.inline-create-model-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--space-xs);
+  width: min(320px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 500;
+  box-shadow: var(--shadow);
+}
+
+.inline-create-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-create-model-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.inline-create-model-select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+
+.inline-create-model-select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.inline-create-model-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.inline-create-model-row .model-badge {
+  width: fit-content;
+}
+
+@media (max-width: 640px) {
+  .inline-create-actions {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .inline-create-hint {
+    margin-left: 0;
+  }
+
+  .inline-create-model-dropdown {
+    left: 0;
+    right: auto;
+    width: min(360px, calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
+  }
+}
+
+/* === Empty state === */
+.empty-column {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 80px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  margin: 4px;
+}
+
+/* Toggle controls */
+.auto-merge-toggle,
+.toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.toggle-switch {
+  position: relative;
+}
+
+.auto-merge-toggle input,
+.toggle-switch input[type="checkbox"] {
+  position: absolute;
+  inline-size: 0;
+  block-size: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-slider {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-normal);
+  flex-shrink: 0;
+}
+
+.toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--card);
+  border-radius: 50%;
+  transition: transform var(--transition-normal);
+}
+
+.auto-merge-toggle input:checked + .toggle-slider,
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--in-review);
+}
+
+.auto-merge-toggle input:checked + .toggle-slider::after,
+.toggle-switch input:checked + .toggle-slider::after {
+  transform: translateX(12px);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider,
+.auto-merge-toggle input:focus-visible + .toggle-slider {
+  box-shadow: var(--focus-ring-strong);
+}
+
+.toggle-label {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@media (display-mode: standalone) {
+  :root {
+    /* Installed PWA mode: add tokenized breathing room above iOS home indicator. */
+    --standalone-bottom-gap: var(--space-sm);
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Tablet: 6 columns at 1fr collapse to ~130–170px each, which makes
+     task cards stack one word per line. Use a real minimum column width
+     and let the board scroll horizontally instead. */
+  .board {
+    grid-template-columns: repeat(6, minmax(260px, 1fr));
+    overflow-x: auto;
+  }
+
+  /*
+  FNXC:CommandCenterStyling 2026-06-18-20:30:
+  Command Center tablet rendering needs the same definite project-content flex chain as mobile so the shell and tabpanel resolve a real height instead of collapsing or overflowing the document at 769px–1024px (FN-6679).
+  */
+  .project-content {
+    display: flex;
+    flex: 1;
+    align-items: stretch;
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+}
+
+/* === Mobile Responsive Overrides ===
+   Cross-cutting mobile rules only. Component-specific overrides have been
+   moved into co-located @media blocks at the bottom of each component's
+   .css file in app/components/. */
+@media (max-width: 768px) {
+  /* Prevent iOS Safari auto-zoom on focus: all inputs must be >= 16px */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  input[type="tel"],
+  input:not([type]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Lock the document to the visual viewport's inline axis. The board is the
+     only always-present horizontal scroller on mobile; root/header/footer
+     gestures must stay vertical-only so iOS/Android cannot park the whole
+     page off-axis and expose the offscreen-right void. */
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    /* Stop Chrome's overscroll/rubber-band on mobile — without this the user
+       can pull the page up to expose empty space above the dashboard. */
+    overscroll-behavior: none;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: none;
+    touch-action: pan-y;
+  }
+
+  /* Disable pinch-zoom globally on mobile. Android Chrome ignores
+     `user-scalable=no` for a11y, and the kanban board's horizontally-
+     scrollable layout interacts badly with zoom-out (exposes the
+     offscreen-right area). `touch-action` is not inherited — it applies
+     to the target element only — so default every element to vertical page
+     panning, then opt known horizontal scrollers back into pan-x below. */
+  * {
+    touch-action: pan-y;
+  }
+
+  #root {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    overscroll-behavior-x: none;
+    touch-action: pan-y;
+  }
+
+  /* Prevent horizontal overflow from wide content without sizing descendants
+     to the layout viewport when the visual viewport is narrower/drifted. */
+  * {
+    max-width: 100%;
+    max-inline-size: 100%;
+  }
+
+  /*
+  FNXC:Terminal 2026-07-08-17:10:
+  FN-7693 (real root cause of the mobile blank terminal — supersedes the FN-7620/FN-7686 remeasure
+  attempts): the universal `* { max-width: 100% }` reset above ALSO matches xterm's hidden character-
+  measurement subtree (`.xterm-helpers` and its `.xterm-char-measure-element`). That subtree's containing
+  block (`.xterm-helpers`) is a 0x0 absolutely-positioned box, so `max-width: 100%` resolves to
+  `max-width: 0` and hard-caps xterm's character-cell measurement at 0. FitAddon.fit() then proposes 0
+  columns/rows and `.xterm-screen` (plus the WebGL renderer canvas) collapses to 0x0 — the shell prompt
+  DOES stream in and IS written into xterm's row DOM, but paints into a zero-size box, so the terminal is
+  blank. This bites ONLY on mobile because the reset is mobile-scoped (this @media block), which is why the
+  terminal renders fine at desktop widths. Exempt xterm's measurement subtree so the cell width measures
+  its true content width. Verified live via mobile emulation: with this exemption
+  `.xterm-char-measure-element` measures ~295px (was 0) and `.xterm-screen` gets a real width (was 0x0),
+  rendering the prompt. Applies to both terminal surfaces (TerminalModal + SessionTerminal) since
+  `.xterm-helpers` is xterm's own class.
+  */
+  .xterm-helpers,
+  .xterm-helpers *,
+  .xterm-char-measure-element {
+    max-width: none !important;
+    max-inline-size: none !important;
+  }
+
+  pre,
+  code,
+  .code-block {
+    overflow-x: auto;
+    max-width: 100%;
+    max-inline-size: 100%;
+    touch-action: pan-x pan-y;
+    word-break: break-all;
+    word-break: break-word;
+  }
+
+  img,
+  svg {
+    max-width: 100%;
+  }
+
+  img {
+    height: auto;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    max-inline-size: 100%;
+    touch-action: pan-x pan-y;
+  }
+
+  /* Global touch target enforcement on mobile */
+  .btn:not(.btn-icon):not(.btn-badge):not(.btn-sm):not(.btn--sm) {
+    min-height: 36px;
+  }
+
+  .btn-icon {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Column-header action buttons (e.g. archive) stay compact */
+  .column-header .btn-icon {
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  select,
+  textarea {
+    min-height: 36px;
+  }
+
+  /* Board: flex layout with single horizontal scroll + snap */
+  .board {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    overflow-anchor: none;
+    scroll-padding-inline: calc(50% - 150px);
+    /*
+    FNXC:BoardNavigation 2026-07-22-14:20:
+    Mobile board column paging uses a short JS ease-out snap. CSS scroll-behavior:smooth
+    stacked with browser smooth scroll made settle feel laggy; keep auto so free-pan
+    inertia and the hook's animation stay snappy.
+    */
+    scroll-behavior: auto;
+    scrollbar-width: none;
+    padding: var(--space-md);
+    padding-bottom: var(--space-md);
+    gap: var(--space-md);
+    width: 100%;
+    max-width: 100%;
+    max-inline-size: 100%;
+  }
+
+  .board::-webkit-scrollbar {
+    display: none;
+  }
+
+  .board > .column,
+  .column,
+  .column-header,
+  .column-body {
+    touch-action: pan-x pan-y;
+  }
+
+  .board > .column {
+    width: 300px;
+    min-width: 300px;
+    flex-shrink: 0;
+    scroll-snap-align: center;
+  }
+
+  /* Workflow-mode board: reassert the definite flex fill chain at the phone
+     tier after the generic mobile .board/.column overrides. The board keeps
+     the document-pan lock on ancestors while scrolling internally. */
+  .project-content {
+    display: flex;
+    flex: 1;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .project-content > .board-workflow-view,
+  .board-workflow-view {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .board.board-workflow-columns {
+    display: flex;
+    flex-direction: row;
+    flex: 1 1 auto;
+    align-self: stretch;
+    align-items: stretch;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+    scroll-snap-type: x proximity;
+  }
+
+  .board.board-workflow-columns > .column {
+    flex: 1 0 300px;
+    min-width: 300px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* Column header: natural height from padding and font is sufficient */
+
+  /* Column count badge: slightly wider on mobile for tapping */
+  .column-count {
+    min-width: 28px;
+  }
+
+  /* Modal: full-screen on mobile (cross-cutting overlay/modal base chrome) */
+  .modal-overlay:not(.confirm-dialog-overlay),
+  .agent-dialog-overlay,
+  .workflow-output-modal-overlay {
+    padding-top: 0;
+    align-items: stretch;
+    inline-size: 100%;
+    max-inline-size: 100%;
+    overflow-x: hidden;
+    overscroll-behavior-x: none;
+    touch-action: pan-y;
+  }
+
+  .modal:not(.confirm-dialog),
+  .modal-lg,
+  .modal-md,
+  .gm-modal {
+    width: 100%;
+    max-width: 100%;
+    inline-size: 100%;
+    max-inline-size: 100%;
+    min-width: 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+    /* iOS PWA status bar (black-translucent) overlays content; reserve top
+       inset so headers / close buttons aren't clipped behind it. */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .modal-resize-grip {
+    display: none;
+  }
+
+  /*
+  FNXC:DashboardTheming 2026-08-19-19:52:
+  Mobile's generic modal reset removes all borders, which would erase Medieval's shared wood frame at the
+  actual narrow viewport. Restore only tokenized border paint here; sizing, touch, dismissal, and the
+  fullscreen mobile modal contract remain owned by the generic rule above.
+  */
+  [data-color-theme="medieval"] .modal:not(.confirm-dialog),
+  [data-color-theme="medieval"] .modal-lg,
+  [data-color-theme="medieval"] .modal-md,
+  [data-color-theme="medieval"] .gm-modal {
+    border-color: transparent;
+    border-width: var(--btn-border-width);
+    border-style: solid;
+    background-color: var(--surface);
+    background-image:
+      linear-gradient(var(--surface), var(--surface)),
+      repeating-linear-gradient(90deg, var(--medieval-wood-dark) 0, var(--medieval-wood-light) var(--space-xs), var(--medieval-wood-dark) var(--space-sm), var(--medieval-wood-light) var(--space-md));
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* Settings modal: use the section picker as the only mobile navigation */
+  .settings-layout {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .settings-mobile-section-picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: var(--btn-border-width) solid var(--border);
+    background: var(--surface);
+  }
+
+  .settings-mobile-section-picker label {
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .settings-mobile-section-picker select {
+    width: 100%;
+  }
+
+  .settings-mobile-section-picker select:focus-visible {
+    outline: none;
+    border-color: var(--todo);
+    box-shadow: var(--focus-ring-strong);
+  }
+
+  .settings-sidebar {
+    display: none;
+  }
+
+  .settings-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 6px 12px;
+    white-space: nowrap;
+  }
+
+  .settings-nav-item:hover {
+    border-left-color: transparent;
+    border-bottom-color: var(--border);
+  }
+
+  .settings-nav-item.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--todo);
+  }
+
+  /* Hide group headers on mobile - they don't fit well in horizontal scroll row */
+  .settings-group-header {
+    display: none;
+  }
+
+  .settings-content {
+    flex: 1;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .settings-content .form-group small {
+    overflow-wrap: break-word;
+    word-break: break-all;
+  }
+
+  .settings-content input,
+  .settings-content select,
+  .settings-content textarea {
+    font-size: 16px;
+  }
+
+  .settings-section-heading {
+    padding: var(--space-lg) 0 var(--space-md);
+    margin: 0;
+  }
+
+  .form-group {
+    padding: 0 14px;
+  }
+
+  .settings-empty-state {
+    padding: 12px 14px;
+  }
+
+  /* Dropdown items touch target (shared: InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm) */
+  .dep-dropdown-item {
+    min-height: 36px;
+  }
+
+  /* Inline create: constrain dependency dropdown to card width */
+  .dep-dropdown {
+    left: 0;
+    right: 0;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 200px;
+  }
+
+  .refine-menu--modal {
+    left: 14px;
+    right: 14px;
+  }
+
+}
+
+/* === Tablet Responsive Tier (769px–1024px) === */
+/* Cross-cutting tablet rules only. Component-specific tablet overrides
+   live in co-located @media blocks in app/components/. */
+
+/* === Badge Base === */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+.badge--sm {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+
+/* === Mobile scroll fixes for view containers ============================== */
+/* Many top-level "view" components use a flex column with height:100% +
+   overflow:hidden on the root and overflow-y:auto on the content area. On
+   mobile the content area can fail to scroll because flex children default to
+   min-height:auto, which prevents the inner area from being smaller than its
+   intrinsic content. Force min-height:0 so overflow-y:auto actually kicks in. */
+@media (max-width: 768px) {
+  /* Wrapped in :is() so legacy CSS-regression tests that match per-selector
+     base rules (e.g. /\.mailbox-view\s*\{[^}]*\}/) don't pick this up as the
+     "first" definition for any individual selector. */
+  :is(.insights-view, .memory-view, .dev-server-view, .skills-view,
+      .documents-view, .roadmaps-view,
+      .agents-view, .chat-view, .mission-manager, .mailbox-view,
+      .reliability-view) {
+    min-height: 0;
+  }
+
+  :is(.insights-view-content, .memory-view-content, .skills-view-content,
+      .documents-view-content, .agents-view-content, .chat-thread,
+      .mission-detail, .mission-manager__body, .mailbox-content) {
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
+
+/* === Global utility classes (rescued from misclassified extractions) ====== */
+.text-muted { color: var(--text-muted); }
+.text-secondary { color: var(--text-muted); }
+.text-dim { color: var(--text-dim, var(--text-muted)); }
+
+/* === Column header dropdown menu (todo column "Respecify All", etc.) ====== */
+.column-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.column-menu-popover {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  min-width: calc(var(--space-2xl) * 6);
+  padding: var(--space-xs);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+}
+
+.column-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  padding-bottom: var(--space-xs);
+  margin-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border);
+}
+
+.column-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-xs) / 2);
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.column-menu-item:hover:not(:disabled),
+.column-menu-item:focus-visible {
+  background: var(--card-hover);
+}
+
+.column-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.column-menu-item-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.column-menu-item-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.column-menu-item-check {
+  width: 1em;
+  color: var(--color-success);
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .column-menu-popover {
+    max-width: calc(100vw - (var(--space-lg) * 2));
+  }
+}
+
+/*
+FNXC:Navigation 2026-06-22-00:00:
+Board card clicks open task detail as a full main-content view that replaces the board ("Full main panel" design). This layout fills the main content area with a scrollable embedded TaskDetailContent body. Theme tokens only; mobile shell renders it unchanged because the panel just fills its host.
+
+FNXC:TaskDetail 2026-06-22-18:40:
+The panel and its body must be width-bounded (width:100%; min-width:0; max-width:100%) so the embedded detail content cannot exceed the full-width host and get clipped on the right; the body scrolls vertically only (overflow-x:hidden). The separate back-row was removed; "Back to board" now lives inside TaskDetailContent's gray header (see .task-detail-header-back-btn).
+*/
+.task-detail-main-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-detail-main-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/*
+FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
+FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
+mobile full-panel task detail, layered purely on top of the unchanged FN-7583/FN-7586 dismissal
+routing (popstate / fusion:native-back / useNavigationHistory stack). Mobile-only (gated by the
+existing `isMobile` prop in MainContent.tsx); desktop never receives this class. A true
+finger-tracked interactive predictive-back is not feasible from a Capacitor single-page WebView
+on either platform today (WKWebView exposes no interactive-progress callback to JS; Android's
+system predictive-back preview is not driveable from the in-page DOM) — see task FN-7587 notes
+and the filed interactive-predictive-back follow-up task.
+*/
+@media (max-width: 768px) {
+  .task-detail-main-panel--mobile-transition {
+    animation: task-detail-mobile-slide-fade-in var(--duration-normal) ease-out;
+  }
+}
+
+@keyframes task-detail-mobile-slide-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--space-xl, 24px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-detail-main-panel--mobile-transition {
+    animation: none;
+  }
+}

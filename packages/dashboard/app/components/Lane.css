@@ -1,0 +1,177 @@
+/* Multi-lane board lane (U9). Each lane is a full-width vertical row whose
+ * columns scroll horizontally inside the lane. Tokens mirror .board/.column in
+ * app/styles.css; no monolith CSS is touched. */
+
+.board-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--column-gap, 12px);
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--board-padding, 12px);
+  box-sizing: border-box;
+}
+
+.board-workflow-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.board-workflow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-xl);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.board-workflow-selector {
+  display: inline-flex;
+  margin-left: auto;
+  min-width: 0;
+}
+
+
+.board.board-workflow-columns {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /*
+  FNXC:BoardNavigation 2026-07-24-10:05:
+  Desktop/tablet workflow-column scrolling is free-panning — snapping (and its slow browser
+  settle animation) is reserved for the phone tier, where the JS column pager owns paging.
+  */
+  scroll-snap-type: none;
+  touch-action: pan-x pan-y;
+}
+
+.board.board-workflow-columns > .column {
+  flex: 1 0 300px;
+  min-width: 300px;
+  height: 100%;
+  min-height: 0;
+  scroll-snap-align: center;
+  touch-action: pan-x pan-y;
+}
+
+.lane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--surface-muted, var(--surface));
+}
+
+.lane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.lane-header:hover {
+  background: var(--surface-hover, var(--surface));
+}
+
+.lane-header:focus-visible {
+  outline: 2px solid var(--todo);
+  outline-offset: -2px;
+}
+
+.lane-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.lane-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--text-muted, var(--text));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 0 6px;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+/* Inline column feedback (capacity-exhausted promote, deterministic drag
+ * rejection) — rendered in-column, not a toast (R17 / promote spec). */
+.column-inline-feedback {
+  margin: 4px 12px 0;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
+  border-radius: var(--radius-sm, 6px);
+}
+
+
+@media (max-width: 1024px) {
+  .board.board-lanes {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scroll-snap-type: none;
+  }
+
+  .board.board-lanes > .lane {
+    width: 100%;
+    min-width: 0;
+    flex-shrink: 0;
+  }
+
+  .board.board-workflow-columns {
+    flex: 1 1 auto;
+    flex-direction: row;
+    align-items: stretch;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: none;
+  }
+}
+
+/*
+FNXC:BoardNavigation 2026-08-18-19:29:
+The selected-workflow and All-workflows Board paths share this live workflow-column scroller.
+Keep desktop free-panning and phone proximity snapping here; retired lane compatibility styling is
+not part of the current Board or plugin surface.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .board.board-workflow-columns {
+    scroll-snap-type: x proximity;
+  }
+}

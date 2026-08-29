@@ -1,0 +1,1393 @@
+/**
+ * PostgreSQL schema applier.
+ *
+ * FNXC:PostgresSchema 2026-06-24-03:40:
+ * Applies the fresh Drizzle migration baseline to a PostgreSQL connection
+ * and records it in a migration bookkeeping table. The baseline migration
+ * (migrations/0000_initial.sql) is the snapshot of the final SQLite schema
+ * (SCHEMA_VERSION=128) translated to PostgreSQL — applying it to an empty
+ * database yields final-schema parity (VAL-SCHEMA-001).
+ *
+ * After the baseline lands, plugin-owned tables are materialized via the
+ * schema-init hook (VAL-SCHEMA-007). The applier calls each registered plugin
+ * hook so plugins evolve their own tables independently of the core migration.
+ *
+ * Migration tracking uses a single-row bookkeeping table in the public schema
+ * so the applier is idempotent: re-running against an already-migrated database
+ * is a no-op. The version-gate discipline (the institutional learning that
+ * fresh-DB tests cannot catch a skipped-on-upgrade migration) is carried
+ * forward via the applier's explicit baseline marker.
+ */
+
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { sql } from "drizzle-orm";
+import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
+import { acquireSchemaMutationLocks } from "./advisory-locks.js";
+
+/** The latest PostgreSQL schema version known to this applier. */
+/*
+FNXC:GitHubImportTranslate 2026-07-17-23:48:
+Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
+
+FNXC:PostgresBigintCounters 2026-07-19-12:00:
+SCHEMA_BASELINE_VERSION advances to 0026 for the bigint counters migration.
+Per-migration identities above stay fixed; only this latest-version marker moves.
+
+FNXC:WorkflowTaskContinuations 2026-07-21:
+SCHEMA_BASELINE_VERSION advances to 0031 for durable, single-owner task
+continuations at workflow column boundaries.
+
+FNXC:LegacyAdoption 2026-07-21-17:30:
+SCHEMA_BASELINE_VERSION advances to 0037 for dropping the cross-project concurrency table; it previously advanced to 0036 for normalized Direct conversation tags; it previously advanced to 0032 for fusion_runtime SELECT +
+SECURITY DEFINER write access to the legacy-adoption drained marker.
+
+FNXC:TaskWedgeNotifications 2026-07-23-00:00:
+Advance the PostgreSQL schema ceiling for the durable wedge episode column. The
+forward migration must run before TaskStore writes the new field on fresh and
+upgraded databases.
+
+FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main):
+SCHEMA_BASELINE_VERSION advances to 0038 for optional per-mission task_prefix — 0037 is the
+capacity-model table drop that landed while this PR was open.
+*/
+/* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: advance the schema ceiling so durable consumer state exists before observers begin polling FN-8684's outbox. */
+/* FNXC:MissionValidation 2026-08-01-16:21: advance the schema ceiling before validator admission reads durable content fingerprints. */
+/* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: 0048 registers project-scoped GitHub CI check state. */
+/** FNXC:AgentActivityStream 2026-08-09-21:32: 0049 follows the landed 0048 GitHub check-state migration so upgraded projects receive the durable activity outbox. */
+/* FNXC:SpecLock 2026-08-09-18:17: 0050 stores immutable plan history and 0051 widens source revisions before Date.now()-based writes. */
+/* FNXC:MemoryRecall 2026-08-10-11:03: Explicit baseline registration prevents the recall migration from being silently skipped. */
+/* FNXC:SpecLockMissionAlignment 2026-08-10-16:17: advance the schema ceiling so SQLite and PostgreSQL feature projections retain reconciled drift alignment. */
+/* FNXC:MultiProjectIsolation 2026-08-11-10:25: schema startup must register project-local agent ratings before bound stores scope their mutations. */
+/* FNXC:MessageArchive 2026-08-12-22:14: 0058 persists non-destructive mailbox archival on upgrades. */
+/* FNXC:TaskRecommendations 2026-08-13-22:23: upgrades must install the source-agent index before duplicate intake queries it. */
+/* FNXC:WorkspaceLease 2026-08-15-12:00: the baseline ceiling must include durable coordination tables so an upgraded database is never rejected by the current binary. */
+/* FNXC:ActivityLogTaskSearch 2026-08-20-04:17: advance the schema ceiling so durable central task-ID lookups receive their indexed upgrade. */
+/*
+FNXC:ReviewConvergence 2026-08-22-18:58:
+Advance the ceiling to 0065 for FN-149's review-convergence columns. FN-149 registered
+REVIEW_CONVERGENCE_STAGE_VERSION and wired the migration but left this marker at 0064, which is a
+SELF-REJECTION rather than a compatibility guard: the first open applies 0065 and records it in
+fusion_schema_migrations, then the NEXT open (the project store, in the same boot) hits
+assertBinaryNotOlderThanDatabase, sees 0065 > 0064, and throws StaleBinarySchemaError. Every
+startup died with "this binary only knows up to 0064" on fresh and upgraded databases alike. This
+marker is ONLY the binary's "highest migration I know" claim — bumping it applies no SQL and
+touches no data; it must advance in the same change that ships a new migration file.
+*/
+/* FNXC:MemoryFocus 2026-08-13-15:57: chat_sessions.memory_focus (RUFU-068) renumbered 0059->0060->0061 as upstream claimed 0059 (FN-9037) and 0060 (FN-9059). */
+/* FNXC:MemoryFocus 2026-08-20-22:10: the upstream 2026-08-20 batch (FN-066..FN-094) claimed 0061-0064 after this branch had already taken 0061, so the memory-focus migration was renumbered to 0065 and the baseline ceiling advanced with it. */
+/* FNXC:MemoryFocus 2026-08-23-12:50: upstream then shipped FN-149's 0065_fn_149_review_convergence_stage.sql on origin/main, claiming 0065 for its own migration. Upstream's 0065 is canonical (already released), so the memory-focus migration is renumbered to 0066 and the ceiling advances to 0066. Production databases that already applied the memory-focus SQL under ledger row "0065" (v17-era ledger) need a one-time ledger remap 0065->0066 before first boot of a 0066-ceiling binary, or the fresh 0065_fn_149 migration would be skipped as "already applied". */
+export const SCHEMA_BASELINE_VERSION = "0066";
+/** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
+export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
+const INITIAL_SCHEMA_VERSION = "0000";
+const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
+const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
+/**
+ * FNXC:PostgresMigrationIdentity 2026-07-14-01:41:
+ * Each migration keeps an immutable bookkeeping identity even as SCHEMA_BASELINE_VERSION advances to newer migrations. Upgrade checks and inserts must use this dedicated 0003 identifier so a later latest-version marker cannot make an unrecorded monitor/approval migration look applied.
+ */
+export const MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION = "0003";
+export const LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION = "0004";
+export const MULTI_PROJECT_CUTOVER_SCHEMA_VERSION = "0005";
+export const PROJECT_OWNERSHIP_SCHEMA_VERSION = "0006";
+export const SQLITE_SCHEMA_PARITY_VERSION = "0007";
+/**
+ * FNXC:PlannerOversight 2026-07-14-18:49:
+ * Version 0008 adds project.tasks.session_advisor_enabled for per-task session
+ * advisor overrides. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
+ */
+export const SESSION_ADVISOR_ENABLED_SCHEMA_VERSION = "0008";
+export const MISSION_FIX_IDEMPOTENCY_VERSION = "0009";
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import-translation cache advances to 0010. Migrations are registered here explicitly (not auto-discovered from the migrations dir), so a new .sql file that is not wired through a version constant + bookkeeping check silently never runs.
+*/
+export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
+/**
+ * FNXC:GitHubImportTranslate 2026-07-16-23:30:
+ * Existing databases already recorded 0010, so the cache scope correction is
+ * deliberately a new forward migration rather than a retroactive SQL edit.
+ */
+export const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION = "0016";
+/*
+FNXC:GitHubImportTranslate 2026-07-17-23:48:
+0016 aligned future cache writes with the normalized legacy partition, but a
+pre-0016 cache row can still carry a historic blank project_id. Migration 0019
+backfills that durable data before a restarted store scopes cache reads to
+__legacy_unscoped__, preventing an avoidable re-translation.
+*/
+export const IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION = "0019";
+/*
+FNXC:MultiProjectIsolation 2026-07-15-23:40:
+Version 0011 splits the domain "project" field from the RLS partition on the tables
+that conflated them: `project_id` stays the trigger/GUC-owned isolation partition,
+`owner_project_id` becomes the caller-supplied domain field. Writing domain values
+into the partition put parent rows and child rows in different partitions and broke
+the composite FKs (SQLSTATE 23503). Keep this identity fixed when
+SCHEMA_BASELINE_VERSION advances.
+*/
+export const OWNER_PROJECT_ID_SPLIT_VERSION = "0011";
+/*
+FNXC:ChatPinned 2026-07-16-12:30:
+Version 0012 makes the persisted pin timestamp available on databases that
+already applied the baseline before Direct conversations can be pinned.
+*/
+export const CHAT_SESSION_PINS_VERSION = "0012";
+/** FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: upgrades existing PostgreSQL task rows before retry-state reads. */
+export const EXECUTOR_TOOL_FAILURE_RETRY_VERSION = "0013";
+/** FNXC:ExecutorEscalation 2026-07-16-21:00: Existing clusters need the durable single-shot latch before executor reads it during post-FN-7996 escalation. */
+export const EXECUTOR_ESCALATION_ATTEMPT_VERSION = "0014";
+/** FNXC:PostgresSchema 2026-07-16-22:00: central global routines follow main's already-landed 0014 migration. */
+export const GLOBAL_ROUTINES_SCHEMA_VERSION = "0015";
+/** FNXC:Settings-MergerModel 2026-07-16-12:00: per-task merger lane is an additive upgrade. */
+export const TASK_MERGER_MODEL_LANE_VERSION = "0017";
+/**
+ * FNXC:Lifecycle 2026-07-16-22:35:
+ * Version 0018 lands project.tasks.bulk_completion_refusal_at (FN-8141) on
+ * existing clusters. PR #2260 added the column to the model + 0000 baseline but
+ * forgot the forward migration, so every pre-#2260 database crashed on its first
+ * TaskStore SELECT. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
+ */
+export const BULK_COMPLETION_REFUSAL_AT_VERSION = "0018";
+/** FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00: durable project-scoped proposal key/index protects task creation across crash and reclaim races. */
+export const TASK_PROPOSAL_CLAIM_VERSION = "0020";
+/** FNXC:ConfigVersioning 2026-07-18-00:00: existing clusters need immutable configuration history before write paths use it. */
+export const CONFIGURATION_REVISIONS_VERSION = "0021";
+/** FNXC:Ideation 2026-07-30-15:30: Persisted ideation needs its own forward migration because configuration revisions already own 0021. */
+export const IDEATION_SCHEMA_VERSION = "0022";
+/** FNXC:ResearchMissionBridge 2026-07-18-12:00: forward migration stores stable research finding provenance on canonical features. */
+export const RESEARCH_FEATURE_PROVENANCE_VERSION = "0023";
+/** FNXC:TaskVerificationRequest 2026-07-30-00:00: upgrades need the project-scoped chat-to-executor verification queue. */
+export const TASK_VERIFICATION_REQUEST_VERSION = "0024";
+/** FNXC:SymbolLock 2026-07-30-14:10: upgraded projects need the durable lock table and RLS contract before scheduler admission can use it. */
+export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
+/** FNXC:PostgresBigintCounters 2026-07-18-21:45: widen overflow-prone counters to bigint before SQLite migration. */
+export const BIGINT_COUNTERS_VERSION = "0026";
+/** FNXC:TaskTiming 2026-07-20-10:00: existing clusters need planning-session timing columns. */
+export const PLANNING_ACTIVE_TIMING_VERSION = "0029";
+/** Dashboard health needs project-scoped, read-only runtime access to the SQLite cutover ledger. */
+export const SQLITE_MIGRATION_RUNTIME_READ_VERSION = "0030";
+export const WORKFLOW_TASK_CONTINUATIONS_VERSION = "0031";
+/** FNXC:LegacyAdoption 2026-07-21-17:30: runtime role needs drained-marker read + restricted write. */
+export const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION = "0032";
+/** FNXC:TaskWedgeNotifications 2026-07-23-00:00: manually register the durable wedge episode migration for PostgreSQL upgrades. */
+export const TASK_WEDGE_NOTIFICATION_VERSION = "0033";
+/** FNXC:MissionValidation 2026-07-23-14:30: provenance-safe milestone criteria require an explicit upgrade. */
+export const MILESTONE_ASSERTION_PROVENANCE_VERSION = "0034";
+/** FNXC:MissionLineageBudget 2026-07-22-12:00: migration is explicit because upgraded clusters need durable root stop tombstones. */
+export const MISSION_LINEAGE_STOP_VERSION = "0035";
+/** FNXC:ChatTags 2026-07-25-10:55: existing clusters need normalized project-scoped Direct conversation tags. */
+export const CHAT_SESSION_TAGS_VERSION = "0036";
+/*
+FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+Drops `central.global_concurrency`. Registered EXPLICITLY, per this file's own
+warning that migrations are not auto-discovered and an unwired .sql silently never
+runs — which is exactly what happened on the first attempt here: the file existed,
+the model was updated, and the table was still present in a fresh database.
+*/
+export const DROP_GLOBAL_CONCURRENCY_VERSION = "0037";
+/*
+FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main — RENUMBERED 0037 -> 0038):
+Upgraded projects need the optional mission prefix before mission reads and triage task creation use
+it. This shipped as 0037 when the PR was written; main has since taken 0037 for the capacity-model
+table drop, and two migrations cannot share a number — the runner keys bookkeeping on it, so the
+second would read as already-applied and silently never run. Renumbered rather than reordered: 0037
+is landed on real databases and its identity is immutable, per the MONITOR_APPROVAL note above.
+*/
+export const MISSION_TASK_PREFIX_VERSION = "0038";
+/** FNXC:CredentialInstanceSelection 2026-08-01-05:43: explicit registration prevents migration 0039 from being silently skipped on upgraded PostgreSQL databases. */
+export const CREDENTIAL_INSTANCE_SELECTION_VERSION = "0039";
+/** FNXC:LifecycleOutbox 2026-08-01-10:33: migrations are explicitly registered; 0040 installs both writer tables for fresh and upgraded projects. */
+export const TASK_LIFECYCLE_OUTBOX_VERSION = "0040";
+/** FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: 0041 creates project-scoped consumer registration, cursor, receipt, and dead-letter state. */
+export const TASK_LIFECYCLE_CONSUMERS_VERSION = "0041";
+/** FNXC:MissionValidation 2026-08-01-16:21: durable input fingerprints and budget-block provenance. */
+export const VALIDATOR_INPUT_FINGERPRINT_VERSION = "0042";
+/** FNXC:PlanningDependencyReseed 2026-08-04-02:14: durable per-episode unplanned-dispatch diagnostics. */
+export const UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION = "0043";
+/** FNXC:QueuedTaskLogging 2026-08-04-18:03: upgraded databases need the durable full queue-episode signature before concurrent producers can suppress repeats safely. */
+export const QUEUED_EPISODE_SIGNATURE_VERSION = "0044";
+/** FNXC:WorkflowAgentRouting 2026-08-07-03:12: explicit registration keeps role-tag upgrades from being skipped. */
+export const MULTI_ROLE_WORKFLOW_AGENTS_VERSION = "0045";
+/** FNXC:WorkflowAgentRouting 2026-08-07-03:25: upgraded projects need durable principal fencing before graph dispatch can route permanent agents. */
+export const WORKFLOW_PRINCIPAL_FENCE_VERSION = "0046";
+/** FNXC:TaskRecommendations 2026-08-08-05:02: explicit registration prevents recommendation JSONB upgrades being skipped. */
+export const TASK_RECOMMENDATIONS_VERSION = "0047";
+/** FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: explicit registration prevents event-driven merge state migration from being skipped. */
+export const GITHUB_CHECK_STATES_VERSION = "0048";
+/** FNXC:AgentActivityStream 2026-08-09-21:32: Migration 0049 avoids the already-landed 0048 bookkeeping identity. */
+export const AGENT_ACTIVITY_EVENTS_VERSION = "0049";
+/** FNXC:SpecLock 2026-08-09-18:17: immutable lock/report storage follows the already-landed activity migration. */
+export const SPEC_LOCK_DRIFT_REPORT_VERSION = "0050";
+/** FNXC:SpecLock 2026-08-09-18:17: widen source revisions before Date.now()-based current-plan writes overflow integer storage. */
+export const SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION = "0051";
+/** FNXC:MemoryRecall 2026-08-10-11:03: explicit migration bookkeeping for project recall rows. */
+export const MEMORY_RECALL_RECORDS_VERSION = "0052";
+/** FNXC:SpecLockMissionAlignment 2026-08-10-16:17: durable feature alignment is registered after all existing migration identities. */
+export const MISSION_FEATURE_SPEC_ALIGNMENT_VERSION = "0053";
+/** FNXC:MultiProjectIsolation 2026-08-11-10:25: keep rating identity project-local after the universal ownership migration. */
+export const AGENT_RATING_PROJECT_ISOLATION_VERSION = "0054";
+/** FNXC:AgentRatingsProjectIsolation 2026-08-12-01:00: targeted idempotent reconciliation protects historical rating ownership drift. */
+export const AGENT_RATINGS_PROJECT_PARTITION_VERSION = "0055";
+/** FNXC:MultiProjectIsolation 2026-08-12-02:12: register FN-8997 predicate indexes explicitly; migration files are never auto-discovered. */
+export const PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION = "0056";
+/** FNXC:MultiProjectIsolation 2026-08-12-15:43: register the 0048 default reconciliation explicitly for upgrades. */
+export const PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION = "0057";
+/** FNXC:MessageArchive 2026-08-12-22:14: explicit registration prevents the archived-message migration from being skipped. */
+export const MESSAGE_ARCHIVE_SCHEMA_VERSION = "0058";
+export const TASK_SOURCE_AGENT_INDEX_VERSION = "0059";
+export const WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION = "0060";
+/** FNXC:ActivityLogTaskSearch 2026-08-20-04:17: explicit registration prevents the central durable task-ID index from being skipped on upgrades. */
+export const ACTIVITY_LOG_TASK_ID_INDEX_VERSION = "0061";
+export const REMOVE_TASK_SUBTASK_SPLITTING_VERSION = "0062";
+export const AI_MERGE_REVIEW_RECONCILIATION_VERSION = "0063";
+/** FNXC:RepositoryScope 2026-08-20-23:07: upgraded projects need explicit task repository intent before workspace lifecycle readers use it. */
+export const TASK_REPOSITORY_SCOPE_VERSION = "0064";
+/** FNXC:ReviewConvergence 2026-08-22-05:42: explicit migration registration preserves bounded review recovery state on upgraded projects. */
+export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
+
+/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
+
+/** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
+export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
+
+/**
+ * Thrown when the database was migrated by a NEWER Fusion binary than the one now
+ * opening it. Carries the offending versions so the operator sees what to upgrade.
+ */
+export class StaleBinarySchemaError extends Error {
+  constructor(
+    readonly databaseVersion: string,
+    readonly binaryVersion: string,
+  ) {
+    super(
+      `This Fusion binary is older than the database it opened: the database has schema `
+      + `migration ${databaseVersion} applied, but this binary only knows up to `
+      + `${binaryVersion}. Refusing to open so an old binary cannot write rows the newer `
+      + `schema's invariants depend on. Upgrade Fusion (e.g. \`brew upgrade fusion\`) and retry.`,
+    );
+    this.name = "StaleBinarySchemaError";
+  }
+}
+
+/*
+FNXC:StaleBinaryGuard 2026-07-19-03:10 (U9b / R10):
+Old-binary write refusal. Migration bookkeeping is forward-only, so a database carrying a
+version ABOVE this binary's SCHEMA_BASELINE_VERSION was migrated by a newer Fusion. Letting
+the old binary proceed writes rows using the previous schema's assumptions (the observed
+stale-Homebrew-binary failure mode). Compared numerically, not lexically; unparseable
+identifiers are ignored so a plugin marker cannot brick every open.
+
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+The ignore-unparseable rule is a load-bearing coupling, not just plugin defense:
+LEGACY_ADOPTION_DRAINED_MARKER (below) is a deliberately NON-NUMERIC bookkeeping row that
+`adoptLegacyTaskRowsOnOpen` (task-store/lifecycle-ops.ts) writes into
+fusion_schema_migrations after a fully-drained adoption sweep. This guard MUST keep
+skipping non-numeric versions, or the marker would present as a "newer database" and
+brick every open.
+*/
+export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): void {
+  const binaryVersion = Number(SCHEMA_BASELINE_VERSION);
+  if (!Number.isFinite(binaryVersion)) return;
+  let highest = -Infinity;
+  let highestRaw = "";
+  for (const version of applied) {
+    const parsed = Number(version);
+    if (!Number.isFinite(parsed)) continue;
+    if (parsed > highest) {
+      highest = parsed;
+      highestRaw = version;
+    }
+  }
+  if (highest > binaryVersion) {
+    throw new StaleBinarySchemaError(highestRaw, SCHEMA_BASELINE_VERSION);
+  }
+}
+
+/** Bookkeeping table for the fresh Drizzle migration history. */
+export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
+
+/*
+FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
+Durable "legacy adoption fully drained" marker row in fusion_schema_migrations.
+Written by the store-open adoption sweep after a full paginated drain in which no
+row produced a mutating adoption plan; its presence lets subsequent opens skip the
+whole-active-census scan (which would otherwise run on every open forever).
+Deliberately NON-NUMERIC so assertBinaryNotOlderThanDatabase ignores it by design
+(see that guard's FNXC note — the two sites are coupled).
+*/
+export const LEGACY_ADOPTION_DRAINED_MARKER = "legacy-adoption-drained";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/*
+FNXC:StandaloneExeMigrations 2026-07-17-13:30:
+The bun-compiled standalone `fn` binary runs its bundled code from the virtual
+/$bunfs/root filesystem, so the historical `join(__dirname, "migrations")`
+resolution points at a path that does not exist on disk (bun --compile does not
+embed readFile assets) and every DATABASE_URL boot died with
+ENOENT /$bunfs/root/migrations/0000_initial.sql. Resolution order:
+  1. FUSION_MIGRATIONS_DIR env override — always wins when set (operator escape hatch).
+  2. join(__dirname, "migrations") — the npm/tsup and desktop layout; kept first
+     among the probes so nothing changes for existing installs.
+  3. join(dirname(process.execPath), "migrations") — the standalone-exe layout,
+     where build.ts / the release tarball stage migrations/ next to the binary.
+The existsSync probe (not a runtime-detection heuristic) picks between (2) and
+(3): inside the compiled binary the module-relative dir simply does not exist,
+while for node-based installs it always does, so npm/desktop behavior is untouched.
+*/
+function resolveMigrationsDir(): string {
+  const envDir = process.env.FUSION_MIGRATIONS_DIR;
+  if (envDir) return envDir;
+  const moduleDir = join(__dirname, "migrations");
+  if (existsSync(join(moduleDir, "0000_initial.sql"))) return moduleDir;
+  const execDir = join(dirname(process.execPath), "migrations");
+  if (existsSync(join(execDir, "0000_initial.sql"))) return execDir;
+  // Preserve the historical default (and its historical error message) when
+  // neither location exists — the readFile ENOENT remains the diagnostic.
+  return moduleDir;
+}
+
+const MIGRATIONS_DIR = resolveMigrationsDir();
+const BASELINE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0000_initial.sql");
+const AUTOMATION_ISOLATION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0001_automation_project_isolation.sql",
+);
+const ANALYTICS_ISOLATION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0002_analytics_project_isolation.sql",
+);
+const MONITOR_APPROVAL_ISOLATION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0003_monitor_approval_project_isolation.sql",
+);
+const LEGACY_CUTOVER_PRESERVATION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0004_legacy_cutover_preservation.sql",
+);
+const MULTI_PROJECT_CUTOVER_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0005_multi_project_cutover.sql",
+);
+const PROJECT_OWNERSHIP_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0006_project_ownership.sql",
+);
+const SQLITE_SCHEMA_PARITY_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0007_sqlite_schema_parity.sql",
+);
+const SESSION_ADVISOR_ENABLED_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0008_session_advisor_enabled.sql",
+);
+const MISSION_FIX_IDEMPOTENCY_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0009_mission_fix_idempotency.sql",
+);
+const IMPORT_TRANSLATION_CACHE_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0010_import_translation_cache.sql",
+);
+const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0016_import_translation_cache_scope_fix.sql",
+);
+const IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0019_import_translation_cache_legacy_partition_backfill.sql",
+);
+const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0011_owner_project_id.sql",
+);
+const CHAT_SESSION_PINS_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0012_chat_session_pins.sql",
+);
+const EXECUTOR_TOOL_FAILURE_RETRY_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0013_executor_tool_failure_retry.sql",
+);
+const EXECUTOR_ESCALATION_ATTEMPT_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0014_executor_escalation_attempt.sql",
+);
+const GLOBAL_ROUTINES_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0015_global_routines.sql",
+);
+const TASK_MERGER_MODEL_LANE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0017_task_merger_model_lane.sql");
+const BULK_COMPLETION_REFUSAL_AT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0018_bulk_completion_refusal_at.sql");
+const TASK_PROPOSAL_CLAIM_MIGRATION_PATH = join(MIGRATIONS_DIR, "0020_task_proposal_claim.sql");
+const CONFIGURATION_REVISIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0021_configuration_revisions.sql");
+const IDEATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0022_ideation.sql");
+const RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0023_research_feature_provenance.sql");
+const TASK_VERIFICATION_REQUEST_MIGRATION_PATH = join(MIGRATIONS_DIR, "0024_task_verification_request.sql");
+const SYMBOL_LOCKS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0025_symbol_locks.sql");
+const BIGINT_COUNTERS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0026_bigint_counters.sql");
+/**
+ * FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8; renumbered 0026->0027 after
+ * main claimed 0026 for bigint counters):
+ * Durable workflow IR pin (+ its node/column entry) and the one-time legacy-adoption
+ * stamp. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
+ */
+export const WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION = "0027";
+const WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0027_workflow_ir_pin_and_legacy_adoption.sql",
+);
+
+const PLANNING_ACTIVE_TIMING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0029_planning_active_timing.sql");
+const TASK_DECLARED_SYMBOLS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0028_task_declared_symbols.sql");
+const SQLITE_MIGRATION_RUNTIME_READ_PATH = join(MIGRATIONS_DIR, "0030_sqlite_migration_runtime_read.sql");
+const WORKFLOW_TASK_CONTINUATIONS_PATH = join(MIGRATIONS_DIR, "0031_workflow_task_continuations.sql");
+const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_PATH = join(
+  MIGRATIONS_DIR,
+  "0032_legacy_adoption_drained_marker_runtime_grants.sql",
+);
+const TASK_WEDGE_NOTIFICATION_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0033_fn-8505_wedge_notification.sql",
+);
+const MILESTONE_ASSERTION_PROVENANCE_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0034_milestone_assertion_provenance.sql",
+);
+const MISSION_LINEAGE_STOP_MIGRATION_PATH = join(MIGRATIONS_DIR, "0035_fn_8543_mission_lineage_stop.sql");
+const CHAT_SESSION_TAGS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0036_chat_session_tags.sql");
+const DROP_GLOBAL_CONCURRENCY_MIGRATION_PATH = join(MIGRATIONS_DIR, "0037_drop_global_concurrency.sql");
+const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0038_mission_task_prefix.sql");
+const CREDENTIAL_INSTANCE_SELECTION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0039_fn_8660_credential_instance_selection.sql");
+const TASK_LIFECYCLE_OUTBOX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0040_fn_8684_task_lifecycle_outbox.sql");
+const TASK_LIFECYCLE_CONSUMERS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0041_fn_8685_task_lifecycle_consumers.sql");
+const VALIDATOR_INPUT_FINGERPRINT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0042_fn_8694_validator_input_fingerprint.sql");
+const UNPLANNED_EXECUTION_BLOCK_DEDUPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0043_fn8768_dispatch_dedupe.sql");
+const QUEUED_EPISODE_SIGNATURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0044_fn_8785_queued_episode_signature.sql");
+const MULTI_ROLE_WORKFLOW_AGENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0045_fn_8764_multi_role_workflow_agents.sql");
+const WORKFLOW_PRINCIPAL_FENCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0046_fn_8764_workflow_principal_fence.sql");
+const TASK_RECOMMENDATIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0047_fn_8829_task_recommendations.sql");
+const GITHUB_CHECK_STATES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0048_fn_8903_github_check_states.sql");
+const AGENT_ACTIVITY_EVENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0049_fn_8864_agent_activity_events.sql");
+const SPEC_LOCK_DRIFT_REPORT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0050_spec_lock_drift_report.sql");
+const SPEC_LOCK_SOURCE_REVISION_BIGINT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0051_spec_lock_source_revision_bigint.sql");
+const MEMORY_RECALL_RECORDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0052_fn_8922_memory_recall_records.sql");
+const MISSION_FEATURE_SPEC_ALIGNMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0053_mission_feature_spec_alignment.sql");
+const AGENT_RATING_PROJECT_ISOLATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0054_fn_8957_agent_rating_project_isolation.sql");
+const AGENT_RATINGS_PROJECT_PARTITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0055_fn_8988_agent_ratings_project_partition.sql");
+const PROJECT_OWNERSHIP_DECLARATION_DRIFT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0056_fn_8997_project_ownership_declaration_drift.sql");
+const PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0057_fn_9004_project_ownership_default_reconciliation.sql");
+const MESSAGE_ARCHIVE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0058_fn_9014_message_archive.sql");
+const TASK_SOURCE_AGENT_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0059_fn_9037_tasks_source_agent_index.sql");
+const WORKSPACE_COORDINATION_LEASES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0060_fn_9059_workspace_coordination_leases.sql");
+const ACTIVITY_LOG_TASK_ID_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0061_fn_066_activity_log_task_id_index.sql");
+const REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0062_remove_task_subtask_splitting.sql");
+const AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0063_fn_090_ai_merge_review_reconciliation.sql");
+const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_task_repository_scope.sql");
+const REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_fn_149_review_convergence_stage.sql");
+/* FNXC:MemoryFocus 2026-08-14-10:30: renumbered to 0061 (FN-9059 workspace leases own 0060), then to 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064, then to 0066 (2026-08-23) when upstream's FN-149 claimed 0065. */
+const CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_chat_session_memory_focus.sql");
+
+/**
+ * Ensure the migration bookkeeping table exists. Lives in the public schema so
+ * it survives across the three application schemas and is queryable without
+ * search_path qualification.
+ */
+async function ensureBookkeepingTable(db: PostgresJsDatabase<Record<string, never>>): Promise<void> {
+  await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS public.${MIGRATION_BOOKKEEPING_TABLE} (
+      version text PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )
+  `));
+}
+
+/** Read the baseline migration SQL from disk. Exported for tests. */
+export async function readBaselineMigrationSql(): Promise<string> {
+  return readFile(BASELINE_MIGRATION_PATH, "utf8");
+}
+
+/** Return the set of already-applied migration versions, or empty if none. */
+export async function getAppliedMigrations(
+  db: PostgresJsDatabase<Record<string, never>>,
+): Promise<string[]> {
+  await ensureBookkeepingTable(db);
+  const rows = (await db.execute(
+    sql`SELECT version FROM public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} ORDER BY version`,
+  )) as unknown as Array<{ version: string }>;
+  return rows.map((row) => row.version);
+}
+
+/**
+ * Apply the fresh baseline migration to the given connection.
+ *
+ * Idempotent: if the baseline version is already recorded, this is a no-op.
+ * After the baseline lands, all registered plugin schema-init hooks run so
+ * plugin-owned tables (e.g. roadmap) materialize (VAL-SCHEMA-007).
+ *
+ * The baseline SQL is applied as a single batch via postgres.js's file/unsafe
+ * execution path. It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT
+ * EXISTS throughout, so a partial prior apply is safe to resume.
+ */
+export async function applySchemaBaseline(
+  db: PostgresJsDatabase<Record<string, never>>,
+  options: { pluginHooks?: readonly PluginSchemaInitHook[] } = {},
+): Promise<{ applied: boolean; pluginHooksRun: number }> {
+  /*
+   * FNXC:PostgresSchema 2026-07-14-00:05:
+   * Schema versions are a cluster-wide invariant. Serialize version discovery,
+   * DDL, and bookkeeping in one transaction so concurrent Fusion processes
+   * cannot both apply a version or race its primary-key marker.
+  */
+  return db.transaction(async (tx) => {
+    await acquireSchemaMutationLocks(tx);
+    await ensureBookkeepingTable(tx);
+    /*
+    FNXC:PostgresSchema 2026-07-16-00:55:
+    FN-8051 requires project, central, and archive to exist before plugin schema-init hooks run.
+    Hooks run even when migration markers are already recorded and target project tables, so
+    ensure the namespaces unconditionally inside the advisory-locked transaction rather than
+    relying on the baseline batch that a marker-present database skips.
+    */
+    await tx.execute(sql.raw(`
+      CREATE SCHEMA IF NOT EXISTS project;
+      CREATE SCHEMA IF NOT EXISTS central;
+      CREATE SCHEMA IF NOT EXISTS archive;
+    `));
+    const applied = await getAppliedMigrations(tx);
+    const baselineAlreadyApplied = applied.includes(INITIAL_SCHEMA_VERSION);
+    const automationIsolationAlreadyApplied = applied.includes(AUTOMATION_ISOLATION_SCHEMA_VERSION);
+    const analyticsIsolationAlreadyApplied = applied.includes(ANALYTICS_ISOLATION_SCHEMA_VERSION);
+    const monitorApprovalIsolationAlreadyApplied = applied.includes(MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION);
+    const legacyCutoverPreservationAlreadyApplied = applied.includes(LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION);
+    const multiProjectCutoverAlreadyApplied = applied.includes(MULTI_PROJECT_CUTOVER_SCHEMA_VERSION);
+    const projectOwnershipAlreadyApplied = applied.includes(PROJECT_OWNERSHIP_SCHEMA_VERSION);
+    const sqliteSchemaParityAlreadyApplied = applied.includes(SQLITE_SCHEMA_PARITY_VERSION);
+    const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
+    const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
+    const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
+    const importTranslationCacheScopeFixAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
+    const importTranslationCacheLegacyPartitionBackfillAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
+    const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
+    const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
+    const executorToolFailureRetryAlreadyApplied = applied.includes(EXECUTOR_TOOL_FAILURE_RETRY_VERSION);
+    const executorEscalationAttemptAlreadyApplied = applied.includes(EXECUTOR_ESCALATION_ATTEMPT_VERSION);
+    const globalRoutinesAlreadyApplied = applied.includes(GLOBAL_ROUTINES_SCHEMA_VERSION);
+    const taskMergerModelLaneAlreadyApplied = applied.includes(TASK_MERGER_MODEL_LANE_VERSION);
+    const bulkCompletionRefusalAtAlreadyApplied = applied.includes(BULK_COMPLETION_REFUSAL_AT_VERSION);
+    const taskProposalClaimAlreadyApplied = applied.includes(TASK_PROPOSAL_CLAIM_VERSION);
+    const configurationRevisionsAlreadyApplied = applied.includes(CONFIGURATION_REVISIONS_VERSION);
+    const ideationAlreadyApplied = applied.includes(IDEATION_SCHEMA_VERSION);
+    const researchFeatureProvenanceAlreadyApplied = applied.includes(RESEARCH_FEATURE_PROVENANCE_VERSION);
+    const taskVerificationRequestAlreadyApplied = applied.includes(TASK_VERIFICATION_REQUEST_VERSION);
+    const symbolLocksAlreadyApplied = applied.includes(SYMBOL_LOCKS_SCHEMA_VERSION);
+    const bigintCountersAlreadyApplied = applied.includes(BIGINT_COUNTERS_VERSION);
+    const workflowIrPinAndLegacyAdoptionAlreadyApplied = applied.includes(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION);
+    const planningActiveTimingAlreadyApplied = applied.includes(PLANNING_ACTIVE_TIMING_VERSION);
+    const sqliteMigrationRuntimeReadAlreadyApplied = applied.includes(SQLITE_MIGRATION_RUNTIME_READ_VERSION);
+    const workflowTaskContinuationsAlreadyApplied = applied.includes(WORKFLOW_TASK_CONTINUATIONS_VERSION);
+    const legacyAdoptionDrainedMarkerRuntimeGrantsAlreadyApplied = applied.includes(
+      LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION,
+    );
+    const taskWedgeNotificationAlreadyApplied = applied.includes(TASK_WEDGE_NOTIFICATION_VERSION);
+    const milestoneAssertionProvenanceAlreadyApplied = applied.includes(MILESTONE_ASSERTION_PROVENANCE_VERSION);
+    const missionLineageStopAlreadyApplied = applied.includes(MISSION_LINEAGE_STOP_VERSION);
+    const chatSessionTagsAlreadyApplied = applied.includes(CHAT_SESSION_TAGS_VERSION);
+    const dropGlobalConcurrencyAlreadyApplied = applied.includes(DROP_GLOBAL_CONCURRENCY_VERSION);
+    const missionTaskPrefixAlreadyApplied = applied.includes(MISSION_TASK_PREFIX_VERSION);
+    const credentialInstanceSelectionAlreadyApplied = applied.includes(CREDENTIAL_INSTANCE_SELECTION_VERSION);
+    const taskLifecycleOutboxAlreadyApplied = applied.includes(TASK_LIFECYCLE_OUTBOX_VERSION);
+    const taskLifecycleConsumersAlreadyApplied = applied.includes(TASK_LIFECYCLE_CONSUMERS_VERSION);
+    const validatorInputFingerprintAlreadyApplied = applied.includes(VALIDATOR_INPUT_FINGERPRINT_VERSION);
+    const unplannedExecutionBlockDedupeAlreadyApplied = applied.includes(UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION);
+    const queuedEpisodeSignatureAlreadyApplied = applied.includes(QUEUED_EPISODE_SIGNATURE_VERSION);
+    const multiRoleWorkflowAgentsAlreadyApplied = applied.includes(MULTI_ROLE_WORKFLOW_AGENTS_VERSION);
+    const workflowPrincipalFenceAlreadyApplied = applied.includes(WORKFLOW_PRINCIPAL_FENCE_VERSION);
+    const taskRecommendationsAlreadyApplied = applied.includes(TASK_RECOMMENDATIONS_VERSION);
+    const githubCheckStatesAlreadyApplied = applied.includes(GITHUB_CHECK_STATES_VERSION);
+    const agentActivityEventsAlreadyApplied = applied.includes(AGENT_ACTIVITY_EVENTS_VERSION);
+    const specLockDriftReportAlreadyApplied = applied.includes(SPEC_LOCK_DRIFT_REPORT_VERSION);
+    const specLockSourceRevisionBigintAlreadyApplied = applied.includes(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION);
+    const memoryRecallRecordsAlreadyApplied = applied.includes(MEMORY_RECALL_RECORDS_VERSION);
+    const missionFeatureSpecAlignmentAlreadyApplied = applied.includes(MISSION_FEATURE_SPEC_ALIGNMENT_VERSION);
+    const agentRatingProjectIsolationAlreadyApplied = applied.includes(AGENT_RATING_PROJECT_ISOLATION_VERSION);
+    const agentRatingsProjectPartitionAlreadyApplied = applied.includes(AGENT_RATINGS_PROJECT_PARTITION_VERSION);
+    const projectOwnershipDeclarationDriftAlreadyApplied = applied.includes(PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION);
+    const projectOwnershipDefaultReconciliationAlreadyApplied = applied.includes(PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION);
+    const messageArchiveSchemaAlreadyApplied = applied.includes(MESSAGE_ARCHIVE_SCHEMA_VERSION);
+    const taskSourceAgentIndexAlreadyApplied = applied.includes(TASK_SOURCE_AGENT_INDEX_VERSION);
+    const workspaceCoordinationLeasesAlreadyApplied = applied.includes(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION);
+    const activityLogTaskIdIndexAlreadyApplied = applied.includes(ACTIVITY_LOG_TASK_ID_INDEX_VERSION);
+    const removeTaskSubtaskSplittingAlreadyApplied = applied.includes(REMOVE_TASK_SUBTASK_SPLITTING_VERSION);
+    const aiMergeReviewReconciliationAlreadyApplied = applied.includes(AI_MERGE_REVIEW_RECONCILIATION_VERSION);
+    const taskRepositoryScopeAlreadyApplied = applied.includes(TASK_REPOSITORY_SCOPE_VERSION);
+    const reviewConvergenceStageAlreadyApplied = applied.includes(REVIEW_CONVERGENCE_STAGE_VERSION);
+    const chatSessionMemoryFocusAlreadyApplied = applied.includes(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+    assertBinaryNotOlderThanDatabase(applied);
+    let schemaChanged = false;
+
+    if (!baselineAlreadyApplied) {
+      const baselineSql = await readBaselineMigrationSql();
+      // The baseline contains multiple statements including CREATE SCHEMA, CREATE
+      // TABLE, CREATE INDEX, and seed INSERTs. postgres.js executes a single
+      // query string as one batch (simple query protocol when unparameterized).
+      await tx.execute(sql.raw(baselineSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${INITIAL_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+  /*
+   * FNXC:AutomationIsolation 2026-07-13-22:37:
+   * A database that already recorded the initial PostgreSQL baseline must still receive project-scoped automation storage. Apply this version independently of 0000; ambiguous legacy ownership fails closed before any bound cron runner can silently omit those schedules.
+   */
+    if (!automationIsolationAlreadyApplied) {
+      const migrationSql = await readFile(AUTOMATION_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AUTOMATION_ISOLATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:AnalyticsIsolation 2026-07-14-00:05:
+    Existing PostgreSQL databases that already recorded 0001 must independently receive analytics project partitions before project-scoped readers and writers start. Keep 0002 versioned so a fresh baseline cannot hide a skipped upgrade path.
+    */
+    if (!analyticsIsolationAlreadyApplied) {
+      const migrationSql = await readFile(ANALYTICS_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${ANALYTICS_ISOLATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:CommandCenterTenantIsolation 2026-07-14-01:04:
+    Version 0003 supplies durable ownership for monitor and approval analytics. It must run independently after 0002 so databases that already accepted the earlier analytics migration cannot silently skip the remaining tenant partitions.
+    */
+    if (!monitorApprovalIsolationAlreadyApplied) {
+      const migrationSql = await readFile(MONITOR_APPROVAL_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:PostgresMigrationCompleteness 2026-07-14-09:27:
+    Apply retired-table preservation independently of 0000 so an older partial migration target can retry without losing board, project-auth, or task-reviewer rows. The DDL is additive and idempotent.
+    */
+    if (!legacyCutoverPreservationAlreadyApplied) {
+      const migrationSql = await readFile(LEGACY_CUTOVER_PRESERVATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:PostgresMultiProjectCutover 2026-07-14-11:18:
+    Existing targets may already contain one completed project plus a partially copied second project. Apply metadata partitioning and collision-safe revision identity before any retry builds its migration plan.
+    */
+    if (!multiProjectCutoverAlreadyApplied) {
+      const migrationSql = await readFile(MULTI_PROJECT_CUTOVER_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MULTI_PROJECT_CUTOVER_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+  // Run plugin schema-init hooks regardless of whether the baseline was just
+  // applied or already present — plugin tables must exist on every connection
+  // the applier touches. The hooks are themselves idempotent (CREATE TABLE IF
+  // NOT EXISTS), so re-running is safe.
+    const pluginHooks = options.pluginHooks ?? DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS;
+    await runPluginSchemaInitHooks(tx, pluginHooks);
+
+    /*
+    FNXC:ProjectDataIsolation 2026-07-14-12:10:
+    Run universal ownership once, after plugin hooks, so first application covers core and plugin tables without duplicate DDL. Later boots validate that every newly introduced plugin table declared the same ownership contract instead of rebuilding primary keys, foreign keys, and policies on every startup.
+
+    FNXC:ProjectArchiveIsolation 2026-07-14-14:31:
+    The steady-state audit includes archive.archived_tasks because archived task IDs are project-local and must retain the same forced-RLS boundary as live task rows.
+    */
+    if (!projectOwnershipAlreadyApplied) {
+      const projectOwnershipSql = await readFile(PROJECT_OWNERSHIP_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(projectOwnershipSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PROJECT_OWNERSHIP_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    } else {
+      const ownershipGaps = (await tx.execute(sql`
+        SELECT n.nspname || '.' || c.relname AS table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN information_schema.columns col
+          ON col.table_schema = n.nspname
+         AND col.table_name = c.relname
+         AND col.column_name = 'project_id'
+        WHERE (n.nspname = 'project' OR (n.nspname = 'archive' AND c.relname = 'archived_tasks'))
+          AND c.relkind = 'r'
+          AND (
+            col.column_name IS NULL
+            OR NOT c.relrowsecurity
+            OR NOT c.relforcerowsecurity
+            OR NOT EXISTS (
+              SELECT 1 FROM pg_policy p
+              WHERE p.polrelid = c.oid AND p.polname = 'fusion_project_isolation'
+            )
+          )
+        ORDER BY c.relname
+      `)) as unknown as Array<{ table_name: string }>;
+      if (ownershipGaps.length > 0) {
+        throw new Error(
+          `Project-owned tables are missing required isolation: ${ownershipGaps.map(({ table_name }) => table_name).join(", ")}`,
+        );
+      }
+      const relationalGaps = (await tx.execute(sql`
+        SELECT c.conrelid::regclass::text AS object_name, c.conname AS detail
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE (n.nspname = 'project' OR (n.nspname = 'archive' AND t.relname = 'archived_tasks'))
+          AND c.contype IN ('p', 'u')
+          AND NOT EXISTS (
+            SELECT 1 FROM unnest(c.conkey) key_attnum
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = key_attnum
+            WHERE a.attname = 'project_id'
+          )
+        UNION ALL
+        SELECT t.oid::regclass::text, idx.relname
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'project' AND i.indisunique
+          AND NOT EXISTS (
+            SELECT 1 FROM unnest(i.indkey::smallint[]) key_attnum
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = key_attnum
+            WHERE a.attname = 'project_id'
+          )
+        UNION ALL
+        SELECT c.conrelid::regclass::text, c.conname
+        FROM pg_constraint c
+        JOIN pg_class child ON child.oid = c.conrelid
+        JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
+        JOIN pg_class parent ON parent.oid = c.confrelid
+        JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+        WHERE c.contype = 'f' AND child_ns.nspname = 'project' AND parent_ns.nspname = 'project'
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM unnest(c.conkey) key_attnum
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = key_attnum
+              WHERE a.attname = 'project_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM unnest(c.confkey) key_attnum
+              JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = key_attnum
+              WHERE a.attname = 'project_id'
+            )
+          )
+        ORDER BY 1, 2
+      `)) as unknown as Array<{ object_name: string; detail: string }>;
+      if (relationalGaps.length > 0) {
+        throw new Error(
+          `Project-owned keys or relationships are globally scoped: ${relationalGaps.map(({ object_name, detail }) => `${object_name}.${detail}`).join(", ")}`,
+        );
+      }
+    }
+
+    /*
+    FNXC:PostgresMigrationColumnCoverage 2026-07-14-13:17:
+    Apply SQLite schema parity independently of the original baseline and ownership migration. Existing partial cutover targets must gain all late source columns before the idempotent migration retry rebuilds its table plan.
+    */
+    if (!sqliteSchemaParityAlreadyApplied) {
+      const sqliteSchemaParitySql = await readFile(SQLITE_SCHEMA_PARITY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(sqliteSchemaParitySql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SQLITE_SCHEMA_PARITY_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:PlannerOversight 2026-07-14-18:49:
+    Apply session_advisor_enabled independently of 0007 so databases that already
+    recorded SQLite schema parity still gain the per-task session-advisor column
+    before TaskStore/Drizzle SELECT paths run on boot.
+    */
+    if (!sessionAdvisorEnabledAlreadyApplied) {
+      const sessionAdvisorEnabledSql = await readFile(SESSION_ADVISOR_ENABLED_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(sessionAdvisorEnabledSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SESSION_ADVISOR_ENABLED_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionFixIdempotency 2026-07-14-18:55:
+    Existing PostgreSQL databases receive the validator-run lineage uniqueness invariant independently of earlier schema versions. Duplicate historical rows fail the migration visibly instead of being silently discarded.
+
+    FNXC:PostgresConflictResolution 2026-07-14-20:52:
+    Main assigned migration 0008 to session-advisor state before the cutover landed, so mission lineage uniqueness advances to 0009. Both migrations must run in order; sharing a bookkeeping version would silently skip one invariant.
+    */
+    if (!missionFixIdempotencyAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_FIX_IDEMPOTENCY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_FIX_IDEMPOTENCY_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-09:30:
+    Create the import-translation cache table independently of earlier schema versions so existing databases gain it on boot before any Import Tasks translate/import read runs against it.
+    */
+    if (!importTranslationCacheAlreadyApplied) {
+      const importTranslationCacheSql = await readFile(IMPORT_TRANSLATION_CACHE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(importTranslationCacheSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MultiProjectIsolation 2026-07-15-23:40:
+    Apply the owner_project_id domain/partition split independently of earlier
+    schema versions so existing databases gain the domain column (backfilled from
+    the previously conflated partition value) before any store read/write path
+    that now targets owner_project_id runs on boot.
+    */
+    if (!ownerProjectIdSplitAlreadyApplied) {
+      const ownerProjectIdSplitSql = await readFile(OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(ownerProjectIdSplitSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OWNER_PROJECT_ID_SPLIT_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:ChatPinned 2026-07-16-12:30:
+    Apply the pin timestamp separately from the baseline so all pre-existing
+    databases can safely read and write Direct chat pins after this rollout.
+    */
+    if (!chatSessionPinsAlreadyApplied) {
+      const chatSessionPinsSql = await readFile(CHAT_SESSION_PINS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(chatSessionPinsSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_PINS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!executorToolFailureRetryAlreadyApplied) {
+      const executorToolFailureRetrySql = await readFile(EXECUTOR_TOOL_FAILURE_RETRY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(executorToolFailureRetrySql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXECUTOR_TOOL_FAILURE_RETRY_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!executorEscalationAttemptAlreadyApplied) {
+      const executorEscalationAttemptSql = await readFile(EXECUTOR_ESCALATION_ATTEMPT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(executorEscalationAttemptSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXECUTOR_ESCALATION_ATTEMPT_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!globalRoutinesAlreadyApplied) {
+      const migrationSql = await readFile(GLOBAL_ROUTINES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${GLOBAL_ROUTINES_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+    if (!taskMergerModelLaneAlreadyApplied) {
+      const migrationSql = await readFile(TASK_MERGER_MODEL_LANE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_MERGER_MODEL_LANE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+    /*
+    FNXC:Lifecycle 2026-07-16-22:35:
+    FN-8141 bulk-completion-refusal taint marker. PR #2260 added the column to
+    the model + 0000 baseline but no forward migration, so existing clusters
+    (baseline marker already present) never gained it and crashed on the first
+    TaskStore SELECT. Apply it as a forward migration so those clusters recover.
+    */
+    if (!bulkCompletionRefusalAtAlreadyApplied) {
+      const migrationSql = await readFile(BULK_COMPLETION_REFUSAL_AT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${BULK_COMPLETION_REFUSAL_AT_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!taskProposalClaimAlreadyApplied) {
+      const migrationSql = await readFile(TASK_PROPOSAL_CLAIM_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_PROPOSAL_CLAIM_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:GitHubImportTranslate 2026-07-16-23:30:
+    0010's marker prevents its corrected fresh-install definition from running
+    on upgrades. Apply 0016 separately before runtime cache reads so existing
+    rows, RLS, and unbound compatibility stores share one partition contract.
+    */
+    /*
+    FNXC:ConfigVersioning 2026-07-18-00:00:
+    Migrations are explicitly registered rather than discovered. Keep 0021's
+    bookkeeping check adjacent to its apply block so upgrades cannot silently
+    omit configuration history while fresh installs appear healthy.
+    */
+    if (!configurationRevisionsAlreadyApplied) {
+      const migrationSql = await readFile(CONFIGURATION_REVISIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CONFIGURATION_REVISIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:Ideation 2026-07-30-15:30:
+    Register the ideation migration explicitly. New SQL files are never auto-discovered,
+    and upgrades must receive project-scoped session/candidate tables before the store opens.
+    */
+    if (!ideationAlreadyApplied) {
+      const migrationSql = await readFile(IDEATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDEATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!researchFeatureProvenanceAlreadyApplied) {
+      const migrationSql = await readFile(RESEARCH_FEATURE_PROVENANCE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RESEARCH_FEATURE_PROVENANCE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!importTranslationCacheScopeFixAlreadyApplied) {
+      const migrationSql = await readFile(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!taskVerificationRequestAlreadyApplied) {
+      const migrationSql = await readFile(TASK_VERIFICATION_REQUEST_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_VERIFICATION_REQUEST_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:SymbolLock 2026-07-30-14:10:
+    Migration files are manually registered. Apply 0025 independently so both
+    fresh and upgraded installations gain forced RLS after 0006 owns its setup.
+    */
+    if (!symbolLocksAlreadyApplied) {
+      const migrationSql = await readFile(SYMBOL_LOCKS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SYMBOL_LOCKS_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!importTranslationCacheLegacyPartitionBackfillAlreadyApplied) {
+      const migrationSql = await readFile(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:PostgresBigintCounters 2026-07-18-21:45:
+    Existing embedded-PG clusters that were created before this migration still have
+    integer columns for unbounded token/usage counters, so the SQLite migrator fails on
+    values larger than int4. Apply the column type widening after ownership/parity and
+    record the version so fresh baselines already benefit from the bigint DDL.
+    */
+    if (!bigintCountersAlreadyApplied) {
+      const bigintCountersSql = await readFile(BIGINT_COUNTERS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(bigintCountersSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${BIGINT_COUNTERS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+    /*
+    FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8):
+    Migration files are manually registered — a .sql that is not wired through a version
+    constant AND an apply block here silently never runs. Apply 0027 independently of the
+    baseline so databases that already recorded 0000 gain the IR-pin and adoption columns;
+    without the forward migration those clusters crash on the first slim TaskStore SELECT.
+    */
+    if (!planningActiveTimingAlreadyApplied) {
+      const migrationSql = await readFile(PLANNING_ACTIVE_TIMING_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PLANNING_ACTIVE_TIMING_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!workflowIrPinAndLegacyAdoptionAlreadyApplied) {
+      const migrationSql = await readFile(WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!applied.includes(TASK_DECLARED_SYMBOLS_VERSION)) {
+      const migrationSql = await readFile(TASK_DECLARED_SYMBOLS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_DECLARED_SYMBOLS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!sqliteMigrationRuntimeReadAlreadyApplied) {
+      const migrationSql = await readFile(SQLITE_MIGRATION_RUNTIME_READ_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SQLITE_MIGRATION_RUNTIME_READ_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!workflowTaskContinuationsAlreadyApplied) {
+      const migrationSql = await readFile(WORKFLOW_TASK_CONTINUATIONS_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_TASK_CONTINUATIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:LegacyAdoption 2026-07-21-17:30:
+    Explicit registration (migrations are never auto-discovered). Existing
+    clusters need fusion_runtime SELECT + SECURITY DEFINER write for the
+    drained-marker short-circuit before store-open adoption can stop spamming.
+    */
+    if (!legacyAdoptionDrainedMarkerRuntimeGrantsAlreadyApplied) {
+      const migrationSql = await readFile(LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:TaskWedgeNotifications 2026-07-23-00:00:
+    PostgreSQL migrations are explicitly registered rather than discovered.
+    Apply the wedge episode column before persistence writes it, including on
+    databases that already recorded the prior schema ceiling.
+    */
+    if (!taskWedgeNotificationAlreadyApplied) {
+      const migrationSql = await readFile(TASK_WEDGE_NOTIFICATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_WEDGE_NOTIFICATION_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionValidation 2026-07-23-14:30:
+    Register every forward migration explicitly: discovery is intentionally
+    disabled, and an unregistered provenance migration would silently leave
+    upgraded clusters unable to identify the canonical milestone assertion.
+    */
+    if (!milestoneAssertionProvenanceAlreadyApplied) {
+      const migrationSql = await readFile(MILESTONE_ASSERTION_PROVENANCE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MILESTONE_ASSERTION_PROVENANCE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionLineageBudget 2026-07-22-12:00:
+    PostgreSQL migrations are deliberately registered, never discovered. Apply the
+    durable tombstone before any store can make a generated-fix decision.
+    */
+    if (!missionLineageStopAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_LINEAGE_STOP_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_LINEAGE_STOP_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:ChatTags 2026-07-25-10:55: migrations are explicitly registered; this must run after the baseline on both fresh and upgrade databases. */
+    if (!chatSessionTagsAlreadyApplied) {
+      const migrationSql = await readFile(CHAT_SESSION_TAGS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_TAGS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+    Runs after the baseline on BOTH fresh and upgrade databases. A fresh database
+    still CREATEs the table from 0000_initial (the historical baseline is left
+    untouched, as every prior migration does) and then drops it here, so both paths
+    converge on the same shape without rewriting history.
+    */
+    if (!dropGlobalConcurrencyAlreadyApplied) {
+      const migrationSql = await readFile(DROP_GLOBAL_CONCURRENCY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_GLOBAL_CONCURRENCY_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main):
+    Apply missions.task_prefix independently so databases that already recorded an earlier version
+    gain the optional mission namespace before mission reads or task minting. Sequenced AFTER the
+    capacity-model drop rather than merged with it: the two are unrelated, and a shared guard would
+    make either one's bookkeeping row suppress the other's SQL.
+    */
+    if (!missionTaskPrefixAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_TASK_PREFIX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_TASK_PREFIX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: upgraded task rows need nullable persisted instance companions before model-selection writers can store them; this is data-only and does not resolve credentials at runtime. */
+    if (!credentialInstanceSelectionAlreadyApplied) {
+      const migrationSql = await readFile(CREDENTIAL_INSTANCE_SELECTION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CREDENTIAL_INSTANCE_SELECTION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:LifecycleOutbox 2026-08-01-10:33: explicit application is required because migration discovery is intentionally disabled; the events table and counter must arrive together. */
+    if (!taskLifecycleOutboxAlreadyApplied) {
+      const migrationSql = await readFile(TASK_LIFECYCLE_OUTBOX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LIFECYCLE_OUTBOX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: consumer migration is separate from the immutable FN-8684 writer migration so upgrades cannot mistake one for the other. */
+    if (!taskLifecycleConsumersAlreadyApplied) {
+      const migrationSql = await readFile(TASK_LIFECYCLE_CONSUMERS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LIFECYCLE_CONSUMERS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!validatorInputFingerprintAlreadyApplied) {
+      const migrationSql = await readFile(VALIDATOR_INPUT_FINGERPRINT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${VALIDATOR_INPUT_FINGERPRINT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!unplannedExecutionBlockDedupeAlreadyApplied) {
+      const migrationSql = await readFile(UNPLANNED_EXECUTION_BLOCK_DEDUPE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!queuedEpisodeSignatureAlreadyApplied) {
+      const migrationSql = await readFile(QUEUED_EPISODE_SIGNATURE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${QUEUED_EPISODE_SIGNATURE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!multiRoleWorkflowAgentsAlreadyApplied) {
+      const migrationSql = await readFile(MULTI_ROLE_WORKFLOW_AGENTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MULTI_ROLE_WORKFLOW_AGENTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!workflowPrincipalFenceAlreadyApplied) {
+      const migrationSql = await readFile(WORKFLOW_PRINCIPAL_FENCE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_PRINCIPAL_FENCE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:TaskRecommendations 2026-08-08-06:11:
+    A copied test/template database can retain migration bookkeeping from a newer binary while its
+    project.tasks relation predates this additive column. Verify the materialized column as well as
+    the marker, then replay the idempotent migration to prevent TaskStore inserts from failing after
+    an otherwise successful startup. Settings-only schemas have no tasks relation and remain no-ops.
+    */
+    const taskRecommendationColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'project'
+            AND table_name = 'tasks'
+            AND column_name = 'recommendations'
+        ) AS recommendations_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; recommendations_exists: boolean }>;
+    const taskRecommendationColumnsMissing = taskRecommendationColumnState[0]?.tasks_exists
+      && !taskRecommendationColumnState[0]?.recommendations_exists;
+    if (!taskRecommendationsAlreadyApplied || taskRecommendationColumnsMissing) {
+      const migrationSql = await readFile(TASK_RECOMMENDATIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_RECOMMENDATIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: run after historical baseline for both new and upgraded databases; idempotent SQL converges interrupted upgrades. */
+    if (!githubCheckStatesAlreadyApplied) {
+      const migrationSql = await readFile(GITHUB_CHECK_STATES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${GITHUB_CHECK_STATES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!agentActivityEventsAlreadyApplied) {
+      const migrationSql = await readFile(AGENT_ACTIVITY_EVENTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AGENT_ACTIVITY_EVENTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!specLockDriftReportAlreadyApplied) {
+      const migrationSql = await readFile(SPEC_LOCK_DRIFT_REPORT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SPEC_LOCK_DRIFT_REPORT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!specLockSourceRevisionBigintAlreadyApplied) {
+      const migrationSql = await readFile(SPEC_LOCK_SOURCE_REVISION_BIGINT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!memoryRecallRecordsAlreadyApplied) {
+      const migrationSql = await readFile(MEMORY_RECALL_RECORDS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MEMORY_RECALL_RECORDS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!missionFeatureSpecAlignmentAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_FEATURE_SPEC_ALIGNMENT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_FEATURE_SPEC_ALIGNMENT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!agentRatingProjectIsolationAlreadyApplied) {
+      const migrationSql = await readFile(AGENT_RATING_PROJECT_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AGENT_RATING_PROJECT_ISOLATION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!agentRatingsProjectPartitionAlreadyApplied) {
+      const migrationSql = await readFile(AGENT_RATINGS_PROJECT_PARTITION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AGENT_RATINGS_PROJECT_PARTITION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!projectOwnershipDeclarationDriftAlreadyApplied) {
+      const migrationSql = await readFile(PROJECT_OWNERSHIP_DECLARATION_DRIFT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!projectOwnershipDefaultReconciliationAlreadyApplied) {
+      const migrationSql = await readFile(PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!messageArchiveSchemaAlreadyApplied) {
+      const migrationSql = await readFile(MESSAGE_ARCHIVE_SCHEMA_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MESSAGE_ARCHIVE_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!taskSourceAgentIndexAlreadyApplied) {
+      const migrationSql = await readFile(TASK_SOURCE_AGENT_INDEX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_SOURCE_AGENT_INDEX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:Workspace 2026-08-15-08:23: register 0060 explicitly; an unregistered migration never protects upgraded multi-node deployments. */
+    if (!workspaceCoordinationLeasesAlreadyApplied) {
+      const migrationSql = await readFile(WORKSPACE_COORDINATION_LEASES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!activityLogTaskIdIndexAlreadyApplied) {
+      const migrationSql = await readFile(ACTIVITY_LOG_TASK_ID_INDEX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${ACTIVITY_LOG_TASK_ID_INDEX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:TaskSplittingRemoval 2026-08-20-17:42: Explicit registration guarantees upgrades drop only the obsolete split request column before current task persistence runs. */
+    if (!removeTaskSubtaskSplittingAlreadyApplied) {
+      const migrationSql = await readFile(REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REMOVE_TASK_SUBTASK_SPLITTING_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:AIMergeReviewReconciliation 2026-08-20-21:56:
+    FN-090 has one durable, structured review authority. Explicit migration registration is
+    required because migrations are never discovered and upgraded projects must not fall back to log parsing.
+    */
+    if (!aiMergeReviewReconciliationAlreadyApplied) {
+      const migrationSql = await readFile(AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AI_MERGE_REVIEW_RECONCILIATION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:RepositoryScope 2026-08-20-23:07: migrations are explicitly registered so upgrade paths cannot silently omit task intent. */
+    if (!taskRepositoryScopeAlreadyApplied) {
+      const migrationSql = await readFile(TASK_REPOSITORY_SCOPE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_REPOSITORY_SCOPE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!reviewConvergenceStageAlreadyApplied) {
+      const migrationSql = await readFile(REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REVIEW_CONVERGENCE_STAGE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:MemoryFocus 2026-08-14-10:30: register 0066 explicitly (renumbered from 0061 on 2026-08-20 — the upstream FN-066..FN-094 batch owns 0061-0064 — and from 0065 on 2026-08-23 when upstream's FN-149 claimed 0065). */
+    if (!chatSessionMemoryFocusAlreadyApplied) {
+      const migrationSql = await readFile(CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_MEMORY_FOCUS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
+  });
+}

@@ -1,0 +1,293 @@
+name: PR Checks
+
+# The thin trusted merge gate (docs/plans/2026-06-04-001-refactor-fast-trusted-test-gate-plan.md).
+# Blocking checks are exactly: Lint, Typecheck, Build, Gate.
+#
+# BRANCH-PROTECTION CUTOVER: required status checks are matched by job name.
+# When this file changes job names, update the repo's branch-protection
+# required checks to exactly [Lint, Typecheck, Build, Gate] — a stale required
+# name (e.g. "Test shard 1/4") that no longer reports will block every PR
+# with "Expected — waiting for status". Open PRs must rebase onto main after
+# the cutover so they run this workflow shape.
+#
+# Everything that used to run here as shards / slow tier / inventory guard is
+# non-blocking and lives in full-suite.yml (push to main).
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token: every job here only reads the repo (checkout + cache).
+permissions:
+  contents: read
+
+# FN-4863: Opt JavaScript actions into Node 24 ahead of GitHub's forced cutover on 2026-06-02.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The pre.json anchor check needs the newest `chore(release):` commit
+          # that touched .changeset/pre.json (its ledger baseline) and the `v*`
+          # stable tags. Bounded depth, not fetch-depth: 0 — releases land every
+          # few days, so 200 commits always reaches one, and a full 486MB clone
+          # on every PR is not worth it. The check falls back to `git ls-remote
+          # --tags` for the tags and reports the ledger rule SKIPPED (never
+          # silently passed) if the baseline is out of range.
+          fetch-depth: 200
+          fetch-tags: true
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Changeset format
+        run: pnpm check:changesets
+
+      # PR #3472 resolved a .changeset/pre.json rebase conflict against a copy
+      # predating the v0.76.0 stable. Nothing failed at PR time; days later
+      # `pnpm release` saw the cycle anchored below the shipped stable, fired its
+      # stale-cycle re-anchor, and proposed 0.77.0-beta.0 — below the published
+      # 0.77.0-beta.1. pre.json is generated, hand-edited by nobody, and conflicts
+      # in nearly every long-lived branch, so a wrong resolution is invisible
+      # until release day. ~50ms.
+      - name: Beta cycle anchor (pre.json)
+        run: pnpm check:pre-json
+
+      - name: Dashboard route modularity
+        run: pnpm check:routes-modular
+
+      # The lifecycle-column ratchet was advisory until now: the census existed only as
+      # `pnpm census:lifecycle-columns` (no --strict) and nothing ran it, so three PRs
+      # lowered counts without re-recording and left allowances the deleted guards could
+      # return through while this gate stayed green. ~2s over ~1950 files.
+      - name: Lifecycle-column ratchet
+        run: pnpm check:lifecycle-columns
+      - name: SQL-column ratchet
+        run: pnpm check:sql-column-literals
+      - name: Move-target ratchet
+        run: pnpm check:move-target-literals
+      - name: Inert lane/flag seams
+        run: pnpm check:inert-flag-seams
+      - name: FNXC stamp dates
+        run: pnpm check:fnxc-future-dates
+      - name: Lane-wiring ratchet
+        run: pnpm check:lane-wiring
+      - name: Plugin interop declarations match the dashboard API
+        run: pnpm check:plugin-interop-drift
+      # AGENTS.md states the deletion ratchet as policy — "A quarantined test is DELETED after 14
+      # days (quarantinedAt + 2 weeks) unless rescued" — and nothing enforced it. Same shape as the
+      # lifecycle-column note above: the script supports `--strict`, the package script omitted it,
+      # and no workflow ran it, so it could not fail however long an entry sat there. It fires 5 days
+      # BEFORE the deadline so the choice is still delete-or-rescue rather than an overdue entry.
+      - name: Quarantine deletion ratchet
+        run: pnpm check:quarantine-ledger
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:CIGateSpeed 2026-07-23-00:05:
+      # tsc incremental buildinfo cache. tsconfig.base.json enables
+      # `incremental` with per-package dist/.tsbuildinfo; a restored buildinfo
+      # is SELF-VALIDATING (tsc hashes every input against it and re-checks
+      # whatever changed), so restore-keys can never let a stale check through
+      # — it only shrinks the re-checked set. Cold typecheck was ~4 min of the
+      # PR critical path. Keyed by SHA so every commit saves a fresh snapshot;
+      # restore-keys picks the nearest prior one (same PR, or main via the
+      # warm-gate-build-cache job in full-suite.yml, which must keep an
+      # identical path list — actions/cache versions caches by path list).
+      - name: Cache TypeScript incremental buildinfo
+        uses: actions/cache@v6
+        with:
+          path: |
+            packages/*/dist/.tsbuildinfo
+            packages/dashboard/dist/.tsbuildinfo-app
+            plugins/*/dist/.tsbuildinfo
+          key: typecheck-tsbuildinfo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-tsbuildinfo-${{ runner.os }}-
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:CIGateSpeed 2026-07-23-00:05:
+      # RESTORE-ONLY tap of the gate's incremental dist cache (see the gate
+      # job's cache block for the full safety rationale: `pnpm build` always
+      # runs and reconciles a near-match restore per package by content hash).
+      # Restore-only (actions/cache/restore, never save) because this job runs
+      # FULL CLI packaging (CI=true → desktop + bundled plugins + DTS), and
+      # saving that shape would swap the cache's canonical fast-CLI contents
+      # out from under the Gate job. Full CLI packaging itself is never skipped
+      # regardless of cache state (ensureFullPackageCliPlanned force-plans the
+      # CLI in full mode), so this job's distinctive coverage is preserved.
+      # Path list must stay byte-identical to the gate job's block.
+      - name: Compute dist source hash
+        id: dist-hash
+        run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore built dist artifacts (incremental, restore-only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            packages/core/dist
+            packages/dashboard/dist
+            packages/engine/dist
+            packages/plugin-sdk/dist
+            packages/cli/dist
+            plugins/fusion-plugin-dependency-graph/dist
+            plugins/fusion-plugin-hermes-runtime/dist
+            plugins/fusion-plugin-openclaw-runtime/dist
+            plugins/fusion-plugin-paperclip-runtime/dist
+            .fusion/cache/plugin-build-cache.json
+          key: gate-dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+          restore-keys: |
+            gate-dist-${{ runner.os }}-
+
+      - name: Build
+        run: pnpm build
+
+  # The only merge-blocking TEST signal (R3). Runs the boot smoke (the app
+  # starts and serves) plus the curated engine-core suite and the CI-shape
+  # test — see `test:gate` in the root package.json. Gate membership is the
+  # explicit allow-list in packages/engine/vitest.config.ts (engine-core
+  # project); a flaky gate test is evicted by removing it from that list.
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    # FNXC:FixPgTestsAndCi 2026-06-26-09:10:
+    # Provision a PostgreSQL service container so the postgres/*.pg.test.ts
+    # suites (pgDescribe) run in the merge gate. The pg-test-harness probe
+    # detects reachability via a TCP probe on localhost:5432 and skips when
+    # unavailable, so this service is what makes the 57 PG twin tests actually
+    # execute instead of being silently skipped.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # Mark the service healthy only when pg_isready succeeds on the mapped
+        # port, so job steps don't start before Postgres accepts connections.
+        options: >-
+          --health-cmd "pg_isready -h localhost -p 5432 -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Point the PG test harness at the service container. psql admin DDL
+      # (CREATE/DROP DATABASE) runs against this URL's maintenance database.
+      FUSION_PG_TEST_URL_BASE: "postgresql://postgres:postgres@localhost:5432"
+      PGPASSWORD: "postgres"
+    # The gate's value is speed; without a job timeout a hung build or
+    # deadlocked vitest worker blocks every PR for GitHub's default 6 hours.
+    # Expected runtime is ~3-5 min.
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:CIGateSpeed 2026-07-22-23:30:
+      # Gate-scoped INCREMENTAL dist cache (`gate-dist-*` namespace, distinct from
+      # the shard jobs' exact-match `dist-*` contract). Unlike the shard jobs —
+      # where restore-keys is forbidden because tests consume restored dist
+      # WITHOUT a build (stale dist was the FN-4232/FN-4605 failure mode) — the
+      # gate always runs `pnpm build` after restore. build-workspace.mjs verifies
+      # every package's git content hash against .fusion/cache/plugin-build-cache.json
+      # (cached below alongside dist) and rebuilds anything changed, missing, or
+      # unhashed, so a near-match restore can only speed the build up, never let
+      # stale dist through. Measured before this change: every PR missed the
+      # exact key and paid a full ~6-8 min build for ~45s of actual gate tests.
+      # NEVER add node_modules here (breaks Windows pnpm junctions elsewhere).
+      # The warm-gate-build-cache job in full-suite.yml saves this same cache
+      # (identical path list — actions/cache versions caches by path list, so
+      # the two blocks must stay in sync) on every push to main so a PR's FIRST
+      # gate run restores main's build instead of building cold.
+      - name: Compute dist source hash
+        id: dist-hash
+        run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache built dist artifacts (incremental)
+        id: dist-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            packages/core/dist
+            packages/dashboard/dist
+            packages/engine/dist
+            packages/plugin-sdk/dist
+            packages/cli/dist
+            plugins/fusion-plugin-dependency-graph/dist
+            plugins/fusion-plugin-hermes-runtime/dist
+            plugins/fusion-plugin-openclaw-runtime/dist
+            plugins/fusion-plugin-paperclip-runtime/dist
+            .fusion/cache/plugin-build-cache.json
+          key: gate-dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+          restore-keys: |
+            gate-dist-${{ runner.os }}-
+
+      # Only seed the mtime-defeating artifact hash-cache on an EXACT hit; on a
+      # restore-keys near-hit the restored dist may be stale for changed
+      # packages, and `pnpm build` below is what reconciles it.
+      - name: Seed artifact hash-cache on cache hit
+        if: steps.dist-cache.outputs.cache-hit == 'true'
+        run: node scripts/ensure-test-artifacts.mjs --seed-artifact-cache
+
+      # FNXC:CIGateSpeed 2026-07-22-23:30:
+      # Boot smoke needs the built workspace including the CLI. Fast CLI
+      # packaging (bin.js + extension.js, no desktop/bundled-plugin/DTS staging)
+      # is sufficient for boot smoke + test:gate and is the same shape
+      # `pnpm verify:fast` proves locally; CI=true would otherwise force the
+      # multi-minute full packaging tail on every gate run. Full CLI packaging
+      # coverage stays blocking in the separate Build job.
+      - name: Build
+        run: pnpm build
+        env:
+          FUSION_CLI_FULL_PACKAGE: "0"
+
+      - name: Boot smoke (app starts and serves)
+        run: node scripts/boot-smoke.mjs
+
+      - name: Gate tests (curated engine-core + CI-shape)
+        run: pnpm test:gate
+
+  # Advisory desktop-packaging validation lives in its OWN workflow (desktop-packaging.yml) so this
+  # thin gate stays exactly [Lint, Typecheck, Build, Gate] — the job set here maps 1:1 to the
+  # branch-protection required checks (CI-shape test enforces the invariant).

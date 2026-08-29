@@ -1,0 +1,223 @@
+name: Desktop Windows Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_pg_smoke:
+        description: "Skip the embedded-PG smoke (already covered by verify-elevated-restricted.yml)"
+        type: boolean
+        default: false
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # FNXC:WindowsDesktopPackaging 2026-07-15-00:55:
+      # The embedded-PG smoke boots postgres under a non-admin helper user
+      # (fusion-pg). The FIRST Start-Process -Credential for that user loads its
+      # Windows profile hive (~10-20s), which would blow a test's 15s budget.
+      # Create the user and warm its profile once here, outside any test window;
+      # the launcher resets the user's password before each run, but the warmed
+      # profile persists, so every later launch is ~0.5s.
+      # FNXC:WindowsDesktopPackaging 2026-07-18-01:40:
+      # The smoke wedged a runner for 45+ min with Start-Process -Wait and no
+      # step timeout (baseline ~18 min). Cap it, and allow skipping it via
+      # dispatch input when the dedicated verify-elevated-restricted workflow
+      # already proves embedded PG on this ref — packaging does not depend on it.
+      - name: Prewarm embedded-PG helper user profile
+        if: ${{ !inputs.skip_pg_smoke }}
+        shell: pwsh
+        run: |
+          $user = "fusion-pg"
+          # Throwaway password for the ephemeral helper user (the launcher resets
+          # it before each run); generated at runtime to avoid a hardcoded literal.
+          $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
+          net user $user $pass /add /y 2>&1 | Out-Null
+          $sec = ConvertTo-SecureString $pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$user", $sec)
+          [void](Start-Process -FilePath cmd.exe -ArgumentList '/c','exit' -Credential $cred -Wait -WindowStyle Hidden)
+          Write-Host "prewarmed $user profile"
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # The manual Windows installer path must boot the same embedded database
+      # payload used by Local mode before it can publish an installer artifact.
+      # FNXC:WindowsDesktopPackaging 2026-07-15-02:40:
+      # The runner executes jobs elevated, and PostgreSQL refuses an elevated
+      # (admin) token. Run the WHOLE smoke AS the non-admin helper user
+      # (fusion-pg): the test process, its tmpdir() data dirs, AND postgres all
+      # run as fusion-pg, so postgres inherits a non-admin token and boots via
+      # the normal embedded-postgres path — no in-launcher Start-Process
+      # -Credential / staging / process-kill races.
+      - name: Smoke embedded Postgres on Windows
+        if: ${{ !inputs.skip_pg_smoke }}
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          $user = "fusion-pg"
+          $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
+          net user $user $pass /y 2>&1 | Out-Null
+          # FNXC:WindowsDesktopPackaging 2026-07-15-11:25:
+          # Full recursive grants on the workspace + pnpm store (proven green on
+          # win-pg-diag). Narrow grants miss pnpm resolution targets and exit 1
+          # with no useful signal. Capture the bat log so failures surface.
+          Write-Host "granting ACL (workspace + tooling) for $user..."
+          icacls $env:GITHUB_WORKSPACE /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
+          if (Test-Path D:\.pnpm-store) {
+            icacls D:\.pnpm-store /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          }
+          icacls C:\Users\runneradmin /grant "*S-1-5-32-545:RX" /C 2>&1 | Out-Null
+          if (Test-Path C:\Users\runneradmin\setup-pnpm) {
+            icacls C:\Users\runneradmin\setup-pnpm /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          }
+          $nodeDir = Split-Path (Get-Command node).Source -Parent
+          icacls $nodeDir /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          # Traversable HOME/TEMP for the helper user (its tmpdir() lands here).
+          $h = "C:\fusionpg-home"
+          New-Item -ItemType Directory -Force -Path "$h\tmp" | Out-Null
+          icacls $h /grant "*S-1-5-32-545:(OI)(CI)F" /T /C 2>&1 | Out-Null
+          $pnpmDir = Split-Path (Get-Command pnpm).Source -Parent
+          $bat = Join-Path $h "smoke.bat"
+          $log = Join-Path $h "smoke.log"
+          Set-Content -Path $bat -Encoding ASCII -Value @(
+            "@echo off",
+            "set `"USERPROFILE=$h`"",
+            "set `"APPDATA=$h\AppData\Roaming`"",
+            "set `"LOCALAPPDATA=$h\AppData\Local`"",
+            "set `"TEMP=$h\tmp`"",
+            "set `"TMP=$h\tmp`"",
+            "set `"PATH=$nodeDir;$pnpmDir;%PATH%`"",
+            "cd /d $env:GITHUB_WORKSPACE",
+            "call pnpm --filter @fusion/core test:embedded-postgres > `"$log`" 2>&1",
+            "exit /b %ERRORLEVEL%"
+          )
+          Write-Host "running embedded-PG smoke as $user..."
+          $sec = ConvertTo-SecureString $pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$user", $sec)
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList '/c',$bat -Credential $cred -Wait -PassThru -WindowStyle Hidden
+          if (Test-Path $log) {
+            Write-Host "----- smoke.log (tail) -----"
+            Get-Content $log -Tail 200
+          } else {
+            Write-Host "smoke.log missing (bat may not have started)"
+          }
+          if ($p.ExitCode -ne 0) { Write-Error "embedded-PG smoke failed (exit $($p.ExitCode))"; exit 1 }
+
+      # FNXC:WindowsDesktopPackaging 2026-07-01-19:45:
+      # Mirror release.yml: build every workspace package's tsc dist (incl.
+      # @fusion/core and @fusion/engine, which are gitignored) before packaging.
+      # Without this the embedded Local runtime's `import("@fusion/engine")`
+      # resolves to an empty dist and the app crashes with ERR_MODULE_NOT_FOUND.
+      # `@fusion/desktop build` now also self-builds these, so this is belt-and-
+      # suspenders parity that additionally covers any other workspace runtime dep.
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Build desktop package
+        run: pnpm --filter @fusion/desktop build
+
+      # Code-signing hardening is intentionally deferred to FN-5592.
+      - name: Package signed Windows EXE
+        if: ${{ env.WINDOWS_CERTIFICATE_BASE64 != '' }}
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --x64 --publish never
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package unsigned Windows EXE
+        if: ${{ env.WINDOWS_CERTIFICATE_BASE64 == '' }}
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --x64 --publish never
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify signed artifacts
+        if: ${{ env.WINDOWS_CERTIFICATE_BASE64 != '' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+        run: |
+          $exes = Get-ChildItem packages/desktop/dist-electron -Filter *.exe
+          if ($exes.Count -eq 0) { Write-Error "No EXE artifacts produced"; exit 1 }
+          foreach ($exe in $exes) {
+            $sig = Get-AuthenticodeSignature $exe.FullName
+            Write-Host "$($exe.Name): $($sig.Status)"
+            if ($sig.Status -ne 'Valid') { Write-Error "Signature invalid: $($exe.Name) ($($sig.Status))"; exit 1 }
+          }
+
+      - name: Verify Windows runtime resources
+        shell: pwsh
+        run: |
+          # FNXC:WindowsDesktopPackaging 2026-07-01-08:08:
+          # The Windows app must install Electron's root .pak runtime resources;
+          # missing chrome_100_percent.pak, chrome_200_percent.pak, or resources.pak
+          # leaves Fusion.exe unable to start even when the NSIS installer succeeds.
+          $requiredResources = @('chrome_100_percent.pak', 'chrome_200_percent.pak', 'resources.pak')
+          $unpackedRoots = Get-ChildItem packages/desktop/dist-electron -Directory -Filter 'win*-unpacked'
+          if ($unpackedRoots.Count -eq 0) { Write-Error "No win-unpacked directory produced"; exit 1 }
+          foreach ($root in $unpackedRoots) {
+            foreach ($resource in $requiredResources) {
+              $resourcePath = Join-Path $root.FullName $resource
+              if (!(Test-Path $resourcePath)) { Write-Error "Missing Electron runtime resource: $resourcePath"; exit 1 }
+            }
+          }
+          $nsis = Get-ChildItem packages/desktop/dist-electron -Filter 'Fusion-*-win-*.exe' | Where-Object { $_.Name -notmatch '-portable\.exe$' }
+          $portable = Get-ChildItem packages/desktop/dist-electron -Filter 'Fusion-*-win-*-portable.exe'
+          if ($nsis.Count -eq 0) { Write-Error "No NSIS installer artifact produced"; exit 1 }
+          if ($portable.Count -eq 0) { Write-Error "No portable EXE artifact produced"; exit 1 }
+
+      - name: Verify packaged app.asar assets
+        shell: pwsh
+        run: |
+          # FNXC:WindowsDesktopPackaging 2026-07-03-15:40:
+          # Field report Issue 5: the packaged desktop shipped without preload.js and
+          # dead-ended on "can't reach the Fusion backend" (preload absence is silent —
+          # the contextBridge never installs window.fusionShell/fusionAPI). scripts/build.ts
+          # verifies the pre-package staging tree; this asserts the SHIPPED app.asar itself
+          # contains the Electron main/preload/renderer entrypoints, since only the packed
+          # asar reflects what a user installs.
+          $required = @('dist/main.js', 'dist/preload.js', 'dist/client/index.html')
+          $unpackedRoots = Get-ChildItem packages/desktop/dist-electron -Directory -Filter 'win*-unpacked'
+          if ($unpackedRoots.Count -eq 0) { Write-Error "No win-unpacked directory produced"; exit 1 }
+          foreach ($root in $unpackedRoots) {
+            $asar = Join-Path $root.FullName 'resources/app.asar'
+            if (!(Test-Path $asar)) { Write-Error "Missing packaged app.asar: $asar"; exit 1 }
+            $entries = npx --yes @electron/asar list $asar
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to list app.asar: $asar"; exit 1 }
+            $normalized = $entries | ForEach-Object { $_.TrimStart('/','\').Replace('\','/') }
+            foreach ($asset in $required) {
+              if ($normalized -notcontains $asset) {
+                Write-Error "app.asar is missing required Electron asset '$asset' in $($root.Name); refusing to ship an incomplete package"
+                exit 1
+              }
+            }
+            Write-Host "$($root.Name)/resources/app.asar contains all required Electron assets"
+          }
+
+      # Automated publish is intentionally deferred to FN-5593.
+      # Keep a single artifact; filenames include -x64 / -arm64 so both arches are captured.
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: fusion-desktop-windows
+          path: |
+            packages/desktop/dist-electron/*.exe
+            packages/desktop/dist-electron/*.blockmap

@@ -1,0 +1,2685 @@
+/*
+FNXC:WorkflowEditorFloatingModal 2026-07-11-00:00:
+FN-7827 requires the workflow editor shell to neutralize the shared .modal max-height: 80vh clamp. FloatingWindow and the embedded pane own the host size, so the shell must fill 100% and track resizes without inheriting modal width or height limits.
+*/
+.wf-editor-modal {
+  --wf-editor-touch-target: calc(var(--space-xl) + var(--space-lg) + var(--space-xs));
+
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  min-width: 0;
+  min-height: 0;
+  resize: none;
+  overflow: hidden;
+  background: var(--bg);
+  border: none;
+  border-radius: inherit;
+}
+
+/*
+FNXC:WorkflowEditorFloating 2026-06-24-00:00:
+Workflow editor modal sizing, clamping, and resize affordances are owned by FloatingWindow. Keep the editor shell a full-size child so the shared panel can persist geometry without fighting an inner native resize grip.
+*/
+.floating-window--workflow-editor .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--workflow-editor .wf-editor-header {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-window--workflow-editor .wf-editor-header:active {
+  cursor: grabbing;
+}
+
+/*
+FNXC:WorkflowEditorEmbedding 2026-06-22-00:00:
+Embedded presentation renders the editor inline as a main-content-area view
+filling the right-dock panel instead of as a centered fixed modal. The wrapper
+takes the full panel box and the modal element drops its modal chrome
+(fixed sizing, box-shadow, border-radius, resize grip) so it reads as a flush
+embedded view.
+*/
+.workflow-editor-embedded {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.wf-editor-modal--embedded {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  min-width: 0;
+  min-height: 0;
+  position: static;
+  resize: none;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+}
+
+.wf-create-modal {
+  --wf-editor-touch-target: calc(var(--space-xl) + var(--space-lg) + var(--space-xs));
+}
+
+/*
+FNXC:WorkflowEditorEmbedding 2026-06-22-01:00:
+Align the embedded workflows header to the shared ViewHeader/Insights metric — var(--surface) background, --view-header-min-height, --space-lg/--space-xl padding, no bottom divider, and a 20px todo-tinted icon + 1.125rem title — so Workflows reads the same size and color as Insights.
+*/
+.wf-editor-header {
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-height: var(--view-header-min-height);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+  border-bottom: none;
+}
+
+.wf-editor-header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wf-editor-header h2 svg {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+.wf-editor-header h2 span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-editor-close {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* FNXC:WorkflowStepCRUD 2026-06-26-14:00: U7c removed the .wf-migration-notice banner
+   styles along with the legacy-step migration notice. */
+
+.wf-editor-close:hover {
+  color: var(--text);
+}
+
+.wf-editor-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wf-editor-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  width: 300px;
+  min-width: 0;
+  padding: var(--space-sm);
+  border-right: 1px solid var(--border);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/*
+FNXC:WorkflowSidebar 2026-06-22-12:00:
+Workflow authors need to reclaim horizontal graph-editing space without leaving
+the workflow view. Hide only the sidebar shell when collapsed and keep the
+restore control attached to the canvas so the state is always reversible.
+
+FNXC:WorkflowSidebar 2026-06-22-12:35:
+When collapsed, the show-sidebar control belongs inline in the workflow name strip before the workflow name. It must be icon-only and in normal document flow so it cannot overlap the header title or workflow name.
+*/
+.wf-editor-body--sidebar-collapsed .wf-editor-sidebar {
+  display: none;
+}
+
+.wf-editor-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.wf-editor-sidebar-head .wf-editor-new {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.wf-sidebar-shell-toggle,
+.wf-sidebar-shell-restore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 30px;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.wf-sidebar-shell-toggle {
+  flex: 0 0 auto;
+  width: 30px;
+  padding-inline: 0;
+}
+
+.wf-sidebar-shell-restore {
+  flex: 0 0 auto;
+  width: 30px;
+  padding-inline: 0;
+  white-space: nowrap;
+}
+
+.wf-sidebar-shell-toggle:hover,
+.wf-sidebar-shell-restore:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.wf-sidebar-shell-toggle:focus-visible,
+.wf-sidebar-shell-restore:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* U12: columns + fields authoring sections moved into the left sidebar, below
+   the workflow list. Each is a collapsible disclosure whose toggle button is the
+   section header; the panels' own internal <h3> is suppressed to avoid a double
+   header. */
+.wf-sidebar-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.wf-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.wf-sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.wf-sidebar-section-toggle:hover {
+  background: var(--bg-secondary);
+}
+
+/* When nested in the sidebar disclosure, the panels are stacked full-width
+   blocks rather than side columns: drop the dedicated width/border and let them
+   flow inside the sidebar's own scroll. */
+.wf-sidebar-section .wf-column-panel,
+.wf-sidebar-section .wf-fields-panel {
+  width: auto;
+  min-width: 0;
+  padding: 0 var(--space-xs) var(--space-xs);
+  border-left: none;
+  overflow-y: visible;
+}
+
+/* The disclosure toggle is the visible section header; hide the panels' own
+   title heading to avoid a duplicate. The Add button (also in the header) stays. */
+.wf-sidebar-section .wf-column-panel-header h3,
+.wf-sidebar-section .wf-fields-panel-header h3 {
+  display: none;
+}
+
+.wf-sidebar-section .wf-column-panel-header,
+.wf-sidebar-section .wf-fields-panel-header {
+  justify-content: flex-end;
+}
+
+.wf-editor-new {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wf-editor-new:hover {
+  background: var(--bg-tertiary);
+}
+
+/* U5/R10: sidebar import affordance + persistent inline error/warning regions. */
+.wf-editor-import {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wf-editor-import:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-editor-import:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-editor-import-error {
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-error) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-error);
+  border-radius: var(--radius-sm);
+  color: var(--ws-error);
+  font-size: 0.8rem;
+}
+
+.wf-editor-import-warnings {
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-warning) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-warning);
+  border-radius: var(--radius-sm);
+  color: var(--ws-warning);
+  font-size: 0.8rem;
+}
+
+.wf-editor-import-warning {
+  margin: 0;
+}
+
+.wf-editor-import-warning + .wf-editor-import-warning {
+  margin-top: var(--space-xs);
+}
+
+.wf-editor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wf-editor-list li {
+  min-width: 0;
+}
+
+.wf-editor-list-item {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wf-editor-list-item:hover {
+  background: var(--bg-secondary);
+}
+
+.wf-editor-list-item.active {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}
+
+.wf-editor-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.wf-editor-select-note {
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--ws-info) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-info);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wf-editor-canvas-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.wf-editor-mobile-back {
+  display: none;
+}
+
+.wf-editor-canvas-empty {
+  flex: 1;
+  justify-content: center;
+}
+
+/* No-workflow onboarding panel (R9): icon + heading + explanation + create CTA. */
+.wf-editor-onboard {
+  flex-direction: column;
+  text-align: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+}
+
+.wf-editor-onboard-icon {
+  color: var(--text-muted);
+}
+
+.wf-editor-onboard-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.wf-editor-onboard-text {
+  margin: 0;
+  max-width: 36ch;
+  color: var(--text-muted);
+}
+
+.wf-editor-onboard-cta {
+  margin-top: var(--space-xs);
+}
+
+/* Trivial-graph palette hint (R9): non-blocking banner over the canvas. */
+.wf-trivial-hint {
+  position: absolute;
+  top: var(--space-sm);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  pointer-events: none;
+  max-width: min(90%, 42ch);
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-info) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-info);
+  border-radius: var(--radius-sm);
+  color: var(--ws-info);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.wf-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.wf-editor-palette {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.wf-palette-btn,
+.wf-editor-action,
+.wf-editor-delete,
+.wf-editor-save {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  transition: background var(--transition-fast);
+}
+
+.wf-palette-btn:hover,
+.wf-editor-action:hover,
+.wf-editor-delete:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-editor-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:WorkflowToolbar 2026-06-22-12:00:
+Toolbar commands such as Export should move as whole controls when space is
+tight; do not allow their short labels to split onto multiple lines.
+*/
+.wf-editor-toolbar .wf-editor-action,
+.wf-editor-toolbar .wf-editor-delete,
+.wf-editor-toolbar .wf-editor-save,
+.wf-editor-readonly-banner .wf-editor-action,
+.wf-editor-readonly-banner .wf-editor-save {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.wf-editor-readonly-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* U9/R8: palette Templates section — collapsible, grouped, filterable. */
+.wf-templates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-templates-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.wf-templates-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wf-templates-toggle:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-templates-filter {
+  flex: 0 1 220px;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.wf-templates-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-templates-conflict {
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-error) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-error);
+  border-radius: var(--radius-sm);
+  color: var(--ws-error);
+  font-size: 0.8rem;
+}
+
+.wf-templates-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-templates-group-title {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.wf-templates-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-templates-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.wf-templates-entry:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-templates-entry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-templates-badge {
+  padding: 0 var(--space-xs);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+/* Neutralize the fieldset wrapper so it only gates interactivity, not layout. */
+.wf-inspector-fields {
+  display: contents;
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+.wf-editor-save {
+  background: var(--todo);
+  border-color: var(--todo);
+  color: var(--bg);
+}
+
+.wf-editor-save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-editor-delete {
+  color: var(--ws-error);
+}
+
+/* Inspector delete buttons (U3): sit below the field group, sized to the panel. */
+.wf-inspector-delete {
+  margin-top: var(--space-sm);
+  justify-content: center;
+}
+
+.wf-editor-banner {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--ws-warning);
+  color: var(--ws-warning);
+  font-size: 0.85rem;
+}
+
+/* Info-tone banner (KTD-4): branching graph runs on the interpreter only — not a
+ *  failure, so it uses the info token rather than the warning treatment. */
+.wf-editor-banner--info {
+  border-bottom-color: var(--ws-info);
+  color: var(--ws-info);
+  background: color-mix(in srgb, var(--ws-info) 6%, var(--bg-secondary));
+}
+
+.wf-editor-canvas {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/*
+FNXC:WorkflowEditorTheme 2026-06-19-05:22:
+React Flow ships white default controls and mini-map chrome, but the workflow editor must inherit Fusion theme tokens in both dark and light modes. Scope overrides to the canvas so other React Flow consumers keep their local contracts.
+*/
+.wf-editor-canvas .react-flow__controls {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.wf-editor-canvas .react-flow__controls-button {
+  background: var(--surface);
+  border: 0;
+  border-bottom: var(--btn-border-width) solid var(--border);
+  color: var(--text);
+  fill: currentColor;
+}
+
+.wf-editor-canvas .react-flow__controls-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.wf-editor-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.wf-editor-canvas .react-flow__minimap {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+/*
+FNXC:WorkflowMiniMap 2026-06-22-10:15:
+MiniMap node fill is supplied by WorkflowNodeEditor.tsx so background-only
+column bands can be transparent and real workflow nodes remain visible. Keep
+CSS scoped to chrome/stroke details only; a CSS fill here overrides React
+Flow's SVG attributes and makes the graph preview read blank.
+*/
+.wf-editor-canvas .react-flow__minimap-node {
+  stroke: var(--border-strong, var(--border));
+}
+
+.wf-editor-canvas .react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.wf-minimap-toggle {
+  position: absolute;
+  right: calc(200px + var(--space-sm));
+  bottom: var(--space-sm);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 28px;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.wf-minimap-toggle:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.wf-minimap-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-minimap-toggle--collapsed {
+  right: var(--space-sm);
+}
+
+.wf-mobile-shell {
+  display: none;
+}
+
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Segmented three-mode view switch (Simple / Advanced / List) replacing the old
+boolean .wf-layout-toggle. Also reused by the mobile graph-style toggle
+(Graph / List) so both switches read as one control family.
+*/
+.wf-view-mode-toggle,
+.wf-mobile-graph-style-toggle {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+}
+
+.wf-mobile-graph-style-toggle {
+  margin: var(--space-sm) var(--space-md) 0;
+}
+
+.wf-view-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 26px;
+  padding: var(--space-xs) 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.wf-view-mode-option:hover {
+  color: var(--text);
+}
+
+.wf-view-mode-option--active {
+  background: var(--surface-emphasis);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.wf-view-mode-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Simplified-view toolbar: a single quiet row (Add step + common actions). */
+.wf-editor-toolbar--simple {
+  justify-content: space-between;
+}
+
+.wf-editor-toolbar--simple .wf-simple-toolbar-add {
+  border-color: color-mix(in srgb, var(--todo) 45%, var(--border));
+  color: var(--text);
+}
+
+.wf-editor-toolbar--simple .wf-simple-toolbar-add:hover {
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, var(--surface));
+}
+
+/* Mobile graph tab: the simplified canvas needs a bounded, non-scrolling
+   region inside the scrollable mobile panel (WorkflowSimpleCanvas fills it
+   with position:absolute). */
+.wf-mobile-simple-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: max(340px, 55dvh);
+  margin: var(--space-sm) var(--space-md) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Simple-view inspector polish: the shared node/edge inspector gets a roomier,
+card-like presentation in the simplified view (wider pane, soft section
+cards) without touching its advanced-view layout or any field markup.
+*/
+.wf-editor-inspector--simple {
+  width: 320px;
+  padding: var(--space-lg);
+  gap: var(--space-md);
+  background: var(--surface);
+}
+
+.wf-editor-inspector--simple h3 {
+  font-size: 1rem;
+}
+
+.wf-editor-inspector--simple .wf-inspector-fields {
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+}
+
+.wf-editor-body--simple-layout :where(.wf-editor-readonly-banner),
+.wf-editor-body--simple-layout :where(.wf-editor-toolbar),
+.wf-editor-body--simple-layout :where(.wf-templates),
+.wf-editor-body--simple-layout :where(.wf-editor-canvas) {
+  display: none;
+}
+
+.wf-editor-body--simple-layout .wf-mobile-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/*
+FNXC:WorkflowSimpleEditor 2026-06-29-13:20:
+Mobile simple-editor tabs must stay inside the editor width while remaining horizontally swipeable/reachable. The tab strip owns horizontal overflow, and both the scroller and tab button touch targets opt into pan-x because the global mobile reset applies `touch-action: pan-y` per element, not by inheritance.
+
+FNXC:WorkflowSimpleEditor 2026-06-29-13:32:
+Keep the scroller border-box explicit so the strip's padding and border are included in its 100% inline size even if future CSS narrows the global reset.
+
+FNXC:WorkflowSimpleEditor 2026-06-29-16:22:
+Use both physical and logical width clamps because this tab strip is reused by automatic mobile simple layout and compact simple layout. The scroller may overflow internally, but its own border box must stay pinned to the editor width so the page never expands.
+
+FNXC:WorkflowSimpleEditor 2026-06-29-16:48:
+Keep logical overflow and tab intrinsic-size declarations beside the physical fallbacks so the simple-editor tab strip remains the only horizontal scroll owner while tab-button touches can start pan-x gestures under the global mobile `touch-action: pan-y` reset.
+*/
+.wf-mobile-tabs {
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 auto;
+  width: 100%;
+  inline-size: 100%;
+  max-width: 100%;
+  max-inline-size: 100%;
+  min-width: 0;
+  min-inline-size: 0;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overflow-inline: auto;
+  overflow-block: hidden;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-mobile-tab {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-inline-size: max-content;
+  white-space: nowrap;
+  touch-action: pan-x pan-y;
+  min-height: var(--wf-editor-touch-target);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.wf-mobile-tab--active {
+  border-color: var(--accent, var(--ws-info));
+  background: var(--bg-tertiary);
+}
+
+.wf-mobile-tab:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-mobile-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.wf-mobile-tab:active {
+  transform: scale(0.97);
+}
+
+.wf-mobile-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.wf-mobile-add,
+.wf-mobile-actions,
+.wf-mobile-destination {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+}
+
+.wf-mobile-add-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-mobile-add-section h3,
+.wf-mobile-template-group h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wf-mobile-add-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+.wf-mobile-add-option,
+.wf-mobile-template-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  min-width: 0;
+  min-height: var(--wf-editor-touch-target);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+  transition:
+    background var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.wf-mobile-add-option:hover,
+.wf-mobile-template-option:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-mobile-add-option:focus-visible,
+.wf-mobile-template-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.wf-mobile-add-option:active,
+.wf-mobile-template-option:active {
+  transform: scale(0.97);
+}
+
+.wf-mobile-template-filter {
+  width: 100%;
+}
+
+.wf-mobile-template-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-mobile-actions .wf-editor-action,
+.wf-mobile-actions .wf-editor-delete,
+.wf-mobile-actions .wf-editor-save {
+  justify-content: center;
+  min-height: var(--wf-editor-touch-target);
+}
+
+.wf-mobile-ai-panel {
+  position: static;
+  inset: auto;
+  width: 100%;
+  box-shadow: none;
+}
+
+.wf-editor-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 280px;
+  padding: var(--space-md);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.wf-editor-inspector h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.wf-inspector-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.wf-inspector-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wf-inspector-toggle:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-inspector-toggle--collapsed {
+  position: absolute;
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  z-index: 5;
+  box-shadow: var(--shadow-sm);
+}
+
+.wf-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.wf-field input,
+.wf-field textarea,
+.wf-field select {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+}
+
+.wf-field input:focus,
+.wf-field textarea:focus,
+.wf-field select:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ── Prompt fullscreen editor ─────────────────────────────────── */
+.wf-prompt-editor {
+  position: relative;
+}
+
+.wf-prompt-editor--fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* FNXC:WorkflowEditor 2026-07-12-00:00: Keep this as a static fallback only; WorkflowNodeEditor applies an inline shared floating-stack z-index when the prompt overlay opens so mobile FloatingWindow sheets cannot cover it. */
+  z-index: 10000;
+  background: var(--surface);
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0))
+           max(var(--space-lg), env(safe-area-inset-right, 0))
+           max(var(--space-lg), env(safe-area-inset-bottom, 0))
+           max(var(--space-lg), env(safe-area-inset-left, 0));
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-prompt-editor--fullscreen .wf-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-prompt-editor--fullscreen textarea {
+  flex: 1;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.wf-prompt-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.wf-prompt-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-prompt-expand-btn--inline {
+  position: absolute;
+  top: calc(var(--space-xs) + 1.2em + var(--space-xs));
+  right: var(--space-xs);
+  z-index: 2;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
+}
+
+.wf-prompt-expand-btn--inline:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.wf-prompt-editor:not(.wf-prompt-editor--fullscreen) textarea {
+  padding-right: calc(var(--space-xl) + var(--space-md));
+}
+
+/*
+FNXC:WorkflowEditor 2026-06-21-20:18:
+Built-in workflow prompts need visible override state and a reset action without making graph controls editable; keep the controls outside disabled fieldsets and use shared button/token styles.
+*/
+.wf-prompt-override-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding-right: calc(var(--space-xl) + var(--space-md));
+}
+
+.wf-prompt-override-actions--fullscreen {
+  justify-content: space-between;
+  padding-right: 0;
+}
+
+.wf-prompt-override-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-pill);
+  color: var(--color-warning);
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.wf-inspector-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.wf-inspector-note--info {
+  color: var(--ws-warning);
+}
+
+.wf-inspector-note--with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* ── Per-node Help (FNXC:WorkflowEditor 2026-06-21-10:00) ───────────
+ *  Collapsible <details> teaching what the selected node does, how to
+ *  configure it, and its inputs/outputs/edges. Sits under the heading,
+ *  collapsed by default so it never pushes config fields below the fold. */
+.wf-inspector-help {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.wf-inspector-help-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.78rem;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.wf-inspector-help-summary::-webkit-details-marker {
+  display: none;
+}
+
+.wf-inspector-help-summary:hover {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+/* Engine-managed badge for graph-only policy nodes (read-only lifecycle). */
+.wf-inspector-help-badge {
+  margin-left: auto;
+  padding: 1px var(--space-xs);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.wf-inspector-help-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: 0 var(--space-sm) var(--space-sm);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.wf-inspector-help-summary-text {
+  margin: 0;
+  color: var(--text);
+}
+
+.wf-inspector-help-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-sm);
+  margin: 0;
+}
+
+.wf-inspector-help-dl dt {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.wf-inspector-help-dl dd {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.wf-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+}
+
+.wf-field--checkbox input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  accent-color: var(--todo);
+  cursor: pointer;
+}
+
+/* Canvas nodes */
+/* ── U1: card-style nodes ──
+ *  Cards have a header row (icon + label + badges + error badge) and an
+ *  independent config-summary row. Sizing mirrors WF_CARD_WIDTH /
+ *  WF_CARD_MAX_WIDTH in workflow-flow-mapping.ts; the max-width ceiling forces
+ *  long labels/summaries to truncate rather than grow the canvas. Per-kind
+ *  accent uses a left border + a faint header tint over a semantic token. */
+.wf-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  width: 200px;
+  max-width: 240px;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.wf-node-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+/* Summary row: single line, truncates independently of the header. */
+.wf-node-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+/* Per-kind accent: left border color + a faint header tint. color-mix over
+ *  semantic tokens keeps both themes legible without raw colors. */
+.wf-node-start {
+  border-left-color: var(--ws-success);
+}
+
+.wf-node-end {
+  border-left-color: var(--text-muted);
+}
+
+.wf-node-prompt {
+  border-left-color: var(--accent, var(--todo));
+  background: color-mix(in srgb, var(--accent, var(--todo)) 5%, var(--bg-secondary));
+}
+
+.wf-node-script {
+  border-left-color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.wf-node-gate {
+  border-left-color: var(--ws-warning);
+  background: color-mix(in srgb, var(--ws-warning) 6%, var(--bg-secondary));
+}
+
+.wf-node-hold {
+  border-left-color: var(--ws-warning);
+}
+
+.wf-node-split,
+.wf-node-join {
+  border-left-color: var(--accent, var(--ws-info));
+}
+
+.wf-node-merge {
+  border-left-color: var(--ws-info);
+  border-style: dashed;
+}
+
+/* ── Step-inversion nodes (KTD-3/4/12/15, U8) ── */
+
+.wf-node-step-execute {
+  border-left-color: var(--accent, var(--ws-info));
+  background: color-mix(in srgb, var(--accent, var(--ws-info)) 5%, var(--bg-secondary));
+}
+
+.wf-node-step-review {
+  border-left-color: var(--ws-info);
+  background: color-mix(in srgb, var(--ws-info) 6%, var(--bg-secondary));
+}
+
+.wf-node-parse-steps {
+  border-left-color: var(--ws-info);
+}
+
+.wf-node-code {
+  border-left-color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+/* A foreach renders as a React Flow group node containing its template
+ *  subgraph. Children are positioned inside the group's box. */
+.wf-foreach-group {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px dashed var(--accent, var(--ws-info));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent, var(--ws-info)) 6%, transparent);
+  padding: var(--space-xs);
+}
+
+.wf-foreach-group.wf-node--error {
+  border-color: var(--ws-error);
+}
+
+.wf-foreach-header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.wf-foreach-empty {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Rework edges (KTD-5): dashed accent stroke with a loop affordance. */
+.wf-edge-rework .react-flow__edge-path {
+  stroke: var(--accent, var(--ws-info));
+  stroke-dasharray: 5 4;
+  stroke-width: 2;
+}
+
+/* Failure edges (R2): a distinct dash pattern from rework plus an error-token
+ *  stroke. Two-channel rule — the condition label is always rendered (third
+ *  channel is color) so failure edges stay distinguishable in low-contrast
+ *  themes. */
+.react-flow__edge.wf-edge-failure .react-flow__edge-path {
+  stroke: var(--ws-error);
+  stroke-dasharray: 2 4;
+  stroke-width: 2;
+}
+
+.wf-code-source {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.wf-editor-sidebar .wf-code-source {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Header overflow priority (R1): icon fixed-width; label flex-shrinks first
+ *  with ellipsis; badges + error badge hold their width flush right. */
+.wf-node-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.wf-node-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-node-badge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--ws-warning);
+  color: var(--bg);
+}
+
+.wf-spin {
+  animation: wf-spin 1s linear infinite;
+}
+
+@keyframes wf-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── U10: swimlane bands, column panel, error badges, read-only banner ── */
+
+.wf-column-band {
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--bg-secondary) 65%, transparent);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+}
+
+.wf-node--error {
+  border-color: var(--ws-error);
+  border-left-color: var(--ws-error);
+}
+
+.wf-node-error-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--ws-error);
+  color: var(--bg);
+}
+
+.wf-editor-readonly-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-editor-duplicate-primary {
+  font-weight: 600;
+}
+
+.wf-editor-banner--warn {
+  background: var(--ws-warning);
+  color: var(--bg);
+}
+
+/* Inline name + description strip (KTD-10). */
+.wf-name-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/*
+FNXC:WorkflowLifecycleValidation 2026-06-29-12:18:
+Workflow authors need store-produced lifecycle warnings visible in the editor before runtime. Keep them inline and non-blocking: parser/store/merge guards still enforce hard safety, while this banner exposes missing summary/merge/review-loop guidance during authoring.
+*/
+.wf-lifecycle-warnings {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--ws-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--ws-warning) 8%, var(--bg-secondary));
+  color: var(--text);
+}
+
+/*
+FNXC:WorkflowEditor 2026-07-12-10:30:
+The banner is a <details> disclosure: collapsed it reads as one quiet count
+line ("2 lifecycle warnings"); expanding reveals the full list. Hide the
+native marker and rotate the chevron on open.
+*/
+.wf-lifecycle-warnings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--ws-warning);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.wf-lifecycle-warnings-title::-webkit-details-marker {
+  display: none;
+}
+
+.wf-lifecycle-warnings-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.wf-lifecycle-warnings-chevron {
+  transition: transform var(--transition-fast);
+  opacity: 0.75;
+}
+
+.wf-lifecycle-warnings[open] .wf-lifecycle-warnings-chevron {
+  transform: rotate(180deg);
+}
+
+.wf-lifecycle-warnings[open] ul {
+  margin-top: var(--space-xs);
+}
+
+/*
+FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
+One-click fix affordances: a quiet pill per fixable warning row plus a
+"Fix all" pill inline in the collapsed summary line.
+*/
+.wf-lifecycle-fix {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, var(--ws-warning) 55%, var(--border));
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ws-warning);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.wf-lifecycle-fix:hover {
+  background: color-mix(in srgb, var(--ws-warning) 15%, transparent);
+}
+
+.wf-lifecycle-fix:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.wf-lifecycle-fix--all {
+  margin-left: var(--space-xs);
+}
+
+.wf-lifecycle-warnings ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wf-lifecycle-warnings li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+/*
+FNXC:WorkflowNodeEditor 2026-07-15-00:00:
+FN-8043 uses --text-muted for lifecycle warning chips because --text-secondary is an undefined deprecated alias in both themes.
+*/
+.wf-lifecycle-warning-code,
+.wf-lifecycle-warning-node {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-mono, monospace);
+}
+
+.wf-workflow-name,
+.wf-workflow-name--readonly {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wf-workflow-name:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-workflow-name--readonly {
+  cursor: default;
+}
+
+.wf-workflow-name-input {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+}
+
+.wf-workflow-icon-input {
+  width: calc(var(--space-xl) + var(--space-md));
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  text-align: center;
+}
+
+.wf-workflow-description,
+.wf-workflow-description--readonly {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wf-workflow-description:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-workflow-description--readonly {
+  cursor: default;
+}
+
+.wf-workflow-description-input {
+  font-size: 0.78rem;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  min-width: 220px;
+}
+
+/* Create-workflow dialog (KTD-7). */
+/* Template picker (U4/R7): radiogroup of Blank + built-ins + user workflows. */
+.wf-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.wf-template-section {
+  margin: var(--space-xs) 0 var(--space-xs);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.wf-template-section--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-template-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text);
+}
+
+.wf-template-option:hover {
+  background: var(--surface-hover);
+}
+
+.wf-template-option.selected {
+  border-color: var(--accent);
+  background: var(--surface-hover-strong);
+}
+
+.wf-template-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-template-option-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.wf-template-option-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.wf-template-option-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-template-option-count {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.wf-create-error {
+  margin: var(--space-xs) 0 0;
+  font-size: 0.8rem;
+  color: var(--ws-error);
+}
+
+.wf-column-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 280px;
+  min-width: 260px;
+  padding: var(--space-md);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.wf-column-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.wf-column-add,
+.wf-column-move,
+.wf-column-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.wf-column-add {
+  flex: 0 0 auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.wf-column-move,
+.wf-column-remove {
+  width: 1.75rem;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+.wf-column-add:hover:not(:disabled),
+.wf-column-move:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.wf-column-remove:hover:not(:disabled) {
+  border-color: var(--ws-error);
+  background: color-mix(in srgb, var(--ws-error) 12%, transparent);
+  color: var(--ws-error);
+}
+
+.wf-column-add:focus-visible,
+.wf-column-move:focus-visible,
+.wf-column-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-add:disabled,
+.wf-column-move:disabled,
+.wf-column-remove:disabled {
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+}
+
+.wf-column-panel-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.wf-column-panel-errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--ws-error);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ws-error) 10%, transparent);
+}
+
+.wf-column-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-column-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-column-item--error {
+  border-color: var(--ws-error);
+}
+
+.wf-column-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-column-name {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+/*
+FNXC:WorkflowEditorTheme 2026-06-22-10:15:
+Column-panel name fields, trait checkboxes, and agent-mode radios sit on the
+same sidebar surface as workflow fields. Theme all native form controls with
+Fusion tokens so light/dark themes never show browser-default white controls.
+*/
+.wf-column-name:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.wf-column-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-name:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.wf-column-description-field {
+  /*
+  FNXC:DashboardTextTokens 2026-07-23-22:30:
+  FN-8526 shipped this label with the undefined deprecated --text-secondary alias; per the FN-8043
+  migration guarded by deprecated-text-secondary-token-migration.test.ts, secondary text uses the
+  canonical --text-muted token, which resolves in both base and light themes.
+  (Comment lives inside the block so WorkflowColumnPanel.test.tsx's brace-scanning selector parser
+  still sees the bare selector.)
+  */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.wf-column-description {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--wf-editor-touch-target) * 2);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  resize: vertical;
+}
+
+.wf-column-description:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.wf-column-description:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-description:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.wf-column-item-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.wf-column-violation {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.7rem;
+  color: var(--ws-error);
+  margin: 0;
+}
+
+.wf-column-traits,
+.wf-column-agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px dashed var(--border);
+}
+
+.wf-column-trait-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-column-trait {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:WorkflowEditorTheme 2026-06-19-05:22:
+Column trait toggles are left-sidebar workflow controls; keep their enabled and disabled checkbox chrome on the workflow accent token instead of React/browser defaults.
+*/
+.wf-column-trait input[type="checkbox"] {
+  accent-color: var(--todo);
+}
+
+.wf-column-trait input[type="checkbox"],
+.wf-column-agent-mode-option input[type="radio"] {
+  margin: 0;
+  accent-color: var(--todo);
+}
+
+.wf-column-trait input[type="checkbox"]:disabled,
+.wf-column-agent-mode-option input[type="radio"]:disabled {
+  cursor: not-allowed;
+}
+
+.wf-column-traits-label,
+.wf-column-agent-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.wf-column-agent-select {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.72rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.wf-column-agent-select:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.wf-column-agent-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-agent-select:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.wf-column-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px var(--space-xs);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.wf-column-agent-badge--stale {
+  border-color: color-mix(in srgb, var(--ws-warning) 55%, var(--border));
+  background: color-mix(in srgb, var(--ws-warning) 12%, transparent);
+  color: var(--ws-warning);
+}
+
+.wf-column-agent-error,
+.wf-column-agent-stale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0;
+  font-size: 0.68rem;
+}
+
+.wf-column-agent-error {
+  color: var(--ws-error);
+}
+
+.wf-column-agent-stale {
+  color: var(--ws-warning);
+}
+
+.wf-column-agent-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-column-agent-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 1px var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.wf-column-agent-mode-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+
+.wf-column-agent-mode-option:has(input:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* ── U10/R11: Design-with-AI affordances ─────────────────────────────────── */
+
+/* Create-dialog disclosure (above the template picker). */
+.wf-ai-create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.wf-ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  align-self: flex-start;
+  padding: var(--space-xs) var(--space-xs);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wf-ai-toggle:hover {
+  background: var(--surface-hover);
+}
+
+.wf-ai-create-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-ai-prompt {
+  width: 100%;
+  resize: vertical;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wf-ai-prompt:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-ai-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+/* Toolbar popover panel anchored under the "Design with AI" button. */
+.wf-ai-edit-wrap {
+  position: relative;
+}
+
+.wf-ai-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 768px) {
+  .wf-prompt-editor--fullscreen {
+    padding: var(--space-sm);
+  }
+
+  .wf-prompt-override-actions {
+    align-items: stretch;
+    flex-direction: column;
+    padding-right: 0;
+  }
+
+  /* FNXC:WorkflowEditor 2026-06-22-16:00: scope the viewport-takeover to the
+     dialog presentation only via :not(.wf-editor-modal--embedded). The embedded
+     workflow editor renders inside the main-content pane (between the mobile
+     Header and MobileNavBar); without the guard its base .wf-editor-modal class
+     matched these 100vw/100dvh rules and covered the whole screen. The embedded
+     panel keeps its 100%-of-pane sizing from the embedded block above and fills
+     only the content area. .wf-create-modal has no embedded variant, so it stays
+     full-screen as a dialog. */
+  .modal-overlay:has(.wf-create-modal) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .floating-window--workflow-editor {
+    inset: 0 !important;
+    width: 100vw !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    min-height: 0 !important;
+    max-height: 100dvh !important;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--workflow-editor .floating-window__resize-handle {
+    display: none;
+  }
+
+  .wf-editor-modal:not(.wf-editor-modal--embedded),
+  .wf-create-modal {
+    width: 100vw;
+    min-width: 0;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    resize: none;
+    flex: 1 1 auto;
+  }
+
+  .wf-editor-header,
+  .wf-editor-readonly-banner {
+    flex-wrap: wrap;
+  }
+
+  .wf-editor-readonly-banner {
+    gap: var(--space-sm);
+  }
+
+  .wf-editor-body {
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .wf-editor-body--list-stage .wf-editor-sidebar {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+    max-height: none;
+    border-right: none;
+    border-bottom: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .wf-editor-body--list-stage .wf-editor-canvas-wrap,
+  .wf-editor-body--list-stage .wf-editor-inspector {
+    display: none;
+  }
+
+  .wf-editor-body--editor-stage .wf-editor-sidebar {
+    display: none;
+  }
+
+  .wf-editor-body--editor-stage .wf-editor-canvas-wrap {
+    display: flex;
+    flex: 0 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .wf-editor-body--editor-stage .wf-editor-canvas {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .wf-editor-body--editor-stage .wf-editor-inspector {
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  .wf-editor-mobile-back {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: var(--space-xs);
+    min-height: var(--wf-editor-touch-target);
+    margin: var(--space-sm) var(--space-sm) 0;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .wf-editor-sidebar .wf-column-panel {
+    width: 100%;
+    min-width: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .wf-editor-body .wf-settings-panel {
+    width: 100%;
+    min-width: 0;
+    max-height: 50vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  .wf-editor-canvas-wrap {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .wf-editor-canvas {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .wf-editor-body--editor-stage :where(.wf-editor-readonly-banner),
+  .wf-editor-body--editor-stage :where(.wf-editor-toolbar),
+  .wf-editor-body--editor-stage :where(.wf-templates),
+  .wf-editor-body--editor-stage :where(.wf-editor-canvas) {
+    display: none;
+  }
+
+  .wf-mobile-shell {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .wf-editor-canvas .react-flow,
+  .wf-editor-canvas .react-flow__renderer,
+  .wf-editor-canvas .react-flow__pane,
+  .wf-editor-canvas .react-flow__viewport {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: 100%;
+  }
+
+  .wf-editor-list-item,
+  .wf-editor-new,
+  .wf-editor-import,
+  .wf-sidebar-section-toggle,
+  .wf-palette-btn,
+  .wf-editor-action,
+  .wf-editor-delete,
+  .wf-editor-save,
+  .wf-templates-toggle,
+  .wf-templates-entry,
+  .wf-template-option,
+  .wf-ai-toggle,
+  .wf-workflow-name,
+  .wf-workflow-name-input,
+  .wf-column-panel button,
+  .wf-fields-panel button,
+  .wf-settings-panel button {
+    min-height: var(--wf-editor-touch-target);
+  }
+
+  .wf-editor-list-item,
+  .wf-editor-new,
+  .wf-editor-import,
+  .wf-palette-btn,
+  .wf-editor-action,
+  .wf-editor-delete,
+  .wf-editor-save,
+  .wf-templates-toggle,
+  .wf-templates-entry,
+  .wf-ai-toggle {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .wf-field input,
+  .wf-field textarea,
+  .wf-field select,
+  .wf-column-name,
+  .wf-column-description,
+  .wf-column-agent-select,
+  .wf-templates-filter,
+  .wf-ai-prompt {
+    min-height: var(--wf-editor-touch-target);
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .wf-template-list {
+    max-height: 40vh;
+  }
+
+  .wf-editor-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .wf-editor-palette,
+  .wf-editor-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .wf-templates {
+    flex: 0 0 auto;
+  }
+
+  .wf-templates-header {
+    flex-wrap: nowrap;
+  }
+
+  .wf-templates-toggle {
+    flex: 0 0 auto;
+  }
+
+  .wf-inspector-toggle {
+    min-height: var(--wf-editor-touch-target);
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .wf-ai-panel {
+    position: fixed;
+    inset: var(--space-sm);
+    top: auto;
+    right: auto;
+    z-index: 30;
+    width: auto;
+  }
+
+  .wf-editor-inspector {
+    width: 100%;
+    max-height: 40vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  .wf-editor-body--mobile-node-detail .wf-editor-canvas-wrap {
+    display: none;
+    min-height: 0;
+  }
+
+  .wf-editor-body--mobile-node-detail .wf-editor-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    border-left: none;
+    border-top: none;
+    overflow-y: auto;
+  }
+
+  .wf-editor-body--mobile-edge-detail .wf-editor-canvas-wrap {
+    display: none;
+    min-height: 0;
+  }
+
+  .wf-editor-body--mobile-edge-detail .wf-editor-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    border-left: none;
+    border-top: none;
+    overflow-y: auto;
+  }
+}

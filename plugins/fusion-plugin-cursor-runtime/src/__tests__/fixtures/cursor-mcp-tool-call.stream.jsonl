@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","cwd":"<scratch>","session_id":"<session>","model":"Auto"}
+{"type":"tool_call","subtype":"started","tool_call":{"mcpToolCall":{"args":{"name":"fn9098-echo-echo","args":{"message":"hello"},"providerIdentifier":"fn9098-echo","toolName":"echo","serverIdentifier":"fn9098-echo"}}}}
+{"type":"tool_call","subtype":"completed","tool_call":{"mcpToolCall":{"result":{"success":{"content":[{"text":{"text":"ECHO:hello"}}],"isError":false}}}}}
+{"type":"result","subtype":"success","result":"ECHO:hello"}

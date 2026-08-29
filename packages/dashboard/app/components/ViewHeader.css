@@ -1,0 +1,101 @@
+/*
+FNXC:Navigation 2026-06-22-01:00:
+Shared main-content view header, modeled after Command Center (.cc-header / .cc-title). Provides the standard --space-lg side/top padding and --space-md bottom gap, an icon + 1.125rem title, and an optional right-aligned actions cluster that wraps below the title on narrow widths so the two never overlap.
+
+FNXC:ViewHeader 2026-06-23-03:45:
+ViewHeader is now THE canonical top header for every left-sidebar/main-content view. Its defaults match the reference already implemented by Missions (.mission-manager__header--inline) and Agents (.agents-view .view-header): container padding var(--space-lg) var(--space-xl), background var(--surface), no bottom divider, flex-shrink:0, and a --todo-colored leading icon at size 20. The title is 1.125rem/600/var(--text) with a var(--space-sm) icon-title gap. The actions cluster is pushed right with margin-left:auto so refresh/new/filter buttons right-align consistently across views; those buttons should use the shared `btn btn-sm` sizing. Per-view headers must adopt ViewHeader with NO divergent overrides so navigating between any two views shows a pixel-consistent header (same height, icon color/size, title metrics, padding, and button sizing). The Agents scoped override (.agents-view .view-header) is now redundant and removed; these defaults supply that chrome directly.
+
+FNXC:ViewHeader 2026-06-22-18:00:
+All view headers use Missions' surface background without a dividing line after the header. Sidebar section headers follow the same no-post-header-line rule so the app chrome feels seamless across themes.
+*/
+/*
+FNXC:ViewHeader 2026-06-23-04:15:
+Pin a shared min-height (--view-header-min-height ≈ 61px border-box) so headers WITH btn-sm actions and title-only headers render the SAME height. box-sizing:border-box keeps padding+border inside the pinned height; align-items:center vertically centers the title/actions row within it.
+
+FNXC:ViewHeader 2026-06-23-05:00:
+min-height alone let DESKTOP headers whose actions were TALLER than the canonical content row grow past 61px: Skills hit 77 via a 44px `touch-target` close button, Goals 69 via a 36px base `.btn` primary, Agents 65 via the 32px `.view-toggle` segmented switch. The desktop clamping rules below (scoped to the non-mobile breakpoint) pin a FIXED `height` and bound every action child to --view-header-content-row (28px) so tall controls collapse into the canonical row instead of stretching it; align-items:center keeps the 16-18px icons centered and nothing clips. The base rule keeps `min-height` (no fixed height) so the MOBILE breakpoint — where controls intentionally grow to 36px touch targets (see AgentsView.css @media max-width:768px) — can still expand the header instead of clipping those targets.
+*/
+.view-header {
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--view-header-min-height);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+}
+
+.view-header__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* FNXC:ViewHeader 2026-06-23-03:45: Leading icon is --todo-colored at size 20 to match Missions/Agents; never let it shrink. */
+.view-header__title svg {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+.view-header__title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* FNXC:ViewHeader 2026-06-23-03:45: Right-align the action cluster with margin-left:auto so it pins to the trailing edge consistently; btn btn-sm gives every header button the same height/padding. */
+.view-header__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-left: auto;
+}
+
+/*
+FNXC:ViewHeader 2026-06-23-05:00:
+DESKTOP-ONLY canonical-height clamp. The mobile breakpoint is `(max-width: 768px), (max-height: 480px)` (landscape phones can exceed 768 wide, hence the height arm — see project mobile-breakpoint note), so the non-mobile complement is `(min-width: 769px) and (min-height: 481px)`. We scope the clamp here because mobile intentionally GROWS these controls to 36px touch targets (AgentsView.css @media max-width:768px); clamping there would clip them. On desktop:
+- Pin a FIXED header height so it can never exceed the canonical 61px.
+- nowrap + a fixed content-row-height actions cluster keep everything on one row (wrapping was a secondary way headers grew past 61px).
+- Bound every action child to --view-header-content-row (28px): Goals' base `.btn` primary (intrinsic ~36px → now padding-trimmed to fit), Skills' 44px `touch-target` close button, and Agents' 32px `.view-toggle` all collapse to the row. align-items:center keeps the 16-18px icons centered; nothing clips because each control's own content fits inside 28px.
+*/
+@media (min-width: 769px) and (min-height: 481px) {
+  .view-header {
+    height: var(--view-header-min-height);
+  }
+
+  .view-header__actions {
+    flex-wrap: nowrap;
+    height: var(--view-header-content-row);
+  }
+
+  .view-header__actions > * {
+    min-height: 0;
+    max-height: var(--view-header-content-row);
+    white-space: nowrap;
+  }
+
+  /* Skills' close button carries `touch-target` (min-height:44px); force it square at the canonical row so it stops stretching the header to 77px. The 16px X icon stays centered and tappable. */
+  .view-header__actions .touch-target {
+    min-width: var(--view-header-content-row);
+    min-height: var(--view-header-content-row);
+    width: var(--view-header-content-row);
+    height: var(--view-header-content-row);
+  }
+
+  /* Agents' `.view-toggle` segmented switch is intrinsically 32px; bound it (and its inner 28px buttons) to the canonical row so it no longer adds 4px. Stays a single horizontal row of toggles. */
+  .view-header__actions .view-toggle {
+    height: var(--view-header-content-row);
+  }
+
+  .view-header__actions .view-toggle .view-toggle-btn {
+    height: 100%;
+  }
+}

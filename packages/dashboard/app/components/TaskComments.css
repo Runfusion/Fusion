@@ -1,0 +1,110 @@
+.comments-header-row {
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.comments-author-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.comments-actions-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.comments-edit-form {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.comments-edit-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+.comments-outcome-text {
+  white-space: pre-wrap;
+}
+
+.comments-compose-form {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.comments-type-toggle {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.comments-guidance-hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.comments-footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.comments-char-count {
+  font-size: 0.75rem;
+}
+
+.comments-char-count--over {
+  color: var(--color-error);
+}
+
+.comments-textarea {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.comments-textarea:focus,
+.comments-textarea:focus-visible {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.comments-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.comments-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-guidance-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: calc(var(--space-xs) / 4) var(--space-sm);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 768px) {
+  .comments-textarea {
+    font-size: 1rem;
+  }
+}

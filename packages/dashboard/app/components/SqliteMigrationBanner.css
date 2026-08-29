@@ -1,0 +1,10 @@
+.sqlite-migration-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+.sqlite-migration-banner-body code { word-break: break-all; }
+
+.sqlite-migration-banner-actions { flex-shrink: 0; }

@@ -1,0 +1,353 @@
+import { describe, expect, it } from "vitest";
+import {
+  BUILTIN_MOVED_WORKFLOW_SETTINGS,
+  BUILTIN_OVERSIGHT_SETTINGS,
+  BUILTIN_REVIEW_REVISION_SETTINGS,
+  BUILTIN_TRIAGE_POLICY_SETTINGS,
+  BUILTIN_WORKFLOW_SETTINGS,
+  DEFAULT_PLANNING_TIMEOUT_MS,
+  renderTriagePolicyPlaceholders,
+} from "../workflows/builtin-workflow-settings.js";
+import { MOVED_SETTINGS_KEYS } from "../config/moved-settings.js";
+import {
+  resolveEffectiveSettingValues,
+  validateSettingValuePatch,
+} from "../workflows/workflow-settings.js";
+
+const expectedDefaults: Record<string, { type: string; default: unknown }> = {
+  triageSizeSmallMaxHours: { type: "number", default: 2 },
+  triageSizeMediumMaxHours: { type: "number", default: 4 },
+  triageSizeLargeMaxHours: { type: "number", default: 8 },
+  triageNoCommitsDecisionVerbs: {
+    type: "multi-enum",
+    default: ["Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", "Investigate and report"],
+  },
+  triageDecisionOnlyWorkflowId: { type: "string", default: "builtin:quick-fix" },
+  triageDefaultWorkflowId: { type: "string", default: "" },
+  leanPlanning: { type: "boolean", default: false },
+  autoApproveSpec: { type: "boolean", default: false },
+  /*
+  FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+  Driven off the exported constant, not a literal — same anti-drift rule the maxPostReviewFixes
+  parity anchor documents. The planning turn previously had no Fusion-side ceiling at all.
+  */
+  planningTimeoutMs: { type: "number", default: DEFAULT_PLANNING_TIMEOUT_MS },
+};
+
+describe("workflow-native built-in workflow settings", () => {
+  it("declares behavior-equivalent triage defaults outside the moved-key catalog", () => {
+    const triageById = new Map(BUILTIN_TRIAGE_POLICY_SETTINGS.map((setting) => [setting.id, setting]));
+    const fullIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
+
+    expect(BUILTIN_TRIAGE_POLICY_SETTINGS).toHaveLength(Object.keys(expectedDefaults).length);
+    for (const [id, expected] of Object.entries(expectedDefaults)) {
+      const setting = triageById.get(id);
+      expect(setting, `${id} should be declared`).toBeDefined();
+      expect(setting?.type).toBe(expected.type);
+      expect(setting?.default).toStrictEqual(expected.default);
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+  });
+
+  it("declares review revision caps as unset workflow values outside moved/project settings", () => {
+    const revisionById = new Map(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => [setting.id, setting]));
+    const fullIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
+
+    /*
+    FNXC:ReviewSeverityGate 2026-08-10-18:32:
+    The blocking-severity pair is review-loop policy and belongs in this catalog alongside the
+    revision caps: the caps bound how many times a REVISE may cycle, the thresholds decide whether a
+    REVISE blocks at all. They are enum-typed with defaults, so the number-typed assertions below
+    deliberately continue to cover only the three cap settings.
+    */
+    /*
+    FNXC:ReviewConvergence 2026-08-23-23:05:
+    FN-149 (a786c45bb9) added the six review-convergence/arbitration keys to this catalog: they are
+    review-loop policy of the same kind as the caps and the severity gate, so they belong here and
+    stay OUT of the moved catalog / MOVED_SETTINGS_KEYS (asserted below). 455bdbc007 removed their
+    duplicate defaults from DEFAULT_PROJECT_SETTINGS, making these declarations their single source
+    of truth. The `*Enabled` pair is defaulted; the provider/model lanes are deliberately undefaulted
+    so an unset workflow value means "no alternate target configured".
+    */
+    expect(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => setting.id)).toEqual([
+      "reviewerInlineFixes",
+      "planReviewMaxRevisions",
+      "codeReviewMaxRevisions",
+      "planReviewBlockingSeverity",
+      "codeReviewBlockingSeverity",
+      "reviewConvergenceEscalationEnabled",
+      "reviewConvergenceEscalationProvider",
+      "reviewConvergenceEscalationModelId",
+      "reviewArbitrationEnabled",
+      "reviewArbitrationProvider",
+      "reviewArbitrationModelId",
+      "planReviewReplanCap",
+    ]);
+    for (const id of ["reviewConvergenceEscalationEnabled", "reviewArbitrationEnabled"]) {
+      const setting = revisionById.get(id);
+      expect(setting?.type, `${id} should be boolean`).toBe("boolean");
+      expect(setting?.default, `${id} should default on`).toBe(true);
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+    for (const id of [
+      "reviewConvergenceEscalationProvider",
+      "reviewConvergenceEscalationModelId",
+      "reviewArbitrationProvider",
+      "reviewArbitrationModelId",
+    ]) {
+      const setting = revisionById.get(id);
+      expect(setting?.type, `${id} should be a string lane`).toBe("string");
+      expect(setting, `${id} should carry no declaration default`).not.toHaveProperty("default");
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+    for (const id of ["planReviewBlockingSeverity", "codeReviewBlockingSeverity"]) {
+      const setting = revisionById.get(id);
+      expect(setting, `${id} should be declared`).toBeDefined();
+      expect(setting?.type).toBe("enum");
+      // Defaulted (unlike the caps): the gate is always active, with "any" restoring pre-gate blocking.
+      expect(setting).toHaveProperty("default");
+      expect(setting?.options?.map((option) => option.value)).toContain("any");
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+    expect(revisionById.get("planReviewBlockingSeverity")?.default).toBe("high");
+    expect(revisionById.get("codeReviewBlockingSeverity")?.default).toBe("critical");
+    const inlineFixes = revisionById.get("reviewerInlineFixes");
+    expect(inlineFixes).toMatchObject({
+      type: "boolean",
+      default: true,
+    });
+    expect(fullIds.has("reviewerInlineFixes")).toBe(true);
+    expect(movedIds.has("reviewerInlineFixes")).toBe(false);
+    expect(movedKeyIds.has("reviewerInlineFixes")).toBe(false);
+    for (const id of ["planReviewMaxRevisions", "codeReviewMaxRevisions", "planReviewReplanCap"]) {
+      const setting = revisionById.get(id);
+      expect(setting, `${id} should be declared`).toBeDefined();
+      expect(setting?.type).toBe("number");
+      expect(setting).not.toHaveProperty("default");
+      if (id === "planReviewReplanCap") {
+        expect(setting).toMatchObject({ minimum: 0, integer: true });
+      }
+      expect(setting?.description).toMatch(/Leave unset|unset|unbounded/i);
+      expect(setting?.description).toContain("0");
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+  });
+
+  it("rejects fractional and negative values for the Plan Review replan cap", () => {
+    const invalid = validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: -1,
+    });
+    expect(invalid.rejections).toEqual([
+      expect.objectContaining({ settingId: "planReviewReplanCap", code: "type-mismatch" }),
+    ]);
+
+    const fractionalCap = validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: 2.5,
+    });
+    expect(fractionalCap.rejections).toEqual([
+      expect.objectContaining({ settingId: "planReviewReplanCap", code: "type-mismatch" }),
+    ]);
+    expect(validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: 0,
+    }).accepted).toEqual({ planReviewReplanCap: 0 });
+  });
+
+  it("declares planner oversight level as a workflow-native enum outside moved/project settings", () => {
+    const fullIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
+
+    /*
+    FNXC:MemoryAgent 2026-08-15-22:10:
+    FN-8932 declares memory consolidation workflow-native (it resolves through the default workflow
+    on a no-task heartbeat, like patrol), so it belongs in this catalog and stays out of
+    moved/project settings like every other key asserted below.
+    */
+    expect(BUILTIN_OVERSIGHT_SETTINGS.map((setting) => setting.id)).toEqual([
+      "memoryConsolidationEnabled",
+      "plannerOversightLevel",
+      "plannerOversightNotificationLevel",
+      "plannerOverseerExecutorStuckAfterMs",
+      "plannerOverseerAdvisorEnabled",
+      "plannerOverseerAdvisorProvider",
+      "plannerOverseerAdvisorModelId",
+      "plannerHeartbeatPatrolEnabled",
+    ]);
+    // FNXC:PlannerOversight 2026-07-14-12:00: LLM session advisor must default OFF.
+    expect(BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOverseerAdvisorEnabled")).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+    /* FNXC:MemoryAgent 2026-08-15-22:10: resolve by id, not position — FN-8932 prepended
+       memoryConsolidationEnabled to this catalog and positional reads silently drifted. */
+    const memoryConsolidation = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "memoryConsolidationEnabled");
+    expect(memoryConsolidation).toMatchObject({ type: "boolean", default: true });
+    expect(movedIds.has("memoryConsolidationEnabled")).toBe(false);
+    expect(movedKeyIds.has("memoryConsolidationEnabled")).toBe(false);
+    const oversight = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOversightLevel")!;
+    expect(oversight).toMatchObject({
+      type: "enum",
+      default: "autonomous",
+    });
+    expect(oversight.options?.map((option) => option.value)).toEqual(["off", "observe", "steer", "autonomous"]);
+    expect(oversight.options?.map((option) => option.label)).toEqual([
+      "Off",
+      "Observe",
+      "Steer",
+      "Autonomous recovery",
+    ]);
+    expect(fullIds.has("plannerOversightLevel"), "plannerOversightLevel should be in the full built-in catalog").toBe(
+      true,
+    );
+    expect(
+      movedIds.has("plannerOversightLevel"),
+      "plannerOversightLevel should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerOversightLevel"),
+      "plannerOversightLevel should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+
+    const notificationLevel = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOversightNotificationLevel")!;
+    expect(notificationLevel).toMatchObject({
+      id: "plannerOversightNotificationLevel",
+      type: "enum",
+      default: "important",
+    });
+    expect(notificationLevel.options?.map((option) => option.value)).toEqual([
+      "silent",
+      "errors",
+      "important",
+      "all",
+    ]);
+    expect(notificationLevel.options?.map((option) => option.label)).toEqual([
+      "Silent",
+      "Errors only",
+      "Important",
+      "All",
+    ]);
+    expect(
+      fullIds.has("plannerOversightNotificationLevel"),
+      "plannerOversightNotificationLevel should be in the full built-in catalog",
+    ).toBe(true);
+    expect(
+      movedIds.has("plannerOversightNotificationLevel"),
+      "plannerOversightNotificationLevel should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerOversightNotificationLevel"),
+      "plannerOversightNotificationLevel should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+
+    // FN-7743: executor-stall recovery threshold, declared alongside the other
+    // workflow-native oversight settings.
+    const executorStuckAfterMs = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOverseerExecutorStuckAfterMs")!;
+    expect(executorStuckAfterMs).toMatchObject({
+      id: "plannerOverseerExecutorStuckAfterMs",
+      type: "number",
+      default: 2 * 60 * 60 * 1000,
+    });
+    expect(
+      fullIds.has("plannerOverseerExecutorStuckAfterMs"),
+      "plannerOverseerExecutorStuckAfterMs should be in the full built-in catalog",
+    ).toBe(true);
+    expect(
+      movedIds.has("plannerOverseerExecutorStuckAfterMs"),
+      "plannerOverseerExecutorStuckAfterMs should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerOverseerExecutorStuckAfterMs"),
+      "plannerOverseerExecutorStuckAfterMs should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+
+    const heartbeatPatrol = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerHeartbeatPatrolEnabled")!;
+    expect(heartbeatPatrol).toMatchObject({
+      id: "plannerHeartbeatPatrolEnabled",
+      type: "boolean",
+      default: true,
+    });
+    expect(heartbeatPatrol.description).toMatch(/idle\/no-task heartbeat proactive patrol/i);
+    expect(
+      fullIds.has("plannerHeartbeatPatrolEnabled"),
+      "plannerHeartbeatPatrolEnabled should be in the full built-in catalog",
+    ).toBe(true);
+    expect(
+      movedIds.has("plannerHeartbeatPatrolEnabled"),
+      "plannerHeartbeatPatrolEnabled should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerHeartbeatPatrolEnabled"),
+      "plannerHeartbeatPatrolEnabled should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+  });
+
+  it("accepts custom triage workflow ids and retains them as effective values", () => {
+    const patch = validateSettingValuePatch(BUILTIN_TRIAGE_POLICY_SETTINGS, {
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+
+    expect(patch.rejections).toEqual([]);
+    expect(patch.accepted).toMatchObject({
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+    expect(resolveEffectiveSettingValues(BUILTIN_TRIAGE_POLICY_SETTINGS, patch.accepted)).toMatchObject({
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+  });
+
+  it("renders placeholders from resolved settings and rejects dangling tokens", () => {
+    const prompt = [
+      "Size S (<{{triageSizeSmallMaxHours}}h)",
+      "verbs: {{triageNoCommitsDecisionVerbs}}",
+    ].join("\n");
+
+    const rendered = renderTriagePolicyPlaceholders(prompt, {
+      triageSizeSmallMaxHours: 1,
+      triageNoCommitsDecisionVerbs: ["Audit", "Confirm"],
+    } as never);
+
+    expect(rendered).toContain("Size S (<1h)");
+    expect(rendered).toContain("verbs: Audit, Confirm");
+    expect(rendered).not.toContain("{{");
+    expect(() => renderTriagePolicyPlaceholders("{{unknownTriageToken}}", {})).toThrow(/Unresolved triage policy placeholder/);
+  });
+
+  it("renders the triage default workflow from project settings unless explicitly overridden", () => {
+    const prompt = "Keep the project default workflow (`{{triageDefaultWorkflowId}}`)";
+
+    expect(renderTriagePolicyPlaceholders(prompt, { defaultWorkflowId: "WF-005" })).toContain("`WF-005`");
+    expect(renderTriagePolicyPlaceholders(prompt, {
+      triageDefaultWorkflowId: "builtin:coding",
+      defaultWorkflowId: "WF-005",
+    } as never)).toContain("`WF-005`");
+    expect(renderTriagePolicyPlaceholders(prompt, {
+      triageDefaultWorkflowId: "WF-009",
+      defaultWorkflowId: "WF-005",
+    } as never)).toContain("`WF-009`");
+
+    const fallback = renderTriagePolicyPlaceholders(prompt, {});
+    expect(fallback).toContain("`builtin:coding`");
+    expect(fallback).not.toContain("{{");
+  });
+
+  it("rejects removed split-policy placeholders", () => {
+    expect(() => renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {})).toThrow(/Unresolved triage policy placeholder/);
+  });
+});

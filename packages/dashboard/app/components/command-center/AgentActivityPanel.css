@@ -1,0 +1,101 @@
+/*
+FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
+The activity panel keeps live and timeline controls touch-usable at desktop and mobile widths with existing design tokens. Timeline rows are manual windows, so this stylesheet deliberately adds no nested scroll owner.
+
+FNXC:CommandCenterAgentActivity 2026-08-16-05:07:
+FN-8866 shipped with the undefined numeric --space-1/2/3 scale, which invalidated every gap/padding to 0 and collapsed the panel's spacing. This design system defines only the named --space-xs/sm/md/lg/xl/2xl scale (styles.css), so the numeric references map onto the ascending named steps (1 to xs, 2 to sm, 3 to md) per CommandCenter.token-validity.css.test.ts. No pixel literals here: the mobile-styles guard forbids raw px anywhere in this file, comments included.
+*/
+.cc-agent-activity {
+  display: grid;
+  gap: var(--space-md);
+  min-inline-size: 0;
+}
+
+.cc-agent-activity-mode,
+.cc-agent-activity-filters,
+.cc-agent-activity-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.cc-agent-activity-filters {
+  flex-wrap: wrap;
+}
+
+.cc-agent-activity-filters .input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.cc-agent-activity-range-note,
+.cc-agent-activity-end,
+.cc-agent-activity-copy small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.cc-agent-activity-list {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.cc-agent-activity-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+  padding: var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+button.cc-agent-activity-row {
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+button.cc-agent-activity-row:hover,
+button.cc-agent-activity-row:focus-visible {
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+
+.cc-agent-activity-copy {
+  display: grid;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.cc-agent-activity-target .cc-agent-activity-row {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 768px) {
+  .cc-agent-activity-mode,
+  .cc-agent-activity-filters,
+  .cc-agent-activity-target {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cc-agent-activity-mode .btn,
+  .cc-agent-activity-filters .input,
+  .cc-agent-activity-target .btn {
+    inline-size: 100%;
+  }
+
+  .cc-agent-activity-row {
+    align-items: flex-start;
+  }
+}
+
+@media (max-height: 480px) and (max-width: 768px) {
+  .cc-agent-activity {
+    gap: var(--space-sm);
+  }
+}

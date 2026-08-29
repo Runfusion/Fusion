@@ -1,0 +1,427 @@
+/**
+ * PostgreSQL central-db / archive-db / secrets-store integration test
+ * (U6 satellite-central-archive-db).
+ *
+ * FNXC:CentralArchiveSecrets 2026-06-24-21:00:
+ * Integration tests proving the async Drizzle helper modules for the central
+ * database (task claims), the archive database (archived_tasks CRUD + search),
+ * and the SecretsStore (project + global secrets) round-trip correctly against
+ * real PostgreSQL.
+ *
+ * Coverage:
+ *   - Central DB task claims (tryClaimTask / renewTaskClaim / releaseTaskClaim
+ *     / getTaskClaim): the CentralClaimStore contract surface. Proves the
+ *     optimistic-epoch handoff and same-owner renewal work under PostgreSQL
+ *     MVCC, removing the single-writer contention the SQLite BEGIN IMMEDIATE
+ *     path imposed.
+ *   - Archive DB (upsert / list / get / filterArchived / delete / rowCount /
+ *     search): the cold-storage archived-task log. Proves the jsonb comments
+ *     column and the task_json text snapshot round-trip.
+ *   - SecretsStore (create / get / list / update / reveal / delete for both
+ *     project and global scope, duplicate-key, access-policy CHECK, env
+ *     exportable): VAL-CROSS-011 (secrets encryption round-trips against the
+ *     central PostgreSQL database) and VAL-DATA-016 prerequisite. Proves the
+ *     bytea ciphertext survives byte-identical through the async path.
+ *
+ * Skipped when PostgreSQL is unreachable (FUSION_PG_TEST_SKIP=1) so the merge
+ * gate stays green without a running server.
+ */
+
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { randomBytes } from "node:crypto";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
+import type { ArchivedTaskEntry } from "../../types.js";
+
+/*
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test, and every assertion is unchanged.
+*/
+interface TestCtx {
+  layer: AsyncDataLayer;
+}
+
+/** A fixed 32-byte master key provider for deterministic test crypto. */
+function fixedMasterKeyProvider(key: Buffer = randomBytes(32)): () => Promise<Buffer> {
+  return async () => Buffer.from(key);
+}
+
+/** Build a minimal valid ArchivedTaskEntry for the archive round-trip tests. */
+function sampleArchiveEntry(overrides: Partial<ArchivedTaskEntry> = {}): ArchivedTaskEntry {
+  const now = new Date().toISOString();
+  return {
+    id: `FN-ARCH-${Math.random().toString(36).slice(2, 8)}`,
+    lineageId: `ln-${Math.random().toString(36).slice(2, 8)}`,
+    title: "Archived task title",
+    description: "Archived task description body",
+    column: "archived",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    comments: [],
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: now,
+    ...overrides,
+  };
+}
+
+pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-central-archive-db)", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_cas_test",
+  });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  // ── Central DB: task claims ──
+
+  it("CentralDatabase: tryClaimTask creates a fresh claim, then getTaskClaim reads it back", async () => {
+    const { tryClaimTask, getTaskClaim } = await import("../../async-stores/async-central-db.js");
+    const now = new Date().toISOString();
+
+    const result = await tryClaimTask(ctx.layer, {
+      projectId: "proj-1",
+      taskId: "FN-1",
+      nodeId: "node-a",
+      agentId: "agent-1",
+      runId: "run-1",
+      renewedAt: now,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.claim.leaseEpoch).toBe(1);
+      expect(result.claim.ownerNodeId).toBe("node-a");
+      expect(result.claim.ownerRunId).toBe("run-1");
+    }
+
+    const claim = await getTaskClaim(ctx.layer.db, "proj-1", "FN-1");
+    expect(claim).not.toBeNull();
+    expect(claim!.projectId).toBe("proj-1");
+    expect(claim!.taskId).toBe("FN-1");
+  });
+
+  it("CentralDatabase: same-owner renewal requires matching expectedEpoch", async () => {
+    const { tryClaimTask } = await import("../../async-stores/async-central-db.js");
+    const now = () => new Date().toISOString();
+
+    const created = await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-2", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-1", renewedAt: now(),
+    });
+    expect(created.ok).toBe(true);
+
+    // Wrong epoch → conflict.
+    const conflict = await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-2", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-2", renewedAt: now(), expectedEpoch: 99,
+    });
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) expect(conflict.reason).toBe("conflict");
+
+    // Correct epoch → renewal.
+    const renewed = await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-2", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-2", renewedAt: now(), expectedEpoch: 1,
+    });
+    expect(renewed.ok).toBe(true);
+    if (renewed.ok) expect(renewed.claim.ownerRunId).toBe("run-2");
+  });
+
+  it("CentralDatabase: different-owner takeover requires matching expectedEpoch, else conflict", async () => {
+    const { tryClaimTask } = await import("../../async-stores/async-central-db.js");
+    const now = () => new Date().toISOString();
+
+    await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-3", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-1", renewedAt: now(),
+    });
+
+    // Different owner, no expected epoch → conflict.
+    const blocked = await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-3", nodeId: "node-b", agentId: "agent-2",
+      runId: "run-x", renewedAt: now(),
+    });
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.reason).toBe("conflict");
+
+    // Different owner, correct expected epoch → takeover (epoch bumps).
+    const takeover = await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-3", nodeId: "node-b", agentId: "agent-2",
+      runId: "run-x", renewedAt: now(), expectedEpoch: 1,
+    });
+    expect(takeover.ok).toBe(true);
+    if (takeover.ok) {
+      expect(takeover.claim.ownerNodeId).toBe("node-b");
+      expect(takeover.claim.leaseEpoch).toBe(2);
+    }
+  });
+
+  it("CentralDatabase: renewTaskClaim and releaseTaskClaim honor ownership", async () => {
+    const { tryClaimTask, renewTaskClaim, releaseTaskClaim, getTaskClaim } = await import("../../async-stores/async-central-db.js");
+    const now = () => new Date().toISOString();
+
+    await tryClaimTask(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-4", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-1", renewedAt: now(),
+    });
+
+    // Wrong owner renewal → conflict.
+    const bad = await renewTaskClaim(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-4", nodeId: "node-b", agentId: "agent-2",
+      runId: "run-2", renewedAt: now(), expectedEpoch: 1,
+    });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.reason).toBe("conflict");
+
+    // Correct owner renewal → ok.
+    const ok = await renewTaskClaim(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-4", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-3", renewedAt: now(), expectedEpoch: 1,
+    });
+    expect(ok.ok).toBe(true);
+
+    // Release by non-owner → not_owner.
+    const notOwner = await releaseTaskClaim(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-4", nodeId: "node-b", agentId: "agent-2",
+    });
+    expect(notOwner.ok).toBe(false);
+    if (!notOwner.ok) expect(notOwner.reason).toBe("not_owner");
+
+    // Release by owner → ok, row gone.
+    const released = await releaseTaskClaim(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-4", nodeId: "node-a", agentId: "agent-1",
+    });
+    expect(released.ok).toBe(true);
+    const after = await getTaskClaim(ctx.layer.db, "proj-1", "FN-4");
+    expect(after).toBeNull();
+  });
+
+  it("CentralDatabase: renewTaskClaim returns not_found for an absent claim", async () => {
+    const { renewTaskClaim } = await import("../../async-stores/async-central-db.js");
+    const result = await renewTaskClaim(ctx.layer, {
+      projectId: "proj-1", taskId: "FN-MISSING", nodeId: "node-a", agentId: "agent-1",
+      runId: "run-1", renewedAt: new Date().toISOString(), expectedEpoch: 1,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("not_found");
+  });
+
+  // ── Archive DB ──
+
+  it("ArchiveDatabase: upsert → get → list → filterArchived → delete", async () => {
+    const { upsertArchivedTask, getArchivedTask, listArchivedTasks, filterArchived, deleteArchivedTask, getArchivedRowCount } = await import("../../async-stores/async-archive-db.js");
+    const entry = sampleArchiveEntry({ id: "FN-ARCH-1", title: "First archived", comments: [{ id: "c1", text: "note", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }] });
+
+    await upsertArchivedTask(ctx.layer.db, entry);
+
+    const got = await getArchivedTask(ctx.layer.db, "FN-ARCH-1");
+    expect(got).toBeDefined();
+    expect(got!.id).toBe("FN-ARCH-1");
+    expect(got!.title).toBe("First archived");
+    expect(got!.description).toBe("Archived task description body");
+
+    const all = await listArchivedTasks(ctx.layer.db);
+    expect(all).toHaveLength(1);
+
+    const present = await filterArchived(ctx.layer.db, ["FN-ARCH-1", "FN-GONE"]);
+    expect(present.has("FN-ARCH-1")).toBe(true);
+    expect(present.has("FN-GONE")).toBe(false);
+
+    expect(await getArchivedRowCount(ctx.layer.db)).toBe(1);
+
+    await deleteArchivedTask(ctx.layer.db, "FN-ARCH-1");
+    expect(await getArchivedTask(ctx.layer.db, "FN-ARCH-1")).toBeUndefined();
+    expect(await getArchivedRowCount(ctx.layer.db)).toBe(0);
+  });
+
+  it("ArchiveDatabase: upsert replaces an existing entry on conflict", async () => {
+    const { upsertArchivedTask, getArchivedTask } = await import("../../async-stores/async-archive-db.js");
+    const entry = sampleArchiveEntry({ id: "FN-ARCH-2", title: "v1" });
+    await upsertArchivedTask(ctx.layer.db, entry);
+
+    const updated = sampleArchiveEntry({ id: "FN-ARCH-2", title: "v2", description: "changed" });
+    await upsertArchivedTask(ctx.layer.db, updated);
+
+    const got = await getArchivedTask(ctx.layer.db, "FN-ARCH-2");
+    expect(got!.title).toBe("v2");
+    expect(got!.description).toBe("changed");
+  });
+
+  it("ArchiveDatabase: search matches tokens across title/description/comments", async () => {
+    const { upsertArchivedTask, searchArchivedTasks } = await import("../../async-stores/async-archive-db.js");
+    await upsertArchivedTask(ctx.layer.db, sampleArchiveEntry({ id: "FN-S1", title: "Postgres migration", description: "convert sqlite", comments: [] }));
+    await upsertArchivedTask(ctx.layer.db, sampleArchiveEntry({ id: "FN-S2", title: "unrelated", description: "nothing here", comments: [{ id: "c", text: "mention postgres", author: "agent", createdAt: "2026-01-01T00:00:00.000Z" }] }));
+
+    const hits = await searchArchivedTasks(ctx.layer.db, "postgres", 10);
+    const ids = hits.map((h) => h.id).sort();
+    expect(ids).toEqual(["FN-S1", "FN-S2"]);
+
+    const none = await searchArchivedTasks(ctx.layer.db, "zzznomatch", 10);
+    expect(none).toEqual([]);
+  });
+
+  // ── SecretsStore ──
+
+  it("SecretsStore: create → get → list → update → reveal → delete for project scope", async () => {
+    const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
+
+    const created = await store.createSecret({
+      scope: "project", key: "API_KEY", plaintextValue: "secret-value-123",
+      description: "my key", accessPolicy: "auto",
+    });
+    expect(created.key).toBe("API_KEY");
+
+    const meta = await store.getSecretMetadata(created.id, "project");
+    expect(meta).not.toBeNull();
+    expect(meta!.accessPolicy).toBe("auto");
+
+    const listed = await store.listSecrets("project");
+    expect(listed).toHaveLength(1);
+
+    const updated = await store.updateSecret(created.id, "project", { description: "renamed" });
+    expect(updated.description).toBe("renamed");
+
+    const revealed = await store.revealSecret(created.id, "project", { userId: "u1" });
+    expect(revealed.plaintextValue).toBe("secret-value-123");
+    expect(revealed.key).toBe("API_KEY");
+
+    // lastReadAt recorded after reveal.
+    const afterRead = await store.getSecretMetadata(created.id, "project");
+    expect(afterRead!.lastReadBy).toBe("u1");
+
+    await store.deleteSecret(created.id, "project");
+    const gone = await store.getSecretMetadata(created.id, "project");
+    expect(gone).toBeNull();
+  });
+
+  it("SecretsStore: global scope routes to central.secrets_global", async () => {
+    const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
+
+    const created = await store.createSecret({
+      scope: "global", key: "GLOBAL_TOKEN", plaintextValue: "g-val",
+      envExportable: true, envExportKey: "GLOBAL_TOKEN",
+    });
+    const revealed = await store.revealSecret(created.id, "global", { userId: "u" });
+    expect(revealed.plaintextValue).toBe("g-val");
+
+    // listSecrets() with no scope returns both project + global.
+    const all = await store.listSecrets();
+    expect(all.some((s) => s.scope === "global" && s.key === "GLOBAL_TOKEN")).toBe(true);
+  });
+
+  it("SecretsStore: duplicate key throws duplicate-key (unique constraint)", async () => {
+    const { AsyncSecretsStore, SecretsStoreError } = await import("../../async-stores/async-secrets-store.js");
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
+
+    await store.createSecret({ scope: "project", key: "DUP", plaintextValue: "v1" });
+    await expect(
+      store.createSecret({ scope: "project", key: "DUP", plaintextValue: "v2" }),
+    ).rejects.toMatchObject({ code: "duplicate-key", name: "SecretsStoreError" });
+    expect(SecretsStoreError).toBeDefined();
+  });
+
+  it("SecretsStore: re-encrypting a value on update round-trips", async () => {
+    const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
+
+    const created = await store.createSecret({ scope: "project", key: "ROTATE", plaintextValue: "old" });
+    await store.updateSecret(created.id, "project", { plaintextValue: "new" });
+    const revealed = await store.revealSecret(created.id, "project", { userId: "u" });
+    expect(revealed.plaintextValue).toBe("new");
+  });
+
+  it("SecretsStore: listEnvExportable returns project-overrides-global on key collision", async () => {
+    const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
+
+    await store.createSecret({ scope: "global", key: "SHARED", plaintextValue: "global-val", envExportable: true, envExportKey: "SHARED" });
+    await store.createSecret({ scope: "project", key: "SHARED", plaintextValue: "project-val", envExportable: true, envExportKey: "SHARED" });
+
+    const exported = await store.listEnvExportable();
+    expect(exported).toHaveLength(1);
+    expect(exported[0]!.plaintextValue).toBe("project-val");
+  });
+
+  it("SecretsStore: deleting an absent secret throws not-found", async () => {
+    const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
+    await expect(store.deleteSecret("nope", "project")).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  /**
+   * FNXC:PostgresMigrationCoverage 2026-07-13-22:54:
+   * Secret audit notifications must cover create, update, read, and delete without ever including plaintext, and a failing observer must remain non-blocking so audit infrastructure cannot break credential operations.
+   */
+  it("SecretsStore: audit events omit plaintext and emitter failures stay non-blocking", async () => {
+    const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
+    const events: Array<Record<string, unknown>> = [];
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider(), {
+      auditEmitter: (event) => events.push(event),
+    });
+
+    const created = await store.createSecret({
+      scope: "project",
+      key: "AUDITED_TOKEN",
+      plaintextValue: "must-never-enter-audit",
+    });
+    await store.updateSecret(created.id, "project", { plaintextValue: "rotated-secret" });
+    await store.revealSecret(created.id, "project", { agentId: "agent-1" });
+    await store.deleteSecret(created.id, "project");
+
+    expect(events.map((event) => event.mutationType)).toEqual([
+      "secret:create",
+      "secret:update",
+      "secret:read",
+      "secret:delete",
+    ]);
+    expect(events.every((event) => event.secretId === created.id && event.key === "AUDITED_TOKEN")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("must-never-enter-audit");
+    expect(JSON.stringify(events)).not.toContain("rotated-secret");
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resilientStore = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider(), {
+      auditEmitter: () => {
+        throw new Error("audit transport unavailable");
+      },
+    });
+    try {
+      await expect(
+        resilientStore.createSecret({ scope: "project", key: "RESILIENT", plaintextValue: "still-created" }),
+      ).resolves.toMatchObject({ key: "RESILIENT" });
+      /*
+      FNXC:EngineDiagnostics 2026-07-30-15:00:
+      Asserted with stringContaining, because the logger deliberately wraps every message in a
+      machine-readable severity marker: `withSeverityMarker` (logger.ts:31) emits
+      `\u0000fnlvl=warn\u0000[core-async-secrets-store] …` so the TUI log pane can colour by level.
+      This case pinned the raw string and so broke when that convention landed — the assertion was
+      coupled to log FORMATTING, not to the behaviour it exists to check.
+
+      What it actually cares about is that a failing audit emitter is reported and does not take the
+      create down with it. Both are still asserted: the resolves.toMatchObject above proves the secret
+      was created anyway, and this proves the failure was surfaced with its cause.
+      */
+      expect(warning).toHaveBeenCalledTimes(1);
+      const [loggedMessage, loggedCause] = warning.mock.calls[0]!;
+      expect(String(loggedMessage)).toContain("[async-secrets-store] audit emitter failed");
+      expect((loggedCause as { message?: string })?.message).toBe("audit transport unavailable");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+});

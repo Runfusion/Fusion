@@ -1,0 +1,23 @@
+.tracking-repo-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.tracking-repo-select__custom-input {
+  margin-top: 0;
+}
+
+.tracking-repo-select__hint {
+  color: var(--text-muted);
+}
+
+.tracking-repo-select__hint--error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .tracking-repo-select {
+    gap: var(--space-xs);
+  }
+}

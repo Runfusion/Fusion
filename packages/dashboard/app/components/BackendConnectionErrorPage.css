@@ -1,0 +1,17 @@
+.project-overview-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-2xl);
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .project-overview-empty {
+    padding: var(--space-lg);
+  }
+}

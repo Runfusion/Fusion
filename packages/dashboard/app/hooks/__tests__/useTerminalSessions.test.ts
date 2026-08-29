@@ -1,0 +1,1919 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { StrictMode } from "react";
+import { renderHook, waitFor, act } from "@testing-library/react";
+import { useTerminalSessions, __resetServerPlatformProbeForTests } from "../useTerminalSessions";
+import { scopedKey } from "../../utils/projectStorage";
+import * as apiModule from "../../api";
+import * as systemPanelModule from "../../api/system/system-panel";
+
+// Mock API
+vi.mock("../../api", () => ({
+  createTerminalSession: vi.fn(),
+  killPtyTerminalSession: vi.fn(),
+  listTerminalSessions: vi.fn(),
+}));
+
+// FNXC:Terminal 2026-07-23-22:40: Windows-UA clients probe the server platform
+// (GET /api/system/info) before deciding whether auto-create is skipped.
+vi.mock("../../api/system/system-panel", () => ({
+  fetchSystemInfo: vi.fn(),
+}));
+
+const mockCreateTerminalSession = vi.mocked(apiModule.createTerminalSession);
+const mockKillPtyTerminalSession = vi.mocked(apiModule.killPtyTerminalSession);
+const mockListTerminalSessions = vi.mocked(apiModule.listTerminalSessions);
+const mockFetchSystemInfo = vi.mocked(systemPanelModule.fetchSystemInfo);
+
+// Mock localStorage
+const localStorageMock = {
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+  clear: vi.fn(),
+};
+
+Object.defineProperty(window, "localStorage", {
+  value: localStorageMock,
+});
+
+const TEST_PROJECT_ID = "proj-123";
+const TERMINAL_TABS_KEY = scopedKey("kb-terminal-tabs", TEST_PROJECT_ID);
+const TASK_TERMINAL_TABS_KEY = scopedKey("kb-terminal-tabs:task:FN-7813", TEST_PROJECT_ID);
+const TASK_WORKTREE = "/project/.worktrees/FN-7813";
+
+describe("useTerminalSessions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorageMock.getItem.mockReturnValue(null);
+    localStorageMock.setItem.mockImplementation(() => {});
+    
+    // Default mock implementations
+    mockCreateTerminalSession.mockResolvedValue({
+      sessionId: "session-1",
+      shell: "/bin/bash",
+      cwd: "/project",
+    });
+    mockKillPtyTerminalSession.mockResolvedValue({ killed: true });
+    mockListTerminalSessions.mockResolvedValue([]);
+    // Default: non-Windows host so the Windows-UA probe resolves permissive.
+    __resetServerPlatformProbeForTests();
+    mockFetchSystemInfo.mockResolvedValue({ platform: "darwin" } as systemPanelModule.SystemInfoResponse);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("initial tab creation", () => {
+    it("auto-creates first tab when no tabs exist in localStorage", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab).not.toBeNull();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+    });
+
+    it("converges when a scope change invalidates an in-flight first-tab creation", async () => {
+      let resolveFirstCreate: (session: { sessionId: string; shell: string; cwd: string }) => void;
+      mockCreateTerminalSession
+        .mockImplementationOnce(
+          () => new Promise((resolve) => {
+            resolveFirstCreate = resolve;
+          }),
+        )
+        .mockResolvedValueOnce({
+          sessionId: "session-current-generation",
+          shell: "/bin/bash",
+          cwd: "/project/.worktrees/FN-8302",
+        });
+
+      const { result, rerender } = renderHook(
+        ({ storageScope }: { storageScope?: string }) =>
+          useTerminalSessions(TEST_PROJECT_ID, { storageScope }),
+        { initialProps: { storageScope: undefined }, wrapper: StrictMode },
+      );
+
+      await waitFor(() => {
+        expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+      });
+
+      rerender({ storageScope: "task:FN-8302" });
+
+      await waitFor(() => {
+        expect(mockCreateTerminalSession).toHaveBeenCalledTimes(2);
+      });
+
+      await act(async () => {
+        resolveFirstCreate!({
+          sessionId: "session-stale-generation",
+          shell: "/bin/bash",
+          cwd: "/project",
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeTab?.sessionId).toBe("session-current-generation");
+        expect(result.current.bootstrapError).toBeNull();
+      });
+    });
+
+    it("auto-creates first scoped tab in defaultCwd with a basename title", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValueOnce({
+        sessionId: "session-task",
+        shell: "/bin/bash",
+        cwd: TASK_WORKTREE,
+      });
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenCalledWith(
+        TASK_WORKTREE,
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(result.current.activeTab?.title).toBe("FN-7813");
+      expect(result.current.activeTab?.cwd).toBe(TASK_WORKTREE);
+      expect(localStorageMock.getItem).toHaveBeenCalledWith(TASK_TERMINAL_TABS_KEY);
+      expect(localStorageMock.getItem).not.toHaveBeenCalledWith(TERMINAL_TABS_KEY);
+    });
+
+    it("restores scoped tabs without reading the default terminal tab key", async () => {
+      const scopedTabs = [
+        {
+          id: "tab-task",
+          sessionId: "session-task",
+          title: "FN-7813",
+          cwd: TASK_WORKTREE,
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TASK_TERMINAL_TABS_KEY ? JSON.stringify(scopedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-task", shell: "/bin/bash", cwd: TASK_WORKTREE, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.activeTab?.sessionId).toBe("session-task");
+      expect(localStorageMock.getItem).toHaveBeenCalledWith(TASK_TERMINAL_TABS_KEY);
+      expect(localStorageMock.getItem).not.toHaveBeenCalledWith(TERMINAL_TABS_KEY);
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("restores tabs from localStorage on mount", async () => {
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-1",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      
+      // Session is still valid on server
+      mockListTerminalSessions.mockResolvedValue([{ id: "session-1", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" }]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.length).toBe(1);
+      expect(result.current.tabs[0].sessionId).toBe("session-1");
+      expect(result.current.activeTab?.id).toBe("tab-1");
+      
+      // Should not create a new session if restoring existing ones
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("filters out stale sessions that no longer exist on server", async () => {
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-stale",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-2",
+          sessionId: "session-valid",
+          title: "zsh",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      
+      // Only session-valid still exists on server
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-valid", shell: "/bin/zsh", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" }
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(result.current.tabs[0].sessionId).toBe("session-valid");
+      expect(result.current.activeTab?.id).toBe("tab-2");
+    });
+
+    it("filters stale sessions while preserving mixed project-root and worktree tabs", async () => {
+      const storedTabs = [
+        {
+          id: "tab-root",
+          sessionId: "session-root",
+          title: "Terminal 1",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-worktree",
+          sessionId: "session-worktree",
+          title: "FN-7253",
+          cwd: "/project/.worktrees/FN-7253",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-stale-worktree",
+          sessionId: "session-stale-worktree",
+          title: "FN-0000",
+          cwd: "/project/.worktrees/FN-0000",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-root", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253", createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.map((tab) => tab.id)).toEqual(["tab-root", "tab-worktree"]);
+      expect(result.current.tabs[0].cwd).toBeUndefined();
+      expect(result.current.tabs[1].cwd).toBe("/project/.worktrees/FN-7253");
+      expect(result.current.activeTab?.id).toBe("tab-root");
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("creates new tab if all stored sessions are stale", async () => {
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-stale",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      
+      // No sessions exist on server
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      // Should have created a new session
+      expect(mockCreateTerminalSession).toHaveBeenCalled();
+    });
+  });
+
+  /*
+  FNXC:Terminal 2026-07-23-14:30:
+  GitHub #2121/#2307: win32-hosted servers intentionally skip first-tab
+  auto-create (embedded shells could spawn Windows Terminal Help/version
+  dialogs), but that skip must be observable via `autoCreateDisabled` so the
+  modal renders an explicit start action instead of an endless spinner.
+
+  FNXC:Terminal 2026-07-23-22:40:
+  The skip is keyed on the SERVER platform (probed via /api/system/info by
+  Windows-UA clients), not the browser UA: a Windows browser pointed at a
+  mac/linux host must auto-start a session instead of showing the manual
+  "Start terminal" screen.
+  */
+  describe("Windows host auto-create skip", () => {
+    const setUserAgent = (value: string) => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value,
+        configurable: true,
+      });
+    };
+    const originalUserAgent = window.navigator.userAgent;
+
+    afterEach(() => {
+      setUserAgent(originalUserAgent);
+    });
+
+    it("reports autoCreateDisabled and never auto-creates when the server is win32", async () => {
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockResolvedValue({ platform: "win32" } as systemPanelModule.SystemInfoResponse);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.autoCreateDisabled).toBe(true);
+      });
+      // Give the (skipped) auto-create effect a chance to fire wrongly.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+      expect(result.current.tabs.length).toBe(0);
+    });
+
+    it("auto-creates from a Windows browser when the server host is not Windows", async () => {
+      // Regression: the manual "Start terminal" screen appeared for Windows
+      // browsers even against mac/linux-hosted dashboards, where there is no
+      // wt.exe hazard — opening the terminal must start a session directly.
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockResolvedValue({ platform: "darwin" } as systemPanelModule.SystemInfoResponse);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(result.current.autoCreateDisabled).toBe(false);
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the skip (conservatively) when the platform probe fails", async () => {
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockRejectedValue(new Error("network down"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.autoCreateDisabled).toBe(true);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("never probes the server platform from non-Windows browsers", async () => {
+      setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/126.0");
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(mockFetchSystemInfo).not.toHaveBeenCalled();
+    });
+
+    it("reports autoCreateDisabled=false on non-Windows browsers", async () => {
+      setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/126.0");
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.autoCreateDisabled).toBe(false);
+    });
+
+    it("does not disable auto-create for Windows Phone user agents", async () => {
+      // The guard exists for desktop wt.exe dialogs; a bare "Windows" substring
+      // also matched Windows Phone UAs and needlessly denied them auto-create.
+      setUserAgent(
+        "Mozilla/5.0 (Windows Phone 10.0; Android 6.0.1; Microsoft; Lumia 950) Edge/14.14263",
+      );
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.autoCreateDisabled).toBe(false);
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("waits for server validation before isReady on Windows with persisted tabs", async () => {
+      // The Windows branch used to force isReady(true) on mount, letting xterm
+      // connect to a persisted-but-dead session before validation pruned it.
+      setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0");
+      mockFetchSystemInfo.mockResolvedValue({ platform: "win32" } as systemPanelModule.SystemInfoResponse);
+      const storedTabs = [
+        { id: "tab-dead", sessionId: "session-dead", title: "bash", isActive: true, createdAt: 1 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      let resolveList: (sessions: unknown[]) => void = () => {};
+      mockListTerminalSessions.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveList = resolve as unknown as (sessions: unknown[]) => void;
+          }),
+      );
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Validation is still in flight: Windows must NOT short-circuit isReady.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      expect(result.current.isReady).toBe(false);
+
+      // Server says the persisted session is gone — validation prunes it.
+      await act(async () => {
+        resolveList([]);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+      expect(result.current.tabs.length).toBe(0);
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("persisted tab restore normalization", () => {
+    it("activates the first tab when a persisted payload has no active tab", async () => {
+      // An all-inactive persisted list previously left activeTab null forever:
+      // auto-create is blocked by tabs.length > 0 and the modal spun on
+      // "Starting terminal...". Normalize at the storage read boundary.
+      const storedTabs = [
+        { id: "tab-a", sessionId: "session-a", title: "bash", isActive: false, createdAt: 1 },
+        { id: "tab-b", sessionId: "session-b", title: "zsh", isActive: false, createdAt: 2 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-a" },
+        { id: "session-b" },
+      ] as never);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.length).toBe(2);
+      expect(result.current.activeTab?.id).toBe("tab-a");
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("activates the first tab even when server validation FAILS (the motivating wedge)", async () => {
+      // The validation-failure branch keeps tabs exactly as read from storage —
+      // without normalization at the storage boundary, an all-inactive payload
+      // plus an unreachable server left activeTab null forever: the spinner
+      // stayed up and auto-create was blocked by tabs.length > 0.
+      const storedTabs = [
+        { id: "tab-a", sessionId: "session-a", title: "bash", isActive: false, createdAt: 1 },
+        { id: "tab-b", sessionId: "session-b", title: "zsh", isActive: false, createdAt: 2 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockRejectedValue(new Error("server unreachable"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.length).toBe(2);
+      expect(result.current.activeTab).not.toBeNull();
+      expect(result.current.activeTab?.id).toBe("tab-a");
+    });
+
+    it("collapses multiple active tabs to the first active one", async () => {
+      // Several active-styled tabs render at once while only the first receives
+      // input; the inconsistency also persists back to storage.
+      const storedTabs = [
+        { id: "tab-a", sessionId: "session-a", title: "bash", isActive: false, createdAt: 1 },
+        { id: "tab-b", sessionId: "session-b", title: "zsh", isActive: true, createdAt: 2 },
+        { id: "tab-c", sessionId: "session-c", title: "fish", isActive: true, createdAt: 3 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockRejectedValue(new Error("server unreachable"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.filter((tab) => tab.isActive)).toHaveLength(1);
+      expect(result.current.activeTab?.id).toBe("tab-b");
+    });
+
+    it("drops malformed persisted entries without discarding valid sibling tabs", async () => {
+      // One null/shape-less element used to throw inside normalization and the
+      // outer catch returned [], silently discarding the valid tabs beside it.
+      const storedPayload = [
+        null,
+        { bogus: true },
+        { id: "tab-good", sessionId: "session-good", title: "bash", isActive: false, createdAt: 1 },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TERMINAL_TABS_KEY ? JSON.stringify(storedPayload) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([{ id: "session-good" }] as never);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.activeTab?.id).toBe("tab-good");
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bootstrap sequencing (FN-7686)", () => {
+    it("does not serialize auto-create behind a never-resolving session list on a fresh open", async () => {
+      // FNXC:Terminal 2026-07-08-10:00:
+      // Regression for FN-7686: on a fresh open (no persisted kb-terminal-tabs),
+      // the list-validation round trip has nothing to validate (there are no
+      // local tabs), so it must not block auto-create. This test holds
+      // listTerminalSessions() permanently pending to prove the auto-create
+      // path does not wait on it — asserting observable sequencing, not just
+      // that createTerminalSession was eventually called.
+      //
+      // FNXC:TerminalSharing 2026-08-19-03:05:
+      // The guarantee is now BOUNDED rather than absolute: a fresh open consults the list so it can
+      // adopt sessions other browsers already run (auto-create fires on a 0ms timer, so a
+      // background list could never win that race). A hung list must still not hold the terminal
+      // hostage — it now costs ADOPT_LIST_TIMEOUT_MS (1.5s) and then behaves exactly as before,
+      // which is what the raised waitFor budget below allows for.
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockReturnValue(new Promise(() => {})); // never resolves
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-fast",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Auto-create must complete even though listTerminalSessions never settles.
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      }, { timeout: 5000 });
+      expect(result.current.activeTab?.sessionId).toBe("session-fast");
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("still awaits session-list validation before auto-create when tabs are persisted", async () => {
+      // Reload-with-persisted-tabs case: list validation IS decision-relevant
+      // (must know which sessionIds still exist), so auto-create must remain
+      // gated behind it. This guards against an overly-broad fix that skips
+      // validation unconditionally.
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-stale",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      let resolveList: (val: unknown[]) => void;
+      mockListTerminalSessions.mockReturnValue(
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+      );
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-new",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Give pending microtasks a chance to flush; auto-create must NOT have
+      // fired yet because list validation (decision-relevant here) is still pending.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+
+      // Resolve the list call with no matching sessions (stale tab) — now
+      // auto-create should proceed.
+      await act(async () => {
+        resolveList!([]);
+      });
+
+      await waitFor(() => {
+        expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-03:05:
+  Terminal PTYs live server-side and already accept several attached viewers, but each browser kept
+  its own tab list in localStorage and a browser with none spawned a private session without ever
+  asking what was already running. Two people on one Fusion (or one person in a second browser)
+  therefore never saw each other's terminals. A fresh client must ADOPT the server's sessions.
+  */
+  describe("cross-browser session adoption", () => {
+    it("adopts the server's existing sessions instead of spawning a private one", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-b", cwd: "/project/api", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:30:00.000Z" },
+        { id: "session-a", cwd: "/project/web", shell: "/bin/bash", createdAt: "2026-08-19T01:00:00.000Z", lastActivityAt: "2026-08-19T02:30:00.000Z" },
+      ]);
+      mockCreateTerminalSession.mockResolvedValue({ sessionId: "session-private", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(2);
+      });
+      // Oldest first, so every client orders the shared set identically.
+      expect(result.current.tabs.map((tab) => tab.sessionId)).toEqual(["session-a", "session-b"]);
+      expect(result.current.activeTab?.sessionId).toBe("session-a");
+      expect(result.current.tabs.map((tab) => tab.title)).toEqual(["web", "api"]);
+      // The whole point: no parallel session nobody else can see.
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("still auto-creates when the server has no sessions to adopt", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValue({ sessionId: "session-first", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(result.current.activeTab?.sessionId).toBe("session-first");
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to auto-create when the session list fails", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockRejectedValue(new Error("network down"));
+      mockCreateTerminalSession.mockResolvedValue({ sessionId: "session-fallback", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(result.current.activeTab?.sessionId).toBe("session-fallback");
+    });
+
+    it("does not adopt into a browser that already has its own tabs", async () => {
+      // Adopting here would resurrect tabs this browser deliberately closed.
+      const storedTabs = [{ id: "tab-1", sessionId: "session-mine", title: "bash", isActive: true, createdAt: Date.now() }];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-mine", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T01:00:00.000Z", lastActivityAt: "2026-08-19T02:30:00.000Z" },
+        { id: "session-someone-else", cwd: "/project/api", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:30:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+      expect(result.current.tabs.map((tab) => tab.sessionId)).toEqual(["session-mine"]);
+    });
+  });
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-04:10:
+  Closing is two intents: detach (leave the PTY for other viewers and for reopening) versus end the
+  session for everyone. Before this, every close killed the PTY, so closing a tab in one browser
+  yanked the terminal out from under anyone else attached to it.
+  */
+  describe("detach vs kill on close", () => {
+    const twoTabs = [
+      { id: "tab-1", sessionId: "session-1", title: "one", isActive: true, createdAt: 1 },
+      { id: "tab-2", sessionId: "session-2", title: "two", isActive: false, createdAt: 2 },
+    ];
+
+    it("leaves the server session running when the tab is only detached", async () => {
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(twoTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-1", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T01:00:00.000Z", lastActivityAt: "2026-08-19T01:00:00.000Z" },
+        { id: "session-2", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+      await waitFor(() => expect(result.current.tabs.length).toBe(2));
+
+      act(() => {
+        result.current.closeTab("tab-1", { killSession: false });
+      });
+
+      expect(result.current.tabs.map((tab) => tab.sessionId)).toEqual(["session-2"]);
+      expect(mockKillPtyTerminalSession).not.toHaveBeenCalled();
+    });
+
+    it("kills the server session when the operator ends it", async () => {
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(twoTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-1", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T01:00:00.000Z", lastActivityAt: "2026-08-19T01:00:00.000Z" },
+        { id: "session-2", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+      await waitFor(() => expect(result.current.tabs.length).toBe(2));
+
+      act(() => {
+        result.current.closeTab("tab-1", { killSession: true });
+      });
+
+      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith("session-1", TEST_PROJECT_ID);
+    });
+  });
+
+  describe("reopening detached sessions", () => {
+    it("offers server sessions this browser is not showing, and reopens them", async () => {
+      const storedTabs = [{ id: "tab-1", sessionId: "session-mine", title: "mine", isActive: true, createdAt: 1 }];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-mine", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T01:00:00.000Z", lastActivityAt: "2026-08-19T01:00:00.000Z" },
+        { id: "session-theirs", cwd: "/project/api", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+      await waitFor(() => expect(result.current.isReady).toBe(true));
+
+      await act(async () => {
+        await result.current.refreshDetachedSessions();
+      });
+
+      // Only the session this browser is not showing is offered.
+      expect(result.current.detachedSessions.map((session) => session.id)).toEqual(["session-theirs"]);
+
+      act(() => {
+        result.current.reopenSession("session-theirs");
+      });
+
+      expect(result.current.tabs.map((tab) => tab.sessionId)).toEqual(["session-mine", "session-theirs"]);
+      expect(result.current.activeTab?.sessionId).toBe("session-theirs");
+      // Reopening attaches to the existing PTY rather than starting a new one.
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+      // And it drops out of the reopen list once it is showing here.
+      expect(result.current.detachedSessions).toEqual([]);
+    });
+
+    it("focuses an already-open tab instead of duplicating it", async () => {
+      const storedTabs = [
+        { id: "tab-1", sessionId: "session-1", title: "one", isActive: true, createdAt: 1 },
+        { id: "tab-2", sessionId: "session-2", title: "two", isActive: false, createdAt: 2 },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-1", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T01:00:00.000Z", lastActivityAt: "2026-08-19T01:00:00.000Z" },
+        { id: "session-2", cwd: "/project", shell: "/bin/bash", createdAt: "2026-08-19T02:00:00.000Z", lastActivityAt: "2026-08-19T02:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+      await waitFor(() => expect(result.current.tabs.length).toBe(2));
+
+      act(() => {
+        result.current.reopenSession("session-2");
+      });
+
+      expect(result.current.tabs.length).toBe(2);
+      expect(result.current.activeTab?.sessionId).toBe("session-2");
+    });
+  });
+
+  describe("creating additional tabs", () => {
+    it("creates new tab with fresh session when createTab is called", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({
+          sessionId: "session-1",
+          shell: "/bin/bash",
+          cwd: "/project",
+        })
+        .mockResolvedValueOnce({
+          sessionId: "session-2",
+          shell: "/bin/bash",
+          cwd: "/project",
+        });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab();
+      });
+
+      expect(result.current.tabs.length).toBe(2);
+      expect(result.current.activeTab?.sessionId).toBe("session-2");
+      
+      // First tab should be deactivated
+      expect(result.current.tabs[0].isActive).toBe(false);
+      expect(result.current.tabs[1].isActive).toBe(true);
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+    });
+
+    it("passes an explicit cwd when creating a worktree tab", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253" });
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID
+      );
+      expect(result.current.activeTab?.title).toBe("FN-7253");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+
+    it("persists the server-confirmed cwd for worktree tabs", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253/", title: "FN-7253" });
+      });
+
+      expect(result.current.activeTab?.title).toBe("FN-7253");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+
+    it("treats an explicit undefined cwd like the default project-root flow", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-2", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: undefined });
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+      expect(result.current.activeTab?.title).toBe("Terminal 2");
+      expect(result.current.activeTab?.cwd).toBeUndefined();
+    });
+
+    it("creates independent sessions for duplicate cwd selections", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-1", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-2", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenNthCalledWith(
+        2,
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID
+      );
+      expect(mockCreateTerminalSession).toHaveBeenNthCalledWith(
+        3,
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID
+      );
+      expect(result.current.tabs.map((tab) => tab.sessionId)).toEqual([
+        "session-1",
+        "session-worktree-1",
+        "session-worktree-2",
+      ]);
+      expect(result.current.tabs.slice(1).map((tab) => tab.cwd)).toEqual([
+        "/project/.worktrees/FN-7253",
+        "/project/.worktrees/FN-7253",
+      ]);
+    });
+
+    it("names tabs with incrementing numbers", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-2", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-3", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.tabs[0].title).toBe("Terminal 1");
+      });
+
+      await act(async () => {
+        await result.current.createTab();
+      });
+
+      expect(result.current.tabs[1].title).toBe("Terminal 2");
+
+      await act(async () => {
+        await result.current.createTab();
+      });
+
+      expect(result.current.tabs[2].title).toBe("Terminal 3");
+    });
+  });
+
+  describe("closing tabs", () => {
+    it("closes tab and kills server session", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      
+      mockCreateTerminalSession.mockResolvedValue({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      const tabId = result.current.tabs[0].id;
+      const sessionId = result.current.tabs[0].sessionId;
+
+      act(() => {
+        result.current.closeTab(tabId);
+      });
+
+      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith(sessionId, TEST_PROJECT_ID);
+      expect(result.current.tabs.length).toBe(0);
+    });
+
+    it("closing active tab switches to next tab", async () => {
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-1",
+          title: "Terminal 1",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-2",
+          sessionId: "session-2",
+          title: "Terminal 2",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-1", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "session-2", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(2);
+      });
+
+      act(() => {
+        result.current.closeTab("tab-1");
+      });
+
+      expect(result.current.tabs.length).toBe(1);
+      expect(result.current.activeTab?.id).toBe("tab-2");
+    });
+
+    it("closing last tab triggers auto-creation of new tab", async () => {
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-1",
+          title: "Terminal 1",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      mockListTerminalSessions.mockResolvedValue([{ id: "session-1", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" }]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      // Tab was restored from localStorage (no createTerminalSession call yet)
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+
+      act(() => {
+        result.current.closeTab("tab-1");
+      });
+
+      // Tab count goes to 0 momentarily
+      expect(result.current.tabs.length).toBe(0);
+
+      // New tab should be auto-created
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      // createTerminalSession was called once during auto-create
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("switching active tab", () => {
+    it("updates isActive when switching tabs", async () => {
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-1",
+          title: "Terminal 1",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-2",
+          sessionId: "session-2",
+          title: "Terminal 2",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-1", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "session-2", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.activeTab?.id).toBe("tab-1");
+
+      act(() => {
+        result.current.setActiveTab("tab-2");
+      });
+
+      expect(result.current.activeTab?.id).toBe("tab-2");
+      expect(result.current.tabs.find((t) => t.id === "tab-1")?.isActive).toBe(false);
+      expect(result.current.tabs.find((t) => t.id === "tab-2")?.isActive).toBe(true);
+    });
+  });
+
+  describe("updating tab titles", () => {
+    it("updates tab title when updateTabTitle is called", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      act(() => {
+        result.current.updateTabTitle(result.current.tabs[0].id, "zsh");
+      });
+
+      expect(result.current.tabs[0].title).toBe("zsh");
+    });
+  });
+
+  describe("restarting active tab", () => {
+    it("creates new session for active tab", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-new", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.restartActiveTab();
+      });
+
+      // Old session should be killed
+      expect(mockKillPtyTerminalSession).toHaveBeenCalledWith("session-1", TEST_PROJECT_ID);
+      
+      // Tab should have new session
+      expect(result.current.activeTab?.sessionId).toBe("session-new");
+    });
+
+    it("restarts tabs without explicit cwd in the hook defaultCwd", async () => {
+      const storedTabs = [
+        {
+          id: "tab-task",
+          sessionId: "session-task-old",
+          title: "Task shell",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TASK_TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-task-old", shell: "/bin/bash", cwd: TASK_WORKTREE, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      mockCreateTerminalSession.mockResolvedValueOnce({ sessionId: "session-task-new", shell: "/bin/bash", cwd: TASK_WORKTREE });
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.restartActiveTab();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        TASK_WORKTREE,
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(result.current.activeTab?.sessionId).toBe("session-task-new");
+      expect(result.current.activeTab?.cwd).toBe(TASK_WORKTREE);
+    });
+
+    it("restarts worktree tabs in their preserved cwd", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-new", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+      await act(async () => {
+        await result.current.restartActiveTab();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(result.current.activeTab?.sessionId).toBe("session-worktree-new");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+  });
+
+  describe("replacing active tab session (invalid session recovery)", () => {
+    it("swaps sessionId on active tab without killing old session", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-replacement", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-1");
+      });
+
+      const tabId = result.current.activeTab!.id;
+
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      // Should NOT kill the old session (it's already gone from server)
+      expect(mockKillPtyTerminalSession).not.toHaveBeenCalled();
+
+      // Tab should still exist with same ID but new sessionId
+      expect(result.current.tabs.length).toBe(1);
+      expect(result.current.activeTab?.id).toBe(tabId);
+      expect(result.current.activeTab?.sessionId).toBe("session-replacement");
+    });
+
+    it("replaces stale worktree sessions in their preserved cwd", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-replacement", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+      const tabId = result.current.activeTab!.id;
+
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(mockKillPtyTerminalSession).not.toHaveBeenCalled();
+      expect(result.current.activeTab?.id).toBe(tabId);
+      expect(result.current.activeTab?.sessionId).toBe("session-worktree-replacement");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+
+    it("replaces tabs without explicit cwd in the hook defaultCwd", async () => {
+      const storedTabs = [
+        {
+          id: "tab-task",
+          sessionId: "session-task-old",
+          title: "Task shell",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TASK_TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-task-old", shell: "/bin/bash", cwd: TASK_WORKTREE, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      mockCreateTerminalSession.mockResolvedValueOnce({ sessionId: "session-task-replacement", shell: "/bin/bash", cwd: TASK_WORKTREE });
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        TASK_WORKTREE,
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(mockKillPtyTerminalSession).not.toHaveBeenCalled();
+      expect(result.current.activeTab?.sessionId).toBe("session-task-replacement");
+      expect(result.current.activeTab?.cwd).toBe(TASK_WORKTREE);
+    });
+
+    it("sets bootstrapError when replacement session creation fails", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockRejectedValueOnce(new Error("Server unreachable"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      // Error should be set so UI can show retry
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Server unreachable");
+      });
+
+      // Tab should still exist with the old sessionId
+      expect(result.current.activeTab?.sessionId).toBe("session-1");
+    });
+
+    it("does nothing when no active tab exists", async () => {
+      // Set up a scenario where tabs are empty and isReady is true but no auto-create happened yet
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      // Make auto-create hang so no tab is created
+      mockCreateTerminalSession.mockReturnValue(new Promise(() => {}));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Wait for isReady to be true (list completes) but tabs are empty (create pending)
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // replaceActiveTabSession should be a no-op with no active tab
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      // No additional createTerminalSession calls beyond the pending auto-create
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears bootstrapError on successful replacement after failure", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockRejectedValueOnce(new Error("Temporary failure"))
+        .mockResolvedValueOnce({ sessionId: "session-recovered", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      // First replacement fails
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Temporary failure");
+      });
+
+      // Second replacement succeeds
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeNull();
+      });
+      expect(result.current.activeTab?.sessionId).toBe("session-recovered");
+    });
+  });
+
+  describe("localStorage persistence", () => {
+    it("persists tabs to localStorage", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValue({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" });
+
+      renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(localStorageMock.setItem).toHaveBeenCalled();
+      });
+
+      // Verify the stored data contains the tabs
+      const setItemCalls = localStorageMock.setItem.mock.calls;
+      expect(setItemCalls.length).toBeGreaterThan(0);
+
+      const lastCall = setItemCalls[setItemCalls.length - 1];
+      expect(lastCall[0]).toBe(TERMINAL_TABS_KEY);
+      const storedTabs = JSON.parse(lastCall[1]);
+      expect(storedTabs).toBeInstanceOf(Array);
+    });
+  });
+
+  describe("error handling", () => {
+    it("handles localStorage errors gracefully", async () => {
+      localStorageMock.getItem.mockImplementation(() => {
+        throw new Error("localStorage error");
+      });
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // Should not throw
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Should still create a tab
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+    });
+
+    it("handles server listing failure gracefully", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockRejectedValue(new Error("Server error"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Should still create a tab
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+    });
+
+    it("non-blocking session kill - tab removed even if kill fails", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockKillPtyTerminalSession.mockRejectedValue(new Error("Kill failed"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      const tabId = result.current.tabs[0].id;
+
+      act(() => {
+        result.current.closeTab(tabId);
+      });
+
+      // Tab should still be removed
+      expect(result.current.tabs.length).toBe(0);
+    });
+  });
+
+  describe("bootstrap failure and retry", () => {
+    it("sets bootstrapError when createTerminalSession fails during auto-create", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockRejectedValue(new Error("Server unreachable"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Should become ready (validation passed)
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Should have a bootstrap error (auto-create failed)
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Server unreachable");
+      });
+
+      // No tabs should be created, and the failed generation must not auto-loop.
+      expect(result.current.tabs.length).toBe(0);
+      expect(result.current.activeTab).toBeNull();
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the Windows Terminal version-only failure once until explicit retry", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      const windowsTerminalMessage =
+        "Fusion could not start an embedded terminal shell on Windows. Use Command Prompt or PowerShell for the embedded terminal, or install/repair Windows Terminal separately with `winget install Microsoft.WindowsTerminal` if you want Windows Terminal outside Fusion.";
+      mockCreateTerminalSession.mockRejectedValue(new Error(windowsTerminalMessage));
+
+      const { result, rerender } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe(windowsTerminalMessage);
+      });
+
+      rerender();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(result.current.tabs).toHaveLength(0);
+      expect(result.current.activeTab).toBeNull();
+      expect(result.current.bootstrapError).toBe(windowsTerminalMessage);
+      expect(result.current.bootstrapError).not.toContain("1.24.11321.0");
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("sets bootstrapError with fallback message for non-Error throws", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockRejectedValue("string error");
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("string error");
+      });
+    });
+
+    it("clears bootstrapError and creates tab on retryBootstrap after failure", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // First attempt fails
+      mockCreateTerminalSession.mockRejectedValueOnce(new Error("Connection refused"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Connection refused");
+      });
+
+      expect(result.current.tabs.length).toBe(0);
+
+      // Retry succeeds
+      mockCreateTerminalSession.mockResolvedValueOnce({
+        sessionId: "session-retry",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      await act(async () => {
+        result.current.retryBootstrap();
+      });
+
+      // Error should be cleared
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeNull();
+      });
+
+      // Tab should be created
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-retry");
+      });
+    });
+
+    it("retryBootstrap does not create duplicate tabs", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-1",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Wait for initial tab creation
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(result.current.bootstrapError).toBeNull();
+
+      // Call retryBootstrap when there's already a tab (no error state)
+      act(() => {
+        result.current.retryBootstrap();
+      });
+
+      // Should still have exactly one tab (effect checks tabs.length === 0)
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+    });
+
+    it("bootstrapError remains null when createTerminalSession succeeds", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-1",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(result.current.bootstrapError).toBeNull();
+    });
+
+    it("sets bootstrapError when session creation fails after restoring stale tabs", async () => {
+      // Stored tabs that are stale (don't exist on server)
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-stale",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+
+      // Server has no sessions
+      mockListTerminalSessions.mockResolvedValue([]);
+      // Auto-create fails
+      mockCreateTerminalSession.mockRejectedValue(new Error("Internal server error"));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Stale tabs should be removed, auto-create should fail
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Internal server error");
+      });
+
+      expect(result.current.tabs.length).toBe(0);
+    });
+  });
+
+  describe("bounded bootstrap timeouts", () => {
+    it("sets bootstrapError when createTerminalSession hangs beyond timeout", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // createTerminalSession never resolves
+      mockCreateTerminalSession.mockReturnValue(new Promise(() => {}));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // isReady should become true (list resolved)
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Advance past the create timeout (15s)
+      await act(async () => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      // Should have a bootstrap error from the timed-out create call
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeTruthy();
+        expect(result.current.bootstrapError).toContain("timed out");
+      });
+
+      expect(result.current.tabs.length).toBe(0);
+      expect(result.current.activeTab).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("retryBootstrap recovers from a timed-out create call", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // First create call hangs forever
+      mockCreateTerminalSession.mockReturnValue(new Promise(() => {}));
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Advance past create timeout to trigger error
+      await act(async () => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeTruthy();
+      });
+
+      // Now make retry succeed
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-after-timeout",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      await act(async () => {
+        result.current.retryBootstrap();
+      });
+
+      // Advance to let the auto-create effect fire and complete
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeNull();
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-after-timeout");
+      });
+
+      vi.useRealTimers();
+    });
+
+    it("ignores late resolution from a prior generation after retry succeeds", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // First create call: will resolve very late
+      let resolveFirst: (val: any) => void;
+      const firstPromise = new Promise<any>((resolve) => {
+        resolveFirst = resolve;
+      });
+      mockCreateTerminalSession.mockReturnValueOnce(firstPromise);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Advance past create timeout to trigger error
+      await act(async () => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeTruthy();
+      });
+
+      // Now set up retry to succeed immediately
+      mockCreateTerminalSession.mockResolvedValueOnce({
+        sessionId: "session-gen2",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      await act(async () => {
+        result.current.retryBootstrap();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-gen2");
+      });
+
+      // Now the first (stale) call resolves late — this must NOT overwrite the tab
+      await act(async () => {
+        resolveFirst!({
+          sessionId: "session-gen1-stale",
+          shell: "/bin/bash",
+          cwd: "/project",
+        });
+      });
+
+      // The tab must still be from gen2, not gen1
+      expect(result.current.tabs[0].sessionId).toBe("session-gen2");
+      expect(result.current.tabs.length).toBe(1);
+
+      vi.useRealTimers();
+    });
+  });
+});

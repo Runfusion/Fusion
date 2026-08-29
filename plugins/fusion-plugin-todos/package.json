@@ -1,0 +1,39 @@
+{
+  "name": "@fusion-plugin-examples/todos",
+  "version": "0.1.4-beta.8",
+  "type": "module",
+  "private": true,
+  "description": "Todo Lists plugin package for Fusion",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./dashboard-view": {
+      "types": "./src/dashboard-view.tsx",
+      "source": "./src/dashboard-view.tsx",
+      "import": "./dist/dashboard-view.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*",
+    "lucide-react": "^0.542.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.4",
+    "react-i18next": "^15.7.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@types/node": "^25.5.2",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,112 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import type { Settings, TaskStore, Task } from "@fusion/core";
+import { cleanupOrphanedWorktrees } from "../../worktree/worktree-pool.js";
+import { SelfHealingManager } from "../../self-healing.js";
+import { NativeWorktreeBackend, WorktrunkWorktreeBackend } from "../../worktree/worktree-backend.js";
+
+const { execSpy, execFileSpy, existsSpy, readdirSpy, readFileSpy } = vi.hoisted(() => {
+  const execFileSpy = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+  (execFileSpy as any)[Symbol.for("nodejs.util.promisify.custom")] = execFileSpy;
+  return {
+    execSpy: vi.fn(),
+    execFileSpy,
+    existsSpy: vi.fn(() => true),
+    readdirSpy: vi.fn(() => []),
+    readFileSpy: vi.fn(() => ""),
+  };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, exec: execSpy, execFile: execFileSpy };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, existsSync: existsSpy, readdirSync: readdirSpy, readFileSync: readFileSpy };
+});
+
+
+function storeForSelfHealing(settings: Partial<Settings>, task: Partial<Task>): TaskStore & EventEmitter {
+  const emitter = new EventEmitter();
+  return Object.assign(emitter, {
+    getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, ...settings } as Settings)),
+    listTasks: vi.fn(async ({ column }: any = {}) => (column === "in-review" ? [task] : [])),
+    updateTask: vi.fn(async () => undefined),
+    moveTask: vi.fn(async () => undefined),
+    logEntry: vi.fn(async () => undefined),
+    getTask: vi.fn(async () => task),
+  }) as unknown as TaskStore & EventEmitter;
+}
+
+describe("reliability interactions: worktrunk worktree removal routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    execSpy.mockImplementation((_cmd: string, _opts: unknown, cb: (err: unknown, stdout: string, stderr: string) => void) => cb(null, "", ""));
+    execFileSpy.mockReset();
+    execFileSpy.mockResolvedValue({ stdout: "", stderr: "" });
+    // A workspace-group marker is an explicit delete veto in the ownership proof; these fixtures
+    // are ordinary single-project worktrees, so the marker must be absent.
+    existsSpy.mockImplementation(((path: string) => !String(path).endsWith("/.fusion-workspace-root")) as never);
+    /*
+    FNXC:WorkspaceWorktree 2026-08-23-18:39:
+    `isReclaimableWorktreeCandidate` now requires Git to prove a candidate directory belongs to
+    THIS project before a destructive sweep may touch it, since a shared configured worktree root
+    can hold other projects' checkouts. This fully-mocked fs fixture must therefore state what it
+    always meant: the scanned directories are real linked worktrees of /repo, i.e. their `.git`
+    file is a gitdir pointer below /repo/.git.
+    */
+    readFileSpy.mockImplementation(((path: string) => {
+      const target = String(path);
+      if (target.endsWith("/.git")) return `gitdir: /repo/.git/worktrees/${target.split("/").slice(-2)[0]}\n`;
+      return "";
+    }) as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("self-healing recover path calls worktrunk backend remove and not native remove", async () => {
+    const removeSpy = vi.spyOn(WorktrunkWorktreeBackend.prototype, "remove").mockResolvedValue(undefined);
+    const task = {
+      id: "FN-999",
+      column: "in-review",
+      status: "failed",
+      branch: "fusion/fn-999",
+      worktree: "/repo/.worktrees/fn-999",
+      mergeDetails: { mergeConfirmed: false },
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as unknown as Task;
+    const store = storeForSelfHealing({ worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any }, task);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", getExecutingTaskIds: () => new Set() });
+
+    vi.spyOn(mgr as any, "isBranchTipMisboundToTask").mockResolvedValue({ misbound: true, branchTip: "abc", landed: { sha: "abc", strategy: "tip-reachable" } });
+    vi.spyOn(mgr as any, "clearCompletionBranchIfSubsumed").mockResolvedValue(true);
+
+    await mgr.recoverBranchMisboundInReviewTasks();
+
+    expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-999", taskId: "FN-999" }));
+    expect(execSpy.mock.calls.some((call) => String(call[0]).includes("git worktree remove"))).toBe(false);
+  });
+
+  it("worktree-pool cleanup registered branch calls native backend remove", async () => {
+    const removeSpy = vi.spyOn(NativeWorktreeBackend.prototype, "remove").mockResolvedValue(undefined);
+    readdirSpy.mockReturnValue([{ isDirectory: () => true, name: "fn-1" }] as any);
+    execSpy.mockImplementation((cmd: string, _opts: unknown, cb: (err: unknown, stdout: string, stderr: string) => void) => {
+      if (cmd.includes("git worktree list --porcelain")) {
+        cb(null, "worktree /repo/.worktrees/fn-1\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+
+    const store = { listTasks: vi.fn(async () => []) } as unknown as TaskStore;
+    await cleanupOrphanedWorktrees("/repo", store, { worktreesDir: "/repo/.worktrees" });
+
+    expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" }));
+  });
+});

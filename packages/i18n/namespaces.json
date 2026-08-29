@@ -1,0 +1,5 @@
+{
+  "all": ["common", "app", "errors", "cli"],
+  "dashboard": ["common", "app", "errors"],
+  "cli": ["common", "cli", "errors"]
+}

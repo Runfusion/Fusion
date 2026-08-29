@@ -1,0 +1,41 @@
+{
+  "name": "@fusion-plugin-examples/cursor-runtime",
+  "version": "0.1.55-beta.8",
+  "type": "module",
+  "description": "Cursor CLI runtime plugin for Fusion",
+  "keywords": [
+    "fusion-plugin",
+    "cursor",
+    "runtime"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./probe": {
+      "types": "./src/probe.ts",
+      "source": "./src/probe.ts",
+      "import": "./dist/probe.js"
+    }
+  },
+  "private": true,
+  "scripts": {
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

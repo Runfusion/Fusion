@@ -1,0 +1,437 @@
+/*
+FNXC:PrCreateModal 2026-06-27-00:00:
+FN-7170 hosts Create PR in FloatingWindow: desktop geometry belongs to the shared floating shell while the embedded modal fills that panel, and mobile forces the floating shell full-screen with resize handles hidden so the dialog matches the Plan Mission / Automations contract.
+*/
+.floating-window--pr-create .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--pr-create .modal.pr-create-modal {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+.floating-window--pr-create .pr-create-modal__drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-window--pr-create .pr-create-modal__drag-handle:active {
+  cursor: grabbing;
+}
+
+.pr-create-modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pr-create-modal__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg) var(--modal-padding);
+}
+
+.pr-create-modal__loading {
+  padding: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.pr-create-modal__section-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+}
+
+.pr-create-modal__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pr-create-modal__section-title,
+.pr-create-modal h4 {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.pr-create-modal__preflight {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pr-create-modal__preflight-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: start;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.pr-create-modal__preflight-row.is-ok {
+  box-shadow: var(--glow-success);
+}
+
+.pr-create-modal__preflight-row.is-failed {
+  box-shadow: var(--glow-danger);
+}
+
+.pr-create-modal__preflight-label {
+  margin: 0;
+  font-weight: 600;
+}
+
+.pr-create-modal__preflight-message {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.pr-create-modal__title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.pr-create-modal__preflight-remediation,
+.pr-create-modal__conflict-resolution {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+
+.pr-create-modal__conflict-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.pr-create-modal__conflict-title,
+.pr-create-modal__conflict-message {
+  margin: 0;
+}
+
+.pr-create-modal__conflict-title {
+  font-weight: 600;
+}
+
+.pr-create-modal__conflict-message {
+  color: var(--text-muted);
+}
+
+.pr-create-modal__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.pr-create-modal__inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.pr-create-modal__body-input,
+.pr-create-modal__body-preview {
+  min-height: calc(var(--space-2xl) * 4);
+}
+
+.pr-create-modal__body-input {
+  font-family: var(--font-mono);
+}
+
+.pr-create-modal__body-preview {
+  overflow: auto;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.pr-create-modal__body-preview > :first-child {
+  margin-top: 0;
+}
+
+.pr-create-modal__body-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.pr-create-modal__field-shell {
+  position: relative;
+}
+
+.pr-create-modal__field-shell > .input:disabled {
+  cursor: wait;
+}
+
+.pr-create-modal__metadata-skeleton {
+  position: absolute;
+  inset: var(--btn-border-width);
+  pointer-events: none;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--border) 70%, var(--surface));
+  animation: pr-create-modal-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.pr-create-modal__metadata-skeleton--title {
+  inline-size: min(100%, calc(var(--space-2xl) * 7));
+}
+
+.pr-create-modal__metadata-skeleton--body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--surface) 82%, var(--border));
+}
+
+.pr-create-modal__metadata-skeleton--body span {
+  display: block;
+  block-size: var(--space-md);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--border) 72%, var(--surface));
+}
+
+.pr-create-modal__metadata-skeleton--body span:nth-child(1) {
+  inline-size: 92%;
+}
+
+.pr-create-modal__metadata-skeleton--body span:nth-child(2) {
+  inline-size: 78%;
+}
+
+.pr-create-modal__metadata-skeleton--body span:nth-child(3) {
+  inline-size: 88%;
+}
+
+.pr-create-modal__metadata-skeleton--body span:nth-child(4) {
+  inline-size: 64%;
+}
+
+@keyframes pr-create-modal-skeleton-pulse {
+  0%, 100% {
+    opacity: 0.58;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.pr-create-template-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.pr-create-modal__grid-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+}
+
+.pr-create-modal__draft {
+  align-self: end;
+}
+
+.pr-create-modal__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.pr-create-modal__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  border: var(--btn-border-width) solid var(--border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+}
+
+.pr-create-modal__chip-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pr-create-modal__chip--colored {
+  background: color-mix(in srgb, var(--pr-chip-label-color, var(--card)) 25%, transparent);
+}
+
+.pr-create-modal__chip-remove {
+  min-width: 0;
+  min-height: 0;
+  width: auto;
+  height: auto;
+  padding: 0;
+}
+
+.pr-create-modal__option-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.pr-create-modal__option-item {
+  text-align: left;
+}
+
+.pr-create-collapsible {
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+}
+
+.pr-create-collapsible summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pr-create-modal__preview {
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pr-create-modal__commit-row,
+.pr-create-modal__file-row {
+  display: grid;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-xs) 0;
+  border-bottom: var(--btn-border-width) solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/*
+FNXC:CreatePrModal 2026-06-27-22:35:
+Commit preview rows render DOM order as SHA, subject, author. The grid must mirror that order so the short SHA keeps content width, the subject owns the flexible column, and nowrap prevents overflow-wrap:anywhere from turning the SHA vertical.
+*/
+.pr-create-modal__commit-row {
+  grid-template-columns: auto 1fr auto;
+}
+
+.pr-create-modal__file-row {
+  grid-template-columns: 1fr auto auto;
+}
+
+.pr-create-modal__commit-row code {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pr-create-modal__commit-row > *,
+.pr-create-modal__file-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pr-create-modal .form-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.pr-error {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-error) 35%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.pr-error__hint {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pr-error__actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.pr-error__retry:focus-visible,
+.pr-error__dismiss:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+@media (max-width: 768px) {
+  .floating-window--pr-create {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--pr-create .floating-window__resize-handle {
+    display: none;
+  }
+
+  .floating-window--pr-create .modal.pr-create-modal {
+    border-radius: 0;
+  }
+
+  .pr-create-modal__body {
+    gap: var(--space-md);
+  }
+
+  .pr-create-modal__title-row,
+  .pr-create-modal__grid-two,
+  .pr-create-modal__commit-row,
+  .pr-create-modal__file-row,
+  .pr-create-modal__preflight-remediation,
+  .pr-create-modal__conflict-resolution {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .pr-create-modal__draft {
+    align-self: start;
+  }
+
+  .pr-create-modal__inline-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .pr-create-modal__section-loading {
+    width: 100%;
+  }
+}

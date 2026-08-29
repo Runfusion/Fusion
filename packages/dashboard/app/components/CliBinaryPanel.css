@@ -1,0 +1,229 @@
+.cli-binary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Match the horizontal indent every other top-level child of
+     .settings-content uses (.form-group, .settings-section-heading, etc.).
+     Top margin matches .form-group so consecutive sections breathe the same. */
+  padding: 0 var(--space-xl);
+  margin-top: var(--space-lg);
+  border: 0;
+  background: transparent;
+}
+
+.cli-binary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cli-binary-header .settings-section-heading {
+  margin: 0;
+}
+
+.cli-binary-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cli-binary-pill--ok {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent);
+}
+
+.cli-binary-pill--warn {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+}
+
+.cli-binary-pill--err {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  color: var(--color-error);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+}
+
+.cli-binary-help {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.cli-binary-help code {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+.cli-binary-status-line {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.cli-binary-status-line code {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.cli-binary-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cli-binary-info-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.cli-binary-info-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cli-binary-info-list span {
+  color: var(--text-muted);
+  min-width: 64px;
+}
+
+.cli-binary-info-list code {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.cli-binary-expected {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cli-binary-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cli-binary-install-btn,
+.cli-binary-refresh-btn,
+.cli-binary-copy-btn {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cli-binary-install-btn {
+  background: var(--accent, #3b82f6);
+  color: var(--accent-text);
+}
+
+.cli-binary-install-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
+}
+
+.cli-binary-install-btn:disabled,
+.cli-binary-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cli-binary-refresh-btn,
+.cli-binary-copy-btn {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.cli-binary-refresh-btn:hover:not(:disabled),
+.cli-binary-copy-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.cli-binary-commands {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cli-binary-commands label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cli-binary-command-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--bg) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 6px;
+  padding: 6px 8px 6px 12px;
+}
+
+.cli-binary-command-row code {
+  flex: 1;
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", monospace);
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.cli-binary-install-log {
+  border-top: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
+  padding-top: 10px;
+  font-size: 12.5px;
+}
+
+.cli-binary-install-log summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.cli-binary-install-output {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  border-radius: 4px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cli-binary-install-output--err {
+  color: var(--color-error);
+}
+
+.cli-binary-permissions-hint {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--color-error) 55%, transparent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--color-error);
+  font-size: 12.5px;
+  line-height: 1.5;
+}

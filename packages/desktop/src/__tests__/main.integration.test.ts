@@ -1,0 +1,130 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => {
+  const app = {
+    whenReady: vi.fn(() => Promise.resolve()),
+    getPath: vi.fn((name: string) => (name === "home" ? "/mock/home" : "/mock/other")),
+    on: vi.fn(),
+    quit: vi.fn(),
+  };
+
+  const browserWindow = {
+    loadURL: vi.fn(),
+    loadFile: vi.fn(),
+    on: vi.fn(),
+    once: vi.fn(),
+    hide: vi.fn(),
+    show: vi.fn(),
+    focus: vi.fn(),
+    maximize: vi.fn(),
+    webContents: { setWindowOpenHandler: vi.fn() },
+  };
+
+  return {
+    app,
+    BrowserWindow: vi.fn(function () {
+      return browserWindow;
+    }),
+    Tray: vi.fn(function () {
+      return {
+        destroy: vi.fn(),
+        setImage: vi.fn(),
+        setContextMenu: vi.fn(),
+        setToolTip: vi.fn(),
+        on: vi.fn(),
+      };
+    }),
+    nativeImage: {
+      createEmpty: vi.fn(() => ({ id: "empty-image" })),
+    },
+    screen: {
+      getAllDisplays: vi.fn(() => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }]),
+    },
+    browserWindow,
+    buildAppMenu: vi.fn(),
+    setupTray: vi.fn(),
+    registerIpcHandlers: vi.fn(),
+    registerDeepLinkProtocol: vi.fn(),
+    setupDeepLinkHandler: vi.fn(),
+    loadWindowState: vi.fn(async () => null),
+    loadDesktopLaunchMode: vi.fn(async () => "choose"),
+    saveDesktopLaunchMode: vi.fn(async () => undefined),
+    saveWindowState: vi.fn(),
+    setupAutoUpdater: vi.fn(),
+  };
+});
+
+vi.mock("electron", () => ({
+  app: mocks.app,
+  BrowserWindow: mocks.BrowserWindow,
+  Tray: mocks.Tray,
+  nativeImage: mocks.nativeImage,
+  screen: mocks.screen,
+  shell: { openExternal: vi.fn(() => Promise.resolve()) },
+}));
+
+vi.mock("../menu.js", () => ({
+  buildAppMenu: mocks.buildAppMenu,
+}));
+
+vi.mock("../tray.js", () => ({
+  setupTray: mocks.setupTray,
+}));
+
+vi.mock("../ipc.js", () => ({
+  registerIpcHandlers: mocks.registerIpcHandlers,
+}));
+
+vi.mock("../deep-link.js", () => ({
+  registerDeepLinkProtocol: mocks.registerDeepLinkProtocol,
+  setupDeepLinkHandler: mocks.setupDeepLinkHandler,
+}));
+
+vi.mock("../native.js", () => ({
+  DEFAULT_WINDOW_STATE: {
+    width: 1280,
+    height: 900,
+    isMaximized: false,
+  },
+  loadWindowState: mocks.loadWindowState,
+  loadDesktopLaunchMode: mocks.loadDesktopLaunchMode,
+  saveDesktopLaunchMode: mocks.saveDesktopLaunchMode,
+  saveWindowState: mocks.saveWindowState,
+  setupAutoUpdater: mocks.setupAutoUpdater,
+  startUpdateCheckInterval: vi.fn(() => vi.fn()),
+  clampWindowStateToVisibleDisplay: vi.fn((state) => state),
+}));
+
+// Mock renderer module
+vi.mock("../renderer.js", () => ({
+  isDevelopmentMode: vi.fn(() => false),
+  getRendererUrl: vi.fn(() => "file:///path/to/dist/client/index.html"),
+  getRendererFilePath: vi.fn(() => "/path/to/dist/client/index.html"),
+  isUrlRenderer: vi.fn(() => false),
+  IS_DEVELOPMENT: false,
+  DASHBOARD_URL: vi.fn(() => "file:///path/to/dist/client/index.html"),
+}));
+
+describe("main module integration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it("imports main module exports with a mocked electron runtime", async () => {
+    const mainModule = await import("../main.ts");
+
+    expect(mainModule.run).toBeTypeOf("function");
+    expect(mainModule.initializeApp).toBeTypeOf("function");
+    expect(mainModule.createMainWindow).toBeTypeOf("function");
+  });
+
+  it("initializes app lifecycle wiring without throwing", async () => {
+    const { initializeApp } = await import("../main.ts");
+
+    await expect(initializeApp()).resolves.toBeUndefined();
+    expect(mocks.BrowserWindow).toHaveBeenCalledTimes(1);
+    expect(mocks.registerIpcHandlers).toHaveBeenCalledTimes(1);
+    expect(mocks.setupTray).toHaveBeenCalledTimes(1);
+  });
+});

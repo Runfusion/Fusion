@@ -1,0 +1,562 @@
+.task-review-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.task-review-tab__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.task-review-tab__summary-wrap {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.task-review-tab__summary-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.task-review-tab__summary {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__decision,
+.task-review-tab__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: fit-content;
+  min-width: 0;
+  padding: 0 var(--space-sm);
+  min-height: calc(var(--space-lg) + var(--space-xs));
+  border-radius: var(--radius-pill);
+  border: var(--btn-border-width) solid transparent;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.task-review-tab__decision--APPROVED,
+.task-review-tab__status--addressed {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 28%, transparent);
+}
+
+.task-review-tab__decision--CHANGES_REQUESTED,
+.task-review-tab__status--failed {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 28%, transparent);
+}
+
+.task-review-tab__decision--COMMENTED,
+.task-review-tab__decision--PENDING,
+.task-review-tab__decision--REVIEW_REQUIRED,
+.task-review-tab__status--queued,
+.task-review-tab__status--in-progress {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.task-review-tab__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  flex: 0 1 auto;
+}
+
+.task-review-tab__actions .btn {
+  flex-shrink: 0;
+}
+
+.task-review-tab__auto-merge-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-inline-size: 14rem;
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 72%, var(--card));
+}
+
+/*
+FNXC:TaskReview 2026-06-27-00:00:
+Review comments need the same All/Human/Bot narrowing affordance as the GitHub import preview. Chips wrap instead of scrolling so mobile task detail users can filter reviewer-agent noise without losing access to revision controls.
+*/
+.task-review-tab__comments-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.task-review-tab__comments-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--space-lg) + var(--space-xs));
+  padding: 0 var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.task-review-tab__comments-filter-chip:hover,
+.task-review-tab__comments-filter-chip:focus-visible,
+.task-review-tab__comments-filter-chip.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.task-review-tab__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-review-tab__item {
+  padding: var(--card-padding);
+}
+
+.task-review-tab__item-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.task-review-tab__direct-item {
+  display: block;
+  min-width: 0;
+}
+
+.task-review-tab__direct-item--selectable {
+  cursor: pointer;
+}
+
+.task-review-tab__item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.task-review-tab__item-selection {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.task-review-tab__item-selection input {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.task-review-tab__item-summary {
+  color: var(--text);
+  font-family: var(--font-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__item-meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:TaskReview 2026-06-27-00:00:
+The Review tab mirrors the Import-from-GitHub comment provenance model: avatar, author, Human/Bot badge, and timestamp sit in a wrapping meta row so desktop task detail and the mobile detail pane both expose comment identity without horizontal overflow.
+*/
+.task-review-tab__comment-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--font-primary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.task-review-tab__comment-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--space-lg) + var(--space-xs));
+  height: calc(var(--space-lg) + var(--space-xs));
+  border-radius: var(--radius-pill);
+  border: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.task-review-tab__comment-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.task-review-tab__comment-author {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__comment-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-xs);
+  min-height: var(--space-lg);
+  border-radius: var(--radius-pill);
+  border: var(--btn-border-width) solid var(--border);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.task-review-tab__comment-type-badge--human {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 28%, transparent);
+}
+
+.task-review-tab__comment-type-badge--bot {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 28%, transparent);
+}
+
+.task-review-tab__comment-time {
+  color: var(--text-muted);
+}
+
+.task-review-tab__body {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-primary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.task-review-tab__body.markdown-body {
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__body.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.task-review-tab__body.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.task-review-tab__body.markdown-body pre,
+.task-review-tab__body.markdown-body table {
+  max-width: 100%;
+}
+
+.task-review-tab__meta,
+.task-review-tab__empty,
+.task-review-tab__error {
+  font-family: var(--font-primary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.task-review-tab__meta,
+.task-review-tab__empty {
+  color: var(--text-muted);
+}
+
+.task-review-tab__refresh-meta,
+.task-review-tab__empty,
+.task-review-tab__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 72%, var(--card));
+}
+
+.task-review-tab__refresh-meta {
+  min-width: 0;
+}
+
+.task-review-tab__refresh-meta .status-dot {
+  flex-shrink: 0;
+  margin-top: var(--space-xs);
+}
+
+/*
+FNXC:TaskReviewTab 2026-06-27-23:38:
+PR-linked tasks must expose decision-adjacent reviewers/checks/blockers plus item author/state/GitHub links without overflowing the task-detail modal. These scoped flex rows wrap using design tokens so desktop and mobile Review tabs preserve the existing hierarchy.
+*/
+.task-review-tab__pr-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 72%, var(--card));
+}
+
+.task-review-tab__pr-summary-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.task-review-tab__pr-summary-label {
+  color: var(--text);
+  font-family: var(--font-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.task-review-tab__pill-list,
+.task-review-tab__pr-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.task-review-tab__pill-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-review-tab__pill-list-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-review-tab__reviewer-login,
+.task-review-tab__check-name {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  font-family: var(--font-primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--color-primary);
+  font-family: var(--font-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__github-link svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
+.task-review-tab__empty {
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__error {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 26%, var(--border));
+  background: color-mix(in srgb, var(--color-error) 12%, var(--surface));
+}
+
+.task-review-tab__reviewers,
+.task-review-tab__blockers {
+  margin: 0;
+  padding-left: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.task-review-tab__reviewer {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .task-review-tab {
+    gap: var(--space-md);
+  }
+
+  .task-review-tab__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+  }
+
+  .task-review-tab__summary-wrap,
+  .task-review-tab__actions,
+  .task-review-tab__auto-merge-control {
+    width: 100%;
+  }
+
+  .task-review-tab__summary-wrap {
+    flex: 0 0 auto;
+  }
+
+  .task-review-tab__actions {
+    justify-content: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .task-review-tab__actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .task-review-tab__comments-filter-chip {
+    flex: 1 1 0;
+  }
+
+  .task-review-tab__item,
+  .task-review-tab__body,
+  .task-review-tab__refresh-meta,
+  .task-review-tab__empty,
+  .task-review-tab__error {
+    min-width: 0;
+  }
+
+  .task-review-tab__item-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-review-tab__comment-meta {
+    align-items: flex-start;
+  }
+
+  .task-review-tab__pr-summary,
+  .task-review-tab__pr-item-meta {
+    align-items: stretch;
+  }
+
+  .task-review-tab__pill-list,
+  .task-review-tab__pill-list-item,
+  .task-review-tab__pr-item-meta {
+    width: 100%;
+  }
+
+  .task-review-tab__github-link {
+    max-width: 100%;
+  }
+
+  .task-review-tab__status,
+  .task-review-tab__decision {
+    max-width: 100%;
+  }
+
+  .task-review-tab__body {
+    padding: var(--space-sm);
+  }
+
+  .task-review-tab__refresh-meta {
+    align-items: flex-start;
+  }
+
+  /* FN-4352: primary touch target per AGENTS.md convention (introduced by FN-4236). */
+  .task-review-tab__actions .btn {
+    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+}
+
+.task-review-tab__item--informational {
+  border-color: color-mix(in srgb, var(--color-success) 30%, var(--border));
+}
+
+.task-review-tab__resolution-badge {
+  display: inline-flex;
+  align-items: center;
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-success) 28%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0 var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .task-review-tab__resolution-badge {
+    align-self: flex-start;
+  }
+}

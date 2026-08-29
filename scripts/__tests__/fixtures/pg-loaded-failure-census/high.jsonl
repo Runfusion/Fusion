@@ -1,0 +1,4 @@
+{"trigger":"phase-watchdog","phase":"dropDatabase","phaseDurationsMs":{"dropDatabase":2100},"probeRan":true,"snapshotRows":[{"total_backends":73,"wait_event_type":"IPC","wait_event":"CheckpointDone"},{"total_backends":73,"wait_event_type":"Lock","wait_event":"relation"}]}
+{"trigger":"snapshot","phaseDurationsMs":{"dropDatabase":3000},"probeRan":true,"snapshotRows":[{"total_backends":62,"wait_event_type":"IPC","wait_event":"CheckpointDone"}]}
+{not json}
+{"trigger":"teardown-watchdog","phaseDurationsMs":{},"probeRan":false,"probeSuppressed":"cap"}

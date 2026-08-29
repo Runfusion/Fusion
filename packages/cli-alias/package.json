@@ -1,0 +1,40 @@
+{
+  "name": "runfusion.ai",
+  "version": "0.77.0-beta.8",
+  "license": "MIT",
+  "description": "Launch Fusion with `npx runfusion.ai` — tiny alias for @runfusion/fusion.",
+  "homepage": "https://runfusion.ai",
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Runfusion/Fusion.git",
+    "directory": "packages/cli-alias"
+  },
+  "keywords": [
+    "fusion",
+    "runfusion",
+    "ai",
+    "agent",
+    "dashboard",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "runfusion.ai": "index.js",
+    "runfusion": "index.js",
+    "fn": "index.js",
+    "fusion": "index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@runfusion/fusion": "workspace:*"
+  }
+}

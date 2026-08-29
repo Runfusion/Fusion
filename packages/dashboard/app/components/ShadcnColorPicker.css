@@ -1,0 +1,125 @@
+.shadcn-color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--card-padding);
+  border: var(--btn-border-width) solid var(--border);
+  background: var(--card);
+}
+
+.shadcn-color-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.shadcn-color-picker-heading {
+  min-width: 0;
+}
+
+.shadcn-color-picker-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.shadcn-color-picker-description {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.shadcn-color-picker-toggle {
+  flex: 0 0 auto;
+}
+
+.shadcn-color-picker-controls-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.shadcn-color-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.shadcn-color-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 7), 1fr));
+  gap: var(--space-sm);
+}
+
+.shadcn-color-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.shadcn-color-picker-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.shadcn-color-picker-label code {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+}
+
+.shadcn-color-picker-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.shadcn-color-picker-native {
+  width: calc(var(--space-xl) * 2);
+  height: calc(var(--space-xl) * 2);
+  padding: 0;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.shadcn-color-picker-hex {
+  width: calc(var(--space-2xl) * 3);
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 768px) {
+  .shadcn-color-picker-header,
+  .shadcn-color-picker-row,
+  .shadcn-color-picker-controls,
+  .shadcn-color-picker-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shadcn-color-picker-toggle {
+    align-self: flex-start;
+  }
+
+  .shadcn-color-picker-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shadcn-color-picker-native,
+  .shadcn-color-picker-hex {
+    width: 100%;
+  }
+}

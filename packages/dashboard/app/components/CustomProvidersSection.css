@@ -1,0 +1,201 @@
+@keyframes custom-provider-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.custom-providers-section .onboarding-disclosure-content {
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.custom-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.custom-provider-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.custom-provider-item:hover {
+  border-color: var(--text-dim);
+}
+
+.custom-provider-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.custom-provider-item-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.custom-provider-item-meta {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-provider-item-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.custom-provider-refresh-btn {
+  white-space: nowrap;
+}
+
+.custom-provider-detect-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.custom-provider-row-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.custom-provider-row-message--success {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+}
+
+.custom-provider-row-message--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.custom-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.custom-provider-empty {
+  color: var(--text-muted);
+  padding: var(--space-sm) 0;
+}
+
+.custom-provider-add-btn {
+  margin-top: var(--space-sm);
+}
+
+.custom-provider-form {
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-sm);
+}
+
+.custom-provider-form-row {
+  margin-bottom: var(--space-sm);
+}
+
+.custom-provider-form-actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.custom-provider-form-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-error);
+  margin-top: var(--space-xs);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.custom-provider-item-edit-form {
+  margin-top: var(--space-xs);
+}
+
+/*
+FNXC:ProviderAuth 2026-07-08-00:00:
+FN-7689: checkbox row + hint text for the Anthropic prompt-caching opt-in on custom
+openai-compatible/openai-responses providers. Follows the existing form-row token pattern
+(no hardcoded colors/px) and reuses --text-muted for the hint, matching other secondary text.
+*/
+.custom-provider-form-checkbox-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.custom-provider-form-checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.custom-provider-form-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  margin: 0;
+}
+
+.custom-provider-spin {
+  animation: custom-provider-spin calc(var(--duration-slow) * 4) linear infinite;
+}
+
+@media (max-width: 768px) {
+  .custom-provider-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+  }
+
+  .custom-provider-item-meta {
+    max-width: 100%;
+  }
+
+  .custom-provider-form {
+    padding: var(--space-sm);
+  }
+
+  .custom-provider-item-actions {
+    align-self: stretch;
+    justify-content: flex-start;
+    margin-top: var(--space-xs);
+  }
+
+  .custom-provider-refresh-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}

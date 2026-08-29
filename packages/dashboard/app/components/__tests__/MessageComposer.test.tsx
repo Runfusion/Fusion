@@ -1,0 +1,627 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MessageComposer, resolveDroppedNativeStructureRef } from "../MessageComposer";
+import * as apiModule from "../../api";
+import type { Agent } from "../../api";
+import { isNativeStructureDragEnabled, NATIVE_STRUCTURE_DRAG_MIME } from "../../utils/nativeStructureDrag";
+
+const composeChatProps = vi.fn();
+
+// Mock the API module
+vi.mock("../../api", () => ({
+  sendMessage: vi.fn(),
+  fetchNativeStructurePreview: vi.fn().mockResolvedValue({ available: false, kind: "mission", id: "M-1", reason: "missing" }),
+}));
+
+vi.mock("../NativeStructurePreview", () => ({
+  NativeStructurePreview: ({ capturedLabel }: { capturedLabel?: string }) => <span>{capturedLabel ?? "Structure"}</span>,
+}));
+
+vi.mock("../ComposeChatPanel", () => ({
+  ComposeChatPanel: (props: { embeds: Array<{ kind: string; id: string; label?: string }> }) => {
+    composeChatProps(props);
+    return <output data-testid="compose-chat-embed-context">{props.embeds.map((embed) => `${embed.kind}: ${embed.label ?? embed.id} (${embed.id})`).join("\n")}</output>;
+  },
+}));
+
+// Mock lucide-react icons
+vi.mock("lucide-react", () => ({
+  X: () => <span data-testid="icon-x">X</span>,
+  Send: () => <span data-testid="icon-send">Send</span>,
+  Loader2: ({ className }: { className?: string }) => (
+    <span data-testid="icon-loader" className={className}>Loader</span>
+  ),
+  Bot: () => <span data-testid="icon-bot">Bot</span>,
+  AlertCircle: () => <span data-testid="icon-alert">Alert</span>,
+}));
+
+const mockSendMessage = vi.mocked(apiModule.sendMessage);
+
+const mockAgents: Agent[] = [
+  {
+    id: "agent-001",
+    name: "Test Agent",
+    role: "executor",
+    state: "idle",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    metadata: {},
+  },
+];
+
+const defaultProps = {
+  onSend: vi.fn(),
+  onCancel: vi.fn(),
+  addToast: vi.fn(),
+};
+
+describe("MessageComposer", () => {
+  const originalVisualViewport = window.visualViewport;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSendMessage.mockResolvedValue({
+      id: "msg-new",
+      fromId: "dashboard",
+      fromType: "user",
+      toId: "agent-001",
+      toType: "agent",
+      content: "Test message",
+      type: "user-to-agent",
+      read: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: originalVisualViewport,
+      writable: true,
+    });
+  });
+
+  it("renders the composer with header", () => {
+    render(<MessageComposer {...defaultProps} />);
+    expect(screen.getByText("New Message")).toBeDefined();
+  });
+
+  it("shows agent dropdown when agents are provided", () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    const select = screen.getByTestId("message-composer-recipient");
+    expect(select).toBeDefined();
+    expect(select.tagName).toBe("SELECT");
+  });
+
+  it("disables recipient select when agents list is empty", () => {
+    render(<MessageComposer {...defaultProps} />);
+    const select = screen.getByTestId("message-composer-recipient");
+    expect(select).toBeDefined();
+    expect(select.tagName).toBe("SELECT");
+    expect(select.hasAttribute("disabled")).toBe(true);
+    expect(select.textContent).toContain("No agents available");
+  });
+
+  it("shows loading state in recipient select", () => {
+    render(<MessageComposer {...defaultProps} isLoadingAgents={true} />);
+    const select = screen.getByTestId("message-composer-recipient");
+    expect(select).toBeDefined();
+    expect(select.tagName).toBe("SELECT");
+    expect(select.hasAttribute("disabled")).toBe(true);
+    expect(select.textContent).toContain("Loading agents…");
+  });
+
+  it("adds structural attachments to sent metadata and removes them from the draft", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} nativeStructureCandidates={[
+      { ref: { kind: "mission", id: "M-1" }, label: "Launch" },
+      { ref: { kind: "goal", id: "G-1" }, label: "Ship" },
+    ]} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), { target: { value: "agent-001" } });
+    fireEvent.change(screen.getByTestId("message-composer-content"), { target: { value: "Review" } });
+    fireEvent.change(screen.getByTestId("message-composer-attach-structure"), { target: { value: "0" } });
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent("Launch");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Launch" }));
+    expect(screen.queryByTestId("message-composer-attached-structures")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("message-composer-attach-structure"), { target: { value: "1" } });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: { nativeStructures: [{ kind: "goal", id: "G-1", label: "Ship" }] },
+    }), undefined));
+  });
+
+  it("attaches a native structure dropped on the composer once and ignores unrelated drops", () => {
+    render(<MessageComposer {...defaultProps} />);
+    const composer = screen.getByTestId("message-composer");
+    const nativeTransfer = {
+      types: [NATIVE_STRUCTURE_DRAG_MIME],
+      dropEffect: "none",
+      getData: (type: string) => type === NATIVE_STRUCTURE_DRAG_MIME ? JSON.stringify({ kind: "mission", id: "M-drop" }) : "",
+    } as unknown as DataTransfer;
+    fireEvent.dragOver(composer, { dataTransfer: nativeTransfer });
+    expect(composer).toHaveClass("message-composer--native-structure-drag-over");
+    fireEvent.drop(composer, { dataTransfer: nativeTransfer });
+    fireEvent.drop(composer, { dataTransfer: nativeTransfer });
+    expect(screen.getByTestId("message-composer-attached-structures").querySelectorAll("li")).toHaveLength(1);
+
+    const fileTransfer = { types: ["Files"], getData: () => "" } as unknown as DataTransfer;
+    fireEvent.dragOver(composer, { dataTransfer: fileTransfer });
+    expect(composer).not.toHaveClass("message-composer--native-structure-drag-over");
+  });
+
+  it("attaches roadmap drops once, preserves them in sent metadata, and gives compose chat roadmap context", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} projectId="proj-a" />);
+    const composer = screen.getByTestId("message-composer");
+    const nativeTransfer = {
+      types: [NATIVE_STRUCTURE_DRAG_MIME],
+      getData: (type: string) => type === NATIVE_STRUCTURE_DRAG_MIME
+        ? JSON.stringify({ kind: "roadmap-item", id: "RF-1", projectId: "proj-a" }) : "",
+    } as unknown as DataTransfer;
+
+    fireEvent.drop(composer, { dataTransfer: nativeTransfer });
+    fireEvent.drop(composer, { dataTransfer: nativeTransfer });
+    expect(screen.getByTestId("message-composer-attached-structures").querySelectorAll("li")).toHaveLength(1);
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent("Structure");
+
+    fireEvent.click(screen.getByRole("button", { name: "Draft with AI" }));
+    expect(screen.getByTestId("compose-chat-embed-context")).toHaveTextContent("roadmap-item: RF-1 (RF-1)");
+    expect(composeChatProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      embeds: [{ kind: "roadmap-item", id: "RF-1", projectId: "proj-a" }],
+    }));
+
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), { target: { value: "agent-001" } });
+    fireEvent.change(screen.getByTestId("message-composer-content"), { target: { value: "Review roadmap" } });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: { nativeStructures: [{ kind: "roadmap-item", id: "RF-1", projectId: "proj-a" }] },
+    }), "proj-a"));
+  });
+
+  it("attaches roadmap candidates from the keyboard and touch-safe picker", () => {
+    render(<MessageComposer {...defaultProps} nativeStructureCandidates={[
+      { ref: { kind: "roadmap-item", id: "RF-1", projectId: "proj-a" }, label: "Roadmap feature" },
+    ]} />);
+
+    fireEvent.change(screen.getByTestId("message-composer-attach-structure"), { target: { value: "0" } });
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent("Roadmap feature");
+  });
+
+  it.each(["mission", "roadmap-item"] as const)("rejects a foreign project %s drop", (kind) => {
+    render(<MessageComposer {...defaultProps} projectId="proj-a" />);
+    fireEvent.drop(screen.getByTestId("message-composer"), { dataTransfer: {
+      types: [NATIVE_STRUCTURE_DRAG_MIME],
+      getData: (type: string) => type === NATIVE_STRUCTURE_DRAG_MIME
+        ? JSON.stringify({ kind, id: "foreign-id", projectId: "proj-b" }) : "",
+    } as unknown as DataTransfer });
+
+    expect(screen.queryByTestId("message-composer-attached-structures")).not.toBeInTheDocument();
+  });
+
+  it("stamps unscoped drops, accepts matching projects, and preserves refs for single-project hosts", async () => {
+    const { unmount } = render(<MessageComposer {...defaultProps} agents={mockAgents} projectId="proj-a" />);
+    const drop = (ref: object) => fireEvent.drop(screen.getByTestId("message-composer"), { dataTransfer: {
+      types: [NATIVE_STRUCTURE_DRAG_MIME],
+      getData: (type: string) => type === NATIVE_STRUCTURE_DRAG_MIME ? JSON.stringify(ref) : "",
+    } as unknown as DataTransfer });
+    drop({ kind: "mission", id: "M-unscoped" });
+    drop({ kind: "mission", id: "M-matching", projectId: "proj-a" });
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), { target: { value: "agent-001" } });
+    fireEvent.change(screen.getByTestId("message-composer-content"), { target: { value: "Review" } });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: { nativeStructures: [
+        { kind: "mission", id: "M-unscoped", projectId: "proj-a" },
+        { kind: "mission", id: "M-matching", projectId: "proj-a" },
+      ] },
+    }), "proj-a"));
+
+    unmount();
+    render(<MessageComposer {...defaultProps} />);
+    fireEvent.drop(screen.getByTestId("message-composer"), { dataTransfer: {
+      types: [NATIVE_STRUCTURE_DRAG_MIME],
+      getData: (type: string) => type === NATIVE_STRUCTURE_DRAG_MIME
+        ? JSON.stringify({ kind: "mission", id: "M-single", projectId: "proj-b" }) : "",
+    } as unknown as DataTransfer });
+    expect(resolveDroppedNativeStructureRef({ kind: "mission", id: "M-single", projectId: "proj-b" })).toEqual({ kind: "mission", id: "M-single", projectId: "proj-b" });
+    expect(screen.getByTestId("message-composer-attached-structures")).toBeInTheDocument();
+  });
+
+  it("keeps the roadmap picker available when coarse pointers disable native drag", () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+    render(<MessageComposer {...defaultProps} nativeStructureCandidates={[
+      { ref: { kind: "roadmap-item", id: "RF-mobile" }, label: "Mobile roadmap item" },
+    ]} />);
+
+    expect(isNativeStructureDragEnabled()).toBe(false);
+    fireEvent.change(screen.getByTestId("message-composer-attach-structure"), { target: { value: "0" } });
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent("Mobile roadmap item");
+    vi.unstubAllGlobals();
+  });
+
+  it("disables structural attachment selection when no candidates are available", () => {
+    render(<MessageComposer {...defaultProps} />);
+    expect(screen.getByTestId("message-composer-attach-structure")).toBeDisabled();
+    expect(screen.getByText("No structures available")).toBeInTheDocument();
+  });
+
+  it("preserves a long structure label when attaching from the shared picker", () => {
+    const longLabel = "A deliberately long structure label that must remain available without changing attachment metadata";
+    render(<MessageComposer {...defaultProps} nativeStructureCandidates={[
+      { ref: { kind: "mission-with-a-deliberately-long-kind", id: "M-long" }, label: longLabel },
+    ]} />);
+
+    const picker = screen.getByTestId("message-composer-attach-structure");
+    expect(picker).not.toBeDisabled();
+    expect(picker).toHaveTextContent(`mission-with-a-deliberately-long-kind: ${longLabel}`);
+    fireEvent.change(picker, { target: { value: "0" } });
+
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent(longLabel);
+  });
+
+  it("disables send button when content is empty", () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    const sendBtn = screen.getByTestId("message-composer-send");
+    expect(sendBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("enables send button when recipient and content are filled", () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    // Select agent
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    // Type content
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "Hello agent!" },
+    });
+    const sendBtn = screen.getByTestId("message-composer-send");
+    expect(sendBtn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("shows character count", () => {
+    render(<MessageComposer {...defaultProps} />);
+    expect(screen.getByTestId("message-composer-charcount")).toBeDefined();
+    expect(screen.getByTestId("message-composer-charcount").textContent).toContain("0/2000");
+  });
+
+  it("updates character count when typing", () => {
+    render(<MessageComposer {...defaultProps} />);
+    const textarea = screen.getByTestId("message-composer-content");
+    fireEvent.change(textarea, { target: { value: "Hello" } });
+    expect(screen.getByTestId("message-composer-charcount").textContent).toContain("5/2000");
+  });
+
+  it("calls onSend when message is sent successfully", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "Hello agent!" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        {
+          toId: "agent-001",
+          toType: "agent",
+          content: "Hello agent!",
+          type: "user-to-agent",
+        },
+        undefined,
+      );
+    });
+    expect(defaultProps.onSend).toHaveBeenCalledOnce();
+  });
+
+  it("shows error when send fails", async () => {
+    mockSendMessage.mockRejectedValue(new Error("Network error"));
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "Hello agent!" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => {
+      expect(screen.getByTestId("message-composer-error")).toBeDefined();
+    });
+    expect(screen.getByTestId("message-composer-error").textContent).toContain("Network error");
+  });
+
+  it("calls onCancel when clicking cancel button", () => {
+    render(<MessageComposer {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("message-composer-cancel"));
+    expect(defaultProps.onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("calls onCancel when clicking cancel footer button", () => {
+    render(<MessageComposer {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("message-composer-cancel-btn"));
+    expect(defaultProps.onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("auto-focuses textarea when reply context is provided", () => {
+    render(
+      <MessageComposer
+        {...defaultProps}
+        recipient={{ id: "agent-001", type: "agent" }}
+        replyContext={{ messageId: "m1", preview: "Previous" }}
+      />,
+    );
+
+    expect(document.activeElement).toBe(screen.getByTestId("message-composer-content"));
+  });
+
+  it("scrolls textarea into view on visualViewport resize for a new compose", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    let resizeHandler: (() => void) | undefined;
+
+    addEventListener.mockImplementation((event: string, handler: () => void) => {
+      if (event === "resize") {
+        resizeHandler = handler;
+      }
+    });
+
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        addEventListener,
+        removeEventListener,
+      },
+      writable: true,
+    });
+
+    if (!("scrollIntoView" in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: () => undefined,
+        writable: true,
+      });
+    }
+    const scrollIntoViewSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => undefined);
+
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+
+    expect(addEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
+    resizeHandler?.();
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
+
+    scrollIntoViewSpy.mockRestore();
+  });
+
+  it("scrolls textarea into view on visualViewport resize when replying", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    let resizeHandler: (() => void) | undefined;
+
+    addEventListener.mockImplementation((event: string, handler: () => void) => {
+      if (event === "resize") {
+        resizeHandler = handler;
+      }
+    });
+
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        addEventListener,
+        removeEventListener,
+      },
+      writable: true,
+    });
+
+    if (!("scrollIntoView" in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: () => undefined,
+        writable: true,
+      });
+    }
+    const scrollIntoViewSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => undefined);
+
+    render(
+      <MessageComposer
+        {...defaultProps}
+        recipient={{ id: "agent-001", type: "agent" }}
+        replyContext={{ messageId: "m1", preview: "Previous" }}
+      />,
+    );
+
+    expect(addEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
+    resizeHandler?.();
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
+
+    scrollIntoViewSpy.mockRestore();
+  });
+
+  it("scrolls textarea into view on focus", () => {
+    if (!("scrollIntoView" in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: () => undefined,
+        writable: true,
+      });
+    }
+    const scrollIntoViewSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => undefined);
+
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+
+    fireEvent.focus(screen.getByTestId("message-composer-content"));
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
+
+    scrollIntoViewSpy.mockRestore();
+  });
+
+  it("does not throw when visualViewport is unavailable", () => {
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+
+    expect(() => {
+      render(
+        <MessageComposer
+          {...defaultProps}
+          recipient={{ id: "agent-001", type: "agent" }}
+          replyContext={{ messageId: "m1", preview: "Previous" }}
+        />,
+      );
+    }).not.toThrow();
+  });
+
+  it("shows pre-filled recipient agent name when recipient id exists in agents list", () => {
+    render(
+      <MessageComposer
+        {...defaultProps}
+        agents={mockAgents}
+        recipient={{ id: "agent-001", type: "agent" }}
+      />,
+    );
+
+    expect(screen.getByText("Test Agent")).toBeDefined();
+    expect(screen.queryByText("agent-001")).toBeNull();
+  });
+
+  it("falls back to pre-filled recipient id when agent is not in agents list", () => {
+    render(
+      <MessageComposer
+        {...defaultProps}
+        agents={mockAgents}
+        recipient={{ id: "agent-missing", type: "agent" }}
+      />,
+    );
+
+    expect(screen.getByText("agent-missing")).toBeDefined();
+  });
+
+  it("shows loading state while sending", async () => {
+    mockSendMessage.mockImplementation(() => new Promise(() => {})); // Never resolves
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "Hello agent!" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => {
+      expect(screen.getByTestId("icon-loader")).toBeDefined();
+    });
+  });
+
+  it("forwards wakeImmediately when the wake checkbox is ticked for an agent recipient", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "wake up" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-wake"));
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          wakeImmediately: true,
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("sends wakeImmediately alongside replyTo metadata when replying", async () => {
+    render(
+      <MessageComposer
+        {...defaultProps}
+        agents={mockAgents}
+        recipient={{ id: "agent-001", type: "agent" }}
+        replyContext={{ messageId: "msg-orig", preview: "earlier message" }}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "follow up" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-wake"));
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          wakeImmediately: true,
+          metadata: {
+            replyTo: { messageId: "msg-orig" },
+          },
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("omits wakeImmediately when the checkbox is left unchecked", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "regular" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+
+    await waitFor(() => {
+      const callArgs = mockSendMessage.mock.calls[0][0];
+      expect(callArgs.wakeImmediately).toBeUndefined();
+    });
+  });
+
+  it("locks wake checkbox as checked when selected agent is already immediate mode", () => {
+    const immediateAgents: Agent[] = [
+      {
+        ...mockAgents[0],
+        runtimeConfig: { messageResponseMode: "immediate" },
+      },
+    ];
+    render(<MessageComposer {...defaultProps} agents={immediateAgents} />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+
+    const wakeCheckbox = screen.getByTestId("message-composer-wake") as HTMLInputElement;
+    expect(wakeCheckbox.checked).toBe(true);
+    expect(wakeCheckbox.disabled).toBe(true);
+    expect(screen.getByTestId("message-composer-wake-hint").textContent).toContain("already set to immediate response mode");
+  });
+
+  it("hides wake checkbox for non-agent recipients", () => {
+    render(
+      <MessageComposer
+        {...defaultProps}
+        agents={mockAgents}
+        recipient={{ id: "dashboard", type: "user" }}
+      />,
+    );
+
+    expect(screen.queryByTestId("message-composer-wake")).toBeNull();
+  });
+
+  it("passes projectId to sendMessage", async () => {
+    render(<MessageComposer {...defaultProps} agents={mockAgents} projectId="proj-1" />);
+    fireEvent.change(screen.getByTestId("message-composer-recipient"), {
+      target: { value: "agent-001" },
+    });
+    fireEvent.change(screen.getByTestId("message-composer-content"), {
+      target: { value: "Hello!" },
+    });
+    fireEvent.click(screen.getByTestId("message-composer-send"));
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        "proj-1",
+      );
+    });
+  });
+});

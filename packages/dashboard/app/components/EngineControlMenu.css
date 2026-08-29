@@ -1,0 +1,280 @@
+.engine-control-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+}
+
+/*
+FNXC:EngineControls 2026-08-08-15:40 (FN-8802 width-collapse regression, RUFU-042):
+The open popover carries the shared `.card` class, whose base now sets `min-width: 0` and
+`max-width: 100%` (FN-8802, TaskCard.css). Its containing block is this `.engine-control-menu`
+wrapper, which sizes to the narrow trigger button; `.card`'s `max-width: 100%` therefore
+clamped the intended grid width down to ~the trigger's width (~5mm), hiding all content.
+
+The selected text (width/min-width/max-width) below must beat `.card` deterministically, so it
+targets the popover in its only real mount context (the ExecutorStatusBar footer segment) with
+higher specificity — the same pattern used by `.selection-comment-panel.card`. `max-width` is
+clamped to the VIEWPORT (not the trigger wrapper), `min-width` sets the floor so it can never
+collapse to a sliver, and the footer-scoped overrides re-assert the width so later `.card` rules
+cannot win by load order.
+*/
+
+.engine-control-menu__trigger {
+  color: var(--text-muted);
+}
+
+.engine-control-menu__trigger:hover {
+  color: var(--text);
+}
+
+.engine-control-menu__popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-xs));
+  z-index: 70;
+  width: min(24rem, calc(100vw - (var(--space-lg) * 2)));
+  max-height: min(32rem, calc(100vh - var(--space-2xl)));
+  overflow: auto;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+}
+
+.engine-control-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-block-end: calc(var(--space-xs) * -1);
+}
+
+.engine-control-menu__close {
+  color: var(--text-muted);
+}
+
+.engine-control-menu__close:hover {
+  color: var(--text);
+}
+
+.engine-control-menu__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.engine-control-menu__section--actions {
+  gap: var(--space-xs);
+}
+
+.engine-control-menu__action {
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--space-sm);
+}
+
+.engine-control-menu__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.engine-control-menu__section-header,
+.engine-control-menu__slider-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.engine-control-menu__section-header {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.engine-control-menu__save-state {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+/* FNXC:GlobalConcurrencyControls 2026-06-25-22:45: "All projects" scope caption sits between the global-cap title and its save-state indicator; muted so the save-state remains the emphasized signal. */
+.engine-control-menu__scope-caption {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.engine-control-menu__save-state--saving {
+  color: var(--color-warning);
+}
+
+.engine-control-menu__save-state--saved {
+  color: var(--color-success);
+}
+
+.engine-control-menu__save-state--error,
+.engine-control-menu__error {
+  color: var(--color-error);
+}
+
+/* FNXC:GlobalConcurrencyControls 2026-06-25-14:10: The global cap is a cross-project setting; separate it visually from the per-project sliders below with a divider and an "All projects" caption. */
+.engine-control-menu__section--global {
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-control-menu__slider {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.engine-control-menu__slider-label strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.engine-control-menu__slider-meta {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-17:30:
+FN-8007 makes the current-use dot's half-thumb edge inset match the native desktop range thumb. This preserves the min-relative thumb alignment used by the marker: one running agent stays visible at the start and over-cap use stays on the cap thumb.
+*/
+.engine-control-menu__range-wrap {
+  --engine-control-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.engine-control-menu__range {
+  /*
+  FNXC:GlobalConcurrencyControls 2026-06-30-21:45:
+  Footer current-use dots must align with the Command Center concurrency sliders. Mirror the dashboard range-input geometry instead of nudging the marker so the shared current/cap marker math lands on the same effective track/thumb positions across footer and dashboard surfaces.
+
+  FNXC:GlobalConcurrencyControls 2026-07-15-00:00:
+  FN-7973 requires horizontal concurrency thumb drags to opt out of the mobile pan-y ancestor lock. touch-action:none gives a touch beginning on this range input to the native slider rather than allowing a near-horizontal drag to become page panning.
+  */
+  inline-size: 100%;
+  min-block-size: var(--space-xl);
+  accent-color: var(--accent);
+  touch-action: none;
+}
+
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-18:10:
+FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size token. This prevents browser-default thumb dimensions from changing the marker travel geometry; WebKit and Gecko must use the same dimensions as the half-thumb inset.
+*/
+.engine-control-menu__range::-webkit-slider-thumb {
+  width: var(--engine-control-range-thumb-size);
+  height: var(--engine-control-range-thumb-size);
+}
+
+.engine-control-menu__range::-moz-range-thumb {
+  width: var(--engine-control-range-thumb-size);
+  height: var(--engine-control-range-thumb-size);
+}
+
+/* FNXC:GlobalConcurrencyControls 2026-06-26-06:26: The current-use marker reuses the global .status-dot convention and is positioned with logical inset properties so utilization is visible on LTR/RTL slider tracks without intercepting drag input. */
+.engine-control-menu__use-marker {
+  --use-pct: 0%;
+  --use-offset: 0%;
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--use-offset, var(--use-pct));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.engine-control-menu__error {
+  margin: 0;
+  font-size: var(--font-size-xs);
+}
+
+.executor-status-bar__segment--engine-controls .engine-control-menu > .engine-control-menu__popover.card {
+  /* RUFU-042 (FN-8802 regression): this footer-scoped rule (0,3,0) out-specifies the shared
+     `.card` base (0,1,0), which sets `min-width: 0; max-width: 100%` (TaskCard.css). Without
+     these re-assertions `.card` could clamp the popover to its narrow trigger wrapper (~5mm).
+     `max-width` is clamped to the VIEWPORT, not the trigger, so the grid width survives. */
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-xs));
+  min-width: min(24rem, calc(100vw - (var(--space-lg) * 2)));
+  max-width: calc(100vw - (var(--space-lg) * 2));
+}
+
+@media (max-width: 768px) {
+  .engine-control-menu__range-wrap {
+    --engine-control-range-thumb-size: var(--space-xl);
+  }
+
+  .engine-control-menu__range {
+    min-block-size: var(--space-2xl);
+  }
+
+  .engine-control-menu__range::-webkit-slider-thumb {
+    inline-size: var(--space-xl);
+    block-size: var(--space-xl);
+  }
+
+  .engine-control-menu__range::-moz-range-thumb {
+    inline-size: var(--space-xl);
+    block-size: var(--space-xl);
+  }
+}
+
+@media (max-width: 1024px) {
+  .engine-control-menu__popover {
+    /*
+    FNXC:EngineControls 2026-06-30-07:40:
+    The footer Engine Controls menu opens from a fixed mobile footer, so the mobile panel must not inherit desktop corner anchoring. Keep it viewport-fixed, full-width between token gutters, scrollable, and lifted above the executor footer plus mobile nav stack including safe-area, standalone, and ICB compensation.
+
+    FNXC:EngineControls 2026-06-30-16:10:
+    Browser verification showed the footer context can lose this low-specificity mobile override to later footer/card rules and collapse to the trigger's narrow corner. Keep a matching higher-specificity footer rule below so position:fixed and the full-width safe gutters win in the actual ExecutorStatusBar renderer.
+
+    FNXC:EngineControls 2026-06-30-16:25:
+    Tablet browser verification at 820px still overflowed with the desktop anchored popover. Extend the viewport-safe panel breakpoint through common narrow tablets so the footer trigger cannot place a 24rem menu outside the visible inline bounds.
+
+    FNXC:EngineControls 2026-06-30-16:42:
+    Browser verification at 1024px landscape showed the footer popover could still inherit the shared .card position and render off-screen. Keep the viewport-safe footer override active through that tablet width, and keep a footer-specific desktop rule outside the media query so .card cannot reset the anchored popover on wider screens.
+    */
+    --engine-control-mobile-bottom-stack: calc(var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
+    position: fixed;
+    left: var(--space-sm);
+    right: var(--space-sm);
+    bottom: var(--engine-control-mobile-bottom-stack);
+    width: auto;
+    /* RUFU-042 (FN-8802 regression): reset the desktop viewport min/max floor so the phone-width gutter panel never overflows; `.card`'s max-width:100% cannot clamp the left/right-stretched panel. */
+    min-width: 0;
+    max-width: none;
+    max-height: min(28rem, calc(100dvh - var(--engine-control-mobile-bottom-stack) - (var(--space-md) * 2)));
+    overflow: auto;
+  }
+
+  .executor-status-bar__segment--engine-controls .engine-control-menu > .engine-control-menu__popover.card {
+    --engine-control-mobile-bottom-stack: calc(var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
+    position: fixed;
+    left: var(--space-sm);
+    right: var(--space-sm);
+    bottom: var(--engine-control-mobile-bottom-stack);
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: min(28rem, calc(100dvh - var(--engine-control-mobile-bottom-stack) - (var(--space-md) * 2)));
+    overflow: auto;
+  }
+
+  .engine-control-menu__header {
+    justify-content: flex-end;
+  }
+}

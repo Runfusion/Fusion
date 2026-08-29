@@ -1,0 +1,690 @@
+# Binary Release workflow
+#
+# This workflow builds platform-specific binaries and creates a GitHub Release
+# when a version tag (v*) is pushed. This is the second release channel —
+# npm publishing is handled separately by version.yml via changesets.
+#
+# Release channels:
+#   1. npm publish  — handled by version.yml (changesets/action)
+#   2. GitHub Release with binaries — handled by this workflow (release.yml)
+
+name: Binary Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build platform-specific binaries ──────────────────────────────────
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    # FNXC:Release 2026-07-23-23:05: 45 min (was 30): the desktop pnpm-deploy closure staging
+    # inside the CLI full-package build can take >10 min alone on cold-store macOS runners
+    # (killed every v0.73.0-beta.* bun-darwin-arm64 leg); tsup now allows it 30 min.
+    timeout-minutes: 45
+    # Job-level env so the signing steps' `if:` can detect whether the
+    # signing certificate secrets are configured (secrets can't be read in `if:` directly).
+    env:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            binary: fn-cli-linux-x64
+          - os: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            binary: fn-cli-linux-arm64
+          - os: macos-latest
+            target: bun-darwin-arm64
+            binary: fn-cli-darwin-arm64
+          # bun-darwin-x64 (Intel) dropped: macos-13 runners are scarce and
+          # blocked releases by sitting queued for hours. The CLI ships
+          # Apple-Silicon-only for macOS; desktop macOS DMG/ZIP is universal.
+          - os: windows-latest
+            target: bun-windows-x64
+            binary: fn-cli-windows-x64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build binary
+        run: pnpm --filter @runfusion/fusion build:exe -- --target ${{ matrix.target }}
+
+      - name: Verify binary exists
+        shell: bash
+        run: test -f packages/cli/dist/${{ matrix.binary }}
+
+      - name: Sign macOS binary
+        # Skip when the Apple certificate secret is absent so unsigned binaries
+        # still publish, mirroring the desktop-macos unsigned fallback path.
+        if: ${{ runner.os == 'macOS' && env.APPLE_CERTIFICATE_BASE64 != '' }}
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash scripts/sign-macos.sh packages/cli/dist/${{ matrix.binary }} packages/cli/dist/runtime
+
+      - name: Sign Windows binary
+        # Skip when the Windows certificate secret is absent so unsigned binaries
+        # still publish, mirroring the macOS signing fallback.
+        if: ${{ runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_BASE64 != '' }}
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: pwsh scripts/sign-windows.ps1 packages/cli/dist/${{ matrix.binary }}
+
+      - name: Generate checksum (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd packages/cli/dist
+          sha256sum ${{ matrix.binary }} > ${{ matrix.binary }}.sha256
+
+      - name: Generate checksum (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd packages/cli/dist
+          shasum -a 256 ${{ matrix.binary }} > ${{ matrix.binary }}.sha256
+
+      - name: Generate checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd packages/cli/dist
+          $hash = (Get-FileHash ${{ matrix.binary }} -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.binary }}" | Out-File -Encoding ascii ${{ matrix.binary }}.sha256
+
+      # FNXC:Release 2026-07-17-13:45:
+      # The bare binary alone cannot boot: the compiled exe resolves PostgreSQL
+      # migrations and the embedded-postgres runtime payload execPath-relative
+      # (see packages/core/src/postgres/schema-applier.ts and
+      # embedded-lifecycle.ts). Ship a self-contained tarball (binary +
+      # migrations/ + runtime/<platform>/) per target so a downloaded release
+      # asset works out of the box. The bare binary + .sha256 continue to be
+      # uploaded unchanged so existing download links stay valid.
+      - name: Package release tarball
+        shell: bash
+        run: |
+          cd packages/cli/dist
+          BASE="${{ matrix.binary }}"
+          BASE="${BASE%.exe}"
+          PLAT="${{ matrix.target }}"
+          PLAT="${PLAT#bun-}"
+          STAGE="tarball-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/runtime"
+          cp "${{ matrix.binary }}" "$STAGE/"
+          if [ -d migrations ]; then
+            cp -R migrations "$STAGE/migrations"
+          else
+            echo "::warning::packages/cli/dist/migrations missing; tarball will lack schema migrations"
+          fi
+          if [ -d "runtime/$PLAT" ]; then
+            cp -R "runtime/$PLAT" "$STAGE/runtime/$PLAT"
+          else
+            echo "::warning::packages/cli/dist/runtime/$PLAT missing; tarball will lack native runtime assets"
+          fi
+          if [ -d client ]; then
+            cp -R client "$STAGE/client"
+          fi
+          tar -czf "$BASE.tar.gz" -C "$STAGE" .
+          rm -rf "$STAGE"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$BASE.tar.gz" > "$BASE.tar.gz.sha256"
+          else
+            shasum -a 256 "$BASE.tar.gz" > "$BASE.tar.gz.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.binary }}
+          path: |
+            packages/cli/dist/${{ matrix.binary }}
+            packages/cli/dist/${{ matrix.binary }}.sha256
+            packages/cli/dist/*.tar.gz
+            packages/cli/dist/*.tar.gz.sha256
+            packages/cli/dist/migrations/**/*
+            packages/cli/dist/runtime/**/*
+
+  # ── Build Windows desktop EXE artifacts ──────────────────────────────
+  # Code-signing with WINDOWS_CERTIFICATE_BASE64 / WINDOWS_CERTIFICATE_PASSWORD
+  # is intentionally deferred to FN-5592. Desktop Windows remains x64 because
+  # embedded-postgres does not publish a native Windows ARM64 payload.
+  build-desktop-windows:
+    name: Build Desktop Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # Every Windows desktop release must prove its bundled default database can
+      # initialize, serve SQL, persist across restart, and stop without orphans.
+      - name: Smoke embedded Postgres on Windows
+        run: pnpm --filter @fusion/core test:embedded-postgres
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build desktop package
+        run: pnpm --filter @fusion/desktop build
+
+      - name: Package Windows desktop EXE
+        # Use `exec electron-builder` rather than the `dist:win` script: pnpm leaks
+        # the `--` separator into script args (electron-builder then stops parsing
+        # at `--` and ignores `--publish never`, auto-publishing to the wrong repo).
+        # FNXC:UpdateChannels 2026-07-19-13:30: beta tags (v*-beta.N) build with
+        # publish.channel=beta so electron-builder emits beta*.yml update manifests;
+        # beta-channel desktop installs read those, stable installs keep latest*.yml.
+        # FNXC:UpdateChannels 2026-07-23-21:35: the flag must be quoted on Windows —
+        # pwsh tokenizes bare `-c.publish.channel=beta` into `-c` + `.publish.channel=beta`,
+        # which electron-builder then reads as a config FILE path (ENOENT, v0.73.0-beta.5).
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --publish never ${{ contains(github.ref_name, '-beta') && '"-c.publish.channel=beta"' || '' }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify desktop EXE artifacts
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem packages/desktop/dist-electron -Filter "Fusion-*-win-*.exe"
+          if ($exes.Count -eq 0) {
+            Write-Error "No Fusion Windows EXE artifacts produced"
+            exit 1
+          }
+
+      - name: Generate desktop EXE checksums
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem packages/desktop/dist-electron -Filter "Fusion-*-win-*.exe"
+          foreach ($exe in $exes) {
+            $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($exe.Name)" | Out-File -Encoding ascii "$($exe.FullName).sha256"
+          }
+
+      - name: Upload desktop Windows artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: fusion-desktop-windows
+          path: |
+            packages/desktop/dist-electron/Fusion-*-win-*.exe
+            packages/desktop/dist-electron/Fusion-*-win-*.exe.sha256
+            packages/desktop/dist-electron/Fusion-*-win-*.exe.blockmap
+            packages/desktop/dist-electron/latest.yml
+            packages/desktop/dist-electron/beta.yml
+
+  # ── Build macOS desktop artifacts ────────────────────────────────────
+  build-desktop-macos:
+    name: Build Desktop macOS DMG/ZIP
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # Exercise the native payload on the release host before signing artifacts.
+      - name: Smoke embedded Postgres on macOS
+        run: pnpm --filter @fusion/core test:embedded-postgres
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build desktop package
+        run: pnpm --filter @fusion/desktop build
+
+      - name: Package signed macOS desktop DMG/ZIP
+        if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' }}
+        # FNXC:UpdateChannels 2026-07-19-13:30: beta tags emit beta*.yml manifests (see Windows leg).
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --mac --publish never ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package unsigned macOS desktop DMG/ZIP
+        if: ${{ env.APPLE_CERTIFICATE_BASE64 == '' }}
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --mac --publish never -c.mac.notarize=false ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify signed and notarized macOS artifacts
+        if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' }}
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(packages/desktop/dist-electron/Fusion-*-mac-*.dmg)
+          zips=(packages/desktop/dist-electron/Fusion-*-mac-*.zip)
+          if [ ${#dmgs[@]} -eq 0 ]; then
+            echo "No Fusion macOS DMG artifacts produced" >&2
+            exit 1
+          fi
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "No Fusion macOS ZIP artifacts produced" >&2
+            exit 1
+          fi
+          for dmg in "${dmgs[@]}"; do
+            echo "Verifying signed DMG: $dmg"
+            codesign --verify --deep --strict --verbose=2 "$dmg"
+            spctl --assess --type open --context context:primary-signature -v "$dmg"
+            xcrun stapler validate "$dmg"
+          done
+          for zip in "${zips[@]}"; do
+            echo "Verifying ZIP app bundle: $zip"
+            tmpdir="$(mktemp -d)"
+            unzip -q "$zip" -d "$tmpdir"
+            app="$(find "$tmpdir" -type d -name '*.app' -print -quit)"
+            if [ -z "$app" ]; then
+              echo "No .app bundle found in $zip" >&2
+              rm -rf "$tmpdir"
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl --assess --type exec -v "$app"
+            xcrun stapler validate "$app"
+            rm -rf "$tmpdir"
+          done
+
+      - name: Generate desktop macOS checksums
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for file in packages/desktop/dist-electron/Fusion-*-mac-*.dmg packages/desktop/dist-electron/Fusion-*-mac-*.zip; do
+            shasum -a 256 "$file" > "$file.sha256"
+          done
+
+      - name: Upload desktop macOS artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: fusion-desktop-macos
+          path: |
+            packages/desktop/dist-electron/Fusion-*-mac-*.dmg
+            packages/desktop/dist-electron/Fusion-*-mac-*.dmg.sha256
+            packages/desktop/dist-electron/Fusion-*-mac-*.zip
+            packages/desktop/dist-electron/Fusion-*-mac-*.zip.sha256
+            packages/desktop/dist-electron/Fusion-*-mac-*.blockmap
+            packages/desktop/dist-electron/latest-mac.yml
+            packages/desktop/dist-electron/beta-mac.yml
+
+  # ── Build Linux desktop artifacts ────────────────────────────────────
+  build-desktop-linux:
+    name: Build Desktop Linux Artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # Exercise the native payload on the release host before packaging artifacts.
+      - name: Smoke embedded Postgres on Linux
+        run: pnpm --filter @fusion/core test:embedded-postgres
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build desktop package
+        run: pnpm --filter @fusion/desktop build
+
+      - name: Package Linux desktop artifacts
+        # Linux desktop code-signing is deferred to FN-5605; Linux ARM64 CLI binaries are tracked in FN-5606.
+        # FNXC:UpdateChannels 2026-07-19-13:30: beta tags emit beta*.yml manifests (see Windows leg).
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --linux --x64 --arm64 --publish never ${{ contains(github.ref_name, '-beta') && '-c.publish.channel=beta' || '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify desktop Linux AppImage artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          arm64_appimages=(packages/desktop/dist-electron/Fusion-*-linux-arm64.AppImage)
+          # electron-builder names the x64 AppImage with the x86_64 arch suffix
+          # (deb uses amd64, tar.gz uses x64) — match the actual output name.
+          x64_appimages=(packages/desktop/dist-electron/Fusion-*-linux-x86_64.AppImage)
+          if [ ${#arm64_appimages[@]} -eq 0 ]; then
+            echo "No Fusion Linux arm64 AppImage artifacts produced" >&2
+            exit 1
+          fi
+          if [ ${#x64_appimages[@]} -eq 0 ]; then
+            echo "No Fusion Linux x64 AppImage artifacts produced" >&2
+            exit 1
+          fi
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-15-00:20:
+      # AppImage filename presence is not enough — v0.60.0 shipped without
+      # embedded-postgres / main-bootstrap / omp-runtime. Inspect the linux-*-unpacked
+      # trees electron-builder leaves beside the AppImage.
+      - name: Verify Linux AppImage embedded Postgres packaging
+        run: node scripts/verify-desktop-linux-pg-packaging.mjs
+
+      - name: Sign Linux desktop artifacts
+        if: ${{ env.LINUX_GPG_PRIVATE_KEY != '' }}
+        env:
+          LINUX_GPG_PRIVATE_KEY: ${{ secrets.LINUX_GPG_PRIVATE_KEY }}
+          LINUX_GPG_PASSPHRASE: ${{ secrets.LINUX_GPG_PASSPHRASE }}
+          LINUX_GPG_KEY_ID: ${{ secrets.LINUX_GPG_KEY_ID }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          artifacts=(
+            packages/desktop/dist-electron/Fusion-*-linux-*.AppImage
+            packages/desktop/dist-electron/Fusion-*-linux-*.deb
+            packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz
+          )
+          bash scripts/sign-linux.sh "${artifacts[@]}"
+
+      - name: Generate desktop Linux checksums
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for file in packages/desktop/dist-electron/Fusion-*-linux-*.AppImage packages/desktop/dist-electron/Fusion-*-linux-*.deb packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz; do
+            sha256sum "$file" > "$file.sha256"
+          done
+
+      - name: Upload desktop Linux artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          # Single glob set covers both linux-x64 and linux-arm64 artifact filenames.
+          name: fusion-desktop-linux
+          if-no-files-found: ignore
+          path: |
+            packages/desktop/dist-electron/Fusion-*-linux-*.AppImage
+            packages/desktop/dist-electron/Fusion-*-linux-*.AppImage.sha256
+            packages/desktop/dist-electron/Fusion-*-linux-*.AppImage.asc
+            packages/desktop/dist-electron/Fusion-*-linux-*.deb
+            packages/desktop/dist-electron/Fusion-*-linux-*.deb.sha256
+            packages/desktop/dist-electron/Fusion-*-linux-*.deb.asc
+            packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz
+            packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.sha256
+            packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.asc
+            packages/desktop/dist-electron/latest-linux.yml
+            packages/desktop/dist-electron/beta-linux.yml
+
+
+  # ── Build Android APK/AAB artifacts ──────────────────────────────────
+  # FNXC:Release 2026-06-25-12:00:
+  # Android release assets used to be limited to the manual mobile workflow's
+  # short-lived CI artifacts. Tagged binary releases now build the Capacitor
+  # Android shell in this workflow so the public GitHub Release includes a
+  # stable APK and checksum beside desktop and CLI binaries.
+  # FNXC:Release 2026-06-25-18:10:
+  # Android signing is optional and secret-gated on ANDROID_KEYSTORE_BASE64,
+  # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD.
+  # The Capacitor Android project is gitignored/regenerated, so CI injects
+  # signing with android.injected.signing.* Gradle properties instead of
+  # committing native build.gradle edits. When the keystore is absent, keep the
+  # FN-7014 unsigned debug APK fallback; Play Store upload remains out of scope
+  # and is tracked separately from sideload release artifacts.
+  build-android:
+    name: Build Android APK/AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Job-level env mirrors the desktop signing pattern: step `if:` conditions
+    # can inspect env values, but cannot read secrets.* directly.
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:MobileAndroidBuild 2026-06-28-00:00:
+      # Capacitor 7 @capacitor/android compiles its Android library with JavaVersion.VERSION_21; release APK/AAB Gradle builds must provision JDK 21 because JDK 17 fails with `invalid source release: 21`.
+      - name: Setup Java 21
+        uses: actions/setup-java@v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Android Gradle caches
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('pnpm-lock.yaml', 'packages/mobile/capacitor.config.ts') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build dashboard client
+        run: pnpm --filter @fusion/dashboard build
+
+      - name: Create and sync Capacitor Android project
+        run: |
+          # FNXC:Release 2026-06-25-12:00:
+          # The Capacitor Android platform directory is gitignored and absent in
+          # clean release checkouts, so initialize it from pinned package metadata
+          # before syncing web assets instead of silently skipping the APK leg.
+          if [ ! -d packages/mobile/android ]; then
+            pnpm --filter @fusion/mobile cap add android
+          fi
+          pnpm --filter @fusion/mobile cap sync android
+
+      - name: Decode Android signing keystore
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/fusion-release.keystore"
+
+      - name: Build signed Android release APK and AAB
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          cd packages/mobile/android
+          chmod +x gradlew
+          ./gradlew assembleRelease bundleRelease \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/fusion-release.keystore" \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+
+      - name: Normalize signed Android release assets
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          APK="packages/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          AAB="packages/mobile/android/app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -f "$APK" ]; then
+            echo "::error::Expected signed Android APK missing at $APK" >&2
+            exit 1
+          fi
+          if [ ! -f "$AAB" ]; then
+            echo "::error::Expected signed Android AAB missing at $AAB" >&2
+            exit 1
+          fi
+          mkdir -p packages/mobile/dist
+          cp "$APK" packages/mobile/dist/fusion-android-release.apk
+          cp "$AAB" packages/mobile/dist/fusion-android-release.aab
+
+      - name: Verify signed Android APK signature
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          APK="packages/mobile/dist/fusion-android-release.apk"
+          APKSIGNER=""
+          if [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT/build-tools" ]; then
+            APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1 || true)
+          fi
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --verbose "$APK"
+          else
+            jarsigner -verify -strict "$APK"
+          fi
+
+      - name: Build unsigned Android debug APK
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 == '' }}
+        run: |
+          cd packages/mobile/android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Normalize unsigned Android APK asset
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 == '' }}
+        run: |
+          APK="packages/mobile/android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::Expected Android APK missing at $APK" >&2
+            exit 1
+          fi
+          mkdir -p packages/mobile/dist
+          cp "$APK" packages/mobile/dist/fusion-android.apk
+
+      - name: Generate Android artifact checksums
+        run: |
+          cd packages/mobile/dist
+          for file in fusion-android*.apk fusion-android-release.aab; do
+            [ -f "$file" ] || continue
+            sha256sum "$file" > "$file.sha256"
+          done
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: fusion-android-apk
+          path: |
+            packages/mobile/dist/fusion-android*.apk
+            packages/mobile/dist/fusion-android*.apk.sha256
+            packages/mobile/dist/fusion-android-release.aab
+            packages/mobile/dist/fusion-android-release.aab.sha256
+
+  # ── Create GitHub Release ─────────────────────────────────────────────
+  github-release:
+    name: Create GitHub Release
+    needs: [build-binaries, build-desktop-windows, build-desktop-macos, build-desktop-linux, build-android]
+    # Run as long as the workflow wasn't cancelled, even if some build legs failed,
+    # so a single failing matrix leg doesn't suppress publishing the ones that did
+    # build. Gated to tag pushes only: a workflow_dispatch run on a branch is a
+    # build-only validation (artifacts are still uploaded), and would otherwise try
+    # to create a release tagged with the branch name.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # FNXC:Changelog 2026-06-25-09:30:
+      # The release-notes step reads root CHANGELOG.md, so this job needs the repo
+      # tree — not just downloaded artifacts. Without this checkout the notes step
+      # threw `ENOENT: CHANGELOG.md` and failed the whole job, publishing zero
+      # binaries on v0.47.0 even though every bun build leg succeeded. Sparse-checkout
+      # only CHANGELOG.md to keep the job lean; no submodules or full history needed.
+      - name: Checkout CHANGELOG for release notes
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        id: collect
+        run: |
+          mkdir release-files
+          # FNXC:Release 2026-07-17-13:45:
+          # Prune the CLI runtime/ and migrations/ staging trees: they exist in the
+          # artifact only as tarball inputs and contain files that would otherwise
+          # match the flat collection globs (e.g. embedded-postgres postgres.exe).
+          # The self-contained fn-cli-<platform>.tar.gz (+ .sha256) matches the
+          # existing *.tar.gz globs and reaches the release alongside the bare
+          # fn-cli-* binaries.
+          find artifacts \( -path "*/runtime/*" -o -path "*/migrations/*" \) -prune -o -type f \( -name "fn-*" -o -name "*.sha256" -o -name "*.asc" -o -name "*.exe" -o -name "*.exe.sha256" -o -name "*.blockmap" -o -name "*.dmg" -o -name "*.dmg.sha256" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.apk" -o -name "*.aab" -o -name "*.AppImage" -o -name "*.AppImage.sha256" -o -name "*.deb" -o -name "*.deb.sha256" -o -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "latest*.yml" -o -name "beta*.yml" \) -print -exec cp {} release-files/ \;
+          ls -la release-files/
+          count=$(find release-files -type f | wc -l | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No release artifacts were produced by any build job; skipping release creation." >&2
+          fi
+
+      # Only create the release if at least one artifact exists. A failed build leg
+      # yields a partial release rather than none; a total wipeout fails loudly.
+      # FNXC:Changelog 2026-06-24-17:45:
+      # Use the curated root CHANGELOG notes for the GitHub Release body instead
+      # of GitHub's auto-generated notes. Extracts the version section and passes
+      # it via --notes-file so the release body matches the distilled CHANGELOG.
+      - name: Extract release notes from CHANGELOG
+        if: ${{ steps.collect.outputs.count != '0' }}
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # FNXC:Changelog 2026-06-25-09:30:
+          # Never let release-note extraction fail the publish. A missing/unreadable
+          # CHANGELOG or absent version section falls back to a plain "Release vX.Y.Z"
+          # body so binaries still ship — matching the job's "partial over none" intent.
+          NOTES=$(node -e "
+            const fs = require('fs');
+            const fallback = 'Release v${VERSION}';
+            let content = '';
+            try { content = fs.readFileSync('CHANGELOG.md', 'utf8'); }
+            catch (e) { console.log(fallback); process.exit(0); }
+            const lines = content.split(/\r?\n/);
+            const header = '## ' + '${VERSION}';
+            const start = lines.findIndex(l => l.trim() === header);
+            if (start === -1) { console.log(fallback); process.exit(0); }
+            let end = lines.length;
+            for (let i = start + 1; i < lines.length; i++) {
+              if (lines[i].startsWith('## ')) { end = i; break; }
+            }
+            console.log(lines.slice(start + 1, end).join('\n').trim() || fallback);
+          ")
+          echo "$NOTES" > /tmp/release-notes.md
+
+      # FNXC:UpdateChannels 2026-07-19-13:30:
+      # Beta tags (vX.Y.Z-beta.N, cut from main by `pnpm release --channel beta`)
+      # must be GitHub PRERELEASES: the desktop stable auto-updater and the
+      # /releases/latest URL follow the "latest" release, which GitHub only
+      # assigns to non-prerelease releases. The tag name is the single source
+      # of truth so tag-push-triggered binary builds do the right thing.
+      - name: Create GitHub Release
+        if: ${{ steps.collect.outputs.count != '0' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: /tmp/release-notes.md
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-beta') }}
+          files: release-files/*

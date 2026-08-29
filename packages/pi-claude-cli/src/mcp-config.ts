@@ -1,0 +1,224 @@
+/**
+ * Custom tool discovery and MCP config file generation.
+ *
+ * Discovers non-built-in tools from pi, writes their schemas to a temp file,
+ * and generates an MCP config that points to the schema-only MCP server.
+ */
+
+import { writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+
+/**
+ * A single tool descriptor returned by pi.getAllTools().
+ */
+interface PiToolInfo {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/**
+ * Minimal duck-type interface for the pi ExtensionAPI instance.
+ * We only call getAllTools(), so we only declare that method.
+ * The return type is unknown to accommodate defensive runtime checks.
+ */
+interface PiInstance {
+  getAllTools(): unknown;
+}
+
+/** The 6 built-in tools that pi handles natively (match pi tool names). */
+const BUILT_IN_TOOL_NAMES = new Set([
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "grep",
+  "find",
+]);
+
+/** A custom tool definition with MCP-compatible schema. */
+export interface McpToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/**
+ * Get custom tool definitions from pi, filtering out built-in tools.
+ *
+ * @param pi - The pi ExtensionAPI instance
+ * @returns Array of custom tool definitions (empty if all tools are built-in)
+ */
+export function getCustomToolDefs(pi: PiInstance): McpToolDef[] {
+  const allTools = pi.getAllTools();
+
+  if (!Array.isArray(allTools)) {
+    return [];
+  }
+
+  return (allTools as PiToolInfo[])
+    .filter((tool) => !BUILT_IN_TOOL_NAMES.has(tool.name))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.parameters,
+    }));
+}
+
+/** Minimal pi-ai Tool shape (the subset we need from `Context.tools`). */
+interface PiAiToolLike {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/**
+ * Convert the pi-ai `Context.tools` array (the authoritative per-session tool
+ * list pi-coding-agent passes to streamSimple) into MCP tool defs, filtering
+ * out the 6 built-ins that pi handles natively.
+ */
+export function toolsFromContext(
+  contextTools: ReadonlyArray<PiAiToolLike> | undefined,
+): McpToolDef[] {
+  if (!Array.isArray(contextTools)) return [];
+  return contextTools
+    .filter((tool) => !BUILT_IN_TOOL_NAMES.has(tool.name))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.parameters,
+    }));
+}
+
+export interface UserMcpServerSpec {
+  name: string;
+  enabled?: boolean;
+  transport?: "stdio" | "sse" | "streamable-http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+function userServerToConfig(server: UserMcpServerSpec): Record<string, unknown> | undefined {
+  if (server.enabled === false) return undefined;
+  if (server.transport === "sse" || server.transport === "streamable-http") {
+    if (!server.url) return undefined;
+    return {
+      transport: server.transport,
+      url: server.url,
+      ...(server.headers ? { headers: server.headers } : {}),
+    };
+  }
+  if (!server.command) return undefined;
+  return {
+    command: server.command,
+    ...(server.args ? { args: server.args } : {}),
+    ...(server.env ? { env: server.env } : {}),
+  };
+}
+
+/**
+ * FNXC:McpConfig 2026-06-25-22:12:
+ * The Claude CLI MCP config combines Fusion's schema-only custom-tools server with operator-enabled user MCP servers. User env/header values are already secret-materialized by the engine, so this module must write them only to the transient MCP config and never log server contents.
+ */
+/**
+ * Write MCP config and tool schemas to temp files.
+ *
+ * Creates two temp files:
+ * 1. Schema file: JSON array of tool definitions
+ * 2. Config file: MCP config pointing to the schema-only server
+ *
+ * @param toolDefs - Array of custom tool definitions
+ * @param cacheKey - Optional suffix appended to filenames so that distinct
+ *   tool sets (e.g. session-scoped tool registrations) get distinct files
+ *   and don't race on a single shared path.
+ * @returns Path to the MCP config file
+ */
+export function writeMcpConfig(
+  toolDefs: McpToolDef[],
+  cacheKey?: string,
+  userMcpServers: UserMcpServerSpec[] = [],
+): string {
+  const suffix = cacheKey ? `${process.pid}-${cacheKey}` : `${process.pid}`;
+
+  // Write tool schemas to temp file
+  const schemaFilePath = join(
+    tmpdir(),
+    `pi-claude-mcp-schemas-${suffix}.json`,
+  );
+  writeFileSync(schemaFilePath, JSON.stringify(toolDefs));
+
+  // Resolve path to the schema server .cjs file (sibling of this module)
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const serverPath = join(__dirname, "mcp-schema-server.cjs");
+
+  // Build MCP config
+  const mcpServers: Record<string, unknown> = {
+    "custom-tools": {
+      command: "node",
+      args: [serverPath, schemaFilePath],
+    },
+  };
+  for (const server of userMcpServers) {
+    const config = userServerToConfig(server);
+    if (config) mcpServers[server.name] = config;
+  }
+  const config = { mcpServers };
+
+  // Write config to temp file
+  const configFilePath = join(
+    tmpdir(),
+    `pi-claude-mcp-config-${suffix}.json`,
+  );
+  writeFileSync(configFilePath, JSON.stringify(config));
+
+  return configFilePath;
+}
+
+/** A stdio MCP server spec for ACP `session/new.mcpServers` (U11 — Route A). */
+export interface AcpMcpServerSpec {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+}
+
+function userServerToAcp(server: UserMcpServerSpec): AcpMcpServerSpec | undefined {
+  if (server.enabled === false || (server.transport && server.transport !== "stdio") || !server.command) return undefined;
+  return {
+    name: server.name,
+    command: server.command,
+    args: server.args ?? [],
+    env: Object.entries(server.env ?? {}).map(([name, value]) => ({ name, value })),
+  };
+}
+
+/**
+ * Build the ACP `mcpServers` spec for the same schema-only `custom-tools` server
+ * `writeMcpConfig` produces for `--mcp-config` — but as the inline ACP shape
+ * (`session/new.mcpServers`) instead of a config-file path (U11). Writes the
+ * tool-schema file and points the server at the shared `mcp-schema-server.cjs`.
+ * Returns `[]` when there are no custom tools (Route B read-only posture).
+ */
+export function buildAcpMcpServers(
+  toolDefs: McpToolDef[],
+  cacheKey?: string,
+  userMcpServers: UserMcpServerSpec[] = [],
+): AcpMcpServerSpec[] {
+  if (toolDefs.length === 0) {
+    return userMcpServers.map(userServerToAcp).filter((server): server is AcpMcpServerSpec => Boolean(server));
+  }
+  const suffix = cacheKey ? `${process.pid}-${cacheKey}` : `${process.pid}`;
+  const schemaFilePath = join(tmpdir(), `pi-claude-mcp-schemas-${suffix}.json`);
+  writeFileSync(schemaFilePath, JSON.stringify(toolDefs));
+  const serverPath = join(dirname(fileURLToPath(import.meta.url)), "mcp-schema-server.cjs");
+  return [
+    { name: "custom-tools", command: "node", args: [serverPath, schemaFilePath], env: [] },
+    ...userMcpServers.map(userServerToAcp).filter((server): server is AcpMcpServerSpec => Boolean(server)),
+  ];
+}

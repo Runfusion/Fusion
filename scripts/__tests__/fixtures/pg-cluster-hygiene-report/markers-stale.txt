@@ -1,0 +1,8 @@
+# fusion-hygiene-capture v1
+# kind: markers
+# cluster: 5432|PostgreSQL 16.0|postgres
+# captured_at: 2026-08-19T18:18:00Z
+# query: markers-v1
+# rows: 1
+fusion_schema_template_39001_goldenestworkerspnnem8|2026-08-19T10:10:19Z
+# end

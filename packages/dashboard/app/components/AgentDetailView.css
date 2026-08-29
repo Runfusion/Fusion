@@ -1,0 +1,2464 @@
+/* === Agent Detail Modal === */
+/*
+FNXC:ModalTouchGeometry 2026-07-30-23:55:
+`.agent-detail-overlay` is DELETED — nothing has rendered it since FN-8619 moved Agent Detail onto
+FloatingWindow, whose `modal` host owns the scrim (`.floating-window-overlay--modal`).
+
+It defined a fixed, blurred, flex-centred backdrop, and a mobile rule below reset its padding and
+stretched its alignment. Neither is a lost feature: FloatingWindow's overlay is `position: fixed;
+inset: 0` with no flex context, so those declarations had nothing to act on — it positions the panel
+by geometry instead.
+
+Deleting it was blocked on one real question: two containment guards
+(`dashboard-overflow-containment`, `mobile-horizontal-pan-containment`) pinned a selector list naming
+this class, and if that list were the mechanism keeping modal scrims inside mobile pan containment,
+removing the entry would open a hole. MEASURED: it is not. The lockdown lives on the global mobile
+`html, body` block in styles.css (`overflow-x: hidden`, `overscroll-behavior-x: none`,
+`touch-action: pan-y`); the per-overlay list only reasserts it for overlays that are themselves
+scroll containers. FloatingWindow.css says the same in its own note at the mobile breakpoint.
+*/
+
+.agent-detail-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+.agent-detail-inline-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.agent-detail-inline {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.agent-detail-inline-loading {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.agent-detail-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: calc(var(--space-xl) * 2 + var(--space-md));
+  color: var(--text-muted);
+}
+
+/*
+FNXC:Agents 2026-06-22-18:00:
+The agent-detail header lays out the identity block (avatar + name + active/Healthy badges) and the action cluster (Pause/Stop/Run Now + kebab + refresh + close) on one row.
+Previously both sides were `flex-shrink: 0` with no `flex-wrap`, so when a long agent name plus the full button cluster exceeded the modal width neither side shrank and the actions overflowed ON TOP OF the title/badges (visual overlap).
+Fix: allow the header to wrap, let the identity block shrink (`flex: 1 1 auto; min-width: 0`) so the name ellipsizes, and let the action cluster wrap below the identity at narrow widths instead of overlaying it. Buttons stay reachable; title/badges stay fully visible at every width.
+*/
+.agent-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  padding: var(--space-md) calc(var(--space-lg) + var(--space-xs));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+/* Identity area: icon + name + badges. Shrinks (name ellipsizes) so it never collides with the actions. */
+.agent-detail-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agent-detail-inline-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  padding: calc(var(--space-sm) - var(--space-xs) * 0.5) calc(var(--space-sm) + var(--space-xs) * 0.5);
+  flex-shrink: 0;
+}
+
+.agent-detail-icon {
+  width: calc(var(--space-lg) * 2 + var(--space-xs));
+  height: calc(var(--space-lg) * 2 + var(--space-xs));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.agent-detail-info {
+  min-width: 0;
+}
+
+.agent-detail-info h2 {
+  font-size: calc(var(--space-md) + var(--space-xs));
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-detail-badges {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: calc(var(--space-xs) * 0.5);
+}
+
+/*
+FNXC:Agents 2026-06-22-18:00:
+The action cluster sits beside the identity block and wraps below it (as a whole) when the row runs out of room, rather than growing to overlay the title. `flex-wrap` lets its own buttons reflow on extremely narrow widths so every control stays reachable.
+*/
+.agent-detail-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Lifecycle controls: compact action buttons */
+.agent-detail-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  flex-shrink: 0;
+}
+
+/* Compact button variant for lifecycle controls */
+.btn--compact {
+  padding: calc(var(--space-xs) + var(--space-xs) * 0.25) calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-size: var(--space-md);
+  gap: var(--space-xs);
+}
+
+/* Utility actions: refresh + close */
+.agent-detail-utility-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.agent-detail-bulk-menu {
+  position: relative;
+}
+
+.agent-detail-bulk-menu-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-xs));
+  min-width: calc(var(--space-xl) * 9);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 2;
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.agent-detail-bulk-menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) * 0.5);
+  cursor: pointer;
+}
+
+.agent-detail-bulk-menu-item:hover:not(:disabled),
+.agent-detail-bulk-menu-item:focus-visible {
+  outline: none;
+  background: var(--card-hover);
+}
+
+.agent-detail-bulk-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.agent-detail-bulk-menu-item-hint {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+}
+
+.agent-detail-import-btn {
+  min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+}
+
+/* Legacy class for backward compatibility */
+.agent-detail-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+/* Legacy class for backward compatibility */
+.agent-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:AgentDetailView 2026-06-14-11:22:
+The mobile global `* { touch-action: pan-y; }` lock from FN-6365 prevents horizontal swipe gestures unless each known horizontal scroller opts back into pan-x.
+The overflowing agent-detail tab strip must keep horizontal touch panning enabled so all tabs remain reachable on narrow touch viewports (FN-6450).
+*/
+.agent-detail-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  padding: 0 calc(var(--space-lg) + var(--space-xs));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  overflow-x: auto;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.agent-detail-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+FNXC:AgentDetailView 2026-06-19-08:26:
+Tablet viewports inherit the base tab rule because AgentDetailView has only a mobile breakpoint, so FN-6728 enlarges tab labels to about 14px for Dashboard / Logs / Mail readability without changing icon, spacing, or horizontal-scroll behavior.
+
+FNXC:AgentDetailView 2026-06-21-11:03:
+Agent-detail tabs must be non-shrinking flex children so the overflow strip develops real horizontal scroll on narrow mobile viewports instead of squashing Dashboard / Logs / Mail / Skills / Settings into the available width (FN-6865).
+
+FNXC:AgentDetailView 2026-06-26-01:00:
+`touch-action` is non-inherited, so the tab buttons themselves are the touch targets that must opt into pan-x; the FN-6450/FN-6865 container-only opt-in still left button touches under the global mobile `* { touch-action: pan-y; }` lock. Mirror the FN-7048 task-detail fix for FN-7052 without changing tab layout or labels.
+*/
+.agent-detail-tab {
+  display: flex;
+  flex: 0 0 auto;
+  touch-action: pan-x pan-y;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: calc(var(--space-sm) + var(--space-xs) * 0.5) var(--space-md);
+  background: none;
+  border: none;
+  border-bottom: calc(var(--space-xs) * 0.5) solid transparent;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.agent-detail-tab:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.agent-detail-tab.active {
+  color: var(--todo);
+  border-bottom-color: var(--todo);
+}
+
+.agent-detail-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+}
+
+.agent-detail-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-xl);
+}
+
+.agent-detail-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-xl);
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: var(--space-md);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-detail-id {
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.agent-detail-id:hover {
+  color: var(--text);
+}
+
+/* --- Dashboard Tab --- */
+.dashboard-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.dashboard-summary-layout {
+  padding-bottom: var(--space-md);
+}
+
+.dashboard-summary-health-reason {
+  margin-left: var(--space-xs);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.dashboard-summary-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.budget-warning-banner {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-start;
+  border: 1px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.dashboard-summary-hero__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dashboard-summary-hero__heading h3 {
+  margin: 0;
+  font-size: calc(var(--space-lg) + var(--space-xs) * 0.5);
+  font-weight: 600;
+}
+
+.dashboard-summary-hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  color: var(--text-muted);
+}
+
+.agent-detail-approval-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-warning);
+}
+
+.dashboard-summary-skills {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dashboard-summary-skill-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.dashboard-summary-skill-badge {
+  max-width: calc(var(--space-xl) * 8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-summary-skill-badge-btn {
+  cursor: pointer;
+}
+
+.dashboard-summary-skill-badge-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.dashboard-summary-skill-badge--selected {
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 20%, transparent);
+}
+
+.dashboard-summary-skill-detail {
+  margin-top: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.dashboard-summary-skill-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.dashboard-summary-skill-detail-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dashboard-summary-skill-detail-loading,
+.dashboard-summary-skill-detail-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.dashboard-summary-skill-detail-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  color: var(--color-error);
+}
+
+.dashboard-summary-skill-detail-content {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: calc(var(--space-2xl) * 6);
+  overflow: auto;
+}
+
+.dashboard-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-xl) * 6 + var(--space-sm)), 1fr));
+  gap: var(--space-md);
+}
+
+.dashboard-summary-grid p {
+  margin: 0;
+}
+
+.dashboard-summary-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+}
+
+.dashboard-summary-health-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.dashboard-summary-health-reason {
+  margin-left: var(--space-xs);
+  font-size: var(--space-md);
+}
+
+.runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.run-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dashboard-section {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: calc(var(--space-lg) + var(--space-xs));
+}
+
+.dashboard-section h3 {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  font-weight: 600;
+  margin: 0 0 var(--space-lg) 0;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) * 0.125);
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-xl) * 7 + var(--space-sm)), 1fr));
+  gap: var(--space-lg);
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.info-label {
+  font-size: var(--space-md);
+  color: var(--text-muted);
+}
+
+.info-value {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  font-weight: 500;
+}
+
+.inline-badge {
+  display: inline-block;
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--space-md);
+  text-transform: capitalize;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-lg);
+}
+
+.stat-card {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  text-align: center;
+}
+
+.stat-value {
+  font-size: calc(var(--space-lg) + var(--space-xs) * 0.5);
+  font-weight: 700;
+  color: var(--todo);
+}
+
+.stat-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.current-task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.task-badge {
+  font-family: var(--font-mono);
+  background: var(--surface);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+}
+
+.metadata-json {
+  background: var(--surface);
+  padding: var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: var(--space-md);
+  overflow-x: auto;
+  margin: 0;
+}
+
+/* --- Logs Tab --- */
+.logs-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-md);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.logs-count {
+  font-size: var(--space-md);
+  color: var(--text-muted);
+}
+
+/*
+FNXC:AgentLogHistory 2026-07-26-13:46:
+Wrapper for the log window's "Load older" affordance. Sits ABOVE the viewer because a log tail reads
+bottom-up: older entries are reached by walking upward, so the control belongs at the top edge of the
+rendered window. Reuses the shared `.btn .btn-secondary .btn-sm` primitive — no forked variant.
+*/
+.log-window-loader {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--space-sm);
+}
+
+.streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  font-size: var(--space-md);
+  color: var(--color-success);
+}
+
+.streaming-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  background: var(--color-success);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+.logs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--space-2xl) + var(--space-lg));
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.logs-empty p {
+  margin: var(--space-sm) 0 0 0;
+}
+
+/* --- Mail Tab --- */
+.agent-mail-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.agent-mail-tab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.agent-mail-tab-header h3 {
+  margin: 0;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+.agent-mail-tab-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-error);
+}
+
+.agent-detail-loading--inline {
+  flex-direction: row;
+  justify-content: flex-start;
+  padding: var(--space-md) 0;
+}
+
+.agent-mail-tab .agent-mail-tab-message {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.agent-mail-tab .agent-mail-tab-message:hover {
+  background: var(--card-hover);
+}
+
+.agent-mail-tab .agent-mail-tab-message:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-mail-tab .agent-mail-tab-message--selected {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.agent-mail-tab .agent-mail-tab-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-mail-tab .agent-mail-tab-back {
+  align-self: flex-start;
+}
+
+.agent-mail-tab .agent-mail-tab-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agent-mail-tab .agent-mail-tab-detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.agent-mail-tab .agent-mail-tab-detail-label {
+  color: var(--text-muted);
+  min-width: calc(var(--space-2xl) * 2);
+}
+
+.agent-mail-tab .agent-mail-tab-reply-context {
+  color: var(--text-muted);
+}
+
+.agent-mail-tab .agent-mail-tab-detail-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- Runs Tab --- */
+.runs-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.runs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--space-2xl) + var(--space-lg));
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.runs-empty p {
+  margin: var(--space-sm) 0 0 0;
+}
+
+.run-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+}
+
+.run-card--active {
+  border-color: var(--in-progress);
+  background: color-mix(in srgb, var(--in-progress) 5%, transparent);
+}
+
+.run-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.run-live-indicator {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  font-weight: 600;
+  color: var(--in-progress);
+}
+
+.live-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  background: var(--in-progress);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+.run-id {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  color: var(--text-muted);
+}
+
+.run-status {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  text-transform: capitalize;
+}
+
+.run-status.active {
+  color: var(--in-progress);
+}
+
+.run-status.completed {
+  color: var(--color-success);
+}
+
+.run-status.failed {
+  color: var(--color-error);
+}
+
+.run-status.terminated {
+  color: var(--text-muted);
+}
+
+.run-details {
+  display: flex;
+  gap: var(--space-sm);
+  font-size: var(--space-md);
+  color: var(--text-muted);
+}
+
+.run-logs-container {
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.run-details-loading-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+}
+
+.run-output-sections {
+  margin-bottom: var(--space-md);
+}
+
+.run-output-section {
+  margin-bottom: var(--space-sm);
+}
+
+.run-output-label {
+  margin-bottom: var(--space-xs);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  letter-spacing: calc(var(--space-xs) * 0.1);
+  text-transform: uppercase;
+}
+
+.run-output-label--error {
+  color: var(--color-error);
+}
+
+.run-output-panel {
+  margin: 0;
+  max-height: calc(var(--space-2xl) * 6.25);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  line-height: 1.5;
+}
+
+.run-output-panel--error {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 35%, var(--border));
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.run-context-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-md);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.run-context-item {
+  line-height: 1.5;
+}
+
+.run-output-empty {
+  padding: var(--space-sm) 0;
+  font-style: italic;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.prompt-size-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.prompt-size-sparkline {
+  width: calc(var(--space-2xl) * 2);
+  height: calc(var(--space-xl) + var(--space-md));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.prompt-size-sparkline-grid {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1;
+}
+
+.prompt-size-sparkline-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.prompt-size-values {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+}
+
+.run-agent-logs-section {
+  margin-top: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+/* --- Tasks Tab --- */
+.agent-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agent-task-item {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  padding: var(--space-md) calc(var(--space-md) + var(--space-xs) * 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  text-decoration: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.agent-task-item:hover {
+  background: var(--card-hover);
+  border-color: var(--text-dim);
+}
+
+.agent-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.agent-task-id {
+  font-family: var(--font-mono);
+  font-size: var(--space-md);
+  font-weight: 600;
+  color: var(--todo);
+}
+
+.agent-task-title {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.agent-task-status {
+  font-size: var(--space-md);
+  color: var(--text-muted);
+}
+
+.agent-task-column {
+  display: inline-flex;
+  align-items: center;
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) * 0.1);
+}
+
+.agent-task-column.column-triage {
+  color: var(--triage);
+  background: color-mix(in srgb, var(--triage) 18%, transparent);
+}
+
+.agent-task-column.column-todo {
+  color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 18%, transparent);
+}
+
+.agent-task-column.column-in-progress {
+  color: var(--in-progress);
+  background: color-mix(in srgb, var(--in-progress) 18%, transparent);
+}
+
+.agent-task-column.column-in-review {
+  color: var(--in-review);
+  background: color-mix(in srgb, var(--in-review) 18%, transparent);
+}
+
+.agent-task-column.column-done {
+  color: var(--done);
+  background: color-mix(in srgb, var(--done) 18%, transparent);
+}
+
+.agent-task-column.column-archived {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+
+.agent-tasks-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: calc(var(--space-2xl) + var(--space-lg));
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.agent-tasks-empty p {
+  margin: 0;
+}
+
+/* --- Config Tab --- */
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+Agent Settings composes native inputs, buttons, editors, and portaled controls. Scope the complete surface/state contract here so every theme receives readable foregrounds, surfaces, borders, placeholders, focus rings, and disabled treatment without changing configuration behavior.
+*/
+.config-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  color: var(--text);
+}
+
+.config-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: calc(var(--space-md) + var(--space-sm));
+  color: var(--text);
+}
+
+.config-section .input,
+.config-section .select,
+.config-section textarea {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.config-section .input::placeholder,
+.config-section textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.config-section .input:hover:not(:disabled):not([readonly]),
+.config-section .select:hover:not(:disabled),
+.config-section textarea:hover:not(:disabled):not([readonly]) {
+  border-color: var(--text-muted);
+}
+
+.config-section .input:focus-visible,
+.config-section .select:focus-visible,
+.config-section textarea:focus-visible,
+.config-section input[type="checkbox"]:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.config-section .input:disabled,
+.config-section .select:disabled,
+.config-section textarea:disabled,
+.config-section .btn:disabled,
+.config-runtime-tab:disabled,
+.agent-avatar-editor-action:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.config-section .input[readonly],
+.config-section textarea[readonly] {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.config-section input[type="checkbox"] {
+  accent-color: var(--todo);
+}
+
+.agent-avatar-editor-actions .agent-avatar-editor-action {
+  background: var(--card);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.agent-avatar-editor-actions .agent-avatar-editor-action:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.agent-avatar-editor-actions .agent-avatar-editor-action:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.config-section h3 {
+  font-size: calc(var(--space-md) + var(--space-xs));
+  font-weight: 600;
+  margin: 0 0 var(--space-sm) 0;
+}
+
+.config-section--danger {
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+}
+
+.config-danger-note {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+/* === Agent Content Preview === */
+.agent-content-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.agent-content-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.agent-content-mode-toggle .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+}
+
+.agent-content-preview {
+  overflow-y: auto;
+  padding: var(--space-lg);
+  min-height: 150px;
+}
+
+.agent-content-placeholder {
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--space-xl);
+  min-height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.config-description {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+  margin: 0 0 calc(var(--space-md) + var(--space-sm)) 0;
+}
+
+.config-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+}
+
+.config-field label {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  font-weight: 500;
+}
+
+.config-role-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.config-role-tags legend {
+  padding-inline: var(--space-xs);
+}
+
+.agent-avatar-editor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.agent-avatar-editor-preview {
+  background: var(--card);
+}
+
+.agent-avatar-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.config-runtime-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.config-runtime-tab {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--text-muted);
+  padding: var(--space-sm) var(--space-md);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.config-runtime-tab:hover {
+  border-color: var(--todo);
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.config-runtime-tab:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.config-runtime-tab.active {
+  border-color: var(--todo);
+  color: var(--text);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.config-hint {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.config-error {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--color-error);
+}
+
+.input--error {
+  border-color: var(--color-error) !important;
+}
+
+.config-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: calc(var(--space-md) + var(--space-sm));
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.config-saved-indicator {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  color: var(--color-success);
+}
+
+.config-saved-indicator--error {
+  color: var(--color-error);
+}
+
+.heartbeat-procedure-actions {
+  margin-top: var(--space-sm);
+}
+
+.heartbeat-procedure-viewer {
+  margin-top: var(--space-lg);
+}
+
+.heartbeat-procedure-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.heartbeat-procedure-status--warning {
+  color: var(--color-warning);
+}
+
+/* === Agent Evaluation Ratings === */
+
+.rating-summary-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: calc(var(--space-md) + var(--space-sm));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.rating-score-display {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.rating-average {
+  font-size: var(--space-2xl);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.rating-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.rating-count {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+}
+
+.rating-trend-badge {
+  font-size: var(--space-md);
+  padding: var(--space-xs) calc(var(--space-md) - var(--space-xs) * 0.5);
+  border-radius: var(--radius-lg);
+  font-weight: 500;
+}
+
+.trend-improving {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+
+.trend-declining {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.trend-stable {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.trend-insufficient {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.category-breakdown {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+}
+
+.category-breakdown h4 {
+  margin: 0 0 var(--space-md) 0;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  font-weight: 600;
+}
+
+.category-breakdown .category-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.category-breakdown .category-item:last-child {
+  border-bottom: none;
+}
+
+.category-name {
+  text-transform: capitalize;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+}
+
+.category-score {
+  font-weight: 600;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+}
+
+.add-rating-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.add-rating-form h4 {
+  margin: 0;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  font-weight: 600;
+}
+
+.star-selector {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  padding: var(--space-xs);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.star-btn:hover {
+  background: var(--card-hover);
+}
+
+.star-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.rating-stars {
+  display: inline-flex;
+  gap: var(--space-xs);
+}
+
+.rating-stars .star-filled {
+  color: var(--color-warning);
+}
+
+.rating-stars .star-empty {
+  color: var(--text-muted);
+}
+
+.add-rating-form .add-rating-category-select,
+.add-rating-form .add-rating-comment-input {
+  width: 100%;
+}
+
+.add-rating-form .add-rating-comment-input {
+  resize: vertical;
+  min-height: calc(var(--space-xl) + var(--space-2xl));
+}
+
+.rating-history {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  max-height: calc(var(--space-xl) * 12 + var(--space-md));
+  overflow-y: auto;
+}
+
+.rating-history h4 {
+  margin: 0 0 var(--space-md) 0;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  font-weight: 600;
+}
+
+.rating-history .no-ratings {
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  text-align: center;
+  padding: var(--space-lg);
+}
+
+.rating-history-item {
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.rating-history-item:last-child {
+  border-bottom: none;
+}
+
+.rating-item-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.rating-category-badge {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  background: var(--card-hover);
+  border-radius: var(--radius-pill);
+  text-transform: capitalize;
+}
+
+.rating-time {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.rating-delete-btn {
+  background: none;
+  border: none;
+  padding: var(--space-xs);
+  cursor: pointer;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.rating-delete-btn:hover {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.rating-comment {
+  margin: var(--space-sm) 0 0 0;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Runs tab utilities and inline-style replacements */
+.runs-loading-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+}
+
+.runs-toolbar {
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.runs-toolbar--between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.runs-toolbar-meta {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+}
+
+.run-card--clickable {
+  cursor: pointer;
+}
+
+.run-card--clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.run-header-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.run-badge--compact {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  padding: calc(var(--space-xs) * 0.25) calc(var(--space-sm) * 0.75);
+}
+
+.run-output-summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.run-live-indicator--with-margin {
+  margin-left: var(--space-sm);
+}
+
+.detail-section-body--loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.agent-empty--padded {
+  padding: var(--space-xl);
+}
+
+.logs-fallback-label {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.config-textarea-mono {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  resize: vertical;
+}
+
+.config-textarea-top-spacing {
+  margin-top: var(--space-sm);
+}
+
+.config-hint--block-spacing {
+  margin-bottom: var(--space-md);
+}
+
+.config-hint--block {
+  display: block;
+  margin-bottom: var(--space-sm);
+}
+
+.config-hint--top-spacing {
+  margin-top: var(--space-sm);
+}
+
+.config-hint--inline-loader {
+  display: inline-flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.config-inline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-sm);
+}
+
+.config-hint--inline-tight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.config-hint--warning {
+  color: var(--color-warning);
+}
+
+.agent-heartbeat-auto-claim-card {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.agent-heartbeat-preset-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.agent-heartbeat-preset-label {
+  display: block;
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  margin-bottom: calc(var(--space-xs) * 0.5);
+}
+
+.agent-heartbeat-preset-btn {
+  min-height: calc(var(--space-xl) + var(--space-md));
+  flex-shrink: 0;
+}
+
+/* === Agent Detail View Mobile Responsive === */
+@media (max-width: 768px) {
+  .agent-heartbeat-preset-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-heartbeat-preset-btn {
+    width: 100%;
+    min-height: calc(var(--space-xl) + var(--space-md));
+  }
+
+  .config-runtime-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .config-runtime-tab {
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-avatar-editor-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-avatar-editor-actions .agent-avatar-editor-action {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .skill-multiselect {
+    width: 100%;
+  }
+
+  .skill-multiselect-filter,
+  .skill-multiselect-list,
+  .skill-multiselect-chips {
+    width: 100%;
+  }
+
+  .skill-chip {
+    max-width: 100%;
+  }
+
+  /*
+  FNXC:ModalTouchGeometry 2026-08-13-12:20:
+  The 768px boundary is tablet-class when FloatingWindow enables touch geometry.
+  Keep its inner modal panel container-sized there; only true phones take over the viewport.
+  */
+  @media (max-width: 767.98px) {
+    .agent-detail-modal {
+      /* Reset the desktop min-width: 480px / min-height: 320px — otherwise the
+         fullscreen mobile sheet can still overflow narrow viewports. The
+         !important width/height overrides also beat any persisted desktop size. */
+      min-width: 0 !important;
+      min-height: 0 !important;
+      width: 100vw !important;
+      height: 100dvh !important;
+      max-width: 100vw !important;
+      max-height: 100dvh;
+      margin: 0;
+      border-radius: 0;
+      border: none;
+      /* Disable user resize on mobile — modal is fullscreen. The !important on
+         width/height above also overrides any persisted desktop dimensions. */
+      resize: none;
+    }
+  }
+
+  /*
+  FNXC:AgentDetailMobileHeader 2026-07-14-00:00:
+  Mobile agent detail identity, status badges, and lifecycle controls must keep the FN-6865 non-overlap grid while adding deliberate breathing room so paused/error health text does not read as cramped.
+  */
+  .agent-detail-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-sm);
+    row-gap: var(--space-sm);
+    padding: var(--space-md);
+    padding-top: max(var(--space-md), env(safe-area-inset-top, 0));
+  }
+
+  .agent-detail-identity {
+    grid-column: 1;
+    grid-row: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-md);
+  }
+
+  .agent-detail-icon {
+    width: calc(var(--space-lg) * 2);
+    height: calc(var(--space-lg) * 2);
+    flex-shrink: 0;
+  }
+
+  .agent-detail-icon svg {
+    width: calc(var(--space-sm) + var(--space-xs) * 2);
+    height: calc(var(--space-sm) + var(--space-xs) * 2);
+  }
+
+  .agent-detail-info h2 {
+    font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .agent-detail-badges {
+    flex-wrap: wrap;
+    row-gap: var(--space-xs);
+    column-gap: var(--space-sm);
+    margin-top: var(--space-xs);
+  }
+
+  .agent-detail-header-actions {
+    grid-column: 2;
+    grid-row: 1;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    gap: calc(var(--space-xs) * 0.5);
+  }
+
+  .agent-detail-controls {
+    flex: 0 0 auto;
+    gap: calc(var(--space-xs) * 0.5);
+  }
+
+  .agent-detail-controls .btn--compact {
+    padding: calc(var(--space-sm) - var(--space-xs) * 0.5) calc(var(--space-md) - var(--space-xs) * 0.5);
+    font-size: var(--space-md);
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-detail-controls .agent-detail-mobile-icon-control {
+    min-width: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+    padding-left: calc(var(--space-sm) - var(--space-xs) * 0.5);
+    padding-right: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  }
+
+  .agent-detail-controls .agent-detail-mobile-icon-control .agent-detail-control-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .agent-detail-controls .btn--compact svg {
+    width: calc(var(--space-md) + var(--space-xs) * 0.5);
+    height: calc(var(--space-md) + var(--space-xs) * 0.5);
+  }
+
+  .agent-detail-utility-actions {
+    flex-shrink: 0;
+    margin-left: 0;
+  }
+
+  .agent-detail-bulk-menu-popover {
+    right: 0;
+  }
+
+  .agent-detail-utility-actions .btn-icon {
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+    min-width: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-detail-import-btn {
+    min-width: calc(var(--space-xl) * 3 + var(--space-xs));
+  }
+
+  /* Legacy selectors for backward compatibility */
+  .agent-detail-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-md);
+  }
+
+  .agent-detail-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  }
+
+  .agent-detail-actions .btn {
+    padding: calc(var(--space-sm) - var(--space-xs) * 0.5) calc(var(--space-md) - var(--space-xs) * 0.5);
+    font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-detail-actions .btn svg {
+    width: calc(var(--space-sm) + var(--space-xs) * 1.5);
+    height: calc(var(--space-sm) + var(--space-xs) * 1.5);
+  }
+
+  .agent-detail-actions .btn-icon {
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+    min-width: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-detail-tabs {
+    padding: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .agent-detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .agent-detail-tab {
+    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) * 0.5);
+    font-size: 0.875rem;
+    touch-action: pan-x pan-y;
+    white-space: nowrap;
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .agent-detail-content {
+    padding: var(--space-lg);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .agent-detail-footer {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-lg);
+    padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom, 0));
+    font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  }
+
+  .agent-detail-id {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Dashboard Tab mobile */
+  .dashboard-tab {
+    gap: var(--space-lg);
+  }
+
+  /*
+  FNXC:AgentDetailOverviewHero 2026-07-14-00:00:
+  The mobile Overview hero is part of the perceived agent header; let the name, state badge, health line, role/model text, and skills chips wrap with deliberate row gaps so long pause reasons and many skills do not crowd adjacent rows.
+  */
+  .dashboard-summary-hero__heading {
+    flex-wrap: wrap;
+    row-gap: var(--space-sm);
+    column-gap: var(--space-md);
+  }
+
+  .dashboard-summary-hero__meta {
+    align-items: flex-start;
+    row-gap: var(--space-lg);
+    column-gap: var(--space-md);
+  }
+
+  .dashboard-summary-hero__health {
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard-summary-skills {
+    flex-direction: column;
+    align-items: flex-start;
+    row-gap: var(--space-sm);
+  }
+
+  .dashboard-summary-skill-detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dashboard-section {
+    padding: var(--space-lg);
+  }
+
+  .info-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-md);
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-md);
+  }
+
+  .stat-value {
+    font-size: calc(var(--space-lg) + var(--space-xs) * 0.5);
+  }
+
+  /* Logs Tab mobile */
+  .logs-empty {
+    padding: var(--space-2xl) var(--space-lg);
+  }
+
+  /* Mail Tab mobile */
+  .agent-mail-tab-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .agent-mail-tab .mailbox-agent-subtabs {
+    width: 100%;
+  }
+
+  .agent-mail-tab .mailbox-agent-subtab {
+    flex: 1;
+  }
+
+  .agent-mail-tab .agent-mail-tab-detail {
+    width: 100%;
+    padding: var(--space-md);
+  }
+
+  .agent-mail-tab .agent-mail-tab-back {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  /* Runs Tab mobile */
+  .run-card {
+    padding: var(--space-md);
+  }
+
+  .run-header {
+    flex-wrap: wrap;
+    gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+  }
+
+  .run-details {
+    flex-wrap: wrap;
+  }
+
+  .run-logs-container {
+    padding: var(--space-sm);
+  }
+
+  .run-output-panel {
+    max-height: calc(var(--space-2xl) * 5);
+  }
+
+  .run-context-grid {
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .run-details .text-muted {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* Config Tab mobile */
+  .config-tab {
+    gap: var(--space-lg);
+  }
+
+  .config-section {
+    padding: var(--space-lg);
+  }
+
+  .config-section .input,
+  .config-section .select,
+  .config-section textarea {
+    font-size: calc(var(--space-md) + var(--space-xs));
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  }
+
+  .config-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .config-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .heartbeat-procedure-status {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-summary-card {
+    padding: var(--space-md);
+  }
+
+  .dashboard-summary-hero__heading {
+    row-gap: var(--space-md);
+  }
+
+  .dashboard-summary-hero__meta {
+    row-gap: var(--space-lg);
+    column-gap: var(--space-sm);
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-detail-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .agent-detail-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .agent-detail-actions .btn-icon {
+    align-self: flex-end;
+  }
+
+  .config-actions,
+  .agent-avatar-editor-actions {
+    width: 100%;
+  }
+
+  .config-runtime-tabs {
+    gap: var(--space-xs);
+  }
+
+  .skill-multiselect {
+    gap: var(--space-xs);
+  }
+
+  .agent-detail-footer .divider,
+  .agent-detail-footer .text-muted,
+  .agent-detail-footer .link {
+    display: none;
+  }
+}
+
+/* === Agent Dialog Mobile Responsive === */
+@media (max-width: 768px) {
+  .agent-avatar-editor {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .agent-avatar-editor-actions {
+    width: 100%;
+  }
+
+  .agent-avatar-editor-actions .btn {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  .agent-dialog-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .agent-dialog {
+    width: 100vw !important;
+    height: 100dvh;
+    max-width: 100% !important;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .agent-dialog-header {
+    padding: max(var(--space-md), env(safe-area-inset-top, 0px)) var(--space-lg) var(--space-md) var(--space-lg);
+    flex-shrink: 0;
+  }
+
+  .agent-dialog-body {
+    padding: var(--space-lg);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .agent-dialog-footer {
+    padding: var(--space-md) var(--space-lg);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  /* Form fields stack full-width */
+  .agent-dialog-field .input,
+  .agent-dialog-field .select,
+  .agent-dialog-field textarea {
+    font-size: calc(var(--space-md) + var(--space-xs)); /* prevent iOS zoom */
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  /* Summary rows adapt — used by AgentGenerationModal and NewAgentDialog */
+  .agent-dialog-summary-row {
+    flex-direction: column;
+    gap: calc(var(--space-xs) * 0.5);
+  }
+
+  .agent-dialog-summary-row > span:first-child,
+  .agent-dialog-summary-row-label {
+    width: auto;
+  }
+
+  /* Step indicators stay visible */
+  .agent-dialog-steps {
+    padding: var(--space-sm) var(--space-lg);
+  }
+
+  .agent-dialog-step {
+    flex: 1;
+    width: auto;
+    height: calc(var(--space-xs) - var(--space-xs) * 0.25);
+  }
+
+  .agent-dialog-tabs {
+    grid-template-columns: 1fr;
+    gap: calc(var(--space-sm) - var(--space-xs) * 0.5);
+    margin-bottom: var(--space-md);
+  }
+
+  .agent-dialog-tab {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+    text-align: left;
+  }
+
+  /* Agent Import specific */
+  .agent-import-file-upload {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .agent-import-textarea {
+    font-size: calc(var(--space-md) + var(--space-xs)); /* prevent iOS zoom */
+    min-height: calc(var(--space-xl) * 4 + var(--space-xs));
+  }
+
+  .agent-import-agent-list {
+    max-height: calc(100dvh - (var(--space-xl) * 10 + var(--space-lg)));
+  }
+
+  .agent-import-result-stats {
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: center;
+  }
+
+  .agent-import-browse-list {
+    max-height: calc(100dvh - (var(--space-xl) * 10 + var(--space-lg)));
+  }
+
+  .agent-import-skill-list {
+    max-height: calc(100dvh - (var(--space-xl) * 15 + var(--space-md)));
+  }
+}
+
+@media (max-width: 480px) {
+  .agent-dialog-body {
+    padding: var(--space-md);
+  }
+
+  .agent-dialog-footer {
+    flex-direction: column;
+  }
+
+  .agent-dialog-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.agent-permission-inherit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  margin-bottom: var(--space-sm);
+}
+
+.agent-capability-grants {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.agent-capability-grants h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+
+.agent-capability-grants-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-card-min, 16rem)), 1fr));
+  gap: var(--space-sm);
+}
+
+.agent-capability-grant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-capability-grant-name {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .agent-capability-grants-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-capability-grant-row,
+  .agent-permission-inherit-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/*
+FNXC:AgentMemory 2026-07-11-00:20:
+The agent Memory tab's file editor is the shared FileEditor (CodeMirror). The frame is
+bounded like the project Memory view editor — a visible floor so it never collapses,
+and a viewport cap so long memory files scroll inside the editor instead of stretching
+the tab into endless page scroll.
+*/
+.agent-memory-file-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  max-height: 55vh;
+}
+
+.agent-memory-file-editor .cm-editor {
+  height: 100%;
+  min-height: 0;
+}
+
+.agent-memory-file-editor .cm-scroller {
+  overflow: auto;
+}
+
+.memory-consolidation-history {
+  margin-block: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.memory-consolidation-history__heading,
+.memory-consolidation-history__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  justify-content: space-between;
+}
+
+.memory-consolidation-history__heading h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.memory-consolidation-history__list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-consolidation-history__row {
+  flex-wrap: wrap;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.memory-consolidation-history__row--completed strong { color: var(--color-success); }
+.memory-consolidation-history__row--skipped strong { color: var(--color-warning); }
+.memory-consolidation-history__row--failed strong { color: var(--color-error); }
+
+/* FNXC:AgentSkillsUI 2026-08-16-04:27: Agent badges carry availability text so forced stored IDs do not imply delivery. */
+.dashboard-summary-skill-badge[data-skill-state="disabled"] { border-color: var(--color-warning); }
+.dashboard-summary-skill-badge[data-skill-state="unknown"] { border-color: var(--color-error); }

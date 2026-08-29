@@ -1,0 +1,56 @@
+.docker-target-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.docker-target-selector__modes {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.docker-target-selector__mode-active {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.docker-target-selector__panel {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.docker-target-selector__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.docker-target-selector__field label {
+  color: var(--text-muted);
+}
+
+.docker-target-selector__context-row {
+  display: grid;
+  gap: var(--space-sm);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.docker-target-selector__status {
+  color: var(--text-muted);
+}
+
+.docker-target-selector__success {
+  color: var(--color-success);
+}
+
+.docker-target-selector__error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .docker-target-selector__modes .btn {
+    min-height: calc(var(--mobile-nav-height) - var(--space-sm));
+  }
+}

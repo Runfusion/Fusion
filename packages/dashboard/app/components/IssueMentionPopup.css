@@ -1,0 +1,103 @@
+.issue-mention-popup {
+  position: absolute;
+  z-index: 250;
+  background: var(--surface);
+  border: var(--space-xs) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  min-width: calc(var(--space-xl) * 9);
+  max-width: calc(var(--space-xl) * 14);
+  max-height: calc(var(--space-xl) * 10);
+  overflow-y: auto;
+  padding: var(--space-xs) 0;
+}
+
+.issue-mention-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.issue-mention-popup-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.issue-mention-popup-item:hover {
+  background: var(--card-hover);
+}
+
+.issue-mention-popup-item--selected {
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.issue-mention-popup-item-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.issue-mention-popup-number {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.issue-mention-popup-title {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.issue-mention-popup-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.issue-mention-popup-repository {
+  color: var(--text-muted);
+  font-size: var(--space-md);
+}
+
+.issue-mention-popup-empty,
+.issue-mention-popup-loading {
+  padding: var(--space-lg) var(--space-md);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.issue-mention-popup-loading {
+  display: flex;
+  justify-content: center;
+}
+
+.issue-mention-popup-loading .spinner {
+  width: var(--space-lg);
+  height: var(--space-lg);
+  border: calc(var(--space-xs) / 2) solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: issue-mention-popup-spinner-spin var(--duration-slow) linear infinite;
+}
+
+@keyframes issue-mention-popup-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .issue-mention-popup {
+    left: var(--space-md) !important;
+    right: var(--space-md);
+    top: auto !important;
+    bottom: calc(var(--space-xl) * 3);
+    max-width: none;
+    width: auto;
+    max-height: calc(var(--space-xl) * 12);
+  }
+}

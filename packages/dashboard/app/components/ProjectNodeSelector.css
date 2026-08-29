@@ -1,0 +1,25 @@
+.project-node-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.project-node-selector__label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.project-node-selector .select {
+  width: 100%;
+  max-width: 20rem;
+}
+
+.project-node-selector__option--dim {
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .project-node-selector .select {
+    max-width: 100%;
+  }
+}

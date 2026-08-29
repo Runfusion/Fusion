@@ -1,0 +1,242 @@
+.add-node-modal {
+  width: min(calc(var(--space-lg) * 32.5), calc(100vw - (var(--space-lg) * 2)));
+}
+
+.add-node-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.add-node-modal__row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.add-node-modal__fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__fieldset legend {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
+  padding: 0 var(--space-xs);
+}
+
+.add-node-modal__storage-toggle {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+}
+
+.add-node-modal__advanced-btn {
+  align-self: flex-start;
+}
+
+.add-node-modal__advanced {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__textarea {
+  min-height: calc(var(--space-2xl) * 2.25);
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+.add-node-modal__description {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+  padding: 0;
+}
+
+.add-node-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.add-node-modal__field > span {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.add-node-modal__field .input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+.add-node-modal__field .input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.add-node-modal__field .input[aria-invalid="true"] {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 5%, var(--surface));
+}
+
+.add-node-modal__field .input[aria-invalid="true"]:focus {
+  box-shadow: var(--glow-danger);
+}
+
+.add-node-modal__hint {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.375);
+  color: var(--text-dim);
+  margin-top: calc(var(--space-xs) / 2);
+}
+
+.add-node-modal__error {
+  margin-top: calc(var(--space-xs) / 2);
+}
+
+.add-node-modal__type-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.add-node-modal__type-btn {
+  flex: 1;
+  padding: calc(var(--space-sm) + var(--space-xs) / 2) var(--space-lg);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.add-node-modal__type-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg) 50%, var(--surface));
+}
+
+.add-node-modal__type-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  z-index: 1;
+}
+
+.add-node-modal__type-btn.active {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.add-node-modal__type-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.add-node-modal__remote-fields {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__discovery-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.add-node-modal__discovery-state {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.375);
+  color: var(--color-success);
+}
+
+.add-node-modal__discovered-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.add-node-modal__discovered-card {
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.add-node-modal__discovered-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__projects {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__projects-title {
+  margin: 0;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+.add-node-modal__project-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__project-card {
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.add-node-modal__project-toggle {
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .add-node-modal {
+    width: calc(100vw - (var(--space-md) * 2));
+  }
+
+  .add-node-modal__type-toggle {
+    width: 100%;
+  }
+
+  .add-node-modal__type-btn {
+    flex: 1;
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  .add-node-modal__field input {
+    min-height: calc(var(--space-2xl) + var(--space-md));
+    font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  }
+
+  .add-node-modal__row {
+    grid-template-columns: 1fr;
+  }
+
+  .add-node-modal__project-card {
+    padding: var(--space-md);
+  }
+
+  .add-node-modal__discovered-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

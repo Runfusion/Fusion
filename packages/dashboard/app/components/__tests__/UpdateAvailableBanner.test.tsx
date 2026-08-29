@@ -1,0 +1,332 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
+import { __test_resetSystemRestartRecovery } from "../../hooks/useSystemRestartRecovery";
+import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
+
+const mockFetchDashboardHealth = vi.hoisted(() => vi.fn());
+const mockFetchSystemInfo = vi.hoisted(() => vi.fn());
+const mockInstallUpdate = vi.hoisted(() => vi.fn());
+const mockRequestSystemRestart = vi.hoisted(() => vi.fn());
+
+vi.mock("../../api", () => ({
+  fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
+  fetchSystemInfo: (...args: unknown[]) => mockFetchSystemInfo(...args),
+  installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
+  requestSystemRestart: (...args: unknown[]) => mockRequestSystemRestart(...args),
+}));
+
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
+  return {
+    ...actual,
+    RefreshCw: ({ className }: { className?: string }) => <span data-testid="icon-refresh" className={className} />,
+  };
+});
+
+const successfulInstall = { currentVersion: "0.6.0", latestVersion: "0.7.0", updated: true };
+
+function renderBanner() {
+  return render(<UpdateAvailableBanner latestVersion="0.7.0" currentVersion="0.6.0" onDismiss={vi.fn()} />);
+}
+
+async function completeInstall() {
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  await screen.findByText("Updated to v0.7.0 — restart Fusion to apply");
+}
+
+describe("UpdateAvailableBanner", () => {
+  beforeEach(() => {
+    __test_resetSystemRestartRecovery();
+    __test_resetPendingUpdateInstall();
+    mockFetchDashboardHealth.mockReset();
+    mockFetchDashboardHealth.mockResolvedValue({ version: "not-ready", status: "starting", holding: true });
+    mockFetchSystemInfo.mockReset();
+    mockInstallUpdate.mockReset();
+    mockRequestSystemRestart.mockReset();
+    mockFetchSystemInfo.mockResolvedValue({ restartSupported: true });
+    mockInstallUpdate.mockResolvedValue(successfulInstall);
+    mockRequestSystemRestart.mockResolvedValue({ scheduled: true });
+  });
+
+  it("renders version information with release notes and learn more links", () => {
+    renderBanner();
+
+    expect(screen.getByText(/Update available: v0.7.0 \(current: v0.6.0\)/)).toBeInTheDocument();
+    expect(screen.getByText("fn update")).toBeInTheDocument();
+    expect(screen.getByText(/or pull this source checkout/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Release notes" })).toHaveAttribute(
+      "href",
+      "https://github.com/Runfusion/Fusion/blob/main/CHANGELOG.md",
+    );
+    expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "https://runfusion.ai");
+  });
+
+  it("dismiss button calls onDismiss", () => {
+    const onDismiss = vi.fn();
+
+    render(<UpdateAvailableBanner latestVersion="0.7.0" currentVersion="0.6.0" onDismiss={onDismiss} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("can be hidden by parent on dismiss", () => {
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      if (!visible) return null;
+      return (
+        <UpdateAvailableBanner
+          latestVersion="0.7.0"
+          currentVersion="0.6.0"
+          onDismiss={() => setVisible(false)}
+        />
+      );
+    }
+
+    render(<Harness />);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("disables update-now while installing and then renders an enabled restart button", async () => {
+    let resolveInstall: ((result: typeof successfulInstall) => void) | undefined;
+    mockInstallUpdate.mockReturnValueOnce(new Promise((resolve) => {
+      resolveInstall = resolve;
+    }));
+
+    renderBanner();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled();
+    expect(screen.getByTestId("icon-refresh")).toHaveClass("spinning");
+
+    resolveInstall?.(successfulInstall);
+
+    await screen.findByText("Updated to v0.7.0 — restart Fusion to apply");
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
+  });
+
+  it("restarts a supervised host with the update-banner reason", async () => {
+    renderBanner();
+    await completeInstall();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+
+    await waitFor(() => expect(mockRequestSystemRestart).toHaveBeenCalledWith("update-banner"));
+    expect(await screen.findByText("Restarting… Your connection will close shortly.")).toBeInTheDocument();
+  });
+
+  it("ignores old, unavailable, and holding hosts before banner recovery reloads the installed beta", async () => {
+    vi.useFakeTimers();
+    const reload = vi.fn();
+    vi.stubGlobal("location", { reload });
+    mockFetchSystemInfo
+      .mockResolvedValueOnce({ restartSupported: true, pid: 10 })
+      .mockResolvedValueOnce({ pid: 10 })
+      .mockResolvedValueOnce({ pid: 11 })
+      .mockResolvedValueOnce({ pid: 12 })
+      .mockResolvedValueOnce({ pid: 13 });
+    mockFetchDashboardHealth
+      .mockResolvedValueOnce({ version: "0.77.0-beta.2", status: "ok" })
+      .mockRejectedValueOnce(new Error("host is restarting"))
+      .mockResolvedValueOnce({ version: "0.77.0-beta.4", status: "starting", holding: true })
+      .mockResolvedValueOnce({ version: "0.77.0-beta.4", status: "degraded", holding: false });
+    mockInstallUpdate.mockResolvedValueOnce({ currentVersion: "0.77.0-beta.2", latestVersion: "0.77.0-beta.4", updated: true, outcome: "installed" });
+
+    render(<UpdateAvailableBanner latestVersion="0.77.0-beta.4" currentVersion="0.77.0-beta.2" onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByText("Restarting… Your connection will close shortly.")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+
+    expect(screen.getByText("Fusion v0.77.0-beta.4 is back online — reloading…")).toBeInTheDocument();
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the replacement beta version and reloads after banner-triggered recovery", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { reload });
+    mockFetchSystemInfo.mockResolvedValueOnce({ restartSupported: true, pid: 20 }).mockResolvedValueOnce({ pid: 21 });
+    mockFetchDashboardHealth.mockResolvedValueOnce({ version: "0.77.0-beta.4", status: "degraded", holding: false });
+    mockInstallUpdate.mockResolvedValueOnce({ currentVersion: "0.77.0-beta.2", latestVersion: "0.77.0-beta.4", updated: true, outcome: "installed" });
+
+    render(<UpdateAvailableBanner latestVersion="0.77.0-beta.4" currentVersion="0.77.0-beta.2" onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    await screen.findByRole("button", { name: "Restart Fusion" });
+    fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+
+    expect(await screen.findByText("Fusion v0.77.0-beta.4 is back online — reloading…")).toBeInTheDocument();
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  /*
+  FNXC:UpdateBanner 2026-07-25-10:05:
+  Restart capability is advisory, not a hard block: the button always reaches the
+  server so an operator sees the real refusal instead of a control that silently
+  does nothing (a failed or stale /system/info probe used to disable it outright).
+  */
+  it("shows manual guidance but still attempts the restart when unsupported", async () => {
+    mockFetchSystemInfo.mockResolvedValueOnce({ restartSupported: false });
+    mockRequestSystemRestart.mockRejectedValueOnce(new Error("Restart is not available: no supervising parent."));
+    renderBanner();
+    await completeInstall();
+
+    const restartButton = screen.getByRole("button", { name: "Restart Fusion" });
+    expect(restartButton).toBeEnabled();
+    expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+
+    fireEvent.click(restartButton);
+
+    await waitFor(() => expect(mockRequestSystemRestart).toHaveBeenCalledWith("update-banner"));
+    expect(await screen.findByText(/Restart is not available: no supervising parent\./)).toBeInTheDocument();
+  });
+
+  it("allows a restart attempt while system info is still loading", async () => {
+    mockFetchSystemInfo.mockReturnValueOnce(new Promise(() => {}));
+    renderBanner();
+    await completeInstall();
+
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    expect(screen.queryByText(/Needs a supervising parent/)).not.toBeInTheDocument();
+  });
+
+  it("shows manual guidance when system info cannot be loaded", async () => {
+    mockFetchSystemInfo.mockRejectedValueOnce(new Error("network unavailable"));
+    renderBanner();
+    await completeInstall();
+
+    await waitFor(() => expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+  });
+
+  it("shows a disabled spinning restart action while a restart request is in flight", async () => {
+    mockRequestSystemRestart.mockReturnValueOnce(new Promise(() => {}));
+    renderBanner();
+    await completeInstall();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+
+    expect(screen.getByRole("button", { name: /Restarting/ })).toBeDisabled();
+    expect(screen.getByTestId("icon-refresh")).toHaveClass("spinning");
+  });
+
+  it("shows a re-clickable inline error when restart rejects", async () => {
+    mockRequestSystemRestart.mockRejectedValueOnce(new Error("restart conflict"));
+    renderBanner();
+    await completeInstall();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+
+    expect(await screen.findByText("restart conflict")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+  });
+
+  it("shows a re-clickable inline error when restart is not scheduled", async () => {
+    mockRequestSystemRestart.mockResolvedValueOnce({ scheduled: false });
+    renderBanner();
+    await completeInstall();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart Fusion" }));
+
+    expect(await screen.findByText("Restart could not be scheduled. Try restarting Fusion manually.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+  });
+
+  it("shows install errors inline without rendering a restart button or removing retry", async () => {
+    mockInstallUpdate.mockResolvedValueOnce({
+      currentVersion: "0.6.0",
+      latestVersion: "0.7.0",
+      updated: false,
+      error: "permission denied",
+    });
+
+    renderBanner();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+
+    await waitFor(() => expect(mockInstallUpdate).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Update failed: permission denied")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Restart Fusion" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["installed", { ...successfulInstall, outcome: "installed" }, /Updated to v0\.7\.0/],
+    ["no-update-available", { currentVersion: "0.6.0", latestVersion: "0.7.0", updated: false, outcome: "no-update-available", message: "Fusion is already up to date." }, /already up to date/i],
+    ["check-failed", { currentVersion: "0.6.0", latestVersion: null, updated: false, outcome: "check-failed", error: "registry unavailable", message: "Could not check for updates: registry unavailable" }, /Could not check for updates: registry unavailable/],
+    ["unsupported-install-method", { currentVersion: "0.6.0", latestVersion: "0.7.0", updated: false, outcome: "unsupported-install-method", message: "Use pull and rebuild for this source checkout." }, /pull and rebuild/i],
+    ["failed", { currentVersion: "0.6.0", latestVersion: "0.7.0", updated: false, outcome: "failed", error: "npm failed", message: "npm failed" }, /Update failed: npm failed/],
+    ["legacy fallback", { currentVersion: "0.6.0", latestVersion: "0.7.0", updated: false }, /Update did not complete — see the Fusion logs/],
+  ])("renders the %s install outcome in a live status", async (_outcome, response, expected) => {
+    mockInstallUpdate.mockResolvedValueOnce(response);
+    renderBanner();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+
+    const status = await screen.findByText(expected);
+    expect(status).toHaveAttribute("aria-live", "polite");
+    if (_outcome === "check-failed") expect(status).not.toHaveTextContent(/up to date/i);
+    if (_outcome === "installed") expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["npm missing guidance", {
+      currentVersion: "0.6.0",
+      latestVersion: "0.7.0",
+      updated: false,
+      outcome: "unsupported-install-method",
+      message: "npm is not available on this host; update it the way this install was installed.",
+    }],
+    ["externally managed guidance", {
+      currentVersion: "0.6.0",
+      latestVersion: "0.7.0",
+      updated: false,
+      outcome: "unsupported-install-method",
+      message: "This Fusion install declares updates externally managed via FUSION_UPDATES_EXTERNALLY_MANAGED.",
+    }],
+  ])("renders %s as non-error operator guidance", async (_label, response) => {
+    mockInstallUpdate.mockResolvedValueOnce(response);
+    renderBanner();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+
+    const guidance = await screen.findByText(response.message);
+    expect(guidance).toHaveAttribute("aria-live", "polite");
+    expect(guidance).not.toHaveTextContent(/^Update failed:/);
+  });
+
+  it.each([
+    ["supported", true],
+    ["unsupported", false],
+  ])("keeps the mobile action row and %s restart control in the document", async (_state, restartSupported) => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 480 });
+    mockFetchSystemInfo.mockResolvedValueOnce({ restartSupported });
+
+    renderBanner();
+    await completeInstall();
+
+    const actions = document.querySelector(".update-available-banner__actions");
+    const restartButton = screen.getByRole("button", { name: "Restart Fusion" });
+    expect(actions).toBeInTheDocument();
+    expect(actions).toContainElement(restartButton);
+    expect(restartButton).toBeInTheDocument();
+    expect(restartButton).toHaveProperty("disabled", false);
+    if (!restartSupported) expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+  });
+});

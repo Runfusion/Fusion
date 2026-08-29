@@ -1,0 +1,59 @@
+.report-approval-panel {
+  border-top: var(--btn-border-width) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-top: var(--space-md);
+}
+
+.report-approval-panel__header {
+  align-items: center;
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: space-between;
+}
+
+.report-approval-panel__header h4 {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.report-approval-panel__note {
+  min-height: calc(var(--space-2xl) * 2);
+}
+
+.card-status-badge--awaiting_approval {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+}
+
+.card-status-badge--approved,
+.card-status-badge--published {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+
+.card-status-badge--rejected {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+
+.report-approval-panel__actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.report-approval-panel__history {
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding-left: var(--space-lg);
+}
+
+@media (max-width: 768px) {
+  .report-approval-panel__actions {
+    flex-direction: column;
+  }
+}

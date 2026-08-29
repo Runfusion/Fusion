@@ -1,0 +1,58 @@
+# Release workflow: npm publishing via changesets + OIDC
+#
+# Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed.
+# Requires npm 11.5.1+ for OIDC support.
+#
+# FNXC:UpdateChannels 2026-07-19-13:30:
+# STABLE-CHANNEL ONLY. This workflow publishes with npm's implicit `latest`
+# dist-tag and must never run for a beta: betas are cut from `main` by
+# `pnpm release --channel beta`, which publishes with an explicit `--tag beta`
+# (see scripts/release.mjs and docs/plans/2026-07-19-001-beta-stable-release-tracks-plan.md).
+# If beta publishing ever moves to CI, this workflow needs a channel input that
+# threads `--tag beta` into the publish command — do not dispatch it as-is from
+# a pre-mode (.changeset/pre.json) checkout.
+
+name: Version & Release
+
+# Auto-trigger disabled; workflow preserved for manual use via workflow_dispatch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    name: Version or Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          registry-url: "https://registry.npmjs.org"
+          skip-install: "true"
+
+      - name: Ensure modern npm (OIDC support)
+        run: npm install -g npm@11.6.4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Create Release Pull Request or Publish to npm
+        uses: changesets/action@v2
+        with:
+          version: pnpm release:version
+          # Explicit --tag latest: every publish path names its dist-tag (see channel note above).
+          publish: pnpm -r publish --provenance --access public --tag latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

@@ -1,0 +1,13 @@
+{
+  "id": "fusion-plugin-acp-runtime",
+  "name": "ACP Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Drives any external Agent Client Protocol (ACP) agent for Fusion",
+  "author": "Fusion Team",
+  "runtime": {
+    "runtimeId": "acp",
+    "name": "ACP Runtime",
+    "description": "Drives any external ACP-compatible agent over JSON-RPC/stdio",
+    "version": "0.1.0"
+  }
+}

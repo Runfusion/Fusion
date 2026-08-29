@@ -1,0 +1,14 @@
+{
+  "id": "fusion-plugin-hermes-runtime",
+  "name": "Hermes Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Hermes AI runtime plugin for Fusion - provides AI agent execution runtime capabilities",
+  "author": "Fusion Team",
+  "homepage": "https://github.com/gsxdsm/fusion",
+  "runtime": {
+    "runtimeId": "hermes",
+    "name": "Hermes Runtime",
+    "description": "Hermes raw-model runtime using pi-ai direct streaming",
+    "version": "0.1.0"
+  }
+}

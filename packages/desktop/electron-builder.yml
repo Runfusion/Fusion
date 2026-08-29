@@ -1,0 +1,231 @@
+appId: com.gsxdsm.fusion.desktop
+productName: Fusion
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+
+directories:
+  output: dist-electron
+  buildResources: src/icons
+
+# The desktop app bundles no native addon that needs an Electron-ABI rebuild: it
+# uses Node's built-in `node:sqlite`, and the only native modules in the dependency
+# tree (keytar, @homebridge/node-pty-prebuilt-multiarch via @fusion/dashboard) are
+# loaded optionally and are NOT in the `files` list, so they're never packaged.
+# electron-builder's default rebuild walks the whole tree and tries to source-build
+# node-pty (it ships Node-ABI prebuilds only, none for Electron) via node-gyp, which
+# fails on the Windows runner ("Could not find any Visual Studio installation").
+# Disabling the rebuild skips that pointless, platform-fragile compile entirely.
+npmRebuild: false
+
+files:
+  # pnpm installs workspace/runtime deps as symlinked package entries backed by the
+  # virtual store. These flat node_modules/X/**/* patterns only work when electron-builder
+  # follows the symlink chain from the published package entry, so every @fusion/core
+  # runtime dependency group that the desktop app can load must be listed here.
+  # If @fusion/core gains a new runtime dependency, add it (and any required leaf deps)
+  # here or packaged desktop builds can fail at startup/runtime with missing-module errors.
+  - dist/**/*
+  - package.json
+  - node_modules/@fusion/core/**/*
+  - node_modules/@fusion/dashboard/**/*
+  - node_modules/electron-updater/**/*
+  - node_modules/builder-util-runtime/**/*
+  - node_modules/fs-extra/**/*
+  - node_modules/jsonfile/**/*
+  - node_modules/graceful-fs/**/*
+  - node_modules/universalify/**/*
+  - node_modules/js-yaml/**/*
+  - node_modules/argparse/**/*
+  - node_modules/sprintf-js/**/*
+  - node_modules/lazy-val/**/*
+  - node_modules/lodash.escaperegexp/**/*
+  - node_modules/lodash.isequal/**/*
+  - node_modules/semver/**/*
+  - node_modules/tiny-typed-emitter/**/*
+  - node_modules/debug/**/*
+  - node_modules/ms/**/*
+  - node_modules/sax/**/*
+  # @fusion/core archive parsing deps
+  - node_modules/extract-zip/**/*
+  - node_modules/get-stream/**/*
+  - node_modules/pump/**/*
+  - node_modules/end-of-stream/**/*
+  - node_modules/once/**/*
+  - node_modules/wrappy/**/*
+  - node_modules/yauzl/**/*
+  - node_modules/fd-slicer/**/*
+  - node_modules/pend/**/*
+  - node_modules/buffer-crc32/**/*
+  - node_modules/tar/**/*
+  - node_modules/@isaacs/fs-minipass/**/*
+  - node_modules/chownr/**/*
+  - node_modules/minipass/**/*
+  - node_modules/minizlib/**/*
+  - node_modules/yallist/**/*
+  - node_modules/yaml/**/*
+  # @fusion/core scheduling/automation deps
+  - node_modules/cron-parser/**/*
+  - node_modules/luxon/**/*
+  # @fusion/core discovery/system deps
+  - node_modules/bonjour-service/**/*
+  - node_modules/fast-deep-equal/**/*
+  - node_modules/multicast-dns/**/*
+  - node_modules/dns-packet/**/*
+  - node_modules/thunky/**/*
+  - node_modules/@leichtgewicht/ip-codec/**/*
+  - node_modules/check-disk-space/**/*
+  # @fusion/core optional docker runtime deps
+  - node_modules/dockerode/**/*
+  - node_modules/@balena/dockerignore/**/*
+  - node_modules/@grpc/grpc-js/**/*
+  - node_modules/@grpc/proto-loader/**/*
+  - node_modules/docker-modem/**/*
+  - node_modules/protobufjs/**/*
+  - node_modules/tar-fs/**/*
+  - node_modules/uuid/**/*
+  # FNXC:DesktopEmbeddedPostgres 2026-07-14-18:25:
+  # Zero-config desktop local mode boots embedded PostgreSQL via @fusion/core.
+  # These packages are required runtime deps of that path and must be in the
+  # explicit files allowlist so electron-builder cannot drop them when walking
+  # the staged production closure.
+  - node_modules/embedded-postgres/**/*
+  - node_modules/@embedded-postgres/**/*
+  - node_modules/pg/**/*
+  - node_modules/pg-connection-string/**/*
+  - node_modules/pg-int8/**/*
+  - node_modules/pg-pool/**/*
+  - node_modules/pg-protocol/**/*
+  - node_modules/pg-types/**/*
+  - node_modules/pgpass/**/*
+  - node_modules/postgres-array/**/*
+  - node_modules/postgres-bytea/**/*
+  - node_modules/postgres-date/**/*
+  - node_modules/postgres-interval/**/*
+  - node_modules/split2/**/*
+  - node_modules/xtend/**/*
+  - node_modules/postgres/**/*
+  - node_modules/async-exit-hook/**/*
+  # FNXC:DesktopOmpPlugin 2026-07-14-18:55:
+  # Dashboard server statically imports @fusion-plugin-examples/* runtime probes
+  # (hermes/openclaw/cursor/grok/omp/paperclip/droid/roadmap/dependency-graph).
+  # Include the whole scoped tree so a new statically-imported plugin cannot be
+  # dropped from the packaged app.asar when electron-builder walks the allowlist.
+  - node_modules/@fusion-plugin-examples/**/*
+  - node_modules/@fusion/plugin-sdk/**/*
+  - node_modules/@agentclientprotocol/sdk/**/*
+
+# FNXC:DesktopEmbeddedPostgres 2026-07-14-18:25:
+# Embedded Postgres launches native initdb/pg_ctl/postgres child processes and resolves
+# those paths from platform-package dist/index.js via import.meta.url.
+# If only native/** is unpacked, dist/index.js stays inside app.asar so binary paths
+# resolve as .../app.asar/.../native/bin/postgres. Electron marks those files unpacked,
+# but fs.promises.chmod (used by embedded-postgres ensureBinIsExecutable) still fails
+# with ENOTDIR against the asar path — packaged desktop local mode cannot start Postgres.
+# Unpack the full platform packages (JS entrypoints + native trees) so __dirname is a
+# real filesystem path under app.asar.unpacked and chmod/spawn work without asar redirects.
+# Also keep the top-level embedded-postgres package unpacked so its dynamic import of the
+# platform package resolves to the same real tree.
+asarUnpack:
+  - "node_modules/@embedded-postgres/**/*"
+  - "node_modules/embedded-postgres/**/*"
+
+extraMetadata:
+  # FNXC:DesktopEmbeddedPostgres 2026-07-14-18:50:
+  # CJS bootstrap patches child_process.spawn before ESM main loads so packaged
+  # embedded Postgres binaries resolve out of app.asar (see main-bootstrap.cjs).
+  main: dist/main-bootstrap.cjs
+
+extraResources:
+  - from: src/icons
+    to: icons
+    filter:
+      - "tray-*.png"
+
+protocols:
+  - name: Fusion Deep Links
+    schemes:
+      - fusion
+
+fileAssociations:
+  - ext: fusion
+    name: Fusion Task Link
+    description: Fusion desktop deep link
+    role: Viewer
+    mimeType: x-scheme-handler/fusion
+
+publish:
+  provider: github
+  owner: gsxdsm
+  repo: fusion
+
+mac:
+  category: public.app-category.developer-tools
+  minimumSystemVersion: "10.15"
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+
+win:
+  # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+  # embedded-postgres 15.18 publishes only @embedded-postgres/windows-x64 and
+  # throws on win32/arm64. Do not publish an ARM64 installer whose default local
+  # database cannot start; Windows ARM64 can use the supported x64 installer via
+  # the OS compatibility layer until upstream ships a native ARM64 payload.
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+    publisherName: Fusion
+
+nsis:
+  # FNXC:WindowsDesktopPackaging 2026-07-01-08:02:
+  # NSIS is the installable Windows artifact and must keep the 0.50-style
+  # Fusion-<version>-win-<arch>.exe name so updater/install docs remain stable.
+  # The portable target writes a separate -portable EXE below to avoid colliding
+  # with or overwriting the NSIS installer during x64/arm64 packaging.
+  artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  # FNXC:WindowsDesktopPackaging 2026-07-18-05:20:
+  # Uninstall must stop the embedded postmaster and remove Fusion-materialized
+  # runtime binaries; the database is user data and is only deleted after an
+  # interactive YES (never on silent or auto-update uninstalls).
+  include: build/uninstaller.nsh
+
+portable:
+  artifactName: "${productName}-${version}-${os}-${arch}-portable.${ext}"
+
+linux:
+  category: Development
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: tar.gz
+      arch:
+        - x64
+        - arm64

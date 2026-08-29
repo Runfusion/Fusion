@@ -1,0 +1,70 @@
+.workflow-selector {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+}
+
+.workflow-selector-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-selector-label-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.workflow-selector-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.workflow-selector select {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+}
+
+.workflow-selector select:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.workflow-selector-manage {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.workflow-selector-manage:hover {
+  background: var(--bg-tertiary);
+}
+
+@media (max-width: 768px) {
+  .workflow-selector {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .workflow-selector select,
+  .workflow-selector-manage {
+    width: 100%;
+  }
+
+  .workflow-selector-manage {
+    text-align: center;
+  }
+}

@@ -1,0 +1,671 @@
+/*
+ * UsageIndicator styles extracted from PlanningModeModal.css for FN-2633.
+ * This file now owns all usage indicator and usage popover styling.
+ */
+
+
+/* ============================================================
+   USAGE INDICATOR STYLES
+   ============================================================ */
+
+/* Modal sizing */
+.usage-modal {
+  width: 520px;
+  max-width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  min-height: 280px;
+}
+
+.usage-modal > .modal-header {
+  flex-shrink: 0;
+}
+
+.usage-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.usage-header-icon {
+  color: var(--in-progress);
+}
+
+/* Header actions with view toggle */
+.usage-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* View mode toggle */
+.usage-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-xs) / 2);
+  background: var(--card);
+  padding: calc(var(--space-xs) * 0.75);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.usage-view-toggle-btn {
+  padding: calc(var(--space-xs)) calc(var(--space-sm) + var(--space-xs) / 2);
+  border-radius: var(--radius-sm);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+}
+
+.usage-view-toggle-btn:hover {
+  color: var(--text);
+}
+
+.usage-view-toggle-btn.active {
+  background: var(--todo);
+  color: var(--bg);
+  box-shadow: var(--shadow-sm);
+}
+
+.usage-view-toggle-btn.active:hover {
+  background: var(--todo);
+  color: var(--bg);
+}
+
+.usage-view-toggle-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Content area */
+.usage-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* Provider cards */
+.usage-providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+}
+
+.usage-provider {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.usage-provider--dragging {
+  opacity: 0.5;
+}
+
+.usage-provider--drag-over-before {
+  border-top: 3px solid var(--todo);
+  padding-top: 11px;
+}
+
+.usage-provider--drag-over-after {
+  border-bottom: 3px solid var(--todo);
+  padding-bottom: 11px;
+}
+
+.usage-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.usage-provider-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  cursor: grab;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.usage-provider-actions .usage-provider-drag-handle {
+  margin-left: var(--space-xs);
+}
+
+.usage-provider-drag-handle:hover {
+  color: var(--text-muted);
+}
+
+.usage-provider-drag-handle:active {
+  cursor: grabbing;
+}
+
+.usage-provider-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.usage-provider-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.usage-provider-reorder-controls {
+  display: inline-flex;
+  gap: calc(var(--space-xs) / 2);
+}
+
+.usage-provider-reorder-btn {
+  min-width: calc(var(--space-md) * 2);
+  min-height: calc(var(--space-md) * 2);
+}
+
+.usage-provider-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.usage-provider-name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* Status badges */
+.usage-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.usage-status-badge--error {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.usage-status-badge--not-configured {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
+/* Provider meta (plan, email) */
+.usage-provider-meta {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.usage-provider-plan {
+  font-weight: 500;
+  color: var(--todo);
+}
+
+.usage-provider-email {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Provider error */
+.usage-provider-error {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-left: calc(var(--space-xs) - 1px) solid var(--color-error);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+/* Usage windows */
+.usage-provider-windows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.usage-window {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.usage-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.usage-window-header-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.usage-window-hide-btn {
+  opacity: 0.5;
+  transition: opacity var(--transition-fast);
+  padding: calc(var(--space-xs) / 2);
+  margin-left: var(--space-xs);
+}
+
+.usage-window-hide-btn:hover {
+  opacity: 1;
+}
+
+.usage-window--hidden {
+  display: none;
+}
+
+.usage-show-hidden-btn {
+  margin-left: var(--space-sm);
+  padding: calc(var(--space-xs) / 2) calc(var(--space-sm) - var(--space-xs) / 2);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  line-height: 1.2;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.usage-show-hidden-btn:hover {
+  color: var(--text);
+}
+
+.usage-window-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.usage-window-percentage {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Progress bar */
+.usage-progress-bar {
+  height: 8px;
+  background: var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.usage-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-sm);
+  transition: width var(--transition-slow), background-color var(--transition-slow);
+}
+
+.usage-progress-fill--low {
+  background: var(--color-success);
+}
+
+.usage-progress-fill--medium {
+  background: var(--triage);
+}
+
+.usage-progress-fill--high {
+  background: var(--color-error);
+}
+
+/* Window footer */
+.usage-window-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.usage-window-left {
+  font-weight: 500;
+}
+
+.usage-window-reset {
+  font-style: italic;
+}
+
+.usage-window-reset-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.usage-window-reset-at {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  white-space: nowrap;
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Pace marker and text */
+.usage-progress-wrapper {
+  position: relative;
+}
+
+.usage-pace-marker {
+  position: absolute;
+  top: -1px;
+  width: 2px;
+  height: 10px;
+  background: var(--text-muted);
+  border-radius: 1px;
+  z-index: 2;
+  transform: translateX(-50%);
+}
+
+.usage-pace-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-top: var(--space-xs);
+}
+
+.pace-icon {
+  flex-shrink: 0;
+}
+
+.pace-text {
+  font-weight: 500;
+}
+
+/* ahead = over pace, consuming faster than expected (warning - red) */
+.pace-ahead {
+  color: var(--color-error);
+}
+
+/* on-track = good/expected usage (unchanged) */
+.pace-ontrack {
+  color: var(--color-success);
+}
+
+/* behind = under pace, consuming slower than expected (positive - green) */
+.pace-behind {
+  color: var(--color-success);
+}
+
+/* Empty state */
+.usage-provider-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* Loading skeleton */
+.usage-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+}
+
+.usage-skeleton-provider {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.usage-skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.usage-skeleton-icon,
+.usage-skeleton-name,
+.usage-skeleton-badge,
+.usage-skeleton-bar,
+.usage-skeleton-text {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.usage-skeleton-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+
+.usage-skeleton-name {
+  flex: 1;
+  height: 14px;
+  max-width: 120px;
+}
+
+.usage-skeleton-badge {
+  width: 80px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+}
+
+.usage-skeleton-bar {
+  height: 8px;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.usage-skeleton-text {
+  height: 12px;
+  width: 60%;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+/* Error state */
+.usage-error {
+  padding: var(--space-xl);
+  text-align: center;
+}
+
+.usage-error p:first-child {
+  font-weight: 600;
+  color: var(--color-error);
+  margin-bottom: var(--space-sm);
+}
+
+.usage-error-message {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-lg);
+}
+
+/* Empty state */
+.usage-empty {
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.usage-empty p:first-child {
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.usage-empty-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Actions */
+.usage-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-shrink: 0;
+}
+
+.usage-actions-left {
+  min-width: 0;
+}
+
+.usage-last-updated {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.usage-actions-right {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .usage-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    min-width: 0;
+    min-height: 0;
+    border-radius: 0;
+    resize: none;
+  }
+
+  .usage-actions {
+    align-items: center;
+  }
+
+  .usage-last-updated {
+    text-align: left;
+  }
+
+  .usage-provider-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .usage-provider-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .usage-provider-drag-handle {
+    min-width: calc(var(--space-md) * 3);
+    min-height: calc(var(--space-md) * 3);
+  }
+
+  .usage-provider-reorder-btn {
+    min-width: calc(var(--space-md) * 3);
+    min-height: calc(var(--space-md) * 3);
+  }
+}
+
+@media (pointer: coarse) {
+  .usage-provider-drag-handle {
+    display: none;
+  }
+}
+
+
+/* Desktop popover presentation */
+.usage-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 100;
+}
+
+.usage-modal--popover {
+  width: 420px;
+  max-width: calc(100vw - var(--space-md) * 2);
+  max-height: 80vh;
+  min-width: 320px;
+  min-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  z-index: 101;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  resize: both;
+}
+
+/*
+ * FNXC:UsageIndicator 2026-06-22-00:00:
+ * Embedded presentation for the right-dock redesign. The usage view renders
+ * inline inside the dock container as a plain flow box: no fixed positioning,
+ * no popover box-shadow, no resize handle, filling its parent at 100%/100%.
+ */
+.usage-indicator-embedded {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.usage-modal--embedded {
+  position: static;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  min-width: 0;
+  min-height: 0;
+  box-shadow: none;
+  resize: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.usage-modal-overlay {
+  --overlay-padding-top: var(--space-lg);
+}
+
+.usage-modal.modal {
+  resize: both;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .usage-modal-overlay {
+    --overlay-padding-top: 0;
+  }
+
+  .usage-modal--popover,
+  .usage-modal.modal {
+    resize: none;
+  }
+}

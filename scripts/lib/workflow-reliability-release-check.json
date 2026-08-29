@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "_comment": "FNXC:CustomWorkflowReliability 2026-08-10-18:03: FN-6694 requires this manifest to encode goal G-MPW67VQR-0001-97S3's release-check checklist as objective, runnable seam evidence instead of prose-only QA signoff. FN-8951 repointed deleted pre-cutover seams to live tests that cover definitions and route validation, selection dispatch, REVISE completion, interpreter recovery, and restart durability. FNXC:CustomWorkflowReliability 2026-08-16-10:52: FN-9123 repoints the custom-v1 dispatch seam after f1a8b271bd consolidated its coverage into no-selection-default-workflow-move.test.ts; the manifest must retain a live file that contains the characterization.",
+  "checklist": [
+    {
+      "id": "author-import-save-discover-reload",
+      "title": "Custom workflow authoring, import, invalid rejection, save, discovery, selection, and reload",
+      "journey": "A custom workflow can be authored/imported, rejected on invalid IR, saved, discovered, selected, and reloaded.",
+      "seams": [
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/postgres/workflow-definitions.pg.test.ts"
+        },
+        {
+          "package": "@fusion/dashboard",
+          "file": "packages/dashboard/src/routes/__tests__/workflow-validate-route.test.ts"
+        },
+        {
+          "package": "@fusion/dashboard",
+          "file": "packages/dashboard/src/routes/__tests__/workflow-setting-attribution.test.ts"
+        },
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/workflow-ir-selection-cache.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "selected-workflow-execution-fail-closed",
+      "title": "Selected workflow execution and fail-closed missing custom workflow IDs",
+      "journey": "A task can execute the selected workflow through runtime primitives, and explicit missing custom workflow IDs fail closed.",
+      "seams": [
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/no-selection-default-workflow-move.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-task-runtime.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "gate-advisory-readonly-revise-required-artifact",
+      "title": "Gate, advisory, readonly, REVISE, and required-artifact observability",
+      "journey": "Gate/advisory/readonly/REVISE/required-artifact behavior is observable in task state, workflow results, task documents, and logs.",
+      "seams": [
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-malformed-verdict-gate.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-required-artifact-gate.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-step-readonly-allowlist.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/executor-task-done-revise-verdict-guard.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "automerge-hard-cancel-file-scope-recovery",
+      "title": "autoMerge:false, hard-cancel, file-scope, and recovery invariants",
+      "journey": "autoMerge:false, hard-cancel, file-scope, and recovery invariants are preserved under custom workflow execution.",
+      "seams": [
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/workflow-and-file-scope.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/interpreter-merge-seam.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-step-results-self-healing-recovery.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "restart-selection-progress-run-audit",
+      "title": "Restart durability for workflow selection, progress, and recovery evidence",
+      "journey": "Engine/scheduler restart preserves workflow selection and progress, and any recovery emits typed run-audit evidence instead of silent lifecycle mutation.",
+      "seams": [
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/postgres/workflow-continuation-slot.pg.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/restart-recovery-coordinator.test.ts"
+        }
+      ]
+    }
+  ],
+  "manual": []
+}

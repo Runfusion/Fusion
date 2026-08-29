@@ -1,0 +1,60 @@
+.auth-login-instructions {
+  margin-top: var(--space-sm);
+  margin-bottom: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid color-mix(in srgb, var(--color-info) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.device-code-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0 var(--space-xs);
+}
+
+.device-code {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.device-code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: calc(var(--space-md) * 3);
+  block-size: calc(var(--space-md) * 3);
+  padding: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.device-code-copy-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.device-code-copy-btn:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}

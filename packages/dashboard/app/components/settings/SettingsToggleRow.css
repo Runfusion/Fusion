@@ -1,0 +1,14 @@
+/* SettingsToggleRow (U8 / KTD-10) — checkbox control slot. */
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.settings-toggle > input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.settings-toggle > input[type="checkbox"]:disabled {
+  cursor: default;
+}

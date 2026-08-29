@@ -1,0 +1,8 @@
+{
+  "id": "fusion-plugin-whatsapp-chat",
+  "name": "WhatsApp Chat",
+  "version": "0.1.0",
+  "description": "WhatsApp Web (multi-device) bridge — pairs via QR/code, no Meta Cloud webhook required.",
+  "author": "Fusion Team",
+  "fusionVersion": ">=0.1.0"
+}

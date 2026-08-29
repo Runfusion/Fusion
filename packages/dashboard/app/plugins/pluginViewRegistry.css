@@ -1,0 +1,27 @@
+.plugin-dashboard-view-missing {
+  margin: var(--space-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.plugin-dashboard-view-missing-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--space-lg);
+}
+
+.plugin-dashboard-view-missing-description {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .plugin-dashboard-view-missing {
+    margin: var(--space-md);
+    padding: var(--space-md);
+  }
+}

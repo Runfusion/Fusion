@@ -1,0 +1,2796 @@
+/* === Planning Mode Styles === */
+.planning-modal-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.planning-modal *,
+.planning-modal {
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.planning-modal *::-webkit-scrollbar,
+.planning-modal::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.planning-modal *::-webkit-scrollbar-track,
+.planning-modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.planning-modal *::-webkit-scrollbar-thumb,
+.planning-modal::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.planning-modal *::-webkit-scrollbar-thumb:hover,
+.planning-modal::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.planning-modal *::-webkit-scrollbar-corner,
+.planning-modal::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.planning-modal {
+  width: min(95vw, 1200px);
+  max-width: 95vw;
+  min-width: 360px;
+  height: 85vh;
+  min-height: 480px;
+  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);
+  overflow: hidden;
+}
+
+/*
+FNXC:PlanningMode 2026-06-21-00:00:
+FN-6886 promotes Planning Mode into the main app content area. The embedded shell fills the available content pane and intentionally disables modal-only sizing/resizing so the left sidebar owns navigation and no backdrop shell remains.
+*/
+/*
+FNXC:Planning 2026-08-16-14:48:
+The embedded Planning wrapper matches Missions' shell: NO outer padding. Missions' inline shell (mission-manager--inline) has no wrapper inset — its header supplies the top/side padding (var(--space-lg) var(--space-xl)) and the split body fills edge-to-edge below. Mirroring that here removes the previous extra var(--space-lg) inset so Planning's header and two-pane body align with Missions.
+*/
+.planning-view {
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/*
+FNXC:PlanningMode 2026-06-22-15:30:
+FN-6886 full-view fix: embedded planning must fill the entire main-content pane with no awkward gaps. The flex/height chain is planning-view (flex:1, height:100%) -> planning-modal--embedded (flex:1, height:100%) -> planning-modal-body (flex:1, min-height:0). flex:1 + min-width:0 + min-height:0 on the embedded panel lets it consume all remaining width/height inside the flex .planning-view wrapper instead of collapsing to the base .modal 480px width.
+*/
+.planning-modal--embedded {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  resize: none;
+  box-shadow: none;
+}
+
+/*
+FNXC:PlanningMode 2026-06-22-00:00:
+Embedded planning must blend into the main content like Command Center: no panel shadow, no border/outline, no rounded card chrome, and a transparent background so the view sits flush on the project-content surface. Higher specificity (.planning-view .planning-modal--embedded) is required to beat the base .modal shadow/border/background.
+*/
+.planning-view .planning-modal--embedded {
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  /*
+  FNXC:Planning 2026-06-23-04:45:
+  The base .modal sets max-height:80vh; that wins over the equal-specificity .planning-modal--embedded { max-height:none } by source order, so the embedded panel was capped at 80vh (≈576px) and stopped ~49px short of the .planning-view bottom (measured: embedded bottom 635 vs view bottom 684). Re-assert max-height:none here at higher specificity (.planning-view .planning-modal--embedded) so the embedded shell — and therefore the sidebar list+footer and the detail pane below it — fills the full main-content height with no bottom gap, in both the initial (no-session) and active-session states.
+  */
+  max-height: none;
+}
+
+/*
+FNXC:Planning 2026-06-23-03:00:
+The embedded planning header must be a visual SIBLING of MissionManager's inline header (mission-manager__header--inline). Matched values, copied exactly from MissionManager.css:
+- background: var(--surface), padding: var(--space-lg) var(--space-xl) (= 16px 24px)
+- no bottom divider — app headers are seamless against their content while preserving shared surface background and spacing.
+- title: 1.125rem / 600 / var(--text) via the h3 rule below (font-weight/color come from the base .modal-header h3).
+- icon: var(--todo) tint + flex-shrink:0, identical to .mission-manager__header-icon (the shared icon-triage tint was a different brown, so it is overridden here).
+- gap icon<->title: var(--space-sm) (= 8px), identical to .mission-manager__header-title. Scoped to the embedded planning header so the shared .detail-title-row (TaskDetailModal) keeps its own 10px gap.
+*/
+/* FNXC:ViewHeader 2026-06-23-04:15: Pin canonical --view-header-min-height (≈61px border-box) + box-sizing + vertical centering so embedded Planning's header matches the shared ViewHeader/Missions height exactly. */
+.planning-modal--embedded .modal-header--embedded {
+  box-sizing: border-box;
+  align-items: center;
+  min-height: var(--view-header-min-height);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+  border-bottom: none;
+}
+
+.planning-modal--embedded .modal-header--embedded .detail-title-row {
+  gap: var(--space-sm);
+}
+
+.planning-modal--embedded .modal-header--embedded .detail-title-row > svg {
+  color: var(--todo);
+  flex-shrink: 0;
+}
+
+.planning-modal--embedded .modal-header--embedded h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: normal;
+}
+
+.planning-modal .modal-header {
+  flex-shrink: 0;
+}
+
+.planning-header-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.planning-header-controls .btn {
+  min-height: calc(var(--space-2xl) + var(--space-sm));
+}
+
+.planning-history-trigger.active {
+  color: var(--text);
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring);
+}
+
+.planning-modal .text-muted {
+  color: var(--text-muted);
+}
+
+.planning-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.planning-history-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-popover);
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  min-height: 0;
+}
+
+.planning-history-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--background) 54%, transparent);
+  backdrop-filter: blur(var(--space-xs));
+}
+
+.planning-history-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, calc(var(--space-2xl) * 15));
+  min-width: 0;
+  min-height: 0;
+  border-left: solid var(--btn-border-width) var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.planning-history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  border-bottom: solid var(--btn-border-width) var(--border);
+}
+
+.planning-history-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.planning-history-heading > svg {
+  flex-shrink: 0;
+  margin-top: var(--space-xs);
+  color: var(--todo);
+}
+
+.planning-history-heading h4,
+.planning-history-heading p {
+  margin: 0;
+}
+
+.planning-history-heading h4 {
+  text-wrap: balance;
+}
+
+.planning-history-heading p {
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.planning-history-header .btn-icon {
+  min-width: calc(var(--space-2xl) + var(--space-sm));
+  min-height: calc(var(--space-2xl) + var(--space-sm));
+  flex-shrink: 0;
+}
+
+.planning-history-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-xl);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.planning-history-scroll .conversation-history {
+  max-height: none;
+  margin: 0;
+  overflow: visible;
+}
+
+.planning-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-height: calc(var(--space-2xl) * 6);
+  padding: var(--space-xl);
+  border-radius: var(--radius-xl);
+  color: var(--text-muted);
+  text-align: center;
+  background: var(--card);
+}
+
+.planning-history-empty strong {
+  color: var(--text);
+}
+
+.planning-history-empty p {
+  max-width: calc(var(--space-2xl) * 10);
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.planning-modal-body--split {
+  flex-direction: row;
+}
+
+.planning-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/*
+FNXC:Planning 2026-08-16-14:48:
+Embedded Planning is a real two-pane view mirroring Missions (mission-manager__split): the left sidebar is a full-height flex column (list scrolls, footer pinned to bottom) and the right detail pane fills the remaining width AND height. The sidebar surface/border/width treatment matches mission-manager__sidebar — var(--surface) background, a single border-right divider — so the two views read consistently. The flex chain planning-view -> planning-modal--embedded -> planning-modal-body keeps the whole layout filling the main-content pane to the bottom.
+*/
+.planning-sidebar {
+  width: calc(var(--space-lg) * 18.75);
+  flex-shrink: 0;
+  border-right: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+FNXC:Planning 2026-08-16-14:48:
+Sidebar resize handle — identical treatment to MissionManager's mission-manager__sidebar-resize-handle: a thin (var(--space-sm)) col-resize strip whose ::before center bar tints with var(--todo) on hover/active, plus a focus ring for keyboard resize. touch-action:none keeps the pointer drag from scrolling on trackpads.
+*/
+.planning-sidebar-resize-handle {
+  position: relative;
+  width: var(--space-sm);
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  transition: background var(--transition-fast);
+}
+
+.planning-sidebar-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-xs);
+  transform: translateX(-50%);
+}
+
+.planning-sidebar-resize-handle:hover::before,
+.planning-sidebar-resize-handle:active::before {
+  background: color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.planning-sidebar-resize-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:Planning 2026-08-16-14:48:
+Planning intentionally retains this bottom-pinned session footer at its current metrics. Missions now uses a top-anchored sidebar CTA, so this footer preserves its own padding, border-top, gap, and column layout for the archived-session link.
+*/
+.planning-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-top: var(--btn-border-width) solid var(--border);
+  flex-shrink: 0;
+}
+
+.planning-sidebar-toggle-archived-link {
+  align-self: center;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+  border-radius: var(--radius-sm);
+}
+
+.planning-sidebar-toggle-archived-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.planning-sidebar-toggle-archived-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:Planning 2026-08-16-14:48:
+Planning intentionally retains this bottom-pinned New session button at its current metrics. Missions now anchors its slightly taller CTA at the top of its sidebar; both controls reuse the shared primary button treatment without requiring exact height parity. The earlier .active "inset ring" outline is REMOVED so the no-session-selected (.active) state relies solely on the empty/initial detail pane.
+*/
+.planning-sidebar-new {
+  width: 100%;
+  min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  justify-content: center;
+  gap: var(--space-sm);
+  font-size: inherit;
+}
+
+.planning-sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-sidebar-empty {
+  padding: var(--space-lg) var(--space-md);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  text-align: center;
+  line-height: 1.5;
+}
+
+.planning-sidebar-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-sidebar-skeleton-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+}
+
+.planning-sidebar-skeleton-icon,
+.planning-sidebar-skeleton-title,
+.planning-sidebar-skeleton-meta {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--card-hover);
+}
+
+.planning-sidebar-skeleton-icon {
+  width: var(--space-md);
+  height: var(--space-md);
+  flex-shrink: 0;
+}
+
+.planning-sidebar-skeleton-copy {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-block: var(--space-xs);
+}
+
+.planning-sidebar-skeleton-title {
+  width: 75%;
+  height: var(--space-sm);
+}
+
+.planning-sidebar-skeleton-meta {
+  width: 50%;
+  height: var(--space-xs);
+}
+
+.planning-sidebar-item {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+
+.planning-sidebar-item:hover {
+  background: var(--card-hover);
+}
+
+.planning-sidebar-item.selected {
+  background: color-mix(in srgb, var(--todo) 18%, transparent);
+}
+
+.planning-sidebar-item.pending-delete {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+}
+
+.planning-sidebar-item-button {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  border-radius: var(--radius-md);
+}
+
+.planning-sidebar-item-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.planning-sidebar-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.planning-sidebar-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.planning-sidebar-item-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.planning-sidebar-status-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.planning-sidebar-status-generating { color: var(--todo); }
+.planning-sidebar-status-awaiting { color: var(--triage); }
+.planning-sidebar-status-complete { color: var(--color-success); }
+.planning-sidebar-status-error { color: var(--color-error); }
+
+.planning-sidebar-item-actions {
+  display: flex;
+  align-items: stretch;
+}
+
+.planning-sidebar-item-delete,
+.planning-sidebar-item-archive {
+  flex-shrink: 0;
+  width: calc(var(--space-lg) + var(--space-xl));
+  min-width: calc(var(--space-lg) + var(--space-xl));
+  height: calc(var(--space-lg) + var(--space-xl));
+  min-height: calc(var(--space-lg) + var(--space-xl));
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.planning-sidebar-item:hover .planning-sidebar-item-delete,
+.planning-sidebar-item:focus-within .planning-sidebar-item-delete,
+.planning-sidebar-item:hover .planning-sidebar-item-archive,
+.planning-sidebar-item:focus-within .planning-sidebar-item-archive {
+  display: flex;
+}
+
+.planning-sidebar-item-delete:hover {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+}
+
+.planning-sidebar-item-archive:hover {
+  color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.planning-sidebar-item-delete:focus-visible,
+.planning-sidebar-item-archive:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.planning-sidebar-item.archived .planning-sidebar-item-button {
+  opacity: 0.6;
+}
+
+.planning-sidebar-confirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.planning-session-back {
+  display: inline-flex;
+  min-width: calc(var(--space-md) * 2.25);
+  min-height: calc(var(--space-md) * 2.25);
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.planning-session-back:hover {
+  background: var(--card-hover);
+}
+
+.planning-session-back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Mobile: stack — only one pane visible at a time.
+   FNXC:PlanningMode 2026-06-22-15:30 covers both the landscape phone case
+   (max-height: 480px exceeds 768px wide) and portrait. */
+@media (max-width: 768px), (max-height: 480px) {
+  /* Full-screen sheet — drop overlay padding so the modal fills the
+     viewport instead of being pushed below it, and disable resize since
+     touchscreen users can't drag the corner grip anyway.
+     FNXC:PlanningMode 2026-06-22-15:30: scope the viewport-takeover rules to
+     the NON-embedded (dialog) presentation only. The embedded panel
+     (.planning-modal--embedded) must NOT grab 100vw/100dvh — it lives inside
+     the main-content pane, so forcing full-viewport sizing made it overflow
+     the content area on mobile. The :not(.planning-modal--embedded) guard
+     keeps the modal full-screen sheet intact while letting the embedded view
+     fill only its own pane (handled by the .planning-view rules below). */
+  .modal-overlay:has(.planning-modal) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .modal.planning-modal:not(.planning-modal--embedded) {
+    width: 100vw;
+    min-width: 0;
+    max-width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    resize: none;
+  }
+  .modal.planning-modal:not(.planning-modal--embedded)[style*="--keyboard-overlap"] {
+    height: var(--vv-height, 100dvh);
+    max-height: var(--vv-height, 100dvh);
+    transform: translateY(var(--vv-offset-top, 0px));
+    will-change: transform;
+  }
+  /* FNXC:PlanningMode 2026-06-22-15:30: on mobile the embedded view should use
+     the full width of the (already-narrow) content pane — drop the outer
+     padding so the session list and detail panes are edge-to-edge, and keep
+     the height/flex chain filling the pane. */
+  .planning-view {
+    padding: var(--space-sm);
+  }
+  /*
+  FNXC:PlanningMode 2026-06-25-13:10:
+  The global mobile modal rule in styles.css (`@media (max-width:768px) .modal:not(.confirm-dialog), .modal-lg, ...`) forces every full-screen modal to height/max-height:100dvh. The embedded Planning shell carries `.modal-lg`, so it matched that rule and was stretched to the full 100dvh viewport even though its parent `.planning-view` is bounded between the header and the bottom nav (≈688px). Because `.modal:not(.confirm-dialog)` resolves to specificity (0,2,0) — equal to `.planning-view .planning-modal--embedded` — the global rule won on source order, so the embedded shell overflowed past the viewport, `.planning-view { overflow:hidden }` clipped the footer action buttons, and the summary/question panes could not scroll on mobile. Qualify with `.planning-view.open` (0,3,0) and re-pin max-height so the embedded view stays inside its bounded pane and the inner flex scroll chain works.
+  */
+  .planning-view.open .planning-modal--embedded {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+  }
+  .planning-modal-body--split {
+    flex-direction: column;
+  }
+
+  .planning-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  /*
+  FNXC:PlanningMode 2026-06-30-00:00:
+  Mobile list view must keep the New session CTA reachable like Missions' bottom sidebar action. Bound the sidebar to the Planning pane and let only the session list scroll above the fixed footer; detail view still hides the sidebar through the existing show-detail rule.
+  */
+  .planning-modal-body--show-list {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .planning-modal-body--show-list .planning-sidebar {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+  }
+  .planning-modal-body--show-list .planning-sidebar-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .planning-sidebar-skeleton-row {
+    padding-inline: var(--space-md);
+  }
+  .planning-modal-body--show-list .planning-sidebar-footer {
+    flex-shrink: 0;
+  }
+  .planning-modal-body--show-detail .planning-sidebar {
+    display: none;
+  }
+  /*
+  FNXC:PlanningModeMobile 2026-07-20-10:30:
+  FN-8427 gives session-list mode exclusive ownership of the compact body. JS unmounts
+  RunningPlanPane; this selector is a layout backstop for future render paths so session
+  rows stay scrollable above the New session footer instead of sharing height with a plan.
+  */
+  .planning-modal-body--show-list .planning-detail {
+    display: none;
+  }
+  /* Always keep action buttons visible on mobile (no hover) */
+  .planning-sidebar-item-delete,
+  .planning-sidebar-item-archive {
+    display: flex;
+  }
+}
+
+.planning-error {
+  flex-shrink: 0;
+  margin: 24px 24px 0;
+}
+
+.planning-view-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  padding: var(--space-xl);
+}
+
+/*
+FNXC:Planning 2026-06-23-04:00:
+The footer is a light action row, NOT a heavy bordered band. Drop the border-top divider and trim the padding so the Start-Planning button flows with the content above instead of reading as a large bottom footer.
+*/
+.planning-view-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-sm) var(--space-xl) var(--space-md);
+  flex-shrink: 0;
+}
+
+/*
+FNXC:Planning 2026-06-23-03:00:
+An empty footer must NOT reserve vertical space or paint its divider band. When .planning-view-footer renders with no children (e.g. the initial / no-active-session state once its action is absent), collapse it to zero so the embedded Planning view shows no dead footer band. Footers WITH content (the Start-Planning button in initial, and the .planning-actions composer in an active session) are untouched — :empty only matches when there are no element/text children.
+*/
+.planning-view-footer:empty {
+  display: none;
+  padding: 0;
+  border-top: none;
+}
+
+.planning-advanced-disclosure {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.planning-advanced-disclosure .onboarding-disclosure-content {
+  padding-inline-start: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.planning-advanced-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  width: 100%;
+}
+
+.planning-advanced-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.planning-advanced-blurb {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  line-height: 1.4;
+}
+
+.planning-model-select-group {
+  max-width: 100%;
+  margin: 0;
+  width: 100%;
+}
+
+.planning-model-select-group .form-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) + var(--space-xs) * 0.25);
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.planning-depth-selector {
+  align-items: stretch;
+  justify-content: flex-start;
+  max-width: 100%;
+  margin: 0;
+  width: 100%;
+}
+
+.planning-depth-controls-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.planning-depth-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.planning-depth-chip.btn {
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  min-height: calc(var(--space-lg) + var(--space-xl));
+  padding: var(--space-sm) var(--space-md);
+}
+
+.planning-depth-chip.btn:hover {
+  border-color: var(--todo);
+  background: var(--card-hover);
+}
+
+.planning-depth-chip-active.btn,
+.planning-depth-chip-active.btn:hover {
+  background: var(--todo);
+  border-color: var(--todo);
+  color: var(--bg);
+}
+
+.planning-depth-question-count {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.planning-depth-question-input.input {
+  width: calc(var(--space-2xl) * 2 + var(--space-xs));
+  min-height: calc(var(--space-lg) + var(--space-xl));
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* Initial View */
+.planning-initial {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.planning-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.planning-intro h4 {
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.planning-intro p {
+  max-width: 480px;
+  line-height: 1.6;
+}
+
+.planning-icon {
+  color: var(--triage);
+  margin-bottom: var(--space-sm);
+}
+
+.planning-description {
+  color: var(--text-muted);
+  font-size: 14px;
+  max-width: 480px;
+  line-height: 1.5;
+}
+
+.planning-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  max-height: calc(var(--space-2xl) * 20);
+  overflow-y: auto;
+  outline: none;
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.planning-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.planning-description-preview {
+  width: 100%;
+  min-height: calc(var(--space-md) * 7.5);
+  max-height: calc(var(--space-2xl) * 20);
+  padding: var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  overflow-y: auto;
+}
+
+.planning-description-preview.expanded {
+  min-height: calc(var(--space-md) * 12.5);
+}
+
+.planning-comment-section {
+  margin-top: var(--space-lg);
+}
+
+.planning-other-answer {
+  margin-top: var(--space-sm);
+}
+
+.planning-other-answer .planning-textarea {
+  min-height: calc(var(--space-md) * 5);
+}
+
+.planning-comment-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.planning-comment-section .planning-textarea {
+  min-height: calc(var(--space-md) * 5);
+}
+
+.planning-char-count {
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.planning-initial .form-group,
+.planning-summary-form .form-group {
+  width: 100%;
+  padding: 0;
+  margin-top: 0;
+}
+
+.planning-initial .form-group,
+.planning-examples {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.planning-initial .form-group {
+  text-align: left;
+}
+
+.planning-examples {
+  width: 100%;
+}
+
+.planning-examples-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+  display: block;
+}
+
+.planning-example-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  justify-content: center;
+}
+
+.planning-example-chip {
+  padding: var(--space-sm) calc(var(--space-md) + var(--space-xs) * 0.5);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  line-height: 1.4;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.planning-example-chip:hover {
+  background: var(--card-hover);
+  border-color: var(--todo);
+  color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: var(--focus-ring);
+}
+
+.planning-start-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.planning-initial .planning-view-footer {
+  width: 100%;
+  max-width: 568px;
+  margin: 0 auto;
+  justify-content: center;
+}
+
+/* Question View */
+/*
+FNXC:PlanningMode 2026-07-21-16:47:
+The interview workspace no longer insets the question/plan panes with outer padding or inter-pane gap.
+That gutter read as dead space around the framed cards; panes now sit flush edge-to-edge with a single column divider, matching Missions split layout and the desktop flush rules below.
+*/
+.planning-workspace {
+  position: relative;
+  display: grid;
+  grid-template-areas: "question plan";
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--card) 40%, var(--surface));
+}
+
+.planning-workspace-tabs {
+  display: none;
+}
+
+.planning-plan-pane,
+.planning-question-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.planning-plan-pane {
+  grid-area: plan;
+}
+
+.planning-workspace--plan-only {
+  grid-template-areas: "plan";
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.planning-question-pane {
+  grid-area: question;
+  border-right: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.planning-workspace--generating > .planning-plan-pane,
+.planning-workspace--generating > .planning-question-pane {
+  pointer-events: none;
+  filter: saturate(0.65);
+  opacity: 0.58;
+}
+
+.planning-workspace-loader {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+  color: var(--text);
+  text-align: center;
+  /*
+  FNXC:PlanningThinkingVisibility 2026-07-23-23:10:
+  The loader now hosts the streamed-thinking pane on follow-up turns. On short viewports
+  (landscape phones fall in the mobile breakpoint) the centered column can exceed the overlay,
+  so the overlay itself must scroll instead of clipping the Stop button and thinking output.
+  */
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(var(--space-xs));
+}
+
+.planning-workspace-loader strong {
+  font-size: var(--font-size-base);
+}
+
+.planning-workspace-loader span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/*
+FNXC:PlanningMultiTask 2026-07-24-00:20:
+Plan-review banner linking the latest task created from this plan; the plan remains a live,
+editable work surface after creation.
+*/
+.planning-linked-task-note {
+  display: flex;
+  align-items: center;
+  /* FNXC:PlanningMultiTask 2026-07-24-01:40: wrap on narrow/mobile viewports so the View task action never clips (review finding). */
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--success, var(--accent)) 8%, var(--card));
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.planning-linked-task-note span {
+  flex: 1;
+  min-width: 0;
+}
+
+.planning-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  flex: 1;
+  min-height: 0;
+}
+
+.planning-question-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.planning-question-scroll {
+  gap: var(--space-lg);
+  padding-top: 0;
+}
+
+.planning-question-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg) var(--space-xl) var(--space-xl);
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.planning-question-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/*
+FNXC:PlanningMode 2026-07-16-00:00:
+FN-8065 / GitHub #2150 adds a read-only plan preview before the deepening choices.
+It remains in the outer planning view's scroll flow so desktop and mobile users can
+read the complete plan without introducing a competing nested scrollbar.
+*/
+.planning-checkpoint-plan-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: color-mix(in srgb, var(--todo) 8%, var(--surface));
+  border: solid color-mix(in srgb, var(--todo) 35%, var(--border));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.planning-checkpoint-plan-preview-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-checkpoint-plan-preview-header h4,
+.planning-checkpoint-plan-preview-title,
+.planning-checkpoint-plan-preview-deliverables h5 {
+  margin: 0;
+}
+
+.planning-checkpoint-plan-preview-title {
+  font-size: var(--font-size-lg);
+}
+
+.planning-checkpoint-plan-preview-description > :first-child,
+.planning-checkpoint-plan-preview-deliverables ul {
+  margin-top: 0;
+}
+
+.planning-checkpoint-plan-preview-description > :last-child,
+.planning-checkpoint-plan-preview-deliverables ul {
+  margin-bottom: 0;
+}
+
+.planning-checkpoint-plan-preview-deliverables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.planning-checkpoint-plan-preview-deliverables ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-inline-start: var(--space-lg);
+}
+
+/*
+FNXC:PlanningInterview 2026-07-16-00:00:
+Interview questions now use MailboxMessageContent for sanitized GFM. Keep the
+existing title and muted-description hierarchy while normalizing markdown block
+margins so paragraphs and lists do not create unintended gaps.
+*/
+.planning-question-text {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.planning-question-desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.planning-question-text > *,
+.planning-question-desc > * {
+  margin: 0;
+}
+
+.planning-question-text > * + *,
+.planning-question-desc > * + * {
+  margin-top: var(--space-sm);
+}
+
+.planning-question-text ul,
+.planning-question-text ol,
+.planning-question-desc ul,
+.planning-question-desc ol {
+  padding-left: var(--space-lg);
+}
+
+/* Options */
+.planning-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.planning-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  min-height: calc(var(--space-2xl) + var(--space-md));
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.planning-option--radio,
+.planning-option--checkbox {
+  width: 100%;
+}
+
+.planning-option:hover {
+  background: var(--card-hover);
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+  transform: translateY(-1px);
+}
+
+.planning-option input[type="radio"],
+.planning-option input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--todo);
+}
+
+.planning-option-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-option-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.planning-option-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.planning-radio-group,
+.planning-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.planning-confirm-answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.planning-confirm-group {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.planning-confirm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  flex: 1;
+  padding: var(--space-md) var(--space-xl);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.planning-confirm-btn.selected {
+  background: var(--todo);
+  color: var(--bg);
+  border-color: var(--todo);
+}
+
+/* Actions */
+.planning-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-lg) var(--space-xl) var(--space-xl);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.planning-actions .btn {
+  flex-shrink: 0;
+}
+
+.planning-actions-primary {
+  margin-left: auto;
+}
+
+.planning-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Summary View */
+.planning-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.planning-summary-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  text-align: center;
+}
+
+.planning-summary-icon {
+  color: var(--color-success);
+}
+
+.planning-summary-scroll {
+  gap: var(--space-xl);
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-17:00:
+The review checkpoint renders the same canonical Markdown that Proceed persists as
+plan.md. Keep the document inside the sole scroll owner while the sibling action row and
+its refinement menu remain reachable at the bottom of bounded desktop and mobile panes.
+*/
+.planning-plan-scroll {
+  align-items: center;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--card) 45%, var(--surface));
+}
+
+.planning-plan-review {
+  gap: 0;
+}
+
+.planning-plan-review > .planning-plan-pane {
+  flex: 1;
+}
+
+.planning-plan-document {
+  width: min(100%, calc(var(--space-2xl) * 24));
+}
+
+.planning-plan-document {
+  padding: var(--space-2xl);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 var(--btn-border-width) color-mix(in srgb, var(--border) 75%, transparent),
+    var(--shadow-sm);
+}
+
+.planning-plan-markdown {
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+
+.planning-plan-markdown h1,
+.planning-plan-markdown h2,
+.planning-plan-markdown h3,
+.planning-plan-markdown h4 {
+  text-wrap: balance;
+}
+
+.planning-plan-markdown h1 {
+  font-size: var(--font-size-lg);
+}
+
+.planning-plan-markdown h2 {
+  margin-top: var(--space-xl);
+  font-size: var(--font-size-base);
+}
+
+.planning-summary-qa-disclosure {
+  margin-top: 0;
+}
+
+.planning-summary-qa-disclosure .onboarding-disclosure-content {
+  padding-inline-start: 0;
+}
+
+.planning-summary-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  flex: 1;
+  min-height: 0;
+}
+
+.planning-summary-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.planning-summary-meta-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.planning-summary-meta-row .form-group {
+  margin: 0;
+}
+
+.planning-summary-form .form-group label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.planning-summary-description-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.planning-summary-description-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+}
+
+.planning-expand-btn {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--todo);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.planning-expand-btn:hover {
+  text-decoration: underline;
+}
+
+.planning-size-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.planning-summary-form .form-group textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* Compact size dropdown */
+.planning-size-select {
+  width: 100%;
+  padding: calc(var(--space-sm) + var(--space-xs) * 0.5) calc(var(--space-xl) + var(--space-md)) calc(var(--space-sm) + var(--space-xs) * 0.5) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right calc(var(--space-sm) + var(--space-xs) * 0.5) center;
+}
+
+.planning-size-select:focus {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.planning-size-select:hover:not(:focus) {
+  border-color: var(--text-muted);
+}
+
+.planning-deps-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: var(--space-sm);
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+.planning-dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.planning-dep-chip:hover {
+  background: var(--card-hover);
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+  transform: translateY(-1px);
+}
+
+.planning-dep-chip.selected {
+  background: var(--card-hover);
+  border-color: var(--todo);
+  box-shadow: inset 0 0 0 1px var(--todo);
+}
+
+.planning-dep-chip input[type="checkbox"] {
+  accent-color: var(--todo);
+}
+
+.planning-dep-id {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.planning-dep-title {
+  color: var(--text);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-deliverables {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.planning-deliverables li {
+  position: relative;
+  padding-left: 16px;
+  line-height: 1.5;
+}
+
+.planning-deliverables li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--todo);
+}
+
+.planning-summary-actions {
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.planning-plan-actions {
+  position: relative;
+  justify-content: flex-end;
+  gap: var(--space-lg);
+  padding: var(--space-md) var(--space-xl) var(--space-sm);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+
+.planning-plan-actions .btn {
+  min-width: calc(var(--space-2xl) * 4);
+  min-height: calc(var(--space-2xl) + var(--space-sm));
+}
+
+/*
+FNXC:PlanningMode 2026-07-21-09:15:
+Desktop Planning panes already own their framed surfaces, so their scroll content must sit flush and their action rows must share a compact baseline. Scope these overrides to Planning's pane wrappers and desktop breakpoint so shared Mission/Milestone interview classes and compact safe-area padding retain their existing presentation.
+
+FNXC:PlanningMode 2026-07-21-18:41:
+Tablet (769–1024) keeps the same two-pane shell as desktop but previously fell below the 1025px flush gate, so the right plan pane still stacked scroll padding + card chrome. Lower the gate to 769px so tablet inherits the flush pane treatment; phone (≤768) keeps its own mobile flush block.
+*/
+@media (min-width: 769px) {
+  .planning-question-pane .planning-question-scroll,
+  .planning-plan-pane .planning-plan-scroll {
+    padding: 0;
+  }
+
+  .planning-question-pane .planning-question-panel {
+    background: var(--surface);
+    border: none;
+    border-radius: 0;
+  }
+
+  .planning-plan-pane .planning-plan-document {
+    width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .planning-question-pane .planning-actions,
+  .planning-plan-actions {
+    padding: var(--space-sm) var(--space-xl);
+  }
+
+  .planning-question-pane .planning-actions .btn,
+  .planning-plan-actions .btn {
+    min-height: calc(var(--space-2xl) + var(--space-sm));
+  }
+}
+
+.planning-refine-menu {
+  position: absolute;
+  right: var(--space-xl);
+  bottom: calc(100% + var(--space-sm));
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  width: min(calc(var(--space-2xl) * 14), calc(100vw - var(--space-2xl)));
+  max-height: min(70dvh, calc(var(--space-2xl) * 16));
+  padding: var(--space-xl);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+
+.planning-refine-menu-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.planning-refine-menu-header h4,
+.planning-refine-menu-header p {
+  margin: 0;
+}
+
+.planning-refine-menu-header h4 {
+  font-size: var(--font-size-base);
+  text-wrap: balance;
+}
+
+.planning-refine-menu-header p,
+.planning-refine-menu-input > span {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-wrap: pretty;
+}
+
+.planning-refine-menu-input {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.planning-refine-menu-input textarea {
+  min-height: calc(var(--space-2xl) * 3);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.planning-refine-menu-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.planning-refine-menu-actions .btn {
+  min-width: 0;
+}
+
+/*
+FNXC:PlanningComments 2026-07-23-12:00:
+Contextual comments remain transient review controls: render the capture/editor only after a
+selection, and render the tray only after a valid comment exists so an empty plan review keeps
+its established Refine and Proceed action hierarchy.
+*/
+/*
+FNXC:PlanningComments 2026-07-25-10:20:
+Single Add-comment trigger, living in the plan action rail at every breakpoint. The former
+--document / --mobile variant pair is gone: both rendered in the DOM and read as duplicate buttons.
+*/
+.planning-add-comment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  margin-top: 0;
+}
+
+.planning-comment-editor,
+.planning-comment-tray {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.planning-comment-editor {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  border: solid var(--btn-border-width) var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+/*
+FNXC:PlanningComments 2026-07-23-17:05:
+Desktop (≥1025px) keeps the in-document trigger under the plan markdown. Tablet and phone
+(≤1024px) use the action-rail counterpart so selection comments are not lost under the plan fold.
+
+FNXC:PlanningComments 2026-07-24-05:50:
+Phone and tablet both place that rail control as a full-width row above Refine/Proceed. A
+viewport-fixed bar above the mobile nav sat under the action buttons and required an awkward
+reach past Proceed — match the tablet in-flow stack on phone too.
+*/
+
+.planning-comment-quote,
+.planning-comment-tray blockquote,
+.planning-comment-tray p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.planning-comment-quote,
+.planning-comment-tray blockquote {
+  padding-inline-start: var(--space-md);
+  border-inline-start: solid var(--btn-border-width) var(--todo);
+  color: var(--text-muted);
+}
+
+.planning-comment-tray {
+  flex: 1;
+}
+
+.planning-comment-tray ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planning-comment-tray li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: start;
+}
+
+.planning-comment-tray li > p {
+  grid-column: 1;
+}
+
+.planning-comment-tray .btn-icon {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.planning-summary-actions-right {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 1024px) {
+  .planning-plan-document {
+    padding: var(--space-xl);
+  }
+
+  .planning-plan-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg) calc(var(--space-sm) + env(safe-area-inset-bottom));
+  }
+
+  .planning-plan-actions .btn {
+    width: 100%;
+    min-width: 0;
+    min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  .planning-comment-tray {
+    grid-column: 1 / -1;
+  }
+
+  /*
+  FNXC:PlanningComments 2026-07-25-10:20:
+  Tablet and phone give the sole action-rail trigger the full footer width above Refine/Proceed so a
+  selection always exposes Add comment without leaving the plan action baseline.
+  */
+  .planning-plan-actions .btn.planning-add-comment {
+    display: flex;
+    grid-column: 1 / -1;
+    margin-top: 0;
+    justify-content: center;
+    gap: var(--space-sm);
+  }
+
+  /*
+  FNXC:PlanningComments 2026-07-24-05:55:
+  Pin the MessageSquarePlus glyph to the same token size used by other compact rail CTAs so
+  tablet and phone share the mobile icon scale (default lucide size can dwarf the label in the
+  full-width rail row).
+  */
+  .planning-plan-actions .btn.planning-add-comment svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
+    flex-shrink: 0;
+  }
+
+  /*
+  FNXC:PlanningComments 2026-07-24-06:05:
+  Tablet and phone pin the selection composer as a fixed panel. Tablet previously left it in
+  the plan document foot (keyboard opened while the panel stayed off-screen). Phone previously
+  fixed above the nav only and did not lift for the first keyboard open. Base bottom clears
+  chrome; .planning-comment-editor--keyboard-open / inline style lifts above the soft keyboard.
+  */
+  .planning-comment-editor {
+    position: fixed;
+    left: var(--space-md);
+    right: var(--space-md);
+    bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+    z-index: calc(var(--z-popover) + 1);
+    margin-top: 0;
+    max-height: min(50dvh, calc(var(--space-2xl) * 12));
+    overflow: auto;
+    padding: var(--space-md);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .planning-refine-menu {
+    right: var(--space-lg);
+    left: var(--space-lg);
+    width: auto;
+    max-height: min(65dvh, calc(var(--space-2xl) * 14));
+    padding: var(--space-lg);
+  }
+
+}
+
+/*
+FNXC:PlanningModeTablet 2026-07-20-21:50:
+Tablet embedded Planning keeps the desktop two-pane shell. The question Next action and the plan
+Refine/Proceed actions share one compact bottom baseline; equal footer/button heights, non-wrapping
+plan actions, and a token-sized bottom inset keep all three controls inline without extra space.
+*/
+@media (max-width: 768px) {
+  /*
+  FNXC:PlanningComments 2026-07-24-05:50:
+  Phone keeps the ≤1024 in-flow full-width Add-comment row above Refine/Proceed.
+
+  FNXC:PlanningComments 2026-07-24-06:05:
+  When the keyboard is closed, clear the bottom nav; keyboard-open uses the shared lift style
+  from the TS keyboard metrics so the panel is not trapped under the first OS keyboard frame.
+  */
+  .planning-comment-tray li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .planning-comment-editor:not(.planning-comment-editor--keyboard-open) {
+    bottom: calc(
+      var(--mobile-nav-height, 44px)
+      + max(env(safe-area-inset-bottom, 0px), 12px)
+      + var(--space-md)
+    );
+  }
+
+  /*
+  FNXC:PlanningComments 2026-07-24-06:40:
+  Keyboard-open phone composer is positioned via inline `top`/`max-height` from visualViewport.
+  Clear CSS `bottom` so it cannot fight the JS pin and leave the panel under the keyboard.
+  */
+  .planning-comment-editor.planning-comment-editor--keyboard-open {
+    bottom: auto;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* FNXC:PlanningModeMobile 2026-07-20-10:30: tablet uses the same compact list destination as phone and short shells, so summary/compose detail cannot remain beside saved session rows. */
+  .planning-modal-body--show-list {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .planning-modal-body--show-list .planning-sidebar {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+  }
+
+  .planning-modal-body--show-list .planning-sidebar-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .planning-modal-body--show-list .planning-sidebar-footer {
+    flex-shrink: 0;
+  }
+
+  .planning-modal-body--show-list .planning-detail {
+    display: none;
+  }
+
+  .planning-summary-actions {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .planning-summary-actions-right {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .planning-summary-actions .btn {
+    flex-shrink: 1;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .planning-question-pane .planning-actions,
+  .planning-plan-actions {
+    align-items: stretch;
+    min-height: calc(var(--space-2xl) + var(--space-xl));
+    padding: var(--space-sm) var(--space-lg) var(--space-xs);
+  }
+
+  .planning-question-pane .planning-actions {
+    justify-content: flex-end;
+  }
+
+  .planning-question-pane .planning-actions .btn,
+  .planning-plan-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  /*
+  FNXC:PlanningModeTablet 2026-07-20-21:50:
+  Refine/Proceed share one compact baseline on tablet.
+
+  FNXC:PlanningComments 2026-07-24-05:55:
+  Do not force flex nowrap on the plan action rail: that pulled Add comment into the same row
+  as Refine/Proceed. Keep the ≤1024 two-column grid so the selection control stays a full-width
+  first row (grid-column 1 / -1) with Refine | Proceed on the second row — same stack as phone.
+  */
+  .planning-plan-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+  }
+
+  .planning-plan-actions .btn.planning-add-comment {
+    display: flex;
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-top: 0;
+    justify-content: center;
+    gap: var(--space-sm);
+  }
+
+  .planning-plan-actions .btn.planning-add-comment svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
+    flex-shrink: 0;
+  }
+
+  .planning-comment-tray {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Loading State */
+.planning-loading {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+}
+
+/*
+FNXC:PlanningMode 2026-07-20-23:20:
+Successful plan creation remains a compact handoff instead of closing Planning or presenting
+another review screen. Reuse the shared button primitives and semantic success token so both
+mobile and desktop offer the same View task / Return to sessions choices.
+*/
+.planning-task-created {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  text-align: center;
+}
+
+.planning-task-created-icon {
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-2xl) + var(--space-lg));
+  aspect-ratio: 1;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-success) 35%, var(--border));
+  border-radius: 50%;
+}
+
+.planning-task-created-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: calc(var(--space-2xl) * 12);
+}
+
+.planning-task-created-copy h4,
+.planning-task-created-copy p {
+  margin: 0;
+}
+
+.planning-task-created-copy p {
+  color: var(--text-muted);
+}
+
+.planning-task-created-id {
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.planning-task-created-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.planning-task-created-actions .btn {
+  justify-content: center;
+}
+
+/* AI Thinking Output Display */
+.planning-thinking-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  max-width: 600px;
+}
+
+.planning-thinking-toggle {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.planning-thinking-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.planning-thinking-output {
+  width: 100%;
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  text-align: left;
+}
+
+.planning-thinking-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.planning-loading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.planning-stop-btn {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+.planning-stop-btn:hover {
+  border-color: var(--color-error-dark);
+  color: var(--color-error-dark);
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+}
+
+.planning-stop-btn {
+  min-height: 36px;
+}
+
+.planning-elapsed {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+
+/* Responsive */
+@media (max-width: 768px) {
+  .planning-task-created-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .planning-task-created-actions .btn {
+    width: 100%;
+  }
+
+  .planning-modal--embedded .modal-header--embedded {
+    align-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  /*
+  FNXC:PlanningModeMobile 2026-07-20-21:50:
+  The Planning detail header keeps Back, the lightbulb, a single-line truncated title, and Edit on
+  one row. Fixed icon controls may not shrink; only the title yields space before History.
+  */
+
+  .planning-modal--embedded .modal-header--embedded .detail-title-row {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .planning-modal--embedded .modal-header--embedded .detail-title-row h3 {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .planning-modal--embedded .modal-header--embedded .detail-title-row > svg,
+  .planning-modal--embedded .modal-header--embedded .detail-title-row > .btn-icon,
+  .planning-modal--embedded .modal-header--embedded .planning-session-back {
+    flex: 0 0 auto;
+  }
+
+  .planning-modal--embedded .modal-header--embedded .planning-session-title-input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .planning-header-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .planning-header-controls .btn {
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .planning-history-panel {
+    width: 100%;
+    border-left: 0;
+  }
+
+  .planning-history-header,
+  .planning-history-scroll {
+    padding: var(--space-lg);
+  }
+
+  /*
+  FNXC:PlanningMode 2026-07-21-18:34:
+  Mobile question and plan-review panes were double-inset: workspace gutter + scroll padding + nested card chrome on top of the pane frame. Drop the outer gutter and pane chrome so content sits flush edge-to-edge like desktop, keep a light tab strip inset, and leave readable content padding on the question panel / plan document only. Clear the desktop column divider so a solo question/plan card is not edged by a right border.
+  */
+  .planning-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+  }
+
+  .planning-question-pane {
+    border-right: none;
+  }
+
+  .planning-workspace--mobile-tab-question,
+  .planning-workspace--mobile-tab-plan {
+    grid-template-areas:
+      "tabs"
+      "content";
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .planning-workspace-tabs {
+    grid-area: tabs;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-xs);
+    margin: var(--space-sm) var(--space-sm) 0;
+    padding: var(--space-xs);
+    border: solid var(--btn-border-width) var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--card);
+  }
+
+  .planning-workspace-tabs button {
+    min-height: calc(var(--space-2xl) + var(--space-sm));
+    padding: var(--space-sm) var(--space-md);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .planning-workspace-tabs button.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .planning-workspace-tabs button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring-strong);
+  }
+
+  .planning-workspace--mobile-tab-question .planning-question-pane,
+  .planning-workspace--mobile-tab-plan .planning-plan-pane {
+    grid-area: content;
+  }
+
+  .planning-workspace--mobile-tab-question .planning-plan-pane,
+  .planning-workspace--mobile-tab-plan .planning-question-pane {
+    display: none;
+  }
+
+  .planning-workspace--plan-only {
+    grid-template-areas: "plan";
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .planning-plan-pane,
+  .planning-question-pane {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /*
+  FNXC:PlanningMode 2026-07-21-18:34:
+  Scope flush scroll overrides to Planning's pane wrappers so shared Mission/Milestone interview
+  classes keep their existing mobile view-scroll padding.
+  */
+  .planning-question-pane .planning-question-scroll,
+  .planning-plan-pane .planning-plan-scroll {
+    padding: 0;
+  }
+
+  .planning-question-pane .planning-question-panel {
+    background: var(--surface);
+    border: none;
+    border-radius: 0;
+    padding: var(--space-md) var(--space-lg) var(--space-lg);
+  }
+
+  .planning-plan-pane .planning-plan-document {
+    width: 100%;
+    padding: var(--space-lg);
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* FNXC:PlanningMode 2026-06-22-15:30: this legacy full-viewport sheet sizing
+     is for the dialog presentation only. The :not(.planning-modal--embedded)
+     guard prevents the embedded view from being yanked to 100vw/100dvh, which
+     would overflow the main-content pane it lives in on mobile. */
+  .planning-modal:not(.planning-modal--embedded) {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 0;
+  }
+
+  /*
+  FNXC:PlanningMode 2026-07-31-20:33:
+  THE SHEET IS NO LONGER THE VIEWPORT. The rule above sizes dialog Planning as a full-viewport
+  sheet, which was true until the modal branch moved inside `FloatingWindow`
+  (`FNXC:ModalTouchGeometry 2026-07-26-14:10`). Its host body is shorter than the viewport — it sits
+  below a title bar — so `min-height: 100dvh` now asks the sheet to be TALLER than the box it lives
+  in. `min-height` beats `max-height: 100%`, so the sheet cannot shrink to its host and simply
+  overflows.
+
+  Measured at 768x900: host body 763px tall, sheet forced to 900px, and the plan action rail
+  carrying "Add comment to selection" landed at top=928 — 28px past the fold. The control was
+  unreachable without scrolling, which is the one thing `planning-browser-e2e`'s placement case
+  exists to prevent. Embedded Planning was never affected: it is excluded from the rule above.
+
+  Scoped to the floating host rather than editing the rule above, so a Planning sheet rendered
+  outside `FloatingWindow` keeps its full-viewport sizing.
+  */
+  .floating-window .planning-modal:not(.planning-modal--embedded) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .planning-error {
+    margin: var(--space-lg) var(--space-lg) 0;
+  }
+
+  .planning-view-scroll {
+    padding: var(--space-lg);
+    gap: var(--space-lg);
+  }
+
+  .planning-question-scroll {
+    padding-top: var(--space-sm);
+    gap: var(--space-md);
+  }
+
+  .planning-checkpoint-plan-preview {
+    padding: var(--space-md);
+  }
+
+  .planning-view-footer,
+  .planning-actions {
+    padding: var(--space-md) var(--space-lg) calc(var(--space-lg) + env(safe-area-inset-bottom));
+  }
+
+  .planning-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .planning-plan-actions {
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-lg) calc(var(--space-sm) + env(safe-area-inset-bottom));
+  }
+
+  .planning-actions .btn,
+  .planning-start-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .planning-actions-primary {
+    margin-left: 0;
+  }
+
+  .planning-summary-actions-right {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .planning-summary-meta-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planning-summary-description-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .planning-summary-description-actions {
+    margin-left: 0;
+    margin-inline-start: auto;
+  }
+
+  .planning-example-chips {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .planning-example-chip {
+    width: 100%;
+    text-align: left;
+    border-radius: var(--radius-lg);
+  }
+
+  .planning-depth-selector {
+    gap: var(--space-sm);
+  }
+
+  .planning-depth-controls-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .planning-depth-chip-group {
+    justify-content: flex-start;
+  }
+
+  .planning-depth-question-count {
+    align-items: flex-start;
+  }
+
+  .planning-deps-list {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    max-height: 200px;
+  }
+
+  .planning-dep-chip {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--radius-lg);
+  }
+
+  .planning-dep-title {
+    max-width: none;
+  }
+
+  /* Planning thinking output mobile adjustments */
+  .planning-thinking-container {
+    max-width: 100%;
+  }
+
+  .planning-thinking-output {
+    max-height: 200px;
+    padding: var(--space-md);
+  }
+
+  .planning-thinking-output pre {
+    font-size: 12px;
+  }
+
+  .planning-loading-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .planning-loading-actions .btn {
+    width: 100%;
+    min-height: 36px;
+    justify-content: center;
+  }
+
+  /* Prevent mobile zoom on focus for planning text inputs (16px minimum) */
+  .planning-textarea {
+    font-size: 16px;
+  }
+
+  .planning-comment-section .planning-textarea,
+  .planning-other-answer .planning-textarea {
+    min-height: calc(var(--space-md) * 5);
+  }
+
+  /* Planning options compact on mobile */
+  .planning-option {
+    padding: 12px;
+  }
+
+
+
+
+  /* Dependency chips: touch-friendly */
+  .planning-dep-chip {
+    min-height: 36px;
+  }
+
+  /* Size select: prevent iOS zoom */
+  .planning-size-select {
+    font-size: 16px;
+  }
+
+  /* Confirm buttons: mobile-friendly sizing */
+  .planning-confirm-group {
+    flex-direction: column;
+  }
+
+  .planning-confirm-btn {
+    min-height: 36px;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* Model selection: rows don't overflow */
+  .planning-modal-body .inline-create-model-row {
+    gap: var(--space-sm);
+  }
+
+  .planning-modal-body .model-badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Model selection: prevent iOS zoom on select elements */
+  .planning-modal-body select {
+    font-size: 16px;
+  }
+}
+
+/*
+FNXC:PlanningModeMobile 2026-07-23-12:00:
+Plan selection actions must be visible before document scrolling in phone portrait and width-independent short landscape. Keep this scoped to the review pane: its Markdown scroll sibling may shrink, but the existing action rail remains a non-shrinking, safe-area-padded footer in both embedded and dialog hosts.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .planning-plan-review,
+  .planning-plan-review > .planning-plan-pane {
+    min-height: 0;
+  }
+
+  .planning-plan-review > .planning-plan-pane {
+    flex: 1 1 0;
+  }
+
+  .planning-plan-pane > .planning-plan-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .planning-plan-pane > .planning-plan-actions {
+    flex: 0 0 auto;
+  }
+}
+
+/* === Planning & Breakdown Modal — Inline Style Replacements === */
+
+/* Icon color utilities */
+.icon-triage {
+  color: var(--triage);
+}
+.icon-triage-lg {
+  color: var(--triage);
+  margin-bottom: var(--space-md);
+}
+.icon-todo {
+  color: var(--todo);
+}
+.icon-success {
+  color: var(--color-success);
+}
+.icon-text-secondary {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.icon-milestone {
+  color: var(--icon-milestone);
+  flex-shrink: 0;
+}
+.icon-slice {
+  color: var(--icon-slice);
+  flex-shrink: 0;
+}
+.icon-feature {
+  color: var(--icon-feature);
+  margin-top: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* Icon margin utilities */
+.icon-mr-4 {
+  margin-right: var(--space-xs);
+}
+.icon-mr-6 {
+  margin-right: calc(var(--space-sm) - var(--space-xs) * 0.5);
+}
+.icon-mr-8 {
+  margin-right: var(--space-sm);
+}
+.icon-ml-4 {
+  margin-left: var(--space-xs);
+}
+.icon-ml-6 {
+  margin-left: calc(var(--space-sm) - var(--space-xs) * 0.5);
+}
+
+/* Error panel */
+.ai-error-panel {
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  padding: calc(var(--space-md) + var(--space-xs) * 0.5);
+  display: grid;
+  gap: calc(var(--space-md) - var(--space-xs) * 0.5);
+}
+.ai-error-icon {
+  font-size: calc(var(--space-lg) + var(--space-xs));
+}
+.ai-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+/* Text link button */
+.text-link-btn {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  background: none;
+  border: none;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Form hint error variant */
+.form-hint-error {
+  margin-top: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--color-error);
+}
+
+/* Text muted small */
+.text-muted-sm {
+  margin-left: var(--space-sm);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+/* Model selector spacing */
+.model-select-row--left {
+  margin-right: auto;
+  min-width: min(100%, 320px);
+  max-width: 420px;
+  text-align: left;
+}
+.model-selector-current--spaced {
+  margin-top: var(--space-sm);
+}

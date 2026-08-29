@@ -1,0 +1,13 @@
+{
+  "id": "fusion-plugin-droid-runtime",
+  "name": "Droid Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Droid runtime plugin for Fusion",
+  "author": "Fusion Team",
+  "runtime": {
+    "runtimeId": "droid",
+    "name": "Droid Runtime",
+    "description": "Drives the Droid CLI for Fusion agents",
+    "version": "0.1.0"
+  }
+}

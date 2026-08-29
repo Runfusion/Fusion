@@ -1,0 +1,48 @@
+{
+  "id": "fusion-plugin-linear-import",
+  "name": "Linear Import",
+  "version": "0.1.0",
+  "description": "Import Linear issues into Fusion tasks through plugin-owned settings, routes, tools, and dashboard view.",
+  "author": "Fusion",
+  "fusionVersion": ">=0.1.0",
+  "settingsSchema": {
+    "apiKey": {
+      "type": "password",
+      "label": "Linear API key",
+      "description": "Personal Linear API key used only by this plugin to browse and import issues.",
+      "required": true,
+      "group": "Authentication"
+    },
+    "defaultTeamKey": {
+      "type": "string",
+      "label": "Default team key or ID",
+      "description": "Optional Linear team key or UUID to prefill issue searches.",
+      "group": "Defaults"
+    },
+    "defaultStateFilter": {
+      "type": "enum",
+      "label": "Default issue state filter",
+      "description": "Initial issue state filter for browse and import tools.",
+      "enumValues": ["active", "backlog", "started", "unstarted", "completed", "canceled", "all"],
+      "defaultValue": "active",
+      "group": "Defaults"
+    },
+    "defaultAssigneeId": {
+      "type": "string",
+      "label": "Default assignee ID",
+      "description": "Optional Linear user UUID used as the default assignee filter.",
+      "group": "Defaults"
+    }
+  },
+  "dashboardViews": [
+    {
+      "viewId": "linear-import",
+      "label": "Linear Import",
+      "componentPath": "./dashboard-view",
+      "icon": "ListPlus",
+      "placement": "more",
+      "order": 55,
+      "description": "Browse Linear issues and import selected issues as Fusion tasks."
+    }
+  ]
+}

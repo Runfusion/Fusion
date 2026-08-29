@@ -1,0 +1,8 @@
+.droid-cli-provider-card__binary {
+  font-family: var(--font-mono);
+}
+
+.auth-provider-card[data-testid="droid-cli-provider-card"] .auth-provider-cli-actions .btn:focus-visible,
+.onboarding-provider-card[data-testid="droid-cli-provider-card"] .onboarding-provider-card__actions .btn:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}

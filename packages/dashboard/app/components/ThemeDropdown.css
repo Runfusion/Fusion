@@ -1,0 +1,204 @@
+.theme-dropdown {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+/*
+FNXC:Theme 2026-06-20-00:00:
+FN-6826 requires the Command Center theme dropdown to paint on top of all sibling Command Center cards/views only while open. Use a local dropdown-tier z-index above DateRangePicker's 20 and below app chrome/mobile nav tiers, then reset it in the mobile in-flow branch so closed or static content never floats above unrelated chrome.
+
+FNXC:Theme 2026-06-23-22:35:
+Glass theme surfaces create stronger translucent stacking contexts, so the Command Center theme dropdown must use the app's highest overlay tier while open. Keep the closed root unstacked and keep the mobile in-flow branch reset to auto so this only affects the desktop/tablet floating popover.
+*/
+.theme-dropdown.open {
+  z-index: 10002;
+}
+
+.theme-dropdown-trigger {
+  justify-content: space-between;
+  gap: var(--space-sm);
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+/*
+FNXC:DashboardTheming 2026-07-16-15:00:
+FN-8200 gives the Settings-only current-theme selector breathing room before the Font Size section, using the established large spacing token without affecting Command Center's compact dropdown.
+*/
+.theme-dropdown--current-row {
+  margin-bottom: var(--space-lg);
+}
+
+.theme-dropdown-trigger .theme-option-swatch,
+.theme-dropdown-option .theme-option-swatch {
+  flex: 0 0 auto;
+}
+
+.theme-dropdown-trigger-label,
+.theme-dropdown-option-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-dropdown-trigger--current-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--text);
+  text-align: start;
+}
+
+.theme-dropdown-current-row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: calc(var(--space-2xl) + var(--space-md));
+  block-size: calc(var(--space-2xl) + var(--space-md));
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--todo);
+}
+
+.theme-dropdown-current-row-info {
+  display: grid;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+}
+
+.theme-dropdown-current-row-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.theme-dropdown-current-row-value {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-dropdown-trigger--current-row:hover,
+.theme-dropdown-trigger--current-row:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--card) 90%, var(--accent));
+}
+
+.theme-dropdown-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.theme-dropdown-mode-btn {
+  gap: var(--space-xs);
+}
+
+.theme-dropdown-mode-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-21-12:10:
+FN-8471 keeps the shared filter inside the existing popover so the Settings and Command Center variants retain identical desktop and mobile containment. The global input primitive supplies the tokenized field baseline; these selectors add only component layout, focus, and empty-state behavior.
+*/
+.theme-dropdown-popover {
+  position: absolute;
+  z-index: 10002;
+  inset-block-start: calc(100% + var(--space-xs));
+  inset-inline: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+  display: grid;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.theme-dropdown-filter {
+  display: block;
+  min-inline-size: 0;
+}
+
+.theme-dropdown-filter .input {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.theme-dropdown-filter .input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.theme-dropdown-no-results {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.theme-dropdown-list {
+  display: grid;
+  gap: var(--space-xs);
+  max-block-size: min(60vh, calc(var(--space-2xl) * 12));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-inline-size: 0;
+}
+
+.theme-dropdown-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+  inline-size: 100%;
+  padding: var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: start;
+}
+
+.theme-dropdown-option:hover,
+.theme-dropdown-option:focus-visible,
+.theme-dropdown-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: none;
+}
+
+@media (max-width: 768px) {
+  .theme-dropdown.open {
+    z-index: auto;
+  }
+
+  .theme-dropdown-popover {
+    position: static;
+    z-index: auto;
+    margin-block-start: var(--space-xs);
+  }
+
+  .theme-dropdown-list {
+    max-block-size: min(50vh, calc(var(--space-2xl) * 10));
+  }
+
+  .theme-dropdown-trigger--current-row {
+    padding: var(--space-md);
+  }
+}

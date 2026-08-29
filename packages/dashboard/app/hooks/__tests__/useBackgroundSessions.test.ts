@@ -1,0 +1,723 @@
+/**
+ * Covers background AI session hook behavior: fetch lifecycle, SSE updates,
+ * dismissal, counters/filters, refresh, and project scoping.
+ */
+
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useBackgroundSessions } from "../useBackgroundSessions";
+import {
+  __destroyAiSessionSyncStoreForTests,
+  __resetAiSessionSyncStoreForTests,
+  useAiSessionSync,
+} from "../useAiSessionSync";
+import * as apiModule from "../../api";
+import { MockEventSource } from "../../../vitest.setup";
+
+vi.mock("../../api", () => ({
+  fetchAiSessions: vi.fn(),
+  deleteAiSession: vi.fn(),
+  cancelPlanning: vi.fn(),
+  cancelMissionInterview: vi.fn(),
+}));
+
+const mockFetchAiSessions = vi.mocked(apiModule.fetchAiSessions);
+const mockDeleteAiSession = vi.mocked(apiModule.deleteAiSession);
+const mockCancelPlanning = vi.mocked(apiModule.cancelPlanning);
+const mockCancelMissionInterview = vi.mocked(apiModule.cancelMissionInterview);
+
+function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiModule.AiSessionSummary, "id">): apiModule.AiSessionSummary {
+  return {
+    id: overrides.id,
+    type: overrides.type ?? "planning",
+    status: overrides.status ?? "generating",
+    title: overrides.title ?? overrides.id,
+    projectId: overrides.projectId ?? null,
+    updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
+  };
+}
+
+describe("useBackgroundSessions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetAiSessionSyncStoreForTests();
+    __destroyAiSessionSyncStoreForTests();
+    mockFetchAiSessions.mockResolvedValue([]);
+    mockDeleteAiSession.mockResolvedValue(undefined);
+    mockCancelPlanning.mockResolvedValue(undefined);
+    mockCancelMissionInterview.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    __resetAiSessionSyncStoreForTests();
+    __destroyAiSessionSyncStoreForTests();
+  });
+
+  it("fetches and filters initial sessions", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "s-generating", status: "generating" }),
+      makeSession({ id: "s-awaiting", status: "awaiting_input" }),
+      makeSession({ id: "s-waiting", type: "cli-agent", status: "waiting_on_input" }),
+      makeSession({ id: "s-needs-attention", type: "cli-agent", status: "needs_attention", cliVariant: "authFailed" }),
+      makeSession({ id: "s-complete", status: "complete" }),
+      makeSession({ id: "s-error", status: "error" }),
+      makeSession({ id: "s-ignored", status: "paused" as any }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(mockFetchAiSessions).toHaveBeenCalledWith(undefined);
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id).sort()).toEqual([
+        "s-awaiting",
+        "s-error",
+        "s-generating",
+        "s-needs-attention",
+        "s-waiting",
+      ]);
+      expect(result.current.needsInput).toBe(2);
+    });
+  });
+
+  /*
+  FNXC:SubtaskBreakdownRemoval 2026-08-23-22:10:
+  Subtask Breakdown is no longer a dashboard flow, so a persisted `subtask` session must never reach
+  the banner: a Resume affordance with no destination is worse than no affordance. This is the only
+  executable pin on that filter now that App's routing case for it is gone.
+  */
+  it("never surfaces a persisted subtask session", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "s-subtask", type: "subtask", status: "awaiting_input" }),
+      makeSession({ id: "s-planning", status: "awaiting_input" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["s-planning"]);
+    });
+    expect(result.current.needsInput).toBe(1);
+  });
+
+  it("logs a warning when fetching background sessions fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const networkError = new Error("Network error");
+    mockFetchAiSessions.mockRejectedValueOnce(networkError);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[useBackgroundSessions] Failed to fetch AI sessions:",
+        networkError,
+      );
+    });
+
+    expect(result.current.sessions).toEqual([]);
+    warnSpy.mockRestore();
+  });
+
+  it("applies SSE-driven session updates reactively", async () => {
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "sse-session",
+          type: "mission_interview",
+          status: "generating",
+          title: "Mission stream",
+          updatedAt: "2026-04-08T00:00:01.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.find((session) => session.id === "sse-session")?.status).toBe(
+        "generating",
+      );
+    });
+
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "sse-session",
+          type: "mission_interview",
+          status: "awaiting_input",
+          title: "Mission stream",
+          updatedAt: "2026-04-08T00:00:02.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.find((session) => session.id === "sse-session")?.status).toBe(
+        "awaiting_input",
+      );
+    });
+  });
+
+  it("removes session when SSE delivers complete status", async () => {
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "terminal-complete",
+          type: "planning",
+          status: "generating",
+          updatedAt: "2026-04-08T00:00:01.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.generating).toBe(1);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["terminal-complete"]);
+      expect(result.current.planningSessions.map((session) => session.id)).toEqual(["terminal-complete"]);
+    });
+
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "terminal-complete",
+          type: "planning",
+          status: "complete",
+          updatedAt: "2026-04-08T00:00:02.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+    });
+  });
+
+  it("retains session when SSE delivers error status until completion or dismissal", async () => {
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "terminal-error",
+          type: "planning",
+          status: "generating",
+          updatedAt: "2026-04-08T00:00:01.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["terminal-error"]);
+      expect(result.current.planningSessions.map((session) => session.id)).toEqual(["terminal-error"]);
+    });
+
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "terminal-error",
+          type: "planning",
+          status: "error",
+          updatedAt: "2026-04-08T00:00:02.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["terminal-error"]);
+      expect(result.current.sessions[0]?.status).toBe("error");
+      expect(result.current.planningSessions.map((session) => session.id)).toEqual(["terminal-error"]);
+      expect(result.current.generating).toBe(0);
+    });
+
+    act(() => eventSource._emit("ai_session:updated", makeSession({ id: "terminal-error", type: "planning", status: "complete", updatedAt: "2026-04-08T00:00:03.000Z" })));
+    await waitFor(() => expect(result.current.sessions).toEqual([]));
+  });
+
+  it("removes sessions when ai_session:deleted SSE event arrives", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "delete-me", status: "awaiting_input" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+    act(() => {
+      eventSource._emit("ai_session:deleted", "delete-me");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+  });
+
+  it("dismissSession calls API and updates local state", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-me", status: "awaiting_input" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-me"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-me");
+    });
+
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("dismiss-me");
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+  });
+
+  it("dismissSession calls cancelPlanning for planning sessions", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "planning-session", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["planning-session"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("planning-session");
+    });
+
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning cancellation is lock-free — no tabId argument.
+    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined);
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-session");
+  });
+
+  it("force-dismisses a planning session even when cancellation fails", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "planning-locked", status: "generating", type: "planning" }),
+    ]);
+    mockCancelPlanning.mockRejectedValueOnce(new Error("cancel failed"));
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["planning-locked"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("planning-locked");
+    });
+
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-locked");
+    expect(result.current.sessions).toEqual([]);
+  });
+
+  it("keeps a dismissed planning session hidden when stale sync update arrives", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-sync", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+    const { result: syncResult } = renderHook(() => useAiSessionSync());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-sync"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-sync");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    act(() => {
+      syncResult.current.broadcastUpdate({
+        sessionId: "dismiss-sync",
+        status: "generating",
+        needsInput: false,
+        type: "planning",
+        title: "Dismiss Sync",
+        updatedAt: "1970-01-01T00:00:01.000Z",
+        timestamp: 1,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("keeps a dismissed planning session hidden when stale SSE update arrives", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-sse", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-sse"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-sse");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "dismiss-sse",
+          type: "planning",
+          status: "generating",
+          title: "Dismiss SSE",
+          updatedAt: "1970-01-01T00:00:01.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("allows a newer authoritative SSE update to restore a dismissed session", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-restore", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-restore"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-restore");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "dismiss-restore",
+          type: "planning",
+          status: "awaiting_input",
+          title: "Dismiss Restore",
+          updatedAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-restore"]);
+      expect(result.current.planningSessions.map((session) => session.id)).toEqual(["dismiss-restore"]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(1);
+    });
+  });
+
+  it("refresh keeps dismissed sessions hidden when server returns stale data", async () => {
+    const staleSession = makeSession({
+      id: "dismiss-refresh",
+      status: "generating",
+      type: "planning",
+      updatedAt: "2026-04-08T00:00:01.000Z",
+    });
+
+    mockFetchAiSessions.mockResolvedValueOnce([staleSession]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-refresh"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-refresh");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    mockFetchAiSessions.mockResolvedValueOnce([staleSession]);
+
+    act(() => {
+      result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("does not resurrect a session after ai_session:deleted when a stale sync update arrives", async () => {
+    // Regression: handleDeleted cleared sessionTimestampsRef without setting a
+    // dismissed tombstone or calling broadcastCompleted. The merge effect then
+    // saw knownTimestamp=0 for the deleted session, accepted the still-live
+    // syncedSessions entry (non-terminal status), and re-added it — causing the
+    // stale badge count even when the DB was empty.
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "delete-resurface", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+    const { result: syncResult } = renderHook(() => useAiSessionSync());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["delete-resurface"]);
+    });
+
+    // Simulate a sibling tab broadcasting the session as active in the sync store.
+    act(() => {
+      syncResult.current.broadcastUpdate({
+        sessionId: "delete-resurface",
+        status: "generating",
+        needsInput: false,
+        type: "planning",
+        title: "Deleted Resurface",
+        updatedAt: "2026-04-08T00:00:01.000Z",
+        timestamp: Date.parse("2026-04-08T00:00:01.000Z"),
+      });
+    });
+
+    // Session is in sync store with non-terminal status at this point.
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["delete-resurface"]);
+    });
+
+    // Server fires ai_session:deleted — the session is gone from the DB.
+    const eventSource = MockEventSource.instances[0]!;
+    act(() => {
+      eventSource._emit("ai_session:deleted", "delete-resurface");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+    });
+
+    // Now a stale sync update arrives (same timestamp as before, non-terminal).
+    // Without the fix this re-materialized the session in the UI.
+    act(() => {
+      syncResult.current.broadcastUpdate({
+        sessionId: "delete-resurface",
+        status: "generating",
+        needsInput: false,
+        type: "planning",
+        title: "Deleted Resurface",
+        updatedAt: "2026-04-08T00:00:01.000Z",
+        timestamp: Date.parse("2026-04-08T00:00:01.000Z"),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("does not materialize an older cross-tab session after the authoritative list is empty", async () => {
+    const { result } = renderHook(() => useBackgroundSessions());
+    const { result: syncResult } = renderHook(() => useAiSessionSync());
+
+    await waitFor(() => {
+      expect(mockFetchAiSessions).toHaveBeenCalledWith(undefined);
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    /*
+     * FNXC:SessionSync 2026-07-11-19:08:
+     * A sibling tab can respond after the server has removed its planning
+     * session. The retained session model must remain empty because Planning
+     * reads the authoritative server list and cannot resume stale cache.
+     */
+    act(() => {
+      syncResult.current.broadcastUpdate({
+        sessionId: "late-stale-planning",
+        status: "awaiting_input",
+        needsInput: true,
+        type: "planning",
+        title: "Late stale planning session",
+        updatedAt: "2026-04-08T00:00:01.000Z",
+        timestamp: Date.parse("2026-04-08T00:00:01.000Z"),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("dismissSession calls cancelMissionInterview for mission_interview sessions", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "interview-session", status: "generating", type: "mission_interview" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["interview-session"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("interview-session");
+    });
+
+    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined);
+    expect(mockDeleteAiSession).toHaveBeenCalledWith("interview-session");
+  });
+
+  it("returns accurate generating/needsInput counts and planningSessions filter", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "count-generating", status: "generating", type: "planning" }),
+      makeSession({ id: "count-error-plan", status: "error", type: "planning" }),
+      makeSession({ id: "count-awaiting", status: "awaiting_input", type: "planning" }),
+      makeSession({ id: "count-complete", status: "complete", type: "mission_interview" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.generating).toBe(1);
+      expect(result.current.needsInput).toBe(1);
+      expect(result.current.planningSessions.map((session) => session.id).sort()).toEqual([
+        "count-awaiting",
+        "count-error-plan",
+        "count-generating",
+      ]);
+      expect(result.current.sessions.map((session) => session.id).sort()).toEqual([
+        "count-awaiting",
+        "count-error-plan",
+        "count-generating",
+      ]);
+    });
+  });
+
+  it("refresh triggers a new fetch and updates state", async () => {
+    mockFetchAiSessions
+      .mockResolvedValueOnce([makeSession({ id: "first-session", status: "generating" })])
+      .mockResolvedValueOnce([makeSession({ id: "second-session", status: "awaiting_input" })]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["first-session"]);
+    });
+
+    act(() => {
+      result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(mockFetchAiSessions).toHaveBeenCalledTimes(2);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["second-session"]);
+    });
+  });
+
+  it("logs a warning when refresh fetch fails and preserves existing sessions", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refreshError = new Error("Server error");
+
+    mockFetchAiSessions
+      .mockResolvedValueOnce([makeSession({ id: "existing-session", status: "generating" })])
+      .mockRejectedValueOnce(refreshError);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["existing-session"]);
+    });
+
+    act(() => {
+      result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(mockFetchAiSessions).toHaveBeenCalledTimes(2);
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[useBackgroundSessions] Failed to fetch AI sessions:",
+      refreshError,
+    );
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["existing-session"]);
+
+    warnSpy.mockRestore();
+  });
+
+  it("passes projectId to API fetch and uses project-scoped SSE URL", async () => {
+    const projectId = "proj-123";
+    renderHook(() => useBackgroundSessions(projectId));
+
+    await waitFor(() => {
+      expect(mockFetchAiSessions).toHaveBeenCalledWith(projectId);
+    });
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+
+    expect(MockEventSource.instances[0]?.url).toContain(`/api/events?projectId=${encodeURIComponent(projectId)}`);
+  });
+});

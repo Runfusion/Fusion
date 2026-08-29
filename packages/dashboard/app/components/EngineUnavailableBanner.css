@@ -1,0 +1,18 @@
+.engine-unavailable-banner__icon {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.15rem;
+}
+
+.engine-unavailable-banner__title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-tight);
+}
+
+.engine-unavailable-banner__body { margin: 0; }
+.engine-unavailable-banner code { color: var(--text); white-space: nowrap; }
+
+@media (max-width: 768px) {
+  .engine-unavailable-banner code { white-space: normal; overflow-wrap: anywhere; }
+}

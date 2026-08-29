@@ -1,0 +1,91 @@
+/* === Onboarding Resume Card === */
+
+.onboarding-resume-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+  animation: onboarding-resume-card-enter var(--duration-normal) ease-out;
+}
+
+@keyframes onboarding-resume-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-sm) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.onboarding-resume-card__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.onboarding-resume-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--space-lg) * 2 + var(--space-xs));
+  height: calc(var(--space-lg) * 2 + var(--space-xs));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--todo) 16%, transparent);
+  color: var(--todo);
+  flex-shrink: 0;
+}
+
+.onboarding-resume-card__content {
+  min-width: 0;
+}
+
+.onboarding-resume-card__title {
+  margin: 0;
+  font-size: calc(var(--space-md) + (var(--space-xs) / 2));
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onboarding-resume-card__description {
+  margin: 0;
+  font-size: calc(var(--space-md) + (var(--space-xs) / 4));
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.onboarding-resume-card__description strong {
+  color: var(--text);
+}
+
+.onboarding-resume-card__actions {
+  flex-shrink: 0;
+}
+
+.onboarding-resume-card__resume-btn {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .onboarding-resume-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .onboarding-resume-card__actions {
+    width: 100%;
+  }
+
+  .onboarding-resume-card__resume-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

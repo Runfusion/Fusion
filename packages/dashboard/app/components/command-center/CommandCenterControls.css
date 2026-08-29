@@ -1,0 +1,225 @@
+.cc-controls {
+  min-inline-size: 0;
+}
+
+.cc-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+  align-items: stretch;
+}
+
+.cc-controls-card {
+  min-inline-size: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.cc-controls-card--concurrency {
+  grid-column: 1 / -1;
+}
+
+.cc-controls-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-block-end: var(--space-md);
+}
+
+.cc-controls-card-header h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9375rem;
+}
+
+.cc-controls-card-header p,
+.cc-controls-muted {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.cc-controls-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 0.8125rem;
+}
+
+.cc-controls-status-pill {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.cc-controls-action {
+  gap: var(--space-xs);
+}
+
+.cc-controls-save-state {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.cc-controls-save-state--saved {
+  color: var(--color-success);
+}
+
+.cc-controls-save-state--error {
+  color: var(--color-error);
+}
+
+/*
+FNXC:CommandCenter 2026-07-31-20:57:
+FN-8632 keeps the grid equal to the two per-project capacity sliders that exist.
+Stretch each slider and bottom-align its range control so optional running-count captions
+cannot desynchronize the range tracks at desktop or tablet widths.
+*/
+.cc-controls-sliders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: var(--space-md);
+}
+
+.cc-controls-slider {
+  display: flex;
+  align-self: stretch;
+  min-inline-size: 0;
+  flex-direction: column;
+  gap: var(--space-sm);
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+
+.cc-controls-slider-caption {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.cc-controls-slider-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.cc-controls-slider-label strong {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-17:30:
+FN-8007 makes the current-use dot's half-thumb edge inset match the native desktop range thumb. This preserves the min-relative thumb alignment used by the marker: one running agent stays visible at the start and over-cap use stays on the cap thumb.
+
+FNXC:CommandCenter 2026-08-01-00:14:
+Both capacity controls use this wrapper so their range sizing and native thumb token remain
+identical. A disabled capacity is still a visible control; only its editability changes.
+*/
+.cc-controls-range-wrap {
+  --cc-controls-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);
+  position: relative;
+  display: flex;
+  align-items: center;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.cc-controls-range-wrap,
+.cc-controls-slider > input[type="range"] {
+  margin-block-start: auto;
+}
+
+/* FNXC:GlobalConcurrencyControls 2026-06-26-00:00: The Command Center current-use marker mirrors the footer marker, reuses the status-dot convention, uses logical inline positioning for RTL, and never intercepts range drags. */
+.cc-controls-use-marker {
+  --use-pct: 0%;
+  --use-offset: 0%;
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--use-offset, var(--use-pct));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/*
+FNXC:CommandCenter 2026-06-20-00:25:
+Mobile users must be able to drag horizontal concurrency sliders without the page scroll gesture stealing the thumb movement. Scope touch-action to these range inputs and preserve desktop accent/full-width behavior while increasing the hit area with design tokens.
+
+FNXC:CommandCenter 2026-07-15-00:00:
+FN-7973 requires touch-action:none because the mobile pan-y ancestor lock otherwise claims near-horizontal thumb drags as page pans. This shared rule covers every Command Center concurrency range input while preserving disabled and loading no-op behavior.
+*/
+.cc-controls-slider input[type="range"],
+.cc-controls-touch-slider {
+  inline-size: 100%;
+  min-block-size: var(--space-xl);
+  accent-color: var(--accent);
+  touch-action: none;
+}
+
+/*
+FNXC:GlobalConcurrencyControls 2026-07-15-18:10:
+FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size token. This prevents browser-default thumb dimensions from changing the marker travel geometry; WebKit and Gecko must use the same dimensions as the half-thumb inset.
+*/
+.cc-controls-slider input[type="range"]::-webkit-slider-thumb,
+.cc-controls-touch-slider::-webkit-slider-thumb {
+  width: var(--cc-controls-range-thumb-size);
+  height: var(--cc-controls-range-thumb-size);
+}
+
+.cc-controls-slider input[type="range"]::-moz-range-thumb,
+.cc-controls-touch-slider::-moz-range-thumb {
+  width: var(--cc-controls-range-thumb-size);
+  height: var(--cc-controls-range-thumb-size);
+}
+
+@media (max-width: 768px) {
+  .cc-controls-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-controls-card {
+    padding: var(--space-sm);
+  }
+
+  .cc-controls-card-header {
+    flex-direction: column;
+  }
+
+  .cc-controls-sliders {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-controls-range-wrap {
+    --cc-controls-range-thumb-size: var(--space-xl);
+  }
+
+  .cc-controls-slider input[type="range"],
+  .cc-controls-touch-slider {
+    min-block-size: var(--space-2xl);
+  }
+
+  .cc-controls-slider input[type="range"]::-webkit-slider-thumb,
+  .cc-controls-touch-slider::-webkit-slider-thumb {
+    inline-size: var(--space-xl);
+    block-size: var(--space-xl);
+  }
+
+  .cc-controls-slider input[type="range"]::-moz-range-thumb,
+  .cc-controls-touch-slider::-moz-range-thumb {
+    inline-size: var(--space-xl);
+    block-size: var(--space-xl);
+  }
+
+  .cc-controls-action {
+    justify-content: center;
+    inline-size: 100%;
+  }
+
+}

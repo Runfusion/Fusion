@@ -1,0 +1,494 @@
+/* === Mobile Bottom Tab Bar (FN-1108) ===
+   Fixed bottom navigation for mobile viewports (≤768px).
+   Sits at the very bottom; ExecutorStatusBar appears above when visible.
+   Uses safe-area-inset-bottom for notched devices. */
+
+/* Mobile nav height token - used by nav bar, executor status bar, and content padding */
+:root {
+  --mobile-nav-height: 44px;
+}
+
+.mobile-nav-bar {
+  position: fixed;
+  /* --icb-bottom-offset / --icb-right-offset are published by the viewport
+     compensation script in index.html. On healthy browsers they stay 0px.
+     On Android Chrome when the ICB is inflated past the visible canvas
+     (multi-window / split-screen quirk) and on pinch-zoom, they pull
+     fixed-position elements back into the visible viewport. */
+  bottom: var(--icb-bottom-offset, 0px);
+  left: 0;
+  right: var(--icb-right-offset, 0px);
+  z-index: 45;
+  display: none;
+  align-items: stretch;
+  background: var(--surface);
+  /*
+  FNXC:FooterChrome 2026-06-22-18:00:
+  Mobile bottom navigation follows the executor footer rule: no visible divider between main content and the fixed footer/navigation surface.
+  */
+  border-top: none;
+  min-height: var(--mobile-nav-height);
+  /*
+  FNXC:MobileNav 2026-06-24-22:27:
+  The mobile bottom nav must use symmetric outer side spacing while keeping its fixed right edge compensated by --icb-right-offset, equal-width tab columns, and safe-area bottom padding intact.
+  */
+  padding-inline: var(--space-sm);
+  /* Extend the bar's surface into the iOS home-indicator area so icons sit above
+     the indicator (PWA standalone) and the bar meets the executor status bar
+     flush — its `bottom` already adds these same terms. */
+  /* Floor the inset to ~12px so the bar clears Android Chrome's gesture pill
+     even when the browser under-reports safe-area-inset-bottom (happens while
+     the address bar is visible / during URL-bar collapse). Devices that
+     correctly report a larger inset are unaffected. */
+  padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+  box-shadow: var(--shadow-md);
+}
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-width: 768px)` left a gap on tablet-class narrow viewports (mode=tablet mounts no MobileNavBar, CSS still reserved its height under the elevated footer). Also reveal the bar for landscape phones that stay mode=mobile above 768 CSS px. Keep the width media query as a no-JS/first-paint fallback for true phones.
+*/
+@media (max-width: 768px) {
+  .mobile-nav-bar {
+    display: flex;
+  }
+
+  .mobile-nav-bar--with-footer {
+    bottom: var(--icb-bottom-offset, 0px);
+  }
+
+  /* When the on-screen keyboard is open, hide the nav outright instead of
+     pinning it to bottom:0 and trusting the keyboard to cover it. On iOS the
+     layout viewport does NOT shrink, so a bottom:0 bar stays on screen and
+     overlaps the composer that has lifted above the keyboard. Sliding it fully
+     off the bottom edge guarantees it's gone while typing. Safe for the
+     keyboard: the nav is a sibling of the chat input, not an ancestor, so the
+     transform does not establish a containing block over the focused field
+     (which is what would otherwise make iOS collapse the keyboard). */
+  .mobile-nav-bar.mobile-nav-bar--keyboard-open,
+  .mobile-nav-bar.mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+    bottom: 0;
+    transform: translateY(100%);
+    pointer-events: none;
+  }
+
+  /* Content padding: mobile nav only (no footer). Mirrors the visible fixed stack,
+     including ICB compensation when fixed bars are pulled into the visual viewport. */
+  .project-content--with-mobile-nav:not(.project-content--with-footer) {
+    padding-bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
+  }
+
+  /* Content padding: both mobile nav AND footer */
+  .project-content--with-footer.project-content--with-mobile-nav {
+    padding-bottom: calc(
+      var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)
+    );
+  }
+}
+
+html[data-viewport-mode="mobile"] .mobile-nav-bar {
+  display: flex;
+}
+
+html[data-viewport-mode="mobile"] .mobile-nav-bar--with-footer {
+  bottom: var(--icb-bottom-offset, 0px);
+}
+
+html[data-viewport-mode="mobile"] .mobile-nav-bar.mobile-nav-bar--keyboard-open,
+html[data-viewport-mode="mobile"] .mobile-nav-bar.mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+  bottom: 0;
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-mobile-nav:not(.project-content--with-footer) {
+  padding-bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-footer.project-content--with-mobile-nav {
+  padding-bottom: calc(
+    var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)
+  );
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .mobile-nav-bar {
+  display: none;
+}
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+If a stale project-content--with-mobile-nav class remains while mode is tablet/desktop, do not reserve phantom tab-bar stack space — only the desktop footer token applies.
+*/
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-mobile-nav:not(.project-content--with-footer) {
+  padding-bottom: 0;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer.project-content--with-mobile-nav {
+  padding-bottom: var(--executor-footer-height);
+}
+
+/* Individual tab button */
+/*
+FNXC:MobileNav 2026-06-20-02:04:
+Every mobile nav tab must be an equal-width column with a centered icon so inter-icon spacing stays uniform across tab counts, long labels, active state, badges, and status dots.
+Use a zero flex basis plus min-width:0 so intrinsic label width cannot bias flex distribution; badges and status dots stay absolutely positioned and out of flow.
+
+FNXC:MobileNav 2026-06-20-16:11:
+Real-browser geometry showed the SVG centers were uniform after FN-6766, but status dots protruded past Chat/Mailbox icon boxes and made those icon clusters optically right-heavy.
+Wrap every tab icon in the same token-sized icon slot and keep unread/pending dots inside that slot so icon centering and perceived inter-icon spacing stay identical across tab count, label length, badge, status-dot, and active variants.
+*/
+.mobile-nav-tab {
+  --mobile-nav-icon-size: calc(var(--space-lg) + var(--space-sm) - (var(--space-xs) / 2));
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-xs) / 2);
+  min-height: calc(var(--space-xl) + var(--space-md));
+  padding: calc(var(--space-sm) - (var(--space-xs) / 2)) 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-nav-tab:active {
+  color: var(--text);
+}
+
+.mobile-nav-tab--active {
+  color: var(--accent);
+}
+
+.mobile-nav-tab svg {
+  width: var(--mobile-nav-icon-size);
+  height: var(--mobile-nav-icon-size);
+}
+
+.mobile-nav-tab-icon-wrapper {
+  position: relative;
+  display: flex;
+  flex: 0 0 var(--mobile-nav-icon-size);
+  align-items: center;
+  justify-content: center;
+  width: var(--mobile-nav-icon-size);
+  height: var(--mobile-nav-icon-size);
+}
+
+.mobile-nav-chat-unread-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.mobile-nav-tab-label {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mobile-nav-tab-badge {
+  position: absolute;
+  top: calc(var(--space-xs) / 2);
+  right: calc(50% - var(--space-md));
+  min-width: var(--space-lg);
+  height: var(--space-lg);
+  padding: 0 var(--space-xs);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: var(--space-lg);
+  text-align: center;
+  background: var(--color-error);
+  color: var(--fab-text);
+  border-radius: var(--radius-md);
+}
+
+/* === Mobile More Sheet (Bottom Drawer) === */
+
+.mobile-more-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  animation: mobile-more-backdrop-in 0.2s ease;
+}
+
+.mobile-more-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 91;
+  background: var(--surface);
+  border-top-left-radius: var(--radius-lg, 12px);
+  border-top-right-radius: var(--radius-lg, 12px);
+  padding: 16px 0;
+  /* Additive safe-area: base padding + device safe-area inset ensures last item
+     (Settings) is reachable on real mobile viewports including iOS home indicator. */
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  transition: transform var(--transition-fast);
+  animation: mobile-more-sheet-in 0.25s ease;
+}
+
+.mobile-more-sheet--gesture-ready {
+  animation: none;
+}
+
+.mobile-more-sheet--dragging {
+  transition: none;
+}
+
+@keyframes mobile-more-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mobile-more-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.mobile-more-sheet-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(var(--space-xl) + var(--space-md));
+  min-height: calc(var(--space-xl) + var(--space-md));
+  margin: 0 auto var(--space-sm);
+}
+
+.mobile-more-sheet-handle::after {
+  width: 100%;
+  height: calc(var(--space-xs) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  content: "";
+}
+
+.mobile-more-sheet-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0 16px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mobile-more-shell-connection {
+  padding: 0 16px 12px;
+}
+
+.mobile-more-shell-connection .shell-connection-status {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.mobile-more-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 36px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+
+.mobile-more-item:active {
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.mobile-more-item svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:Navigation 2026-07-05-00:00:
+Planning "awaiting input" moved from a top-of-board banner (broken Resume redirect) to a yellow needs-input dot on
+this More-sheet item, mirroring the mobile-nav-tab icon-wrapper pattern so the dot positions relative to the icon
+rather than the full-width row.
+*/
+.mobile-more-item-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.mobile-more-item-icon-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+
+.mobile-more-item-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.mobile-more-item-badge--unread {
+  background: var(--color-error);
+  color: var(--fab-text);
+}
+
+.mobile-more-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 16px;
+}
+
+.mobile-more-split-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.mobile-more-split-primary {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-more-split-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.mobile-more-split-toggle:hover {
+  background: var(--card);
+}
+
+.mobile-more-chevron {
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.mobile-more-chevron--open {
+  transform: rotate(90deg);
+}
+
+.mobile-more-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--space-md);
+}
+
+.mobile-more-subitem {
+  padding-left: 28px;
+}
+
+.mobile-more-submenu-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 12px 8px 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mobile-more-subitem--manage {
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+/* FN-1137: Quick scripts dropdown mobile viewport handling */
+@media (max-width: 768px) {
+  .quick-scripts-dropdown__menu {
+    max-height: min(60vh, 400px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* FN-1137: mobile dep dropdown overflow handling */
+@media (max-width: 768px) {
+  .dep-dropdown {
+    max-height: min(50vh, 240px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* FN-1137: file browser long-press and mobile context menu touch targets */
+.file-node {
+  touch-action: manipulation;
+}
+
+.file-node--long-pressing {
+  background: var(--card-hover);
+}
+
+@media (max-width: 768px) {
+  .file-browser-context-menu__item {
+    min-height: 36px;
+  }
+}
+
+/* FN-1137: iOS momentum scrolling conventions */
+.dep-dropdown,
+.model-combobox-list,
+.quick-scripts-dropdown__list,
+.file-browser-list {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  /* iOS momentum scrolling for all modal content areas */
+  .modal-content,
+  .modal-body,
+  .modal-scroll,
+  .task-detail-content,
+  .agent-log-content,
+  .file-browser-list,
+  .settings-content,
+  .activity-log-content {
+    -webkit-overflow-scrolling: touch;
+  }
+}

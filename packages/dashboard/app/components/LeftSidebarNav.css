@@ -1,0 +1,315 @@
+/*
+FNXC:Navigation 2026-06-19-00:00:
+The experimental sidebar is a persistent desktop/tablet navigation replacement for the Header view-toggle row. It uses the same tokenized visual rhythm as Header navigation so the flag can be toggled without changing dashboard information architecture.
+
+FNXC:Navigation 2026-06-22-18:00:
+The border between left sidebar and main content should be invisible while the sidebar remains draggable. Keep the resize handle's invisible hit target and hover/focus accent, but remove the persistent vertical rule and footer divider so the shell reads as one continuous surface.
+
+FNXC:Navigation 2026-08-03-05:34:
+Expanded desktop/tablet navigation needs the same tokenized floating depth as the unpinned right dock so board cards paint beneath its outer edge. Keep the shell above adjacent content without changing its flex sizing or resize hit target; rail mode explicitly removes the shadow and stays flat.
+*/
+.left-sidebar-nav {
+  --left-sidebar-nav-width: calc(var(--space-2xl) * 7);
+  --left-sidebar-nav-rail-width: calc(var(--space-2xl) * 2);
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: var(--left-sidebar-nav-width);
+  min-width: var(--left-sidebar-nav-width);
+  min-height: 0;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-primary);
+}
+
+/*
+FNXC:Navigation 2026-06-20-00:00:
+The left sidebar is a sibling of project-content, so it does not inherit project-content footer padding. When the fixed executor status bar is rendered, reserve the shared --executor-footer-height on the aside so the bottom Settings button remains visible and clickable above the footer.
+*/
+.left-sidebar-nav--with-footer {
+  padding-bottom: var(--executor-footer-height);
+}
+
+/*
+FNXC:Navigation 2026-06-21-00:00:
+The collapse toggle lives in the footer above Settings instead of floating on the resize border. It reuses the tokenized row-item styling so expanded mode can show the Collapse label and rail mode can hide that label consistently with other sidebar items.
+*/
+.left-sidebar-nav__collapse-toggle {
+  flex-shrink: 0;
+  justify-content: flex-start;
+}
+
+/*
+FNXC:Navigation 2026-06-21-20:45:
+The persistent desktop/tablet sidebar needs a centered New Task CTA at the top so task creation is reachable from any project screen. It uses the shared row label and rail hiding behavior so expanded mode shows icon plus text while collapsed mode remains an icon-only button with the same global dialog trigger.
+
+FNXC:Navigation 2026-06-22-00:00:
+The New Task CTA must occupy exactly the same box as a sidebar item highlight: same min-height/padding/radius (inherited from .left-sidebar-nav__item) and the same horizontal inset as list rows. The list insets its rows by --space-sm padding, so the CTA matches with --space-sm side margins. The drop shadow is removed because it bled past the box edge and made the CTA read as larger than the item highlights; spacing below the CTA equals the inter-row gap (list padding-top --space-sm).
+*/
+/*
+FNXC:Navigation 2026-06-22-00:10:
+The CTA carries .left-sidebar-nav__item, whose width:100% rule is declared later and otherwise wins over a single-class width:auto. Because the CTA is a direct child of the unpadded aside (not the padded list), width:100% + side margins overflows the aside by 2×--space-sm, overlapping the resize bar and rendering wider than the padded item highlights. Raise specificity (.left-sidebar-nav .left-sidebar-nav__new-task) so width:auto wins: align-self:stretch then fills the aside minus the --space-sm side margins, exactly matching an item highlight box (list content width).
+*/
+/*
+FNXC:Navigation 2026-06-23-02:45:
+New Task lives in the footer with Collapse/Settings and must be the SAME height + width as them. It inherits the base .left-sidebar-nav__item height; dropping the old CTA side/top margins (which inset it as a top-of-rail CTA) lets it fill the footer's padded width exactly like the other footer items, separated only by the footer gap. It keeps the accent CTA fill so it still reads as the primary action.
+*/
+.left-sidebar-nav .left-sidebar-nav__new-task {
+  flex-shrink: 0;
+  justify-content: center;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: auto;
+  margin: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.left-sidebar-nav__new-task:hover,
+.left-sidebar-nav__new-task:focus-visible {
+  background: color-mix(in srgb, var(--accent) 88%, var(--surface));
+  color: var(--accent-text);
+}
+
+/*
+FNXC:Navigation 2026-06-22-00:00:
+With the secondary divider removed the nav reads as one continuous list, so the gap between the primary and secondary sections must match the within-section row rhythm (--space-xs) instead of the larger --space-sm. Otherwise the boundary (e.g. Compound → Goals) shows a doubled gap.
+*/
+.left-sidebar-nav__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+  transition: scrollbar-color var(--transition-fast);
+}
+
+/*
+FNXC:Navigation 2026-06-22-18:38:
+The left sidebar scrollbar should stay out of sight until the user is interacting with that scroll area. Reveal it on hover/focus/active scrolling while preserving the scroll gutter so nav labels do not shift.
+*/
+.left-sidebar-nav__list:hover,
+.left-sidebar-nav__list:focus-within,
+.left-sidebar-nav__list:active {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 38%, transparent) transparent;
+}
+
+.left-sidebar-nav__list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.left-sidebar-nav__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.left-sidebar-nav__list::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.left-sidebar-nav__list:hover::-webkit-scrollbar-thumb,
+.left-sidebar-nav__list:focus-within::-webkit-scrollbar-thumb,
+.left-sidebar-nav__list:active::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-muted) 38%, transparent);
+}
+
+.left-sidebar-nav__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:Navigation 2026-06-22-00:30:
+The secondary section has no divider and no extra top padding, so the gap across the primary/secondary boundary (e.g. Compound -> Workflows) equals the --space-xs list/row rhythm and the nav reads as one continuous list.
+*/
+.left-sidebar-nav__section--secondary {
+  padding-top: 0;
+}
+
+.left-sidebar-nav__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: calc(var(--space-xl) + var(--space-sm));
+  padding: 0 var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  /*
+  FNXC:NavigationTypography 2026-06-23-23:43:
+  Sidebar destinations should read like app chrome instead of light body copy, but not as bold labels.
+  Use the same base text color as headers with medium-normal weight so the nav matches the app theme without looking heavy.
+  */
+  font-family: var(--font-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: var(--line-height-tight);
+  letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.left-sidebar-nav__item:hover,
+.left-sidebar-nav__item:focus-visible {
+  background: var(--card);
+  color: var(--text);
+  outline: none;
+}
+
+.left-sidebar-nav__item:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/*
+FNXC:DashboardStyling 2026-06-21-11:16:
+The left sidebar active highlight and resize accent must use the per-theme --accent token so the selected state reflects the active color theme instead of the workflow todo-status blue. FN-6830 keeps this requirement in the base sidebar rules so every theme inherits it without per-theme overrides.
+*/
+/*
+FNXC:Navigation 2026-06-23-02:45:
+The active/selected state must WIN over :hover. Plain `.item:hover` (specificity 0,2,0) outranks a bare `.item--active` (0,1,0), so a selected row under the cursor wrongly showed the hover color. Pin the active accent for the active row in its hover/focus states too (`--active:hover` = 0,3,0) so the selected color always shows.
+*/
+.left-sidebar-nav__item--active,
+.left-sidebar-nav__item--active:hover,
+.left-sidebar-nav__item--active:focus-visible {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.left-sidebar-nav__icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.left-sidebar-nav__dot {
+  position: absolute;
+  top: calc(var(--space-xs) * -1);
+  right: calc(var(--space-xs) * -1);
+}
+
+/*
+FNXC:Navigation 2026-06-21-00:00:
+The narrower resizable sidebar must preserve row rhythm by truncating labels instead of wrapping or pushing badges/toggles out of place. Rail mode still hides labels entirely through the collapsed sidebar rule.
+*/
+.left-sidebar-nav__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.left-sidebar-nav__badge {
+  position: static;
+  flex-shrink: 0;
+}
+
+/*
+FNXC:Navigation 2026-06-22-00:00:
+The footer stacks the Collapse toggle above Settings. Use a flex column with a small gap so the two controls are visually separated instead of butting directly against each other.
+
+FNXC:Navigation 2026-06-22-18:00:
+The footer has no top divider; it remains a functional footer cluster but should not draw a line at its top edge.
+*/
+.left-sidebar-nav__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: auto;
+  padding: var(--space-sm);
+}
+
+.left-sidebar-nav__settings {
+  justify-content: flex-start;
+}
+
+.left-sidebar-nav__resize-handle {
+  position: absolute;
+  top: 0;
+  right: calc(var(--space-xs) * -1 / 2);
+  bottom: 0;
+  width: var(--space-xs);
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 1;
+}
+
+.left-sidebar-nav__resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: calc(var(--space-xs) / 2);
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.left-sidebar-nav__resize-handle:hover::after,
+.left-sidebar-nav__resize-handle:focus-visible::after {
+  background: var(--accent);
+}
+
+.left-sidebar-nav__resize-handle:focus-visible {
+  outline: none;
+}
+
+.left-sidebar-nav--collapsed {
+  width: var(--left-sidebar-nav-rail-width);
+  min-width: var(--left-sidebar-nav-rail-width);
+  box-shadow: none;
+}
+
+.left-sidebar-nav--collapsed .left-sidebar-nav__label,
+.left-sidebar-nav--collapsed .left-sidebar-nav__badge {
+  display: none;
+}
+
+.left-sidebar-nav--collapsed .left-sidebar-nav__item {
+  justify-content: center;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.left-sidebar-nav--collapsed .left-sidebar-nav__new-task {
+  justify-content: center;
+}
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Width-only hide was wrong for tablet-class devices in the 601–768 CSS px band: JS mounts the left sidebar (mode=tablet) while this media query hid it and MobileNavBar returned null — operators lost every primary nav surface. Prefer the published viewport mode; keep the width rule as a no-JS/first-paint fallback for true phones.
+*/
+@media (max-width: 768px) {
+  .left-sidebar-nav {
+    display: none;
+  }
+}
+
+html[data-viewport-mode="mobile"] .left-sidebar-nav {
+  display: none;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .left-sidebar-nav {
+  display: flex;
+}

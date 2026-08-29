@@ -1,0 +1,76 @@
+.github-star-prompt {
+  position: fixed;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: 1002;
+  width: min(calc(var(--space-2xl) * 10), calc(100vw - (var(--space-lg) * 2)));
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.github-star-prompt__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.github-star-prompt__title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text);
+}
+
+.github-star-prompt__title-wrap h3 {
+  margin: 0;
+  font-size: var(--space-lg);
+}
+
+.github-star-prompt p {
+  margin: var(--space-md) 0 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.github-star-prompt__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: var(--space-lg);
+}
+
+.github-star-prompt__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.github-star-prompt__dismiss {
+  color: var(--text-muted);
+}
+
+.github-star-prompt__dismiss:hover {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .github-star-prompt {
+    right: var(--space-md);
+    bottom: calc(var(--space-2xl) * 3 + var(--space-lg));
+    left: var(--space-md);
+    width: auto;
+    padding: var(--space-md);
+  }
+
+  .github-star-prompt__actions {
+    width: 100%;
+  }
+
+  .github-star-prompt__cta {
+    width: 100%;
+    justify-content: center;
+  }
+}

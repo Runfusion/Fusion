@@ -1,0 +1,192 @@
+.docker-onboarding {
+  width: min(calc(var(--space-2xl) * 22.5), calc(100vw - (var(--space-lg) * 2)));
+}
+
+.docker-onboarding__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.docker-onboarding__section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.docker-onboarding__section-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: calc(var(--space-md) + var(--space-xs) / 2);
+}
+
+.docker-onboarding__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.docker-onboarding__inline-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.docker-onboarding__radio-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.docker-onboarding__type-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.docker-onboarding__type-btn {
+  flex: 1;
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.docker-onboarding__type-btn + .docker-onboarding__type-btn {
+  border-left: 1px solid var(--border);
+}
+
+.docker-onboarding__type-btn.is-active {
+  background: var(--todo);
+  color: var(--bg);
+}
+
+.docker-onboarding__type-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  position: relative;
+  z-index: 1;
+}
+
+.docker-onboarding__checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.docker-onboarding__kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.docker-onboarding__kv-list h5 {
+  margin: 0;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.docker-onboarding__kv-row {
+  display: grid;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.docker-onboarding__kv-row--env {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.docker-onboarding__kv-row--mount {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+}
+
+.docker-onboarding__kv-add {
+  align-self: flex-start;
+}
+
+.docker-onboarding__advanced-toggle {
+  border: none;
+  background: none;
+  color: var(--text);
+  padding: var(--space-xs);
+  margin: calc(var(--space-xs) * -1);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  cursor: pointer;
+  font-size: calc(var(--space-md) + var(--space-xs) / 2);
+  font-weight: 600;
+}
+
+.docker-onboarding__advanced-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.docker-onboarding__advanced-toggle svg {
+  transition: transform var(--transition-fast);
+}
+
+.docker-onboarding__advanced-toggle.is-expanded svg {
+  transform: rotate(180deg);
+}
+
+.docker-onboarding__advanced-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--transition-fast);
+}
+
+.docker-onboarding__advanced-content > div {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.docker-onboarding__advanced-content.is-expanded {
+  grid-template-rows: 1fr;
+}
+
+.docker-onboarding__tls-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.docker-onboarding__tls-fields .docker-onboarding__field:first-child {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 768px) {
+  .docker-onboarding {
+    width: calc(100vw - (var(--space-md) * 2));
+  }
+
+  .docker-onboarding__inline-fields,
+  .docker-onboarding__tls-fields,
+  .docker-onboarding__kv-row {
+    grid-template-columns: 1fr;
+  }
+
+  .docker-onboarding .input,
+  .docker-onboarding .select,
+  .docker-onboarding .btn {
+    min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  .docker-onboarding__advanced-content {
+    transition: none;
+  }
+}

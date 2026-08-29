@@ -1,0 +1,62 @@
+.cc-date-range {
+  position: relative;
+  display: inline-block;
+}
+
+.cc-date-range-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-17-18:44:
+The FN-4286 text-token and component-css hygiene guards require canonical dashboard tokens here: use --shadow-md without a raw rgba fallback and --text-muted instead of the deprecated secondary text token.
+
+FNXC:CommandCenterStyling 2026-06-18-00:00:
+Raw rgba fallbacks are replaced with byte-equivalent concrete-hex color-mix fallbacks in the same var() slots so undefined surface/border tokens preserve the current light and dark rendering while satisfying tokenized styling hygiene.
+*/
+.cc-date-range-popover {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 20;
+  min-width: 16rem;
+  padding: var(--space-md);
+  background: var(--surface-1, #1c1c1c);
+  border: 1px solid var(--border-subtle, color-mix(in srgb, #7f7f7f 25%, transparent));
+  border-radius: var(--radius-md, 8px);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.cc-date-range-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.cc-date-range-custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cc-date-range-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.cc-date-range-field input {
+  background: var(--surface-2, color-mix(in srgb, #7f7f7f 12%, transparent));
+  border: 1px solid var(--border-subtle, color-mix(in srgb, #7f7f7f 25%, transparent));
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+}

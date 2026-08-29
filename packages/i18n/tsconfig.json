@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node", "vitest/globals"],
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*", "locales/**/*.json", "namespaces.json"],
+  "exclude": ["src/**/*.test.ts"]
+}

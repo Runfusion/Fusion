@@ -1,0 +1,113 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: The pricing hint named --font-size-xs but carried a raw 0.75rem fallback that no longer matches the token's 0.8rem value. The fallback is dropped so the declaration cannot silently render off-scale. */
+.model-pricing-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.model-pricing-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.model-pricing-section__meta {
+  margin: var(--space-xs) 0 0;
+}
+
+.model-pricing-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+}
+
+.model-pricing-summary__empty,
+.model-pricing-modal__subtitle {
+  margin: var(--space-xs) 0 0;
+}
+
+.model-pricing-modal__body {
+  overflow-x: auto;
+}
+
+.model-pricing-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: min-content;
+}
+
+.model-pricing-row {
+  display: grid;
+  grid-template-columns:
+    minmax(12rem, 1.4fr)
+    minmax(7rem, 1fr)
+    minmax(7rem, 1fr)
+    minmax(7rem, 1fr)
+    minmax(7rem, 1fr)
+    minmax(10rem, 1.2fr)
+    minmax(5rem, auto);
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.model-pricing-row--head {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.model-pricing-row--add {
+  padding-top: var(--space-xs);
+  border-top: thin solid var(--border);
+}
+
+.model-pricing-key {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.model-pricing-empty {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 768px) {
+  .model-pricing-section__header,
+  .model-pricing-summary {
+    flex-direction: column;
+  }
+
+  .model-pricing-section__header .btn,
+  .model-pricing-summary .btn {
+    width: 100%;
+  }
+
+  .model-pricing-modal__body {
+    overflow-x: visible;
+  }
+
+  .model-pricing-table {
+    min-width: 0;
+  }
+
+  .model-pricing-row {
+    grid-template-columns: minmax(14rem, 1fr);
+    padding: var(--space-sm);
+    border: thin solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .model-pricing-row--head {
+    display: none;
+  }
+
+  .model-pricing-row--add {
+    border-top: thin solid var(--border);
+  }
+}

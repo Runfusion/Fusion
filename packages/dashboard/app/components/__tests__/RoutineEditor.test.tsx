@@ -1,0 +1,692 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { RoutineEditor } from "../RoutineEditor";
+import type { Routine, RoutineTriggerType } from "@fusion/core";
+
+// Mock lucide-react
+vi.mock("lucide-react", () => ({
+  Calendar: () => <span data-testid="icon-calendar">📅</span>,
+  Webhook: () => <span data-testid="icon-webhook">🔗</span>,
+  Code: () => <span data-testid="icon-code">💻</span>,
+  Zap: () => <span data-testid="icon-zap">⚡</span>,
+  Globe: () => <span data-testid="icon-globe">🌍</span>,
+  Folder: () => <span data-testid="icon-folder">📁</span>,
+}));
+
+// Mock API
+vi.mock("../api", () => ({
+  fetchModels: vi.fn(() => Promise.resolve({
+    models: [
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet", reasoning: false, contextWindow: 200000 },
+    ],
+    favoriteProviders: [],
+    favoriteModels: [],
+  })),
+}));
+
+// Mock @fusion/core
+vi.mock("@fusion/core", () => ({
+  AUTOMATION_SELECTABLE_TOOLS: ["Read", "Bash", "Edit", "Write", "Grep", "Find", "Ls"],
+}));
+
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({ id, value, onChange, disabled, models, showThinkingLevel, thinkingLevel, onThinkingLevelChange }: any) => (
+    <div data-testid={`${id}-mock`}>
+      <select data-testid="model-dropdown" value={value || ""} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        <option value="">Use default</option>
+        {models?.map((m: any) => (
+          <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.name}</option>
+        ))}
+      </select>
+      {showThinkingLevel && (
+        <select data-testid={`${id}-thinking-level`} aria-label={`${id} thinking level`} value={thinkingLevel || ""} onChange={(e) => onThinkingLevelChange?.(e.target.value)}>
+          <option value="">Default (off)</option>
+          <option value="off">Off</option>
+          <option value="high">High</option>
+        </select>
+      )}
+    </div>
+  ),
+}));
+
+function makeRoutine(overrides: Partial<Routine> = {}): Routine {
+  return {
+    id: "routine-001",
+    agentId: "agent-001",
+    name: "Test Routine",
+    description: "A test routine",
+    trigger: { type: "cron", cronExpression: "0 * * * *" },
+    command: "echo test",
+    executionPolicy: "parallel",
+    catchUpPolicy: "skip",
+    enabled: true,
+    runCount: 0,
+    runHistory: [],
+    createdAt: "2026-04-07T00:00:00.000Z",
+    updatedAt: "2026-04-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("RoutineEditor", () => {
+  const onSubmit = vi.fn().mockResolvedValue(undefined);
+  const onCancel = vi.fn();
+
+  const fillCommand = (value = "echo test") => {
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value } });
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // ── Create mode (no routine prop) ─────────────────────────────────────
+
+  describe("Create mode (no routine prop)", () => {
+    it("renders form with empty fields", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Name")).toHaveValue("");
+      expect(screen.getByLabelText("Description (optional)")).toHaveValue("");
+    });
+
+    it('shows "New Routine" heading', () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("New Routine")).toBeDefined();
+    });
+
+    it('shows "Create Routine" submit button', () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("Create Routine")).toBeDefined();
+    });
+
+    it("defaults triggerType to 'cron'", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("Cron")).toBeDefined();
+      // Cron expression input should be visible
+      expect(screen.getByLabelText("Cron Expression")).toHaveValue("0 * * * *");
+    });
+
+    it("shows frequency dropdown with preset options when triggerType is 'cron'", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      const frequency = screen.getByLabelText("Frequency");
+      expect(frequency).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every hour" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every day (midnight)" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every week (Monday)" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Every month (1st)" })).toBeDefined();
+      expect(screen.getByRole("option", { name: "Custom cron expression" })).toBeDefined();
+    });
+
+    it("selecting a preset auto-fills the cron expression and disables the input", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "daily" } });
+
+      const cronInput = screen.getByLabelText("Cron Expression");
+      expect(cronInput).toHaveValue("0 0 * * *");
+      expect(cronInput).toBeDisabled();
+      expect(screen.getByText("Auto-filled from preset: 0 0 * * *")).toBeDefined();
+    });
+
+    it("selecting 'Custom' enables the cron expression input", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "custom" } });
+
+      expect(screen.getByLabelText("Cron Expression")).not.toBeDisabled();
+      expect(screen.getByText(/crontab\.guru/)).toBeDefined();
+    });
+
+    it("defaults executionPolicy to 'queue'", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Execution Policy")).toHaveValue("queue");
+    });
+
+    it("defaults catchUpPolicy to 'run_one'", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Catch-up Policy")).toHaveValue("run_one");
+    });
+
+    it("defaults enabled to true", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Enabled")).toBeChecked();
+    });
+
+    it("shows cron expression input when triggerType is 'cron'", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Cron Expression")).toBeDefined();
+    });
+
+    it("shows webhook inputs when triggerType is changed to 'webhook'", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("Webhook"));
+      await waitFor(() => {
+        expect(screen.getByLabelText("Webhook Path")).toBeDefined();
+        expect(screen.getByLabelText("Webhook Secret (optional)")).toBeDefined();
+      });
+    });
+
+    it("shows API info when triggerType is changed to 'api'", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("API"));
+      await waitFor(() => {
+        expect(screen.getByLabelText("API Endpoint")).toBeDefined();
+      });
+    });
+
+    it("shows Manual trigger info when triggerType is changed to 'manual'", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("Manual"));
+      await waitFor(() => {
+        expect(screen.getByText(/triggered manually/)).toBeDefined();
+      });
+    });
+
+    it("hides cron expression input when triggerType is not 'cron'", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("Webhook"));
+      await waitFor(() => {
+        expect(screen.queryByLabelText("Cron Expression")).toBeNull();
+      });
+    });
+  });
+
+  // ── Edit mode (with routine prop) ─────────────────────────────────────
+
+  describe("Edit mode (with routine prop)", () => {
+    it("pre-fills all fields from the routine prop", () => {
+      const routine = makeRoutine({
+        name: "My Routine",
+        description: "My description",
+        trigger: { type: "cron", cronExpression: "0 9 * * *" },
+        executionPolicy: "reject",
+        catchUpPolicy: "run",
+        enabled: false,
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Name")).toHaveValue("My Routine");
+      expect(screen.getByLabelText("Description (optional)")).toHaveValue("My description");
+      expect(screen.getByLabelText("Cron Expression")).toHaveValue("0 9 * * *");
+      expect(screen.getByLabelText("Execution Policy")).toHaveValue("reject");
+      expect(screen.getByLabelText("Catch-up Policy")).toHaveValue("run");
+      expect(screen.getByLabelText("Enabled")).not.toBeChecked();
+    });
+
+    it('shows "Edit Routine" heading', () => {
+      render(<RoutineEditor routine={makeRoutine()} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("Edit Routine")).toBeDefined();
+    });
+
+    it('shows "Save Changes" submit button', () => {
+      render(<RoutineEditor routine={makeRoutine()} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("Save Changes")).toBeDefined();
+    });
+
+    it("editing an existing routine with a preset cron expression selects the matching preset", () => {
+      const routine = makeRoutine({
+        trigger: { type: "cron", cronExpression: "0 0 * * *" },
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Frequency")).toHaveValue("daily");
+      expect(screen.getByLabelText("Cron Expression")).toBeDisabled();
+    });
+
+    it("editing an existing routine with a non-preset cron expression selects 'Custom'", () => {
+      const routine = makeRoutine({
+        trigger: { type: "cron", cronExpression: "0 9 * * 1-5" },
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByLabelText("Frequency")).toHaveValue("custom");
+      expect(screen.getByLabelText("Cron Expression")).not.toBeDisabled();
+    });
+
+    it("pre-fills webhook trigger fields", () => {
+      const routine = makeRoutine({
+        trigger: { type: "webhook", webhookPath: "/trigger/test", secret: "secret123" },
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("Webhook")).toBeDefined();
+      expect(screen.getByLabelText("Webhook Path")).toHaveValue("/trigger/test");
+      expect(screen.getByLabelText("Webhook Secret (optional)")).toHaveValue("secret123");
+    });
+
+    it("pre-fills api trigger fields", () => {
+      const routine = makeRoutine({
+        trigger: { type: "api", endpoint: "/api/test" },
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByText("API")).toBeDefined();
+      expect(screen.getByLabelText("API Endpoint")).toHaveValue("/api/test");
+    });
+  });
+
+  // ── Scope selector ──────────────────────────────────────────────────
+
+  describe("Scope selector", () => {
+    it("clicking Global sets active state", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="project" projectId="proj-1" />);
+
+      const globalButton = screen.getByRole("radio", { name: /Global/i });
+      const projectButton = screen.getByRole("radio", { name: /Project/i });
+
+      expect(globalButton).toHaveAttribute("aria-checked", "false");
+      expect(projectButton).toHaveAttribute("aria-checked", "true");
+
+      fireEvent.click(globalButton);
+
+      expect(globalButton).toHaveAttribute("aria-checked", "true");
+      expect(projectButton).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("clicking Project sets active state", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="proj-1" />);
+
+      const globalButton = screen.getByRole("radio", { name: /Global/i });
+      const projectButton = screen.getByRole("radio", { name: /Project/i });
+
+      expect(globalButton).toHaveAttribute("aria-checked", "true");
+      expect(projectButton).toHaveAttribute("aria-checked", "false");
+
+      fireEvent.click(projectButton);
+
+      expect(globalButton).toHaveAttribute("aria-checked", "false");
+      expect(projectButton).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("calls onScopeChange when clicking scope buttons", () => {
+      const onScopeChange = vi.fn();
+      render(
+        <RoutineEditor
+          onSubmit={onSubmit}
+          onCancel={onCancel}
+          scope="global"
+          projectId="proj-1"
+          onScopeChange={onScopeChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("radio", { name: /Project/i }));
+      fireEvent.click(screen.getByRole("radio", { name: /Global/i }));
+
+      expect(onScopeChange).toHaveBeenNthCalledWith(1, "project");
+      expect(onScopeChange).toHaveBeenNthCalledWith(2, "global");
+    });
+
+    it("disables Project scope button when no projectId is provided", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" />);
+      expect(screen.getByRole("radio", { name: /Project/i })).toBeDisabled();
+    });
+
+    it("disables both scope buttons when editing an existing routine with locked scope", () => {
+      render(
+        <RoutineEditor
+          routine={makeRoutine({ scope: "project" })}
+          onSubmit={onSubmit}
+          onCancel={onCancel}
+          projectId="proj-1"
+        />,
+      );
+
+      expect(screen.getByRole("radio", { name: /Global/i })).toBeDisabled();
+      expect(screen.getByRole("radio", { name: /Project/i })).toBeDisabled();
+    });
+
+    it("submits selected scope from the scope toggle", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="proj-1" />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Scoped Routine" } });
+      fillCommand();
+      fireEvent.click(screen.getByRole("radio", { name: /Project/i }));
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: "project",
+          }),
+        );
+      });
+    });
+
+    it("syncs local scope when parent scope prop changes", () => {
+      const { rerender } = render(
+        <RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="global" projectId="proj-1" />,
+      );
+
+      expect(screen.getByRole("radio", { name: /Global/i })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("radio", { name: /Project/i })).toHaveAttribute("aria-checked", "false");
+
+      rerender(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} scope="project" projectId="proj-1" />);
+
+      expect(screen.getByRole("radio", { name: /Global/i })).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByRole("radio", { name: /Project/i })).toHaveAttribute("aria-checked", "true");
+    });
+  });
+
+  // ── Validation ───────────────────────────────────────────────────────
+
+  describe("Validation", () => {
+    it("shows error when name is empty on submit", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => {
+        expect(screen.getByText("Name is required")).toBeDefined();
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("shows error when triggerType is 'cron' and custom cronExpression is empty", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "custom" } });
+      fireEvent.change(screen.getByLabelText("Cron Expression"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => {
+        expect(screen.getByText("Cron expression is required")).toBeDefined();
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("shows error when triggerType is 'cron' and custom cronExpression is invalid", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "custom" } });
+      fireEvent.change(screen.getByLabelText("Cron Expression"), { target: { value: "invalid" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => {
+        expect(screen.getByText(/Invalid cron format/)).toBeDefined();
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("shows error when triggerType is 'webhook' and webhookPath is empty", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("Webhook"));
+      fireEvent.change(screen.getByLabelText("Webhook Path"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => {
+        expect(screen.getByText("Webhook path is required")).toBeDefined();
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("shows error when triggerType is 'api' and endpoint is empty", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("API"));
+      fireEvent.change(screen.getByLabelText("API Endpoint"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => {
+        expect(screen.getByText("API endpoint is required")).toBeDefined();
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Submission ───────────────────────────────────────────────────────
+
+  describe("Submission", () => {
+    it("calls onSubmit with correct RoutineCreateInput shape on valid create", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Routine" } });
+      fillCommand();
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "New Routine",
+            trigger: { type: "cron", cronExpression: "0 * * * *" },
+            executionPolicy: "queue",
+            catchUpPolicy: "run_one",
+            enabled: true,
+          })
+        );
+      });
+    });
+
+    it("omits thinkingLevel by default for simple AI Prompt routines", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "AI Routine" } });
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      expect(screen.getByTestId("routine-model-thinking-level")).toBeDefined();
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Summarize recent activity" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ type: "ai-prompt", thinkingLevel: undefined })],
+          }),
+        );
+      });
+    });
+
+    it("submits explicit thinkingLevel and shares it with simple Create Task routines", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Task Routine" } });
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      fireEvent.change(screen.getByTestId("routine-model-thinking-level"), { target: { value: "high" } });
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      expect(screen.getByTestId("routine-task-model-thinking-level")).toHaveValue("high");
+      fireEvent.change(screen.getByLabelText("Task Description"), { target: { value: "Review dependencies" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ type: "create-task", thinkingLevel: "high" })],
+          }),
+        );
+      });
+    });
+
+    it("clears thinkingLevel when editing a simple AI Prompt routine", async () => {
+      const routine = makeRoutine({
+        command: undefined,
+        steps: [
+          {
+            id: "step-1",
+            type: "ai-prompt",
+            name: "AI Routine",
+            prompt: "Summarize recent activity",
+            thinkingLevel: "high",
+          },
+        ],
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+
+      expect(screen.getByTestId("routine-model-thinking-level")).toHaveValue("high");
+      fireEvent.change(screen.getByTestId("routine-model-thinking-level"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save Changes"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ thinkingLevel: undefined })],
+          }),
+        );
+      });
+    });
+
+    it("submitting with a preset sends the correct cron expression", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Weekly Routine" } });
+      fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "weekly" } });
+      fillCommand();
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "Weekly Routine",
+            trigger: { type: "cron", cronExpression: "0 0 * * 1" },
+          })
+        );
+      });
+    });
+
+    it("calls onSubmit with correct shape on valid edit", async () => {
+      const routine = makeRoutine({ name: "Old Name" });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Updated Name" } });
+      fireEvent.click(screen.getByText("Save Changes"));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "Updated Name",
+            trigger: { type: "cron", cronExpression: "0 * * * *" },
+          })
+        );
+      });
+    });
+
+    it("disables submit button and shows 'Saving…' during submission", async () => {
+      const slowSubmit = vi.fn().mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      render(<RoutineEditor onSubmit={slowSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Routine" } });
+      fillCommand();
+
+      // Use role and name to find the submit button specifically
+      const submitButton = screen.getByRole("button", { name: "Create Routine" });
+      fireEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(screen.getByText("Saving…")).toBeDefined();
+      });
+      expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    });
+
+    it("re-enables submit button after submission completes", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Routine" } });
+      fillCommand();
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+
+      // Button should return from the transient "Saving…" state and be enabled again.
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Create Routine" })).not.toBeDisabled();
+      });
+    });
+
+    it("builds correct webhook trigger on submit", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Webhook Routine" } });
+      fireEvent.click(screen.getByText("Webhook"));
+      fireEvent.change(screen.getByLabelText("Webhook Path"), { target: { value: "/trigger/my-hook" } });
+      fireEvent.change(screen.getByLabelText("Webhook Secret (optional)"), { target: { value: "my-secret" } });
+      fillCommand();
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            trigger: {
+              type: "webhook",
+              webhookPath: "/trigger/my-hook",
+              secret: "my-secret",
+            },
+          })
+        );
+      });
+    });
+
+    it("builds correct api trigger on submit", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API Routine" } });
+      fireEvent.click(screen.getByText("API"));
+      fireEvent.change(screen.getByLabelText("API Endpoint"), { target: { value: "/api/my-routine" } });
+      fillCommand();
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            trigger: {
+              type: "api",
+              endpoint: "/api/my-routine",
+            },
+          })
+        );
+      });
+    });
+
+    it("builds correct manual trigger on submit", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Manual Routine" } });
+      fireEvent.click(screen.getByText("Manual"));
+      fillCommand();
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            trigger: { type: "manual" },
+          })
+        );
+      });
+    });
+  });
+
+  // ── Cancel ──────────────────────────────────────────────────────────
+
+  describe("Cancel", () => {
+    it("calls onCancel when cancel button is clicked", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("Cancel"));
+      expect(onCancel).toHaveBeenCalled();
+    });
+
+    it("does not call onSubmit when cancel is clicked", () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByText("Cancel"));
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+  FNXC:Automations 2026-07-30-15:45 (U11 merged planning column):
+  The "Target Column" default was `triage`, which U11 deletes from the default workflow. It is
+  submitted as the create step's `taskColumn`, and an EXPLICIT column bypasses the workflow
+  entry-column resolution added for column-less creates — so a routine saved with the untouched
+  default seeded tasks into a column the board does not declare.
+
+  Asserted on the RENDERED control and on the SUBMITTED step, so it covers what the operator actually
+  sends rather than the constant.
+  */
+  describe("create-task target column (U11)", () => {
+    it("sends NO column by default, so each workflow's own intake resolution decides", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+
+      const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
+      expect(select.value, "the default must not name a column at all").toBe("");
+      expect(select.value).not.toBe("triage");
+      // `todo` would be the same mistake one column over — a custom workflow declaring no `todo`
+      // would be seeded into an undeclared column just as surely.
+      expect(select.value).not.toBe("todo");
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "nightly" } });
+      fireEvent.change(screen.getByLabelText("Task Description"), { target: { value: "Review deps" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+      expect(onSubmit.mock.calls[0][0].steps[0].taskColumn).toBeUndefined();
+    });
+
+    it("no longer offers the deleted column at all", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+
+      const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
+      const values = Array.from(select.options).map((o) => o.value);
+      expect(values, "an operator must not be able to pick a column the workflow does not declare").not.toContain("triage");
+      expect(values).toContain("");
+      expect(values).toContain("todo");
+    });
+  });
+});

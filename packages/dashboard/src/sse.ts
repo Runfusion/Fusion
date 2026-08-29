@@ -1,0 +1,1385 @@
+import type { Request, Response } from "express";
+import { createLogger, getMaxAgentActivitySeq, queryAgentActivityEvents } from "@fusion/core";
+import type {
+  TaskStore,
+  MissionStore,
+  AsyncMissionStore,
+  ResearchStore,
+  AsyncResearchStore,
+  PluginStore,
+  PluginInstallation,
+  PluginState,
+  AgentStore,
+  MessageStore,
+  MissionValidatorRun,
+  FixFeatureCreatedPayload,
+  ChatStore,
+  AutomationStore,
+  AgentLogEntry,
+} from "@fusion/core";
+
+// FNXC:DashboardSSE 2026-06-28-13:10:
+// Both the sync stores AND their PG-backend async wrappers now extend EventEmitter
+// and emit the SAME mission/research events, so SSE subscribes to whichever backend
+// getMissionStore()/getResearchStore() resolves — live push works in both backends.
+// Previously these were instanceof-narrowed to the sync EventEmitter only, leaving PG
+// mode without live refresh. The union members share an identical event map, so a single
+// subscribe/unsubscribe set is type-safe across both.
+type SseMissionStore = MissionStore | AsyncMissionStore;
+type SseResearchStore = ResearchStore | AsyncResearchStore;
+import type { AiSessionStore } from "./ai-session-store.js";
+
+let activeConnections = 0;
+let highWaterMark = 0;
+let nextConnectionId = 1;
+
+/*
+FNXC:EngineDiagnostics 2026-07-26-08:15:
+SSE open/close fires on every dashboard tab, reconnect, and focus flip. Logging each +/- connection at info filled the TUI log pane with steady-state transport chatter. Gate behind FUSION_DEBUG=sse (or FUSION_DEBUG=1/all/*). Keep backpressure and real failures on warn/error.
+*/
+function isSseDebugEnabled(): boolean {
+  const raw = process.env.FUSION_DEBUG?.trim();
+  if (!raw) return false;
+  if (raw === "1" || raw === "true" || raw === "all" || raw === "*") return true;
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .includes("sse");
+}
+
+const sseLog = createLogger("sse");
+function sseDebug(message: string): void {
+  if (!isSseDebugEnabled()) return;
+  sseLog.debug(message);
+}
+
+/*
+FNXC:AgentActivityStream 2026-08-12-00:00:
+The durable agent-activity seq tail polls every 2s in production — that interval IS the
+cross-process delivery guarantee for short-lived out-of-process writers that never emit an
+in-process nudge. The PG integration test for that path could only prove delivery by sleeping
+a full real poll cycle (~2.1s), which is exactly the kind of real time-wait FN-5048 forbids.
+Expose a bounded env test-seam (FUSION_AGENT_ACTIVITY_POLL_MS) so that test can drive the poll
+fast without weakening the real 2s default or the delivery contract. Read per-connection so a
+test can set it before opening the SSE; clamp to >=10ms so a bad value can never busy-spin.
+*/
+function resolveAgentActivityPollMs(): number {
+  const raw = process.env.FUSION_AGENT_ACTIVITY_POLL_MS?.trim();
+  if (!raw) return 2_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 2_000;
+  return Math.max(10, Math.floor(parsed));
+}
+
+const SSE_CLIENT_ID_MAX_LENGTH = 128;
+/*
+ * FNXC:DashboardSSE 2026-06-23-15:08:
+ * Client-side keepalive probes are intentionally infrequent to avoid a dashboard-only HTTP connection storm. Keep the server stale timer comfortably above that cadence so healthy streams are not reaped between probes while abandoned streams still self-clean.
+ */
+const SSE_CLIENT_STALE_MS = 75_000;
+// If a client's outbound buffer exceeds this, treat the connection as stuck
+// and close it. Without this, res.write() silently queues into res.outputData
+// for a paused/backgrounded client, and every store event for every entity
+// accumulates there until the process OOMs.
+const SSE_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+
+type SSECloseReason =
+  | "backpressure"
+  | "client-disconnect"
+  | "close"
+  | "error"
+  | "request-aborted"
+  | "send-failed"
+  | "stale"
+  | "superseded";
+
+interface ManagedSSEConnection {
+  id: number;
+  clientId?: string;
+  projectId?: string;
+  close: (reason: SSECloseReason) => void;
+  markAlive?: () => void;
+}
+
+const managedConnections = new Map<number, ManagedSSEConnection>();
+
+function normalizeSSEClientId(value: unknown): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > SSE_CLIENT_ID_MAX_LENGTH) return undefined;
+  if (!/^[a-zA-Z0-9._:-]+$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function registerManagedConnection(connection: ManagedSSEConnection): void {
+  managedConnections.set(connection.id, connection);
+
+  if (!connection.clientId) return;
+
+  const superseded = Array.from(managedConnections.values()).filter((candidate) =>
+    candidate.id !== connection.id &&
+    candidate.clientId === connection.clientId &&
+    candidate.projectId === connection.projectId
+  );
+  for (const existing of superseded) {
+    existing.close("superseded");
+  }
+}
+
+function unregisterManagedConnection(connectionId: number): void {
+  managedConnections.delete(connectionId);
+}
+
+export function disconnectSSEClient(clientId: unknown, projectId?: string): number {
+  const normalizedClientId = normalizeSSEClientId(clientId);
+  if (!normalizedClientId) return 0;
+
+  const matches = Array.from(managedConnections.values()).filter((connection) =>
+    connection.clientId === normalizedClientId &&
+    connection.projectId === projectId
+  );
+  for (const connection of matches) {
+    connection.close("client-disconnect");
+  }
+  return matches.length;
+}
+
+export function markSSEClientAlive(clientId: unknown, projectId?: string): number {
+  const normalizedClientId = normalizeSSEClientId(clientId);
+  if (!normalizedClientId) return 0;
+
+  const matches = Array.from(managedConnections.values()).filter((connection) =>
+    connection.clientId === normalizedClientId &&
+    connection.projectId === projectId
+  );
+  for (const connection of matches) {
+    connection.markAlive?.();
+  }
+  return matches.length;
+}
+
+/** Returns the current number of active SSE connections. */
+export function getActiveSSEConnections(): number {
+  return activeConnections;
+}
+
+/** Returns the high water mark of SSE connections. */
+export function getSSEHighWaterMark(): number {
+  return highWaterMark;
+}
+
+/**
+ * Safely write to an SSE response stream.
+ * Returns "ok" on success, "dead" if the socket is gone, or "backpressure" if
+ * the outbound buffer has grown past SSE_MAX_BUFFERED_BYTES (caller should
+ * tear down — Node will otherwise queue indefinitely into res.outputData).
+ */
+type SafeWriteResult = "ok" | "dead" | "backpressure";
+
+function safeWrite(res: Response, data: string): SafeWriteResult {
+  try {
+    if (res.writableEnded || res.destroyed) return "dead";
+    // Pre-check: if the buffer is already full, refuse the write.
+    if (typeof res.writableLength === "number" && res.writableLength > SSE_MAX_BUFFERED_BYTES) {
+      return "backpressure";
+    }
+    res.write(data);
+    return "ok";
+  } catch {
+    return "dead";
+  }
+}
+
+export function stripTaskListHeavyFields<T>(task: T): T {
+  if (!task || typeof task !== "object" || Array.isArray(task)) {
+    return task;
+  }
+
+  const candidate = task as Record<string, unknown>;
+  /*
+  FNXC:PromoteVisibility 2026-08-13-22:02:
+  Release-gate verdicts are response-only GET /api/tasks enrichments. Strip one defensively at the
+  SSE boundary so a future event producer cannot persist a stale Promote approval in browser state.
+  */
+  const { releaseGate: _transientReleaseGate, ...taskWithoutReleaseGate } = candidate;
+
+  if (!("log" in taskWithoutReleaseGate)) {
+    return taskWithoutReleaseGate as T;
+  }
+
+  const taskCandidate = taskWithoutReleaseGate as Record<string, unknown>;
+  const existingTimed = taskCandidate.timedExecutionMs;
+  // Mirror the slim REST path (listTasks): aggregate `[timing] … in <N>ms`
+  // log entries before stripping the log so the board card has the same
+  // total-execution figure on SSE updates as on the initial fetch.
+  // Without this, `task:updated` events arrive with log=[] AND
+  // timedExecutionMs=undefined, causing TaskCard to fall back to
+  // workflow-only time and flicker every time an update lands.
+  const timedExecutionMs =
+    typeof existingTimed === "number"
+      ? existingTimed
+      : sumTimedLogEntries(taskCandidate.log);
+
+  return {
+    ...taskWithoutReleaseGate,
+    // FN-5105/FN-5135: preserve deletedAt in SSE slim payloads for soft-delete suppression.
+    log: [],
+    timedExecutionMs,
+    tokenUsage: taskCandidate.tokenUsage,
+    workflowStepResults: taskCandidate.workflowStepResults,
+  } as T;
+}
+
+function sumTimedLogEntries(log: unknown): number {
+  if (!Array.isArray(log)) return 0;
+  let total = 0;
+  for (const entry of log) {
+    if (!entry || typeof entry !== "object") continue;
+    const action = typeof (entry as { action?: unknown }).action === "string"
+      ? ((entry as { action: string }).action)
+      : "";
+    const outcome = typeof (entry as { outcome?: unknown }).outcome === "string"
+      ? ((entry as { outcome: string }).outcome)
+      : "";
+    if (!action.includes("[timing]") && !outcome.includes("[timing]")) continue;
+    const match = `${action}\n${outcome}`.match(/(\d+(?:\.\d+)?)ms\b/i);
+    if (!match) continue;
+    const ms = Number(match[1]);
+    if (Number.isFinite(ms)) total += ms;
+  }
+  return total;
+}
+
+export function stripTaskEventHeavyFields<T>(payload: T): T {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  if ("task" in candidate) {
+    return {
+      ...candidate,
+      task: stripTaskListHeavyFields(candidate.task),
+    } as T;
+  }
+
+  return stripTaskListHeavyFields(payload);
+}
+
+async function enrichChatMessageSsePayload<T>(message: T, store: TaskStore, chatStore?: ChatStore): Promise<T> {
+  if (!message || typeof message !== "object" || Array.isArray(message) || !chatStore) {
+    return message;
+  }
+
+  const payload = message as Record<string, unknown>;
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+  if (!sessionId) return message;
+
+  const session = await chatStore.getSession(sessionId);
+  if (!session) return message;
+
+  const agentId = typeof payload.agentId === "string" ? payload.agentId : session.agentId;
+  const enrichedPayload: Record<string, unknown> = {
+    ...payload,
+    agentId,
+    projectId: payload.projectId ?? session.projectId ?? null,
+  };
+
+  if (typeof agentId === "string" && agentId.startsWith("task-planner:")) {
+    const settings = await store.getSettings().catch(() => undefined);
+    enrichedPayload.taskChatVisibleInCommonFeed = settings?.showTaskChatsInCommonFeed === true;
+  }
+
+  return enrichedPayload as T;
+}
+
+/**
+ * Normalized plugin lifecycle transition types.
+ * These are the unified set of transitions that the SSE stream emits.
+ */
+export type PluginLifecycleTransition =
+  | "installing"
+  | "enabled"
+  | "disabled"
+  | "error"
+  | "state-changed"
+  | "uninstalled"
+  | "settings-updated";
+
+/** Message event types forwarded through the SSE stream. */
+export type MessageSseEventType =
+  | "message:sent"
+  | "message:received"
+  | "message:read"
+  | "message:updated"
+  | "message:deleted";
+
+export type ApprovalSseEventType = "approval:requested" | "approval:updated" | "approval:decided";
+
+type ApprovalSseListener = (event: ApprovalSseEventType, payload: unknown, projectId?: string) => void;
+
+const approvalSseListeners = new Set<ApprovalSseListener>();
+
+export function emitApprovalSseEvent(event: ApprovalSseEventType, payload: unknown, projectId?: string): void {
+  for (const listener of approvalSseListeners) {
+    listener(event, payload, projectId);
+  }
+}
+
+/**
+ * Workflow-definition lifecycle events forwarded through the SSE stream. The
+ * TaskStore has no EventEmitter seam for workflow CRUD, so the workflow routes
+ * publish through this module-level seam (mirroring approvals) on create /
+ * update / delete. Board.tsx listens for `workflow:updated` to invalidate and
+ * re-fetch board-workflows when a definition (its lanes / column traits) changes.
+ */
+export type WorkflowSseEventType = "workflow:created" | "workflow:updated" | "workflow:deleted";
+
+type WorkflowSseListener = (event: WorkflowSseEventType, payload: unknown, projectId?: string) => void;
+
+const workflowSseListeners = new Set<WorkflowSseListener>();
+
+export function emitWorkflowSseEvent(event: WorkflowSseEventType, payload: unknown, projectId?: string): void {
+  for (const listener of workflowSseListeners) {
+    listener(event, payload, projectId);
+  }
+}
+
+/**
+ * Custom plugin events forwarded to connected SSE clients. This is the real
+ * publish-to-`/api/events` seam plugins reach through `ctx.emitEvent`: the
+ * dashboard wires a plugin route context's `emitEvent` to call this, and each
+ * open SSE stream forwards matching (project-scoped) events to the browser as a
+ * single `plugin:custom` event. Lets a plugin push live updates (e.g. CE session
+ * turns) instead of relying on client polling.
+ */
+export type PluginCustomSseListener = (
+  pluginId: string,
+  event: string,
+  payload: unknown,
+  projectId?: string,
+) => void;
+
+const pluginCustomSseListeners = new Set<PluginCustomSseListener>();
+
+export function emitPluginCustomSseEvent(
+  pluginId: string,
+  event: string,
+  payload: unknown,
+  projectId?: string,
+): void {
+  for (const listener of pluginCustomSseListeners) {
+    listener(pluginId, event, payload, projectId);
+  }
+}
+
+/**
+ * CLI agent session state transitions (CLI Agent Executor, U10). The engine
+ * state machine's `onStateChange` (throttled ~500ms in the engine) is bridged
+ * into this seam by `setupCliSessionTransport`; every open SSE stream forwards
+ * a matching (project-scoped) `cli:session:state` event so cards / banners
+ * update without touching the byte stream.
+ *
+ * Events are also appended to a small module-level ring buffer with monotonic
+ * ids so a client reconnecting with `Last-Event-ID` replays the transitions it
+ * missed (the byte stream is on a separate WS channel; this is state only).
+ */
+export interface CliSessionStateSsePayload {
+  sessionId: string;
+  taskId: string | null;
+  chatSessionId: string | null;
+  /** Machine state (may be the transient "resuming"). */
+  state: string;
+  terminationReason?: string | null;
+  /** Bounded (~200 chars), ANSI-stripped, redacted preview of recent output. */
+  lastOutputPreview?: string;
+  at: string;
+}
+
+type CliSessionStateSseListener = (
+  id: number,
+  payload: CliSessionStateSsePayload,
+  projectId?: string,
+) => void;
+
+const cliSessionStateSseListeners = new Set<CliSessionStateSseListener>();
+
+/** Module-level ring buffer of cli-session-state events for lastEventId replay. */
+const cliSessionStateBuffer: { id: number; payload: CliSessionStateSsePayload; projectId?: string }[] =
+  [];
+let cliSessionStateNextId = 1;
+const CLI_SESSION_STATE_BUFFER_CAP = 200;
+
+export function emitCliSessionStateSseEvent(
+  payload: CliSessionStateSsePayload,
+  projectId?: string,
+): number {
+  const id = cliSessionStateNextId++;
+  cliSessionStateBuffer.push({ id, payload, projectId });
+  if (cliSessionStateBuffer.length > CLI_SESSION_STATE_BUFFER_CAP) {
+    cliSessionStateBuffer.splice(0, cliSessionStateBuffer.length - CLI_SESSION_STATE_BUFFER_CAP);
+  }
+  for (const listener of cliSessionStateSseListeners) {
+    listener(id, payload, projectId);
+  }
+  return id;
+}
+
+/** Buffered cli-session-state events with id > lastEventId (for reconnect replay). */
+export function getCliSessionStateEventsSince(
+  lastEventId: number,
+): { id: number; payload: CliSessionStateSsePayload; projectId?: string }[] {
+  if (!Number.isFinite(lastEventId)) return [...cliSessionStateBuffer];
+  return cliSessionStateBuffer.filter((entry) => entry.id > lastEventId);
+}
+
+/** Test seam: reset the cli-session-state buffer between tests. */
+export function resetCliSessionStateBufferForTests(): void {
+  cliSessionStateBuffer.length = 0;
+  cliSessionStateNextId = 1;
+}
+
+/**
+ * Normalized plugin lifecycle payload emitted via SSE.
+ * This is the stable contract the UI can reconcile.
+ */
+export interface PluginLifecyclePayload {
+  /** Global install metadata event vs project runtime-state event */
+  scope: "global" | "project";
+  /** Plugin identifier */
+  pluginId: string;
+  /** Normalized transition type */
+  transition: PluginLifecycleTransition;
+  /** Underlying store/runtime event that triggered this transition */
+  sourceEvent: string;
+  /** ISO-8601 timestamp of the event */
+  timestamp: string;
+  /** Project ID when stream is project-scoped (omitted for default streams) */
+  projectId?: string;
+  /** Whether the plugin is currently enabled */
+  enabled: boolean;
+  /** Current plugin state */
+  state: PluginState;
+  /** Plugin version */
+  version: string;
+  /** Plugin settings snapshot */
+  settings: Record<string, unknown>;
+  /** Error message (only present when state is "error") */
+  error?: string;
+}
+
+/**
+ * Map source event names to normalized plugin lifecycle transitions.
+ * This ensures equivalent source events always map to the same transition value.
+ */
+function mapSourceEventToTransition(
+  sourceEvent: string,
+  plugin: PluginInstallation,
+  _previousState?: PluginState,
+): PluginLifecycleTransition {
+  switch (sourceEvent) {
+    case "plugin:registered":
+      return "installing";
+
+    case "plugin:enabled":
+      return "enabled";
+
+    case "plugin:disabled":
+      return "disabled";
+
+    case "plugin:stateChanged":
+      if (plugin.state === "error") {
+        return "error";
+      }
+      return "state-changed";
+
+    case "plugin:unregistered":
+      return "uninstalled";
+
+    case "plugin:updated":
+      // Check if this looks like a settings update
+      // (we emit settings-updated for any update, as the UI can diff if needed)
+      return "settings-updated";
+
+    default:
+      // Unknown events map to error for safety
+      return "error";
+  }
+}
+
+/**
+ * Create a normalized plugin lifecycle payload from a source event.
+ */
+function createPluginLifecyclePayload(
+  sourceEvent: string,
+  plugin: PluginInstallation,
+  projectId?: string,
+): PluginLifecyclePayload {
+  const transition = mapSourceEventToTransition(sourceEvent, plugin);
+  const scope = transition === "installing" || transition === "uninstalled" ? "global" : "project";
+  return {
+    scope,
+    pluginId: plugin.id,
+    transition,
+    sourceEvent,
+    timestamp: new Date().toISOString(),
+    projectId: scope === "project" ? projectId : undefined,
+    enabled: plugin.enabled,
+    state: plugin.state,
+    version: plugin.version,
+    settings: plugin.settings,
+    error: plugin.error,
+  };
+}
+
+export interface CreateSSEOptions {
+  /** Project ID for project-scoped streams (enables scope attribution) */
+  projectId?: string;
+}
+
+export function createSSE(
+  store: TaskStore,
+  missionStore?: SseMissionStore,
+  aiSessionStore?: AiSessionStore,
+  pluginStore?: PluginStore,
+  options?: CreateSSEOptions,
+  agentStore?: AgentStore,
+  messageStore?: MessageStore,
+  chatStore?: ChatStore,
+  automationStore?: AutomationStore,
+) {
+  const { projectId } = options ?? {};
+
+  return (_req: Request, res: Response) => {
+    const connectionId = nextConnectionId++;
+    const clientId = normalizeSSEClientId(_req.query?.clientId);
+    const socket = res.socket ?? _req.socket;
+    // FNXC:ResearchStore 2026-06-28-13:10:
+    // Both ResearchStore and AsyncResearchStore (PG backend) now emit run:* events, so
+    // SSE subscribes to whichever getResearchStore() resolves. The optional-chained
+    // subscribe/unsubscribe below is kept so a getResearchStore() that throws (no research
+    // store wired) degrades gracefully to research-less streaming.
+    let researchStore: SseResearchStore | null;
+    try {
+      researchStore = store.getResearchStore();
+    } catch {
+      researchStore = null;
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    // This header discourages reuse after the stream ends, but Chrome may
+    // still keep an EventSource transport alive during page unload. Cleanup is
+    // therefore driven by explicit client ids and server-side reaping below.
+    res.setHeader("Connection", "close");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    activeConnections++;
+    // Track high water mark and log when new highs are reached
+    if (activeConnections > highWaterMark) {
+      highWaterMark = activeConnections;
+    }
+    sseDebug(`[sse] + connection (active=${activeConnections}, hwm=${highWaterMark})`);
+
+    // Send initial heartbeat
+    res.write(": connected\n\n");
+
+    /** Write an SSE message; tear down on failure or backpressure. */
+    const send = (data: string) => {
+      const result = safeWrite(res, data);
+      if (result === "ok") return;
+      if (result === "backpressure") {
+        sseLog.warn(
+          `connection ${connectionId} backpressure exceeded ` +
+            `(buffered=${res.writableLength}B, threshold=${SSE_MAX_BUFFERED_BYTES}B); closing`,
+        );
+        closeConnection("backpressure");
+        return;
+      }
+      // "dead" — socket already gone; cleanup is enough.
+      cleanup("send-failed");
+    };
+
+    /*
+    FNXC:AgentActivityStream 2026-08-09-09:38:
+    This durable seq tail, rather than the in-process store event, is the cross-process delivery guarantee. A dashboard can only observe short-lived CLI/store writers by polling their committed outbox rows.
+
+    A descending `since` page would return the newest backlog rows first and permanently skip older rows when the mark advances. Drain ascending pages, advance only after the frame writes, and serialize drains: two concurrent readers can otherwise send the same seq range.
+    */
+    const AGENT_ACTIVITY_PAGE_SIZE = 100;
+    const AGENT_ACTIVITY_MAX_PAGES_PER_DRAIN = 20;
+    const AGENT_ACTIVITY_BACKLOG_LIMIT = 5_000n;
+    let activityClosed = false;
+    let activityInitialized = false;
+    let activityInitializing = false;
+    let activityDraining = false;
+    let activityRerun = false;
+    /*
+    FNXC:AgentActivityStream 2026-08-09-12:42:
+    The typed facade nudge carries the just-committed row. Retain the earliest seq observed
+    while seeding so a racing MAX() result cannot advance past it.
+    */
+    let firstNudgedActivitySeq: string | null = null;
+    let lastDeliveredSeq = "0";
+    const activityLayer = store.getAsyncLayer();
+
+    const sendAgentActivityFrame = (payload: unknown): boolean => {
+      if (activityClosed) return false;
+      send(`event: agent:activity\ndata: ${JSON.stringify(payload)}\n\n`);
+      // send() synchronously runs cleanup for dead/backpressured sockets.
+      return !activityClosed;
+    };
+
+    const drainAgentActivity = async (): Promise<void> => {
+      if (!activityLayer || activityClosed || !activityInitialized) return;
+      if (activityDraining) {
+        activityRerun = true;
+        return;
+      }
+
+      activityDraining = true;
+      try {
+        const maxSeq = await getMaxAgentActivitySeq(activityLayer);
+        if (BigInt(maxSeq) - BigInt(lastDeliveredSeq) > AGENT_ACTIVITY_BACKLOG_LIMIT) {
+          // FNXC:AgentActivityStream 2026-08-09-09:38: flooding a reconnected browser is worse than a documented gap it can close with GET /api/agent-activity.
+          if (sendAgentActivityFrame({ truncated: true, fromSeq: lastDeliveredSeq, toSeq: maxSeq })) {
+            lastDeliveredSeq = maxSeq;
+          }
+          return;
+        }
+
+        let pages = 0;
+        while (!activityClosed && pages < AGENT_ACTIVITY_MAX_PAGES_PER_DRAIN) {
+          const page = await queryAgentActivityEvents(activityLayer, {
+            since: lastDeliveredSeq,
+            order: "asc",
+            limit: AGENT_ACTIVITY_PAGE_SIZE,
+          });
+          for (const event of page.events) {
+            if (!sendAgentActivityFrame(event)) return;
+            // Preserve at-least-once delivery: a failed frame leaves this mark unchanged.
+            lastDeliveredSeq = event.seq;
+          }
+          pages++;
+          if (page.events.length < AGENT_ACTIVITY_PAGE_SIZE) return;
+        }
+
+        // The periodic tick resumes a capped backlog without monopolizing this request's event loop.
+      } catch (error) {
+        // FNXC:AgentActivityStream 2026-08-09-09:38: polling failure is retryable monitoring loss, never permission to optimistically advance the durable cursor.
+        sseLog.warn(`agent activity tail failed for connection ${connectionId}; will retry`, error);
+      } finally {
+        activityDraining = false;
+        if (activityRerun && !activityClosed) {
+          activityRerun = false;
+          void drainAgentActivity();
+        }
+      }
+    };
+
+    const initializeAgentActivityTail = async (): Promise<void> => {
+      if (!activityLayer || activityClosed || activityInitialized || activityInitializing) return;
+      activityInitializing = true;
+      try {
+        // Seed at connection time so history remains a deliberate REST read, not an SSE replay.
+        const initialSeq = await getMaxAgentActivitySeq(activityLayer);
+        /*
+        FNXC:AgentActivityStream 2026-08-09-12:27:
+        The initial in-process nudge is only a latency signal; short-lived writers can commit
+        from another process with no local nudge at all. Re-read the durable high-water mark
+        before publishing the seed. A changed mark means a commit raced initialization, so drain
+        from the first mark rather than advancing past it. The interval remains the recovery path
+        for a commit after this bounded check.
+        */
+        const verifiedSeq = await getMaxAgentActivitySeq(activityLayer);
+        /*
+        FNXC:AgentActivityStream 2026-08-09-12:42:
+        An in-process nudge includes its persisted seq. If that commit races the seed MAX(),
+        start immediately before that one row rather than at zero: this delivers the raced row
+        without replaying pre-connect history. An untyped nudge is only a low-latency request;
+        the durable verification/poll remains its correctness fallback.
+        */
+        const nudgedFloor = firstNudgedActivitySeq
+          ? (BigInt(firstNudgedActivitySeq) - 1n).toString()
+          : initialSeq;
+        lastDeliveredSeq = BigInt(nudgedFloor) < BigInt(initialSeq) ? nudgedFloor : initialSeq;
+        activityInitialized = true;
+        if (activityRerun || verifiedSeq !== initialSeq) {
+          activityRerun = false;
+          void drainAgentActivity();
+        }
+      } catch (error) {
+        // Do not seed from "0" after a failed read: that would replay unbounded history.
+        sseLog.warn(`agent activity tail could not establish initial cursor for connection ${connectionId}`, error);
+      } finally {
+        activityInitializing = false;
+      }
+    };
+    const onAgentActivityNudge = (event?: { seq?: unknown }) => {
+      if (!activityInitialized) {
+        const seq = event?.seq;
+        if (typeof seq === "string" && /^\d+$/.test(seq) && BigInt(seq) > 0n) {
+          if (!firstNudgedActivitySeq || BigInt(seq) < BigInt(firstNudgedActivitySeq)) {
+            firstNudgedActivitySeq = seq;
+          }
+        }
+        activityRerun = true;
+        void initializeAgentActivityTail();
+        return;
+      }
+      void drainAgentActivity();
+    };
+    const agentActivityPoll = setInterval(onAgentActivityNudge, resolveAgentActivityPollMs());
+    agentActivityPoll.unref?.();
+    // --- Event handler definitions ---
+    const onCreated = (task: unknown) => {
+      send(`event: task:created\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
+    };
+    const onMoved = (data: unknown) => {
+      send(`event: task:moved\ndata: ${JSON.stringify(stripTaskEventHeavyFields(data))}\n\n`);
+    };
+    const onUpdated = (task: unknown) => {
+      send(`event: task:updated\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
+    };
+    const onTaskAssigned = (agent: unknown, taskId: string) => {
+      const payload = {
+        taskId,
+        agentId:
+          agent && typeof agent === "object" && "id" in agent
+            ? String((agent as { id: unknown }).id)
+            : "",
+        assignedAt: new Date().toISOString(),
+      };
+      send(`event: task:assigned\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+    const onDeleted = (task: unknown) => {
+      send(`event: task:deleted\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
+    };
+    const onMerged = (result: unknown) => {
+      send(`event: task:merged\ndata: ${JSON.stringify(stripTaskEventHeavyFields(result))}\n\n`);
+    };
+    const onAgentLog = (entry: AgentLogEntry) => {
+      const payload = {
+        taskId: entry.taskId,
+        timestamp: entry.timestamp,
+        type: entry.type,
+        agent: entry.agent,
+      };
+      send(`event: agent:log\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+    const onWorkflowSettingValuesUpdated = (data: {
+      workflowId: string;
+      projectId: string;
+      settingIds: string[];
+      mutationId: string;
+    }) => {
+      if (projectId && data.projectId !== projectId) return;
+      send(`event: workflow:setting-values-updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const onArtifactRegistered = (artifact: unknown) => {
+      /* FNXC:ArtifactRegistry 2026-06-27-00:00: Forward TaskStore's authoritative artifact registration event so live artifact surfaces refresh even when the best-effort inbox notification is absent or delayed. */
+      send(`event: artifact:registered\ndata: ${JSON.stringify(artifact)}\n\n`);
+    };
+
+    const onArtifactUpdated = (artifact: unknown) => {
+      /* FNXC:ArtifactRegistry 2026-07-10-15:20: Forward in-place artifact edits (Artifacts view doc editor) so open galleries and viewers refresh without a manual reload. */
+      send(`event: artifact:updated\ndata: ${JSON.stringify(artifact)}\n\n`);
+    };
+
+    const onResearchRunCreated = (run: unknown) => {
+      send(`event: research:run:created\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunUpdated = (run: unknown) => {
+      send(`event: research:run:updated\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunCompleted = (run: unknown) => {
+      send(`event: research:run:completed\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunFailed = (run: unknown) => {
+      send(`event: research:run:failed\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunCancelled = (run: unknown) => {
+      send(`event: research:run:cancelled\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunTimedOut = (run: unknown) => {
+      send(`event: research:run:timed_out\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+
+    const onMissionCreated = (data: unknown) => {
+      send(`event: mission:created\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onMissionUpdated = (data: unknown) => {
+      send(`event: mission:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onMissionDeleted = (data: unknown) => {
+      send(`event: mission:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onMilestoneCreated = (data: unknown) => {
+      send(`event: milestone:created\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onMilestoneUpdated = (data: unknown) => {
+      send(`event: milestone:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onMilestoneDeleted = (data: unknown) => {
+      send(`event: milestone:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onSliceCreated = (data: unknown) => {
+      send(`event: slice:created\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onSliceUpdated = (data: unknown) => {
+      send(`event: slice:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onSliceDeleted = (data: unknown) => {
+      send(`event: slice:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onSliceActivated = (data: unknown) => {
+      send(`event: slice:activated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onFeatureCreated = (data: unknown) => {
+      send(`event: feature:created\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onFeatureUpdated = (data: unknown) => {
+      send(`event: feature:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onFeatureDeleted = (data: unknown) => {
+      send(`event: feature:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onFeatureLinked = (data: unknown) => {
+      send(`event: feature:linked\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onFeatureUnlinked = (data: unknown) => {
+      send(`event: feature:unlinked\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAssertionCreated = (data: unknown) => {
+      send(`event: assertion:created\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAssertionUpdated = (data: unknown) => {
+      send(`event: assertion:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAssertionDeleted = (data: unknown) => {
+      send(`event: assertion:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAssertionLinked = (data: unknown) => {
+      send(`event: assertion:linked\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAssertionUnlinked = (data: unknown) => {
+      send(`event: assertion:unlinked\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onMissionEvent = (data: unknown) => {
+      send(`event: mission:event\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const onMilestoneValidationUpdated = (data: unknown) => {
+      send(`event: milestone:validation:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const onValidatorRunStarted = (run: MissionValidatorRun) => {
+      send(`event: validator-run:started\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+
+    const onValidatorRunCompleted = (run: MissionValidatorRun) => {
+      send(`event: validator-run:completed\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+
+    const onFixFeatureCreated = (payload: FixFeatureCreatedPayload) => {
+      send(`event: fix-feature:created\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onAiSessionUpdated = (data: unknown) => {
+      send(`event: ai_session:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAiSessionDeleted = (data: unknown) => {
+      send(`event: ai_session:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // --- Unified plugin lifecycle handler ---
+    // Instead of emitting individual plugin events, we normalize all plugin
+    // lifecycle changes into a single `plugin:lifecycle` SSE event with
+    // a deterministic payload contract.
+
+    const onPluginRegistered = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:registered", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onPluginUnregistered = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:unregistered", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onPluginUpdated = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:updated", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onPluginEnabled = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:enabled", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onPluginDisabled = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:disabled", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onPluginStateChanged = (plugin: PluginInstallation) => {
+      const payload = createPluginLifecyclePayload("plugin:stateChanged", plugin, projectId);
+      send(`event: plugin:lifecycle\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    // --- Agent lifecycle event handlers ---
+    const onAgentCreated = (agent: unknown) => {
+      send(`event: agent:created\ndata: ${JSON.stringify(agent)}\n\n`);
+    };
+
+    const onAgentUpdated = (agent: unknown) => {
+      send(`event: agent:updated\ndata: ${JSON.stringify(agent)}\n\n`);
+    };
+
+    const onAgentDeleted = (agentId: string) => {
+      send(`event: agent:deleted\ndata: ${JSON.stringify({ id: agentId })}\n\n`);
+    };
+
+    const onAgentStateChanged = (agentId: string, fromState: string, toState: string) => {
+      send(`event: agent:stateChanged\ndata: ${JSON.stringify({ id: agentId, from: fromState, to: toState })}\n\n`);
+    };
+
+    // --- Message event handlers ---
+    const onMessageSent = (message: unknown) => {
+      send(`event: message:sent\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onMessageReceived = (message: unknown) => {
+      send(`event: message:received\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onMessageRead = (message: unknown) => {
+      send(`event: message:read\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onMessageUpdated = (message: unknown) => {
+      send(`event: message:updated\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onMessageDeleted = (messageId: string) => {
+      send(`event: message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
+    };
+
+    const onApprovalEvent: ApprovalSseListener = (event, payload, eventProjectId) => {
+      if (projectId && eventProjectId && eventProjectId !== projectId) return;
+      send(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onWorkflowEvent: WorkflowSseListener = (event, payload, eventProjectId) => {
+      if (projectId && eventProjectId && eventProjectId !== projectId) return;
+      send(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onPluginCustomEvent: PluginCustomSseListener = (pluginId, event, payload, eventProjectId) => {
+      // Scope match mirrors approvals: a project-scoped stream only forwards
+      // events for its own project; the default stream forwards unscoped events.
+      if (projectId && eventProjectId && eventProjectId !== projectId) return;
+      send(`event: plugin:custom\ndata: ${JSON.stringify({ pluginId, event, payload })}\n\n`);
+    };
+
+    const onCliSessionStateEvent: CliSessionStateSseListener = (id, payload, eventProjectId) => {
+      if (projectId && eventProjectId && eventProjectId !== projectId) return;
+      send(`id: ${id}\nevent: cli:session:state\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    // --- Chat store event handlers ---
+    const onChatSessionCreated = (session: unknown) => {
+      send(`event: chat:session:created\ndata: ${JSON.stringify(session)}\n\n`);
+    };
+
+    const onChatSessionUpdated = (session: unknown) => {
+      send(`event: chat:session:updated\ndata: ${JSON.stringify(session)}\n\n`);
+    };
+
+    const onChatSessionDeleted = (sessionId: string) => {
+      send(`event: chat:session:deleted\ndata: ${JSON.stringify({ id: sessionId })}\n\n`);
+    };
+
+    const onChatMessageAdded = (message: unknown) => {
+      void (async () => {
+        /*
+         * FNXC:ChatBadge 2026-07-01-00:00:
+         * Task-detail planner Chat sessions are hidden from the global Chat feed unless `showTaskChatsInCommonFeed` is enabled, so direct-message SSE payloads must carry both the source session agent id and effective feed visibility. The App unread badge uses this metadata to suppress hidden task-local planner replies without regressing opt-in shared-feed planner chats or normal direct-message payload fields.
+         */
+        const payload = await enrichChatMessageSsePayload(message, store, chatStore);
+        send(`event: chat:message:added\ndata: ${JSON.stringify(payload)}\n\n`);
+      })();
+    };
+
+    const onChatMessageDeleted = (messageId: string) => {
+      send(`event: chat:message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
+    };
+
+    const onChatRoomCreated = (room: unknown) => {
+      send(`event: chat:room:created\ndata: ${JSON.stringify(room)}\n\n`);
+    };
+
+    const onChatRoomUpdated = (room: unknown) => {
+      send(`event: chat:room:updated\ndata: ${JSON.stringify(room)}\n\n`);
+    };
+
+    const onChatRoomDeleted = (roomId: string) => {
+      send(`event: chat:room:deleted\ndata: ${JSON.stringify({ id: roomId })}\n\n`);
+    };
+
+    const onChatRoomMemberAdded = (member: unknown) => {
+      send(`event: chat:room:member:added\ndata: ${JSON.stringify(member)}\n\n`);
+    };
+
+    const onChatRoomMemberRemoved = (payload: unknown) => {
+      send(`event: chat:room:member:removed\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const onChatRoomMessageAdded = (message: unknown) => {
+      send(`event: chat:room:message:added\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onChatRoomMessageUpdated = (message: unknown) => {
+      send(`event: chat:room:message:updated\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+
+    const onChatRoomMessageDeleted = (messageId: string) => {
+      send(`event: chat:room:message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
+    };
+
+    // --- Automation store event handlers ---
+    const onScheduleCreated = (schedule: unknown) => {
+      send(`event: schedule:created\ndata: ${JSON.stringify(schedule)}\n\n`);
+    };
+
+    const onScheduleUpdated = (schedule: unknown) => {
+      send(`event: schedule:updated\ndata: ${JSON.stringify(schedule)}\n\n`);
+    };
+
+    const onScheduleDeleted = (schedule: unknown) => {
+      send(`event: schedule:deleted\ndata: ${JSON.stringify(schedule)}\n\n`);
+    };
+
+    const onScheduleRun = (data: unknown) => {
+      send(`event: schedule:run\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // --- Cleanup (all handlers are defined above, safe to reference) ---
+
+    let cleaned = false;
+    let clientStaleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function resetClientStaleTimer(): void {
+      if (!clientId) return;
+      if (clientStaleTimer) clearTimeout(clientStaleTimer);
+      clientStaleTimer = setTimeout(() => {
+        closeConnection("stale");
+      }, SSE_CLIENT_STALE_MS);
+      clientStaleTimer.unref?.();
+    }
+
+    function cleanup(_reason: SSECloseReason = "close") {
+      if (cleaned) return;
+      cleaned = true;
+      unregisterManagedConnection(connectionId);
+      activeConnections--;
+      sseDebug(`[sse] - connection (active=${activeConnections})`);
+      if (clientStaleTimer) clearTimeout(clientStaleTimer);
+      clearInterval(heartbeat);
+      activityClosed = true;
+      clearInterval(agentActivityPoll);
+      store.off("agent:activity", onAgentActivityNudge);
+      store.off("task:created", onCreated);
+      store.off("task:moved", onMoved);
+      store.off("task:updated", onUpdated);
+      store.off("task:deleted", onDeleted);
+      store.off("task:merged", onMerged);
+      store.off("agent:log", onAgentLog);
+      store.off("artifact:registered", onArtifactRegistered);
+      store.off("artifact:updated", onArtifactUpdated);
+      store.off("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);
+      if (missionStore) {
+        missionStore.off("mission:created", onMissionCreated);
+        missionStore.off("mission:updated", onMissionUpdated);
+        missionStore.off("mission:deleted", onMissionDeleted);
+        missionStore.off("milestone:created", onMilestoneCreated);
+        missionStore.off("milestone:updated", onMilestoneUpdated);
+        missionStore.off("milestone:deleted", onMilestoneDeleted);
+        missionStore.off("slice:created", onSliceCreated);
+        missionStore.off("slice:updated", onSliceUpdated);
+        missionStore.off("slice:deleted", onSliceDeleted);
+        missionStore.off("slice:activated", onSliceActivated);
+        missionStore.off("feature:created", onFeatureCreated);
+        missionStore.off("feature:updated", onFeatureUpdated);
+        missionStore.off("feature:deleted", onFeatureDeleted);
+        missionStore.off("feature:linked", onFeatureLinked);
+        missionStore.off("feature:unlinked", onFeatureUnlinked);
+        missionStore.off("assertion:created", onAssertionCreated);
+        missionStore.off("assertion:updated", onAssertionUpdated);
+        missionStore.off("assertion:deleted", onAssertionDeleted);
+        missionStore.off("assertion:linked", onAssertionLinked);
+        missionStore.off("assertion:unlinked", onAssertionUnlinked);
+        missionStore.off("mission:event", onMissionEvent);
+        missionStore.off("milestone:validation:updated", onMilestoneValidationUpdated);
+        missionStore.off("validator-run:started", onValidatorRunStarted);
+        missionStore.off("validator-run:completed", onValidatorRunCompleted);
+        missionStore.off("fix-feature:created", onFixFeatureCreated);
+      }
+      if (aiSessionStore) {
+        aiSessionStore.off("ai_session:updated", onAiSessionUpdated);
+        aiSessionStore.off("ai_session:deleted", onAiSessionDeleted);
+      }
+      if (pluginStore) {
+        pluginStore.off("plugin:registered", onPluginRegistered);
+        pluginStore.off("plugin:unregistered", onPluginUnregistered);
+        pluginStore.off("plugin:updated", onPluginUpdated);
+        pluginStore.off("plugin:enabled", onPluginEnabled);
+        pluginStore.off("plugin:disabled", onPluginDisabled);
+        pluginStore.off("plugin:stateChanged", onPluginStateChanged);
+      }
+      if (agentStore) {
+        agentStore.off("agent:created", onAgentCreated);
+        agentStore.off("agent:updated", onAgentUpdated);
+        agentStore.off("agent:deleted", onAgentDeleted);
+        agentStore.off("agent:stateChanged", onAgentStateChanged);
+        agentStore.off("agent:assigned", onTaskAssigned);
+      }
+      if (messageStore) {
+        messageStore.off("message:sent", onMessageSent);
+        messageStore.off("message:received", onMessageReceived);
+        messageStore.off("message:read", onMessageRead);
+        messageStore.off("message:updated", onMessageUpdated);
+        messageStore.off("message:deleted", onMessageDeleted);
+      }
+      approvalSseListeners.delete(onApprovalEvent);
+      workflowSseListeners.delete(onWorkflowEvent);
+      pluginCustomSseListeners.delete(onPluginCustomEvent);
+      cliSessionStateSseListeners.delete(onCliSessionStateEvent);
+      if (chatStore) {
+        chatStore.off("chat:session:created", onChatSessionCreated);
+        chatStore.off("chat:session:updated", onChatSessionUpdated);
+        chatStore.off("chat:session:deleted", onChatSessionDeleted);
+        chatStore.off("chat:message:added", onChatMessageAdded);
+        chatStore.off("chat:message:deleted", onChatMessageDeleted);
+        chatStore.off("chat:room:created", onChatRoomCreated);
+        chatStore.off("chat:room:updated", onChatRoomUpdated);
+        chatStore.off("chat:room:deleted", onChatRoomDeleted);
+        chatStore.off("chat:room:member:added", onChatRoomMemberAdded);
+        chatStore.off("chat:room:member:removed", onChatRoomMemberRemoved);
+        chatStore.off("chat:room:message:added", onChatRoomMessageAdded);
+        chatStore.off("chat:room:message:updated", onChatRoomMessageUpdated);
+        chatStore.off("chat:room:message:deleted", onChatRoomMessageDeleted);
+      }
+      if (automationStore) {
+        automationStore.off("schedule:created", onScheduleCreated);
+        automationStore.off("schedule:updated", onScheduleUpdated);
+        automationStore.off("schedule:deleted", onScheduleDeleted);
+        automationStore.off("schedule:run", onScheduleRun);
+      }
+      researchStore?.off("run:created", onResearchRunCreated);
+      researchStore?.off("run:updated", onResearchRunUpdated);
+      researchStore?.off("run:completed", onResearchRunCompleted);
+      researchStore?.off("run:failed", onResearchRunFailed);
+      researchStore?.off("run:cancelled", onResearchRunCancelled);
+      researchStore?.off("run:timed_out", onResearchRunTimedOut);
+    }
+
+    function closeConnection(reason: SSECloseReason): void {
+      cleanup(reason);
+      try {
+        if (!res.writableEnded && !res.destroyed) {
+          res.end();
+        }
+      } catch {
+        // The socket may already be gone.
+      }
+      try {
+        if (socket && !socket.destroyed) {
+          socket.destroy();
+        }
+      } catch {
+        // Ignore cleanup races with Node's own close path.
+      }
+    }
+
+    // --- Subscribe ---
+
+    store.on("task:created", onCreated);
+    store.on("task:moved", onMoved);
+    store.on("task:updated", onUpdated);
+    store.on("task:deleted", onDeleted);
+    store.on("task:merged", onMerged);
+    /*
+    FNXC:DashboardStallBadges 2026-07-01-23:42:
+    Agent log streaming is authoritative evidence that an in-review agent is active even when the task row has not changed. Forward compact log metadata on the board stream so clients can clear false Stalled/Merge stalled badges without rewriting the full task for every log line.
+    */
+    store.on("agent:log", onAgentLog);
+    // Subscribe before seeding so an in-process append cannot be lost in the seed-query window.
+    store.on("agent:activity", onAgentActivityNudge);
+    void initializeAgentActivityTail();
+    store.on("artifact:registered", onArtifactRegistered);
+    store.on("artifact:updated", onArtifactUpdated);
+    store.on("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);
+
+    if (missionStore) {
+      missionStore.on("mission:created", onMissionCreated);
+      missionStore.on("mission:updated", onMissionUpdated);
+      missionStore.on("mission:deleted", onMissionDeleted);
+      missionStore.on("milestone:created", onMilestoneCreated);
+      missionStore.on("milestone:updated", onMilestoneUpdated);
+      missionStore.on("milestone:deleted", onMilestoneDeleted);
+      missionStore.on("slice:created", onSliceCreated);
+      missionStore.on("slice:updated", onSliceUpdated);
+      missionStore.on("slice:deleted", onSliceDeleted);
+      missionStore.on("slice:activated", onSliceActivated);
+      missionStore.on("feature:created", onFeatureCreated);
+      missionStore.on("feature:updated", onFeatureUpdated);
+      missionStore.on("feature:deleted", onFeatureDeleted);
+      missionStore.on("feature:linked", onFeatureLinked);
+      missionStore.on("feature:unlinked", onFeatureUnlinked);
+      missionStore.on("assertion:created", onAssertionCreated);
+      missionStore.on("assertion:updated", onAssertionUpdated);
+      missionStore.on("assertion:deleted", onAssertionDeleted);
+      missionStore.on("assertion:linked", onAssertionLinked);
+      missionStore.on("assertion:unlinked", onAssertionUnlinked);
+      missionStore.on("mission:event", onMissionEvent);
+      missionStore.on("milestone:validation:updated", onMilestoneValidationUpdated);
+      missionStore.on("validator-run:started", onValidatorRunStarted);
+      missionStore.on("validator-run:completed", onValidatorRunCompleted);
+      missionStore.on("fix-feature:created", onFixFeatureCreated);
+    }
+
+    if (aiSessionStore) {
+      aiSessionStore.on("ai_session:updated", onAiSessionUpdated);
+      aiSessionStore.on("ai_session:deleted", onAiSessionDeleted);
+    }
+
+    if (pluginStore) {
+      pluginStore.on("plugin:registered", onPluginRegistered);
+      pluginStore.on("plugin:unregistered", onPluginUnregistered);
+      pluginStore.on("plugin:updated", onPluginUpdated);
+      pluginStore.on("plugin:enabled", onPluginEnabled);
+      pluginStore.on("plugin:disabled", onPluginDisabled);
+      pluginStore.on("plugin:stateChanged", onPluginStateChanged);
+    }
+
+    if (agentStore) {
+      agentStore.on("agent:created", onAgentCreated);
+      agentStore.on("agent:updated", onAgentUpdated);
+      agentStore.on("agent:deleted", onAgentDeleted);
+      agentStore.on("agent:stateChanged", onAgentStateChanged);
+      agentStore.on("agent:assigned", onTaskAssigned);
+    }
+
+    if (messageStore) {
+      messageStore.on("message:sent", onMessageSent);
+      messageStore.on("message:received", onMessageReceived);
+      messageStore.on("message:read", onMessageRead);
+      messageStore.on("message:updated", onMessageUpdated);
+      messageStore.on("message:deleted", onMessageDeleted);
+    }
+
+    if (chatStore) {
+      chatStore.on("chat:session:created", onChatSessionCreated);
+      chatStore.on("chat:session:updated", onChatSessionUpdated);
+      chatStore.on("chat:session:deleted", onChatSessionDeleted);
+      chatStore.on("chat:message:added", onChatMessageAdded);
+      chatStore.on("chat:message:deleted", onChatMessageDeleted);
+      chatStore.on("chat:room:created", onChatRoomCreated);
+      chatStore.on("chat:room:updated", onChatRoomUpdated);
+      chatStore.on("chat:room:deleted", onChatRoomDeleted);
+      chatStore.on("chat:room:member:added", onChatRoomMemberAdded);
+      chatStore.on("chat:room:member:removed", onChatRoomMemberRemoved);
+      chatStore.on("chat:room:message:added", onChatRoomMessageAdded);
+      chatStore.on("chat:room:message:updated", onChatRoomMessageUpdated);
+      chatStore.on("chat:room:message:deleted", onChatRoomMessageDeleted);
+    }
+
+    if (automationStore) {
+      automationStore.on("schedule:created", onScheduleCreated);
+      automationStore.on("schedule:updated", onScheduleUpdated);
+      automationStore.on("schedule:deleted", onScheduleDeleted);
+      automationStore.on("schedule:run", onScheduleRun);
+    }
+
+    researchStore?.on("run:created", onResearchRunCreated);
+    researchStore?.on("run:updated", onResearchRunUpdated);
+    researchStore?.on("run:completed", onResearchRunCompleted);
+    researchStore?.on("run:failed", onResearchRunFailed);
+    researchStore?.on("run:cancelled", onResearchRunCancelled);
+    researchStore?.on("run:timed_out", onResearchRunTimedOut);
+
+    // Heartbeat every 30s to keep connection alive.
+    // Sent as a named event so the client's EventSource can detect it
+    // (SSE comments starting with ":" are silently consumed and never
+    // fire event listeners in the browser).
+    approvalSseListeners.add(onApprovalEvent);
+    workflowSseListeners.add(onWorkflowEvent);
+    pluginCustomSseListeners.add(onPluginCustomEvent);
+    cliSessionStateSseListeners.add(onCliSessionStateEvent);
+
+    // Replay any cli-session-state transitions missed since the client's
+    // Last-Event-ID (reconnect recovery — the byte stream is on a separate WS
+    // channel, so only state events are replayed here).
+    {
+      const headerVal = _req.headers?.["last-event-id"];
+      const lastEventIdRaw =
+        (typeof headerVal === "string"
+          ? headerVal
+          : Array.isArray(headerVal)
+            ? headerVal[0]
+            : undefined) ??
+        (typeof _req.query?.lastEventId === "string" ? _req.query.lastEventId : undefined);
+      const lastEventId = lastEventIdRaw !== undefined ? Number(lastEventIdRaw) : NaN;
+      if (Number.isFinite(lastEventId)) {
+        for (const entry of getCliSessionStateEventsSince(lastEventId)) {
+          if (projectId && entry.projectId && entry.projectId !== projectId) continue;
+          send(
+            `id: ${entry.id}\nevent: cli:session:state\ndata: ${JSON.stringify(entry.payload)}\n\n`,
+          );
+        }
+      }
+    }
+
+    registerManagedConnection({
+      id: connectionId,
+      clientId,
+      projectId,
+      close: closeConnection,
+      markAlive: resetClientStaleTimer,
+    });
+    resetClientStaleTimer();
+
+    const heartbeat = setInterval(() => {
+      send("event: heartbeat\ndata: \n\n");
+    }, 30_000);
+
+    // Register cleanup on request close (primary path for HTTP/1.1)
+    _req.on("close", () => cleanup("close"));
+    _req.on("aborted", () => closeConnection("request-aborted"));
+
+    // Also register on response close as a safety net for edge cases
+    // (e.g., proxy timeouts, HTTP/2 stream resets). This ensures cleanup
+    // fires even if the request object doesn't emit "close".
+    // Guard with typeof check for test mocks that may not have on method.
+    if (typeof res.on === "function") {
+      res.on("close", () => cleanup("close"));
+    }
+
+    // Socket events still handle normal disconnects and low-level errors. The
+    // client-id registry above covers browser unload cases where Chrome keeps
+    // the HTTP/1.1 transport alive and no close event arrives promptly.
+    if (socket) {
+      if (typeof socket.setKeepAlive === "function") {
+        socket.setKeepAlive(true, 10_000);
+      }
+      if (typeof socket.on === "function") {
+        socket.on("close", () => cleanup("close"));
+        socket.on("error", () => closeConnection("error"));
+      }
+    }
+  };
+}

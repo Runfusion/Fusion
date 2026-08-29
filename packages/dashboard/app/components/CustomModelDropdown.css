@@ -1,0 +1,469 @@
+/* === Model Combobox Component === */
+/*
+FNXC:AgentSettingsTheming 2026-07-23-13:01:
+The model combobox is portaled outside Agent Settings but remains part of its runtime control. Its trigger, search, menu, options, favorites, and thinking selector must inherit dashboard tokens for dark, light, disabled, hover, and keyboard-focus states.
+*/
+
+.model-combobox {
+  position: relative;
+  width: 100%;
+}
+
+.model-combobox-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-primary);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.model-combobox-trigger:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.model-combobox-trigger:focus,
+.model-combobox-trigger:focus-visible {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.model-combobox-trigger:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  cursor: not-allowed;
+}
+
+.model-combobox-trigger-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.model-combobox-trigger-icon {
+  display: inline-flex;
+  margin-right: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.model-combobox-trigger-arrow {
+  font-size: var(--space-sm);
+  color: var(--text-muted);
+  margin-left: var(--space-sm);
+  transition: transform var(--duration-fast);
+}
+
+.model-combobox-trigger[aria-expanded="true"] .model-combobox-trigger-arrow {
+  transform: rotate(180deg);
+}
+
+.model-combobox-dropdown {
+  position: fixed;
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  /* Must sit above floating dashboard panels and the shared floating-window stack (10100+). */
+  z-index: 11000;
+  max-height: calc(var(--space-2xl) * 10);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.model-combobox-search-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.model-combobox-search {
+  width: 100%;
+  padding: var(--space-sm) calc(var(--space-xl) + var(--space-md)) var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-primary);
+  outline: none;
+}
+
+.model-combobox-search::placeholder {
+  color: var(--text-dim);
+}
+
+.model-combobox-search:focus,
+.model-combobox-search:focus-visible {
+  background: var(--card);
+}
+
+.model-combobox-clear {
+  position: absolute;
+  right: var(--space-sm);
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 var(--space-xs);
+  transition: color var(--transition-fast);
+}
+
+.model-combobox-clear:hover {
+  color: var(--text);
+}
+
+.model-combobox-results-count {
+  flex-shrink: 0;
+  padding: calc(var(--space-sm) - var(--space-xs) * 0.5) var(--space-md);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  background: var(--surface);
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.model-combobox-thinking,
+.model-combobox-instance {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.model-combobox-thinking-label,
+.model-combobox-instance-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.model-combobox-thinking-select,
+.model-combobox-instance-select {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+The inline Thinking Level <select> had no CSS and rendered as the OS-default white control on the dark model dropdown across all model-picker surfaces, including the quick-add QuickEntryBox executor submenu and InlineCreateCard ModelSelectionModal. Mirror the canonical dark select tokens so reasoning-effort selection matches the surrounding combobox everywhere.
+
+FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+The Thinking Level <select> renders inside the createPortal dropdown (.model-combobox-dropdown), not under the trigger wrapper (.model-combobox). Scope the select rules to the portal container so Android/mobile and desktop model pickers receive the dark-theme tokens wherever CustomModelDropdown is used.
+*/
+.model-combobox-dropdown .thinking-level-select {
+  width: 100%;
+  padding: var(--space-xs) calc(var(--space-lg) + var(--space-md)) var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-primary);
+  line-height: 1.4;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.model-combobox-dropdown .thinking-level-select:hover:not(:focus):not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.model-combobox-dropdown .thinking-level-select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.model-combobox-dropdown .thinking-level-select:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  cursor: not-allowed;
+}
+
+.model-combobox-dropdown .thinking-level-select option {
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.model-combobox-dropdown .thinking-level-select optgroup {
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.model-combobox-thinking::after,
+.model-combobox-instance::after {
+  content: "";
+  position: absolute;
+  right: calc(var(--space-md) + var(--space-sm));
+  width: var(--space-xs);
+  height: var(--space-xs);
+  border: solid var(--text-muted);
+  border-width: 0 var(--btn-border-width) var(--btn-border-width) 0;
+  pointer-events: none;
+  transform: rotate(45deg) translateY(calc(var(--space-xs) * -1));
+}
+
+.model-combobox-thinking-badge {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+FNXC:ModelDropdown 2026-07-09-00:00:
+FN-7760 requires the portaled model list to remain the touch-scroll owner on mobile. The global mobile lockdown keeps body/root overflow hidden and defaults touch gestures to vertical panning, so this fixed-position scroller needs its own iOS momentum scrolling, contained overscroll, and explicit vertical pan contract.
+
+FNXC:ModelDropdown 2026-07-15-00:00:
+FN-8212 refines FN-8193 by removing the scroller's top padding. A sticky provider header anchors at the list top, so top padding exposed scrolling model rows in a seam between the fixed header stack and that header. Bottom token spacing preserves the list's trailing rhythm.
+
+FNXC:ModelDropdown 2026-07-16-00:00:
+FN-8355 requires the portaled list to remain the touch-scroll owner after filtering and a virtual-keyboard visualViewport reposition. Permit this flex child to shrink below its content height; otherwise the fixed search/header stack can leave its overflow clipped by the dropdown instead of scrollable on iOS and Android.
+*/
+.model-combobox-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 0 0 var(--space-xs);
+}
+
+.model-combobox-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  transition: background var(--transition-instant);
+  overflow: hidden;
+}
+
+.model-combobox-option:hover,
+.model-combobox-option--highlighted {
+  background: var(--card-hover);
+}
+
+.model-combobox-option--selected {
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.model-combobox-option--selected:hover,
+.model-combobox-option--selected.model-combobox-option--highlighted {
+  background: color-mix(in srgb, var(--todo) 25%, transparent);
+}
+
+.model-combobox-option-main {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.model-combobox-option-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.model-combobox-option-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.model-combobox-option-text--default {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.model-combobox-option-id {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  margin-left: var(--space-sm);
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+.model-combobox-group {
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.model-combobox-group:last-child {
+  border-bottom: none;
+}
+
+/*
+FNXC:ModelDropdown 2026-07-15-00:00:
+Provider headers must remain visible while their long model groups scroll in the shared list. Sticky positioning is scoped to the list scroller, so it cannot overlap the search, result-count, or thinking controls above it.
+*/
+.model-combobox-optgroup {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg);
+  cursor: default;
+  overflow: hidden;
+}
+
+.model-combobox-optgroup-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Provider favorite star (in optgroup header) */
+.model-combobox-optgroup-favorite {
+  padding: calc(var(--space-xs) * 0.5) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--star-idle);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.model-combobox-optgroup-favorite:hover {
+  color: var(--star-active);
+}
+.model-combobox-optgroup-favorite--active {
+  color: var(--star-active);
+}
+
+.model-combobox-optgroup-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color var(--transition-fast), transform var(--transition-fast), background var(--transition-fast);
+  transform: rotate(-90deg);
+}
+
+.model-combobox-optgroup-toggle:hover,
+.model-combobox-optgroup-toggle:focus-visible {
+  color: var(--text);
+  background: var(--card-hover);
+  outline: none;
+}
+
+.model-combobox-optgroup-toggle--expanded {
+  transform: rotate(0);
+}
+
+/* Model favorite star (inside option row) */
+.model-combobox-option-favorite {
+  padding: calc(var(--space-xs) * 0.5) var(--space-xs);
+  font-size: var(--space-md);
+  color: var(--star-idle);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.model-combobox-option-favorite:hover {
+  color: var(--star-active);
+}
+.model-combobox-option-favorite--active {
+  color: var(--star-active);
+}
+
+/* Favorited model pinned row */
+.model-combobox-option--favorite {
+  padding-left: var(--space-md);
+  background: var(--bg-secondary);
+}
+
+.model-combobox-divider {
+  height: var(--btn-border-width);
+  background: var(--border);
+  margin: var(--space-xs) 0;
+}
+
+.model-combobox-no-results {
+  padding: var(--space-lg) var(--space-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Mobile responsive model dropdown */
+@media (max-width: 768px) {
+  .model-combobox-dropdown {
+    max-height: 50vh;
+    max-height: 50dvh; /* Use dynamic viewport height where supported */
+    width: min(calc(var(--space-xl) * 15), calc(100vw - var(--space-2xl)));
+  }
+
+  .model-combobox-search {
+    font-size: var(--space-lg);
+  }
+
+  .model-combobox-option,
+  .model-combobox-optgroup-toggle {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+}
+
+@media (max-width: 480px) {
+  .model-combobox-dropdown {
+    max-height: 50vh;
+    max-height: 50dvh;
+    width: min(calc(var(--space-xl) * 15), calc(100vw - var(--space-2xl)));
+  }
+}
+

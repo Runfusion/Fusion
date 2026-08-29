@@ -1,0 +1,52 @@
+/*
+FNXC:ToolCallDisplay 2026-08-01-15:39:
+FN-8701 requires one responsive presentation for complete available tool payloads. Preserve
+newlines, wrap normal paths and prose, and contain unavoidable long tokens without widening chat
+or log surfaces beyond the viewport.
+*/
+.tool-call-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.tool-call-details-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-xs);
+  align-items: start;
+}
+
+.tool-call-details-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tool-call-details-value {
+  min-width: 0;
+  max-inline-size: 100%;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-call-details-row--error {
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+@media (max-width: 768px) {
+  .tool-call-details-row {
+    grid-template-columns: 1fr;
+  }
+}

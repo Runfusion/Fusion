@@ -1,0 +1,60 @@
+.top-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 101;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.top-progress-bar[data-visible="true"] {
+  opacity: 1;
+}
+
+.top-progress-bar__indicator {
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  animation: top-progress-slide 1.2s linear infinite;
+}
+
+@keyframes top-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@media (max-width: 768px) {
+  .top-progress-bar {
+    height: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .top-progress-bar__indicator {
+    width: 100%;
+    animation: top-progress-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes top-progress-pulse {
+  0% {
+    opacity: 0.65;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.65;
+  }
+}

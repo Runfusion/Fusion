@@ -1,0 +1,132 @@
+import "./AgentErrorDetailsModal.css";
+import { useMemo, useState } from "react";
+import { AlertCircle, Check, Copy, ExternalLink } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
+
+const DEFAULT_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
+
+export interface AgentErrorIssueContext {
+  surface: string;
+  agentId?: string;
+  agentName?: string;
+  agentState?: string;
+  runId?: string;
+  taskId?: string;
+  timestamp?: string;
+}
+
+interface AgentErrorDetailsModalProps {
+  open: boolean;
+  onClose: () => void;
+  errorText: string;
+  issueContext: AgentErrorIssueContext;
+}
+
+export function buildAgentErrorIssueUrl(errorText: string, context: AgentErrorIssueContext): string {
+  const title = `[Agent Error] ${context.surface}${context.agentName ? ` - ${context.agentName}` : ""}`;
+  const bodyLines = [
+    "## Agent Error Report",
+    "",
+    `- Surface: ${context.surface}`,
+    `- Agent ID: ${context.agentId ?? "unknown"}`,
+    `- Agent Name: ${context.agentName ?? "unknown"}`,
+    `- Agent State: ${context.agentState ?? "unknown"}`,
+    `- Run ID: ${context.runId ?? "n/a"}`,
+    `- Task ID: ${context.taskId ?? "n/a"}`,
+    `- Timestamp: ${context.timestamp ?? new Date().toISOString()}`,
+    "",
+    "## Error",
+    "```text",
+    errorText,
+    "```",
+  ];
+
+  const params = new URLSearchParams({
+    title,
+    body: bodyLines.join("\n"),
+  });
+
+  return `${DEFAULT_ISSUE_URL}?${params.toString()}`;
+}
+
+export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext }: AgentErrorDetailsModalProps) {
+  const [copied, setCopied] = useState(false);
+  const { t } = useTranslation("app");
+  const issueUrl = useMemo(() => buildAgentErrorIssueUrl(errorText, issueContext), [errorText, issueContext]);
+  const overlayDismissProps = useOverlayDismiss(onClose);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true" aria-label={t("agentError.dialogLabel", "Agent error details")}>
+      <div className="modal agent-error-modal">
+        <div className="modal-header">
+          <h2 className="modal-title">
+            <AlertCircle size={16} />
+            {t("agentError.title", "Agent Error Details")}
+          </h2>
+          <button className="modal-close" onClick={onClose} aria-label={t("common.close", "Close")}>&times;</button>
+        </div>
+        <div className="agent-error-modal__content">
+          <pre className="agent-error-modal__error">{errorText}</pre>
+        </div>
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              /* FNXC:Clipboard 2026-07-12-00:00: Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback. */
+              void copyTextToClipboard(errorText).then((copiedToClipboard) => {
+                if (!copiedToClipboard) return;
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+            aria-label={copied ? t("agentError.copiedLabel", "Copied error to clipboard") : t("agentError.copyLabel", "Copy error to clipboard")}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+            {copied ? t("agentError.copied", "Copied") : t("agentError.copy", "Copy")}
+          </button>
+          <a
+            className="btn btn-sm btn-warning"
+            href={issueUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => {
+              event.preventDefault();
+              window.open(issueUrl, "_blank", "noopener,noreferrer");
+            }}
+          >
+            <ExternalLink size={14} />
+            {t("agentError.reportOnGithub", "Report on GitHub")}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface AgentErrorIndicatorProps {
+  errorText: string;
+  issueContext: AgentErrorIssueContext;
+  summaryPrefix?: string;
+}
+
+export function AgentErrorIndicator({ errorText, issueContext, summaryPrefix = "Error" }: AgentErrorIndicatorProps) {
+  const [open, setOpen] = useState(false);
+  const { t } = useTranslation("app");
+
+  return (
+    <>
+      <button type="button" className="agent-error-indicator" onClick={() => setOpen(true)} aria-label={t("agentError.openDetails", "Open error details")}>
+        <AlertCircle size={14} />
+        <span className="agent-error-indicator__label">{summaryPrefix}</span>
+      </button>
+      <AgentErrorDetailsModal open={open} onClose={() => setOpen(false)} errorText={errorText} issueContext={issueContext} />
+    </>
+  );
+}

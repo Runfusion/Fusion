@@ -1,0 +1,2396 @@
+{
+  "entries": [
+    {
+      "capturedAt": "2026-06-18T02:53:34.158Z",
+      "gateMs": 8478,
+      "bootSmokeMs": null,
+      "testMs": 38405,
+      "quarantineCount": 2,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [
+        {
+          "label": "Boot smoke (`pnpm smoke:boot`)",
+          "status": "exit 1 after 411ms"
+        }
+      ],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-18T03:04:28.794Z",
+      "gateMs": 6177,
+      "bootSmokeMs": 18220,
+      "testMs": 7740,
+      "quarantineCount": 2,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-18T16:12:01.248Z",
+      "gateMs": 5398,
+      "bootSmokeMs": 18097,
+      "testMs": 7240,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-22T04:22:44.873Z",
+      "gateMs": 8276,
+      "bootSmokeMs": null,
+      "testMs": 48788,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [
+        {
+          "label": "Boot smoke (`pnpm smoke:boot`)",
+          "status": "exit 1 after 406ms"
+        }
+      ],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-22T08:03:10.119Z",
+      "gateMs": 6461,
+      "bootSmokeMs": 18784,
+      "testMs": 9753,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-23T07:29:54.383Z",
+      "gateMs": 15947,
+      "bootSmokeMs": 21059,
+      "testMs": 66916,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-23T18:30:19.699Z",
+      "gateMs": 10820,
+      "bootSmokeMs": 19802,
+      "testMs": null,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [
+        {
+          "label": "Changed-only tests (`pnpm test`)",
+          "status": "exit 1 after 1m 55s"
+        }
+      ],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z"
+    },
+    {
+      "capturedAt": "2026-06-23T18:43:21.941Z",
+      "gateMs": 16817,
+      "bootSmokeMs": 22807,
+      "testMs": 19604,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "ms": 13900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 11600,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "ms": 11200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 10700,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 10100,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "ms": 9400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "ms": 9000,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "ms": 8700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "ms": 8400,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "ms": 8300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 7800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 7000,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "ms": 6900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "ms": 6100,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "ms": 5600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "ms": 5200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "ms": 5100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "ms": 4900,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z",
+      "timingNotes": [
+        "Timing snapshot is 19 days old; verify slowest-file attribution before treating the table as the current culprit.",
+        "5 of the listed slowest files no longer exist at the recorded paths: `packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts`, `packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts`, `packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts`, `packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts`, `packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts`. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
+      ]
+    },
+    {
+      "capturedAt": "2026-06-25T05:47:54.804Z",
+      "gateMs": 7471,
+      "bootSmokeMs": 18157,
+      "testMs": 9439,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.test.tsx",
+          "ms": 60500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.test.tsx",
+          "ms": 24400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-25T05:45:08.116Z",
+      "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-06-27T02:02:13.530Z",
+      "gateMs": 8120,
+      "bootSmokeMs": 17554,
+      "testMs": null,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.test.tsx",
+          "ms": 60500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.test.tsx",
+          "ms": 24400,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        }
+      ],
+      "measurementFailures": [
+        {
+          "label": "Changed-only tests (`pnpm test`)",
+          "status": "exit 1 after 31.0s"
+        }
+      ],
+      "timingSnapshotCapturedAt": "2026-06-25T05:45:08.116Z",
+      "timingNotes": [
+        "2 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/app/components/__tests__/SettingsModal.test.tsx`, `packages/dashboard/app/components/__tests__/ChatView.test.tsx`. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
+      ]
+    },
+    {
+      "capturedAt": "2026-06-27T05:43:17.293Z",
+      "gateMs": 6904,
+      "bootSmokeMs": 17990,
+      "testMs": 13743,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-07-02T08:47:17.721Z",
+      "gateMs": 7682,
+      "bootSmokeMs": 17433,
+      "testMs": 9326,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-07-08T09:30:50.606Z",
+      "gateMs": 36301,
+      "bootSmokeMs": 25333,
+      "testMs": 43360,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-07-08T18:17:42.464Z",
+      "gateMs": 8823,
+      "bootSmokeMs": 17604,
+      "testMs": 61335,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-07-22T16:26:26.004Z",
+      "gateMs": 43881,
+      "bootSmokeMs": 20150,
+      "testMs": 39247,
+      "quarantineCount": 2,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": [
+        "Timing snapshot is 25 days old; verify slowest-file attribution before treating the table as the current culprit.",
+        "9 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/src/__tests__/insights-routes.test.ts`, `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts`, `packages/dashboard/src/__tests__/workflow-routes.test.ts`, `packages/core/src/__tests__/db.test.ts`, `packages/core/src/__tests__/mission-store.test.ts`, …. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
+      ]
+    },
+    {
+      "capturedAt": "2026-07-22T20:52:05.508Z",
+      "gateMs": 45200,
+      "bootSmokeMs": 18285,
+      "testMs": 36699,
+      "quarantineCount": 2,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": [
+        "Timing snapshot is 25 days old; verify slowest-file attribution before treating the table as the current culprit.",
+        "9 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/src/__tests__/insights-routes.test.ts`, `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts`, `packages/dashboard/src/__tests__/workflow-routes.test.ts`, `packages/core/src/__tests__/db.test.ts`, `packages/core/src/__tests__/mission-store.test.ts`, …. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
+      ]
+    },
+    {
+      "capturedAt": "2026-07-22T21:58:46.970Z",
+      "gateMs": 29271,
+      "bootSmokeMs": 24038,
+      "testMs": 35657,
+      "quarantineCount": 2,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": [
+        "Timing snapshot is 25 days old; verify slowest-file attribution before treating the table as the current culprit.",
+        "9 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/src/__tests__/insights-routes.test.ts`, `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts`, `packages/dashboard/src/__tests__/workflow-routes.test.ts`, `packages/core/src/__tests__/db.test.ts`, `packages/core/src/__tests__/mission-store.test.ts`, …. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
+      ]
+    },
+    {
+      "capturedAt": "2026-07-22T22:40:53.357Z",
+      "gateMs": 9144,
+      "bootSmokeMs": 18454,
+      "testMs": 14943,
+      "quarantineCount": 2,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": [
+        "Timing snapshot is 25 days old; verify slowest-file attribution before treating the table as the current culprit.",
+        "9 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/src/__tests__/insights-routes.test.ts`, `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts`, `packages/dashboard/src/__tests__/workflow-routes.test.ts`, `packages/core/src/__tests__/db.test.ts`, `packages/core/src/__tests__/mission-store.test.ts`, …. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
+      ]
+    },
+    {
+      "capturedAt": "2026-08-04T03:10:46.073Z",
+      "gateMs": 14566,
+      "bootSmokeMs": 18149,
+      "testMs": 22450,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx",
+          "ms": 121100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx",
+          "ms": 77800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/schema-applier.test.ts",
+          "ms": 65900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx",
+          "ms": 55700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx",
+          "ms": 53500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 52100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 51600,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/sqlite-migrator.test.ts",
+          "ms": 51300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 39700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 38100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx",
+          "ms": 32900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 30900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/taskstore-remaining.test.ts",
+          "ms": 30500,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 30200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.core-interactions.test.tsx",
+          "ms": 29200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx",
+          "ms": 27800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.definition-actions.test.tsx",
+          "ms": 27000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
+          "ms": 26800,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-07-24T13:09:41.412Z",
+      "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-08-13T01:59:18.032Z",
+      "gateMs": 11000,
+      "bootSmokeMs": 26667,
+      "testMs": 17584,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx",
+          "ms": 121100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx",
+          "ms": 77800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/schema-applier.test.ts",
+          "ms": 65900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx",
+          "ms": 55700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx",
+          "ms": 53500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 52100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 51600,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/sqlite-migrator.test.ts",
+          "ms": 51300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 39700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 38100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx",
+          "ms": 32900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 30900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/taskstore-remaining.test.ts",
+          "ms": 30500,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 30200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.core-interactions.test.tsx",
+          "ms": 29200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx",
+          "ms": 27800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.definition-actions.test.tsx",
+          "ms": 27000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
+          "ms": 26800,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-07-24T13:09:41.412Z",
+      "timingNotes": [
+        "Timing snapshot is 19 days old; verify slowest-file attribution before treating the table as the current culprit."
+      ]
+    },
+    {
+      "capturedAt": "2026-08-16T06:01:44.671Z",
+      "gateMs": 14018,
+      "bootSmokeMs": 20378,
+      "testMs": 17468,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx",
+          "ms": 121100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx",
+          "ms": 77800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/schema-applier.test.ts",
+          "ms": 65900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx",
+          "ms": 55700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx",
+          "ms": 53500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 52100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 51600,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/sqlite-migrator.test.ts",
+          "ms": 51300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 39700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 38100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx",
+          "ms": 32900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 30900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/taskstore-remaining.test.ts",
+          "ms": 30500,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 30200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.core-interactions.test.tsx",
+          "ms": 29200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx",
+          "ms": 27800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.definition-actions.test.tsx",
+          "ms": 27000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
+          "ms": 26800,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-07-24T13:09:41.412Z",
+      "timingNotes": [
+        "Timing snapshot is 22 days old; verify slowest-file attribution before treating the table as the current culprit."
+      ],
+      "notes": [
+        {
+          "text": "single-sample measurement variance; FN-9144 controlled warm median 9.0s over three samples; see docs/solutions/developer-experience/merge-gate-w33-walltime-regression.md",
+          "addedAt": "2026-08-18T14:37:09.135Z"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,285 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act, fireEvent } from "@testing-library/react";
+import { useProjects } from "../useProjects";
+import * as api from "../../api";
+import * as swrCache from "../../utils/swrCache";
+import type { ProjectInfoWithSource } from "../../api";
+
+vi.mock("../../api", () => ({
+  fetchProjectsAcrossNodes: vi.fn(),
+  registerProject: vi.fn(),
+  updateProject: vi.fn(),
+  unregisterProject: vi.fn(),
+  hasNodeMappingsSupport: vi.fn(),
+}));
+
+const mockFetchProjectsAcrossNodes = vi.mocked(api.fetchProjectsAcrossNodes);
+const mockRegisterProject = vi.mocked(api.registerProject);
+const mockUpdateProject = vi.mocked(api.updateProject);
+const mockUnregisterProject = vi.mocked(api.unregisterProject);
+const mockHasNodeMappingsSupport = vi.mocked(api.hasNodeMappingsSupport);
+const mockReadCache = vi.spyOn(swrCache, "readCache");
+const mockWriteCache = vi.spyOn(swrCache, "writeCache");
+const mockClearCache = vi.spyOn(swrCache, "clearCache");
+
+function makeProject(overrides: Partial<ProjectInfoWithSource> = {}): ProjectInfoWithSource {
+  return {
+    id: "proj-1",
+    name: "Project One",
+    path: "/workspace/project-one",
+    status: "active",
+    isolationMode: "in-process",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function setVisibilityState(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => state,
+  });
+}
+
+describe("useProjects", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibilityState("visible");
+    mockFetchProjectsAcrossNodes.mockReset();
+    mockRegisterProject.mockReset();
+    mockUpdateProject.mockReset();
+    mockUnregisterProject.mockReset();
+    mockHasNodeMappingsSupport.mockReset();
+    mockReadCache.mockReset();
+    mockWriteCache.mockReset();
+    mockClearCache.mockReset();
+    mockReadCache.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("hydrates from cache immediately while fetch revalidates", async () => {
+    let resolveFetch: ((projects: ProjectInfoWithSource[]) => void) | undefined;
+    mockFetchProjectsAcrossNodes.mockImplementationOnce(
+      () =>
+        new Promise<ProjectInfoWithSource[]>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    mockReadCache.mockReturnValueOnce([makeProject({ id: "cached-project" })]);
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+
+    const { result } = renderHook(() => useProjects());
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.projects[0]?.id).toBe("cached-project");
+
+    await act(async () => {
+      resolveFetch?.([makeProject({ id: "live-project" })]);
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("live-project");
+  });
+
+  it("passes maxAge for project cache hydration", () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockResolvedValue([]);
+
+    renderHook(() => useProjects());
+
+    expect(mockReadCache).toHaveBeenCalledWith(
+      swrCache.SWR_CACHE_KEYS.PROJECTS,
+      { maxAgeMs: swrCache.SWR_DEFAULT_MAX_AGE_MS },
+    );
+  });
+
+  it("cache miss keeps loading flow until fetch resolves", async () => {
+    let resolveFetch: ((projects: ProjectInfoWithSource[]) => void) | undefined;
+    mockFetchProjectsAcrossNodes.mockImplementationOnce(
+      () =>
+        new Promise<ProjectInfoWithSource[]>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+
+    const { result } = renderHook(() => useProjects());
+
+    expect(result.current.loading).toBe(true);
+
+    await act(async () => {
+      resolveFetch?.([makeProject({ id: "live-project" })]);
+      await flushPromises();
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.projects[0]?.id).toBe("live-project");
+  });
+
+  it("normalizes mapping-enabled payloads into project.nodeMappings", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(true);
+    mockFetchProjectsAcrossNodes.mockResolvedValueOnce([
+      makeProject({
+        id: "proj-1",
+        nodeMappings: [{ nodeId: "node-a", path: "/mnt/a", available: true }],
+      }),
+      makeProject({
+        id: "proj-2",
+        pathMappings: [{ nodeId: "node-b", path: "/mnt/b", available: false }],
+      }),
+    ]);
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.projects[0].nodeMappings).toEqual([
+      { nodeId: "node-a", path: "/mnt/a", available: true, nodeName: undefined },
+    ]);
+    expect(result.current.projects[1].nodeMappings).toEqual([
+      { nodeId: "node-b", path: "/mnt/b", available: false, nodeName: undefined },
+    ]);
+    expect(mockWriteCache).toHaveBeenCalledWith(
+      swrCache.SWR_CACHE_KEYS.PROJECTS,
+      expect.any(Array),
+    );
+  });
+
+  it("synthesizes a legacy fallback mapping from nodeId + path", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockResolvedValueOnce([
+      makeProject({ id: "proj-legacy", nodeId: "node-legacy", _sourceNodeName: "Legacy Node" }),
+    ]);
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0].nodeMappings).toEqual([
+      {
+        nodeId: "node-legacy",
+        nodeName: "Legacy Node",
+        path: "/workspace/project-one",
+        available: true,
+      },
+    ]);
+  });
+
+  it("suppresses visibility-resume suspension errors when projects already exist", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes
+      .mockResolvedValueOnce([makeProject({ id: "proj-1" })])
+      .mockResolvedValueOnce([makeProject({ id: "proj-1" })])
+      .mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("proj-1");
+    expect(result.current.error).toBeNull();
+
+    setVisibilityState("hidden");
+    act(() => {
+      fireEvent(document, new Event("visibilitychange"));
+      vi.advanceTimersByTime(1100);
+    });
+
+    setVisibilityState("visible");
+    await act(async () => {
+      fireEvent(document, new Event("visibilitychange"));
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("proj-1");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps connection errors visible when no projects exist", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects).toEqual([]);
+    expect(result.current.error).toBe("Failed to fetch");
+  });
+
+  it("suppresses initial revalidation suspension errors when cache has projects", async () => {
+    mockReadCache.mockReturnValueOnce([makeProject({ id: "cached-project" })]);
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockRejectedValueOnce(new Error("Failed to fetch"));
+    setVisibilityState("hidden");
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("cached-project");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("refreshes projects using the same normalization", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes
+      .mockResolvedValueOnce([makeProject({ id: "proj-1", nodeId: "node-a" })])
+      .mockResolvedValueOnce([makeProject({ id: "proj-2", nodeId: "node-b" })]);
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.projects[0].id).toBe("proj-2");
+    expect(result.current.projects[0].nodeMappings?.[0]?.nodeId).toBe("node-b");
+    expect(mockWriteCache).toHaveBeenCalledWith(
+      swrCache.SWR_CACHE_KEYS.PROJECTS,
+      expect.any(Array),
+    );
+  });
+
+  it("clears project task cache when unregistering", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockResolvedValueOnce([makeProject({ id: "proj-1" })]);
+    mockUnregisterProject.mockResolvedValueOnce(undefined);
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    await act(async () => {
+      await result.current.unregister("proj-1");
+    });
+
+    expect(mockClearCache).toHaveBeenCalledWith(`${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`);
+  });
+});

@@ -1,0 +1,174 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import type { Task } from "@fusion/core";
+import { TaskCard } from "../TaskCard";
+import { TaskChangesTab } from "../TaskChangesTab";
+
+const useTaskDiffStatsMock = vi.fn();
+const fetchTaskDiffMock = vi.fn();
+
+vi.mock("../../hooks/useTaskDiffStats", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useTaskDiffStats")>();
+  return {
+    ...actual,
+    useTaskDiffStats: (...args: unknown[]) => useTaskDiffStatsMock(...args),
+  };
+});
+
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    fetchTaskDiff: (...args: unknown[]) => fetchTaskDiffMock(...args),
+    // FNXC:DashboardTests 2026-07-14-21:50: TaskCard loads oversight workflow settings; complete the mock surface so parity tests collect.
+    fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
+  };
+});
+
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
+  return {
+    ...actual,
+    Link: () => null,
+    GitBranch: () => null,
+    Clock: () => null,
+    Pencil: () => null,
+    Layers: () => null,
+    ChevronDown: () => null,
+    Folder: () => null,
+    GitPullRequest: () => null,
+    CircleDot: () => null,
+    Target: () => null,
+    Bot: () => null,
+    Trash2: () => null,
+    RotateCw: () => null,
+    Zap: () => null,
+    FileCode: () => null,
+    ChevronRight: () => null,
+    ChevronLeft: () => null,
+    AlertCircle: () => null,
+    GitCommit: () => null,
+    WrapText: () => null,
+    Maximize2: () => null,
+  };
+});
+
+vi.mock("../ProviderIcon", () => ({ ProviderIcon: () => null }));
+vi.mock("../ChangesDiffModal", () => ({ ChangesDiffModal: () => null }));
+vi.mock("../../hooks/useBadgeWebSocket", () => ({
+  useBadgeWebSocket: () => ({ badgeUpdates: new Map(), isConnected: true, subscribeToBadge: vi.fn(), unsubscribeFromBadge: vi.fn() }),
+}));
+vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: vi.fn(() => null) }));
+vi.mock("../../utils/highlightDiff", () => ({ highlightDiff: (diff: string) => diff }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn() }) }));
+/*
+FNXC:RuntimeFallbackUI 2026-07-11-00:00:
+RuntimeFallbackBadge (commit 0bed997af / FUX-022) calls the shared useToast() hook directly. TaskCard
+embeds RuntimeFallbackBadge and this file renders <TaskCard> outside a ToastProvider, so mock the hook
+to avoid "useToast must be used within ToastProvider", matching the TaskCard.test.tsx pattern.
+*/
+vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
+
+function makeTask(overrides: Partial<Task>): Task {
+  return {
+    id: "FN-4521",
+    title: "Parity",
+    description: "",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-05-14T00:00:00.000Z",
+    updatedAt: "2026-05-14T00:00:00.000Z",
+    columnMovedAt: "2026-05-14T00:00:00.000Z",
+    ...overrides,
+  } as Task;
+}
+
+describe("TaskCard/TaskChangesTab files-changed parity", () => {
+  beforeEach(() => {
+    useTaskDiffStatsMock.mockReset();
+    fetchTaskDiffMock.mockReset();
+  });
+
+  it.each([
+    ["in-progress", undefined, undefined],
+    ["in-review", undefined, undefined],
+    ["done", undefined, { commitSha: "abc123" }],
+  ] as const)("keeps counts aligned for %s", async (column, worktree, mergeDetails) => {
+    const stats = { filesChanged: 3, additions: 5, deletions: 2 };
+    useTaskDiffStatsMock.mockReturnValue({ stats, loading: false });
+    fetchTaskDiffMock.mockResolvedValue({
+      files: [
+        { path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@" },
+        { path: "b.ts", status: "modified", additions: 1, deletions: 1, patch: "@@" },
+        { path: "c.ts", status: "added", additions: 3, deletions: 1, patch: "@@" },
+      ],
+      stats,
+    });
+
+    const task = makeTask({ column, worktree, mergeDetails });
+
+    const { container } = render(
+      <>
+        <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
+        <TaskChangesTab taskId={task.id} worktree={worktree} column={column} mergeDetails={mergeDetails} />
+      </>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Files Changed \(3\)/)).toBeTruthy();
+    });
+    expect(container.textContent).toContain("3 files changed");
+  });
+
+  it("keeps the card and Changes tab on the filtered rebase result", async () => {
+    const stats = { filesChanged: 1, additions: 2, deletions: 0 };
+    useTaskDiffStatsMock.mockReturnValue({ stats, loading: false });
+    fetchTaskDiffMock.mockResolvedValue({
+      files: [{ path: "task.ts", status: "modified", additions: 2, deletions: 0, patch: "@@ task" }],
+      stats,
+    });
+
+    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip" } });
+    const { container } = render(
+      <>
+        <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
+        <TaskChangesTab taskId={task.id} column="done" mergeDetails={task.mergeDetails} />
+      </>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".card-session-files")?.textContent).toMatch(/1 file changed/);
+      expect(screen.getByText("Files Changed (1)")).toBeTruthy();
+    });
+    expect(container.textContent).toContain("task.ts");
+    expect(container.textContent).not.toContain("foreign.ts");
+    expect(container.querySelectorAll(".card-session-files")).toHaveLength(1);
+  });
+
+  it("does not render a card files button for an empty scoped result", async () => {
+    const stats = { filesChanged: 0, additions: 0, deletions: 0 };
+    useTaskDiffStatsMock.mockReturnValue({ stats, loading: false });
+    fetchTaskDiffMock.mockResolvedValue({ files: [], stats });
+
+    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip" } });
+    const { container } = render(
+      <>
+        <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
+        <TaskChangesTab taskId={task.id} column="done" mergeDetails={task.mergeDetails} />
+      </>,
+    );
+
+    await waitFor(() => expect(screen.getByText("Files Changed (0)")).toBeTruthy());
+    expect(container.querySelector(".card-session-files")).toBeNull();
+  });
+});

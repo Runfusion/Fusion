@@ -1,0 +1,327 @@
+/**
+ * FNXC:PlannerOversight 2026-07-04-19:45:
+ * FN-7551 engine-level end-to-end test: proves real overseer decision points
+ * — observation, retry, targeted-fix, steering (reviewer), advisory
+ * confirmation suppression, and bounded-recovery escalation — populate the
+ * `overseer:intervention` run-audit timeline via the ACTUAL
+ * production wiring in `project-engine.ts` (`PlannerOverseerMonitor#onObservation`
+ * → the private `emitOverseerObservationDeduped`, the private
+ * `buildPlannerRecoveryHandlers`, the private `emitOverseerEscalationDeduped`),
+ * against a REAL in-memory `TaskStore` — never by calling
+ * `emitOverseer*`/`recordPlannerIntervention` directly.
+ *
+ * Constructing a full `ProjectEngine` (via `start()`) pulls in cron/
+ * notification/research/tunnel/automation subsystems that are impractical to
+ * boot in a unit test. Instead this file extracts the engine's REAL
+ * prototype methods via `Object.create(ProjectEngine.prototype)`, seeding
+ * only the two dedup-map instance fields those methods read/write (normally
+ * initialized by class-field initializers the constructor never runs here)
+ * — this exercises the exact same code that runs inside
+ * `pollPlannerOverseer`/`start()` in production, not a reimplementation.
+ *
+ * FNXC:PlannerOversight 2026-07-11-00:00:
+ * FN-7840 removes the only real-tick producer of advisory merger awaiting-confirmation interventions, so this live-wiring harness now proves suppression at the source rather than request/resolution emission for an unreachable advisory pending-confirmation path.
+ */
+
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { TaskStore, getPlannerInterventionTimeline, type Task } from "@fusion/core";
+import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import { ProjectEngine } from "../project-engine.js";
+import { PlannerOverseerMonitor, type OverseerStageObservation } from "../overseer/planner-overseer.js";
+import { PlannerRecoveryController, type PlannerRecoveryHandlers, type PlannerRecoverySnapshotProvider } from "../overseer/planner-recovery-controller.js";
+
+interface EngineOverseerInternals {
+  plannerObservationEmitDedup: Map<string, string>;
+  plannerEscalationEmitDedup: Set<string>;
+  buildPlannerRecoveryHandlers(store: TaskStore): PlannerRecoveryHandlers;
+  emitOverseerObservationDeduped(store: TaskStore, observation: OverseerStageObservation): Promise<void>;
+  emitOverseerEscalationDeduped(
+    store: TaskStore,
+    taskId: string,
+    decision: { watchedStage: string | null; reason: string; attemptCount: number; attemptLimit: number; sourceLinks: unknown[] },
+  ): Promise<void>;
+}
+
+/** Extracts the real `ProjectEngine` prototype methods FN-7551 wired without running its heavy constructor/`start()`. */
+function makeEngineInternals(opts?: {
+  isTaskLiveForOverseerRetry?: (taskId: string) => boolean;
+}): EngineOverseerInternals & { runtime: { getExecutor: () => { isTaskLiveForOverseerRetry?: (id: string) => boolean } | undefined } } {
+  const engineLike = Object.create(ProjectEngine.prototype) as unknown as EngineOverseerInternals & {
+    runtime: { getExecutor: () => { isTaskLiveForOverseerRetry?: (id: string) => boolean } | undefined };
+  };
+  engineLike.plannerObservationEmitDedup = new Map();
+  engineLike.plannerEscalationEmitDedup = new Set();
+  (engineLike as { plannerLiveRetrySkipLogDedup: Set<string> }).plannerLiveRetrySkipLogDedup = new Set();
+  // FNXC:PlannerOversight 2026-07-21-22:56: retry_step reads runtime.getExecutor for the live-session gate.
+  engineLike.runtime = {
+    getExecutor: () =>
+      opts?.isTaskLiveForOverseerRetry
+        ? { isTaskLiveForOverseerRetry: opts.isTaskLiveForOverseerRetry }
+        : { isTaskLiveForOverseerRetry: () => false },
+  };
+  return engineLike;
+}
+
+/** Builds the real production wiring (monitor + recovery-controller handlers) against a concrete `store`, mirroring `ProjectEngine.start()`. */
+function wireRealEngineOverseer(store: TaskStore) {
+  const internals = makeEngineInternals();
+  const monitor = new PlannerOverseerMonitor({
+    store,
+    onObservation: async (observation) => internals.emitOverseerObservationDeduped(store, observation),
+  });
+  const handlers = internals.buildPlannerRecoveryHandlers(store);
+  const controllerFromMonitor = new PlannerRecoveryController({ snapshotProvider: monitor, handlers });
+
+  return {
+    monitor,
+    handlers,
+    controllerFromMonitor,
+    /** A controller wired with the SAME real handlers but a synthetic snapshot, for exercising decision branches the monitor's own signal-derivation cannot produce (e.g. a failed executor signal). */
+    controllerWithSnapshot: (observation: OverseerStageObservation) => {
+      const provider: PlannerRecoverySnapshotProvider = { getSnapshot: () => observation };
+      return new PlannerRecoveryController({ snapshotProvider: provider, handlers });
+    },
+    emitEscalation: (
+      taskId: string,
+      decision: { watchedStage: string | null; reason: string; attemptCount: number; attemptLimit: number; sourceLinks: unknown[] },
+    ) => internals.emitOverseerEscalationDeduped(store, taskId, decision),
+  };
+}
+
+function observation(overrides: Partial<OverseerStageObservation> = {}): OverseerStageObservation {
+  return {
+    taskId: "T",
+    stage: "executor",
+    signal: "progressing",
+    oversightLevel: "autonomous",
+    observedAt: Date.now(),
+    reason: "test",
+    sources: [],
+    ...overrides,
+  };
+}
+
+pgDescribe("FN-7551 — overseer decision points populate the intervention timeline via the live wiring", () => {
+  const harness = createSharedPgTaskStoreTestHarness({ prefix: "fusion_overseer_wiring" });
+  let store: TaskStore;
+
+  beforeAll(harness.beforeAll);
+  beforeEach(async () => {
+    await harness.beforeEach();
+    store = harness.store();
+  });
+  afterEach(harness.afterEach);
+  afterAll(harness.afterAll);
+
+  async function seedTask(column: "in-progress" | "in-review" = "in-progress"): Promise<Task> {
+    const task = await store.createTask({ title: "T", description: "d" });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    if (column === "in-review") {
+      await store.moveTask(task.id, "in-review", { preserveProgress: true } as never);
+    }
+    return (await store.getTask(task.id))!;
+  }
+
+  it("observation: emits exactly one entry per (stage, signal), dedupes an unchanged repeat, and appends on a changed signal", async () => {
+    const task = await seedTask("in-progress");
+    const { monitor } = wireRealEngineOverseer(store);
+
+    await monitor.observeTask(task, "autonomous");
+    await monitor.observeTask(task, "autonomous");
+    await monitor.observeTask(task, "autonomous");
+
+    let timeline = await getPlannerInterventionTimeline(store, task.id);
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].action).toBe("observe");
+    expect(timeline[0].stage).toBe("executor");
+
+    // Change the signal (progressing -> "blocked" via paused) and observe again — must append.
+    const pausedTask = { ...task, paused: true, pausedReason: "manual test pause" } as Task;
+    await monitor.observeTask(pausedTask, "autonomous");
+
+    timeline = await getPlannerInterventionTimeline(store, task.id);
+    expect(timeline).toHaveLength(2);
+    expect(timeline[0].action).toBe("observe"); // newest-first
+  });
+
+  it("level 'off' never records an observation entry", async () => {
+    const task = await seedTask("in-progress");
+    const { monitor } = wireRealEngineOverseer(store);
+    const result = await monitor.observeTask(task, "off");
+    expect(result).toBeNull();
+    expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
+  });
+
+  it("failed executor with no error source dispatches retry_step and emits a retry entry with attemptCount/attemptLimit", async () => {
+    const task = await seedTask("in-progress");
+    const { controllerWithSnapshot } = wireRealEngineOverseer(store);
+    const controller = controllerWithSnapshot(observation({ taskId: task.id, stage: "executor", signal: "failed", sources: [] }));
+
+    const decision = await controller.tick(task);
+    expect(decision?.action).toBe("retry_step");
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    const retryEntry = timeline.find((e) => e.action === "retry");
+    expect(retryEntry).toBeTruthy();
+    expect(retryEntry?.stage).toBe("executor");
+    expect(retryEntry?.attemptCount).toBe(1);
+    expect(retryEntry?.attemptLimit).toBe(3);
+  });
+
+  /*
+  FNXC:PlannerOversight 2026-07-21-22:56:
+  FN-8471: when a live coding/step session still owns the task, retry_step must
+  not moveTask→todo (hard-cancel thrash) and must not burn the recovery budget.
+  */
+  it("failed executor with a live session skips retry_step bounce and does not burn attempt budget", async () => {
+    const task = await seedTask("in-progress");
+    const internals = makeEngineInternals({
+      isTaskLiveForOverseerRetry: (id) => id === task.id,
+    });
+    const handlers = internals.buildPlannerRecoveryHandlers(store);
+    const controller = new PlannerRecoveryController({
+      snapshotProvider: {
+        getSnapshot: () =>
+          observation({ taskId: task.id, stage: "executor", signal: "failed", sources: [] }),
+      },
+      handlers,
+    });
+
+    const decision = await controller.tick(task);
+    expect(decision?.action).toBe("retry_step");
+
+    const refreshed = await store.getTask(task.id);
+    expect(refreshed?.column).toBe("in-progress");
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    expect(timeline.find((e) => e.action === "retry")).toBeUndefined();
+    // Exact budget invariant — two burns would still leave room under limit 3.
+    expect(controller.getAttemptCount(task.id, "executor")).toBe(0);
+    const second = await controller.tick(task);
+    expect(second?.action).toBe("retry_step");
+    expect(second?.exhausted).not.toBe(true);
+    expect(controller.getAttemptCount(task.id, "executor")).toBe(0);
+  });
+
+  it("failed executor WITH an error source (failed-check) dispatches request_targeted_fix and emits a request-fix entry", async () => {
+    const task = await seedTask("in-progress");
+    const { controllerWithSnapshot } = wireRealEngineOverseer(store);
+    const controller = controllerWithSnapshot(
+      observation({
+        taskId: task.id,
+        stage: "executor",
+        signal: "failed",
+        sources: [{ kind: "failed-check", ref: "lint" }],
+      }),
+    );
+
+    const decision = await controller.tick(task);
+    expect(decision?.action).toBe("request_targeted_fix");
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    const fixEntry = timeline.find((e) => e.action === "request-fix");
+    expect(fixEntry).toBeTruthy();
+    expect(fixEntry?.attemptCount).toBe(1);
+    expect(fixEntry?.attemptLimit).toBe(3);
+    expect(fixEntry?.sourceLinks?.[0]?.target).toBe("lint");
+  });
+
+  it("reviewer stage dispatches inject_guidance and emits an inject-guidance steering entry", async () => {
+    const task = await seedTask("in-review");
+    const { controllerWithSnapshot } = wireRealEngineOverseer(store);
+    const controller = controllerWithSnapshot(observation({ taskId: task.id, stage: "reviewer", signal: "progressing" }));
+
+    const decision = await controller.tick(task);
+    expect(decision?.action).toBe("inject_guidance");
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    const steeringEntry = timeline.find((e) => e.action === "inject-guidance");
+    expect(steeringEntry).toBeTruthy();
+    expect(steeringEntry?.stage).toBe("reviewer");
+  });
+
+  // FNXC:PlannerOversight 2026-07-11-00:00:
+  // FN-7840 regression coverage: real tick() wiring reaches merger/pull-request oversight only when the same `allowsAutoMergeProcessing` predicate says auto-merge will proceed unattended. That advisory state must be silent — no pending confirmation, no request-confirmation intervention, and no merge-checkpoint steering comment/badge source.
+  it("suppresses advisory merger confirmations under active auto-merge policy", async () => {
+    const task = await seedTask("in-review");
+    const { monitor, controllerFromMonitor: controller } = wireRealEngineOverseer(store);
+    await monitor.observeTask(task, "autonomous"); // merger stage (plain in-review, no PR/reviewState)
+
+    const firstDecision = await controller.tick(task, { settings: { autoMerge: true } });
+    expect(firstDecision?.action).toBe("none");
+    expect(firstDecision?.requiresConfirmation).toBe(false);
+    expect(firstDecision?.reason).toMatch(/automatically/i);
+
+    const secondDecision = await controller.tick(task, { settings: { autoMerge: true } });
+    expect(secondDecision?.action).toBe("none");
+    expect(secondDecision?.requiresConfirmation).toBe(false);
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    expect(timeline.filter((e) => e.action === "request-confirmation")).toHaveLength(0);
+    expect(controller.getPendingConfirmations(task.id)).toHaveLength(0);
+
+    const refreshedTask = await store.getTask(task.id);
+    const allCommentText = [
+      ...(refreshedTask?.comments ?? []).map((comment) => comment.text),
+      ...(refreshedTask?.steeringComments ?? []).map((comment) => comment.text),
+    ];
+    expect(allCommentText.some((text) => text.includes("[planner-oversight] merge checkpoint"))).toBe(false);
+  });
+
+  // FNXC:PlannerOversight 2026-07-11-00:00:
+  // FN-7840 makes the old request/approve/deny confirmation-resolution tests unreachable through the public real tick() seam: auto-merge true returns `none`, while auto-merge false is withheld by `evaluateOverseerHumanControl` before `decidePlannerRecovery`. The pure false/undefined safety-valve contract remains covered in @fusion/core; this engine harness documents the production reachability instead of injecting private pending-confirmation state.
+
+  it("bounded-recovery exhaustion emits exactly one escalate entry across repeated polls of the same exhausted stage", async () => {
+    const task = await seedTask("in-progress");
+    const { emitEscalation } = wireRealEngineOverseer(store);
+    const exhaustedDecision = {
+      watchedStage: "executor",
+      reason: 'Bounded recovery attempt budget (3) exhausted for stage "executor"',
+      attemptCount: 3,
+      attemptLimit: 3,
+      sourceLinks: [],
+    };
+
+    await emitEscalation(task.id, exhaustedDecision);
+    await emitEscalation(task.id, exhaustedDecision);
+    await emitEscalation(task.id, exhaustedDecision);
+
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
+    const escalations = timeline.filter((e) => e.action === "escalate");
+    expect(escalations).toHaveLength(1);
+    expect(escalations[0].outcome).toBe("failed");
+  });
+
+  it("oversight level 'off' and a human-control-withheld (userPaused) task never emit any steering/retry/fix/confirmation/escalation entry", async () => {
+    const task = await seedTask("in-review");
+    const { monitor, controllerFromMonitor: controller } = wireRealEngineOverseer(store);
+
+    // Level "off": monitor records nothing (mirrors the poll's `continue` before ever calling tick()).
+    const result = await monitor.observeTask(task, "off");
+    expect(result).toBeNull();
+    expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
+
+    // Human-control withheld (userPaused) — tick() must short-circuit before
+    // any confirmation classification/dispatch, so no intervention entry is
+    // ever recorded (the withhold itself is a separate no-action event this
+    // task does not touch).
+    const pausedTask = { ...task, userPaused: true } as Task;
+    const decision = await controller.tick(pausedTask);
+    expect(decision).toBeNull();
+    expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
+  });
+
+  it("a store/façade failure during observation emission never throws out of observeTask (best-effort contract)", async () => {
+    const task = await seedTask("in-progress");
+    const throwingStore = {
+      ...store,
+      recordRunAuditEvent: () => {
+        throw new Error("boom");
+      },
+    } as unknown as TaskStore;
+
+    const { monitor } = wireRealEngineOverseer(throwingStore);
+    await expect(monitor.observeTask(task, "autonomous")).resolves.not.toThrow();
+  });
+});

@@ -1,0 +1,157 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { afterAll, vi } from "vitest";
+import { applySchemaBaseline, createAsyncDataLayer, createConnectionSetFromUrl, type AsyncDataLayer, type ResolvedBackend } from "@fusion/core";
+import { PG_AVAILABLE, PG_TEST_URL_BASE, pgDescribe } from "@fusion/test-utils/pg-test-harness";
+export { PG_AVAILABLE, pgDescribe };
+import type {
+  CreateInteractiveAiSessionFactory,
+  InteractiveAiSession,
+  InteractiveAiSessionEvent,
+  PluginContext,
+} from "@fusion/core";
+
+export interface TestHarness {
+  layer: AsyncDataLayer;
+  projectRoot: string;
+  ctx: PluginContext;
+  emitted: Array<{ event: string; data: unknown }>;
+  /** Register a workflow definition the ctx's task store can resolve by id. */
+  defineWorkflow(id: string, ir: unknown): void;
+  /** Point a task at one of those workflows, as a real selection row would. */
+  assignTaskWorkflow(taskId: string, workflowId: string): void;
+  close(): void;
+}
+
+const dbName = `ce_harness_${process.pid}_${process.env.VITEST_POOL_ID ?? "0"}_${Math.random().toString(36).slice(2, 8)}`.replace(/[^a-zA-Z0-9_]/g, "_");
+let connections: Awaited<ReturnType<typeof createConnectionSetFromUrl>> | null = null;
+let setupPromise: Promise<void> | null = null;
+/*
+FNXC:PgTestAuthFix 2026-07-18-07:40:
+The credentialed local default made embedded Fusion PostgreSQL runs fail because
+that database has no `postgres` role, cascading CI shard 4 failures. Derive all
+CE admin and test URLs from the shared PG_TEST_URL_BASE: its credential-free
+local default works with the current OS role and retains the CI override.
+*/
+function admin(statement: string): void {
+  execSync(`psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" });
+}
+async function setupPostgres(): Promise<void> {
+  if (connections) return;
+  admin(`DROP DATABASE IF EXISTS ${dbName}`); admin(`CREATE DATABASE ${dbName}`);
+  const url = `${PG_TEST_URL_BASE}/${dbName}`;
+  const backend: ResolvedBackend = { mode: "external", runtimeUrl: url, migrationUrl: url, migrationUrlOverridden: false };
+  const schema = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
+  await applySchemaBaseline(schema.migration); await schema.close();
+  connections = await createConnectionSetFromUrl(backend, { poolMax: 5, connectTimeoutSeconds: 5 });
+}
+afterAll(async () => {
+  await connections?.close().catch(() => undefined);
+  connections = null;
+  if (!PG_AVAILABLE) return;
+  try { admin(`DROP DATABASE IF EXISTS ${dbName}`); } catch { /* best effort */ }
+});
+
+/**
+ * In-memory DB + a minimal route-style PluginContext whose `taskStore` exposes
+ * `getDatabase()` / `getRootDir()` (the only surfaces the orchestrator uses) and
+ * a recording `emitEvent` so tests can assert observable events.
+ */
+export async function makeHarness(): Promise<TestHarness> {
+  setupPromise ??= setupPostgres();
+  await setupPromise;
+  const projectRoot = mkdtempSync(join(tmpdir(), "ce-session-test-"));
+  const layer = createAsyncDataLayer(connections!, { projectId: `ce-test-${Math.random().toString(36).slice(2)}` });
+
+  const emitted: Array<{ event: string; data: unknown }> = [];
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:20:
+  THE WORKFLOW-SELECTION SURFACE, added so lane-vocabulary behaviour is testable through this ctx.
+
+  `resolveWorkflowIrForTask` reads a task's selection and then the named definition. The stub carried
+  neither, so any plugin code resolving a board's real lanes could only be exercised against the
+  builtin default — which is the one vocabulary where a legacy literal and a resolved answer agree,
+  and therefore the one that proves nothing.
+
+  Both readers stay ABSENT until a test seeds them, so every existing test sees the previous shape.
+  */
+  const workflowDefinitions = new Map<string, unknown>();
+  const taskWorkflowIds = new Map<string, string>();
+
+  const taskStore = {
+    getAsyncLayer: () => layer,
+    isBackendMode: () => true,
+    getRootDir: () => projectRoot,
+    getWorkflowDefinition: (id: string) => workflowDefinitions.get(id),
+    getTaskWorkflowSelectionAsync: async (taskId: string) => {
+      const workflowId = taskWorkflowIds.get(taskId);
+      return workflowId ? { workflowId } : undefined;
+    },
+  } as unknown as PluginContext["taskStore"];
+
+  const ctx: PluginContext = {
+    pluginId: "fusion-plugin-compound-engineering",
+    taskStore,
+    settings: {},
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    emitEvent: (event: string, data: unknown) => {
+      emitted.push({ event, data });
+    },
+  };
+
+  return {
+    layer,
+    projectRoot,
+    ctx,
+    emitted,
+    defineWorkflow: (id: string, ir: unknown) => { workflowDefinitions.set(id, { id, ir }); },
+    assignTaskWorkflow: (taskId: string, workflowId: string) => { taskWorkflowIds.set(taskId, workflowId); },
+    close: () => {
+      rmSync(projectRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+/**
+ * A scripted fake interactive session: each prompt/answer advances a cursor and
+ * the next `nextEvent()` yields the scripted event for that turn. Mirrors the
+ * U4 seam tests' scripted fake.
+ */
+export function makeScriptedSession(script: InteractiveAiSessionEvent[]): InteractiveAiSession {
+  let cursor = -1;
+  return {
+    prompt: vi.fn(async () => {
+      cursor++;
+    }),
+    answer: vi.fn(async () => {
+      cursor++;
+    }),
+    nextEvent: vi.fn(async () => {
+      if (script.length === 0) {
+        // An empty script is a test bug — surface it loudly rather than
+        // silently returning undefined (which masks the mistake downstream).
+        throw new Error("makeScriptedSession: empty script has no events to yield");
+      }
+      return script[Math.min(Math.max(cursor, 0), script.length - 1)];
+    }),
+    dispose: vi.fn(),
+  };
+}
+
+/** A factory that returns the given scripted session. */
+export function scriptedFactory(session: InteractiveAiSession): CreateInteractiveAiSessionFactory {
+  return vi.fn(async () => ({ session, sessionFile: "/tmp/ce.json" }));
+}
+
+/** A session whose first turn never produces an event (forces a turn timeout). */
+export function hangingSession(): InteractiveAiSession {
+  return {
+    prompt: vi.fn(async () => undefined),
+    answer: vi.fn(async () => undefined),
+    nextEvent: vi.fn(() => new Promise<InteractiveAiSessionEvent>(() => undefined)),
+    dispose: vi.fn(),
+  };
+}

@@ -1,0 +1,106 @@
+.native-shell-connection-manager {
+  width: min(100%, 42rem);
+}
+
+.native-shell-connection-manager__profiles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 0 var(--space-xl);
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.native-shell-connection-manager__overview,
+.native-shell-connection-manager__section-heading,
+.native-shell-connection-manager__profile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.native-shell-connection-manager__overview-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.native-shell-connection-manager__overview-copy h3,
+.native-shell-connection-manager__section-heading h3,
+.native-shell-connection-manager__editor h3 {
+  margin: 0;
+}
+
+.native-shell-connection-manager__overview-copy p,
+.native-shell-connection-manager__section-heading p {
+  margin: var(--space-xs) 0 0;
+}
+
+.native-shell-connection-manager__section-heading {
+  padding: var(--space-sm) 0;
+}
+
+.native-shell-connection-manager__profile-actions,
+.native-shell-connection-manager__mobile-actions {
+  display: inline-flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.native-shell-connection-manager__mobile-actions {
+  padding: var(--space-md) var(--space-xl) 0;
+}
+
+.native-shell-connection-manager__editor {
+  padding-top: var(--space-lg);
+}
+
+.native-shell-connection-manager__editor h3 {
+  padding-bottom: var(--space-sm);
+}
+
+.native-shell-connection-manager__empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.native-shell-connection-manager__empty-state p {
+  margin: 0;
+}
+
+.native-shell-connection-manager__active-pill {
+  display: inline-flex;
+  margin-top: var(--space-xs);
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  background: var(--status-done-bg);
+}
+
+.native-shell-connection-manager__delete-confirm {
+  margin: 0 var(--space-xl);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
+.native-shell-connection-manager__standalone-error {
+  margin: var(--space-md) var(--space-xl) 0;
+}
+
+@media (max-width: 768px) {
+  .native-shell-connection-manager__overview,
+  .native-shell-connection-manager__section-heading,
+  .native-shell-connection-manager__profile {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .native-shell-connection-manager__section-heading > .btn,
+  .native-shell-connection-manager__overview > .btn {
+    width: 100%;
+  }
+}

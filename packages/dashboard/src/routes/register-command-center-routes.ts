@@ -1,0 +1,698 @@
+import {
+  resolveWorkflowIrById,
+  aggregateTokenAnalytics,
+  aggregateToolAnalytics,
+  aggregateActivityAnalytics,
+  aggregateProductivityAnalytics,
+  aggregatePluginActivations,
+  aggregateTeamAnalytics,
+  aggregateWorkflowAnalytics,
+  aggregateGithubIssueAnalytics,
+  aggregateGitlabIssueAnalytics,
+  aggregateSignalsAnalytics,
+  composeLiveSnapshot,
+  LITELLM_PRICING_SOURCE_URL,
+  parseLiteLLMPricing,
+  resolveColumnFlags,
+  parseWorkflowIr,
+  type TaskStore,
+  type TokenGroupBy,
+  type TokenTimeGranularity,
+} from "@fusion/core";
+import type { Request, Response } from "express";
+import { ApiError } from "../api-error.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
+import {
+  serializeCsv,
+  tokenAnalyticsToTable,
+  toolAnalyticsToTable,
+  activityAnalyticsToTable,
+  productivityAnalyticsToTable,
+  workflowAnalyticsToTable,
+  githubIssueAnalyticsToTable,
+  gitlabIssueAnalyticsToTable,
+  type CsvTable,
+} from "../command-center-csv.js";
+import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
+import { listSignalConnectorStatus, resolveConfiguredSignalProviders } from "./register-signal-routes.js";
+import type { ApiRouteRegistrar } from "./types.js";
+
+/**
+ * Command Center analytics API (U9).
+ *
+ * Thin HTTP adapters over the Phase-A core aggregators
+ * (`{token,tool,activity,productivity}-analytics.ts`) and the U6a live-snapshot
+ * composer (`command-center-live.ts`). All metric math lives in `@fusion/core`
+ * (KTD2); these handlers only parse the request, resolve the **project-scoped**
+ * store, and serialize the aggregator output.
+ *
+ * Security:
+ *  - Every route inherits the dashboard's standard session/auth middleware via
+ *    the {@link ApiRouteRegistrar} contract — exactly like `register-usage-routes.ts`.
+ *    No analytics endpoint, including `/live`, is unauthenticated; an
+ *    unauthenticated request is rejected with 401 by the server-level auth
+ *    middleware before reaching these handlers.
+ *  - Every endpoint (JSON, CSV, and `/live`) resolves the database through
+ *    `getScopedStore(req)` before aggregating, so a project-A caller can never
+ *    read project-B data. The `?format=csv` branch (U8) serializes the SAME
+ *    already-scoped aggregator output, so the export path has no separate
+ *    scoping surface.
+ *
+ * Robustness:
+ *  - Missing or invalid `from`/`to`/`groupBy` query params fall back to a
+ *    documented default window (the last {@link DEFAULT_WINDOW_DAYS} days) and a
+ *    no-grouping default — never a 500. See {@link resolveRange}.
+ */
+
+/** Documented default analytics window when range params are absent/invalid. */
+export const DEFAULT_WINDOW_DAYS = 7;
+
+const VALID_GROUP_BY: ReadonlySet<string> = new Set<TokenGroupBy>([
+  "model",
+  "provider",
+  "node",
+  "agent",
+  "task",
+]);
+
+const VALID_TOKEN_GRANULARITY: ReadonlySet<string> = new Set<TokenTimeGranularity>([
+  "hour",
+  "day",
+  "week",
+]);
+
+/** A resolved, always-valid `[from, to]` ISO range. */
+export interface ResolvedRange {
+  from: string;
+  to: string;
+  /** True when the caller's params were missing/invalid and the default applied. */
+  defaulted: boolean;
+}
+
+function isValidIso(value: string): boolean {
+  const t = Date.parse(value);
+  return Number.isFinite(t);
+}
+
+/**
+ * Resolve `from`/`to` query params into an always-valid ISO range.
+ *
+ * FNXC:CommandCenter 2026-06-25-00:00:
+ * FN-7019 fixes the picker/server contract: the date picker omits null bounds,
+ * so a from-only request means `[from, now]` and a to-only request means
+ * `[epoch, to]`. Only a truly empty/invalid range or an ordered-range violation
+ * may fall back to the documented default window; otherwise presets collapse to
+ * last-7-days and Command Center charts do not change when operators select a
+ * different range. `now` is injectable for tests.
+ */
+export function resolveRange(
+  query: Request["query"],
+  now: number = Date.now(),
+): ResolvedRange {
+  const rawFrom = typeof query.from === "string" ? query.from : undefined;
+  const rawTo = typeof query.to === "string" ? query.to : undefined;
+  const fromMs = rawFrom !== undefined && isValidIso(rawFrom) ? Date.parse(rawFrom) : undefined;
+  const toMs = rawTo !== undefined && isValidIso(rawTo) ? Date.parse(rawTo) : undefined;
+
+  if (fromMs !== undefined && toMs !== undefined) {
+    if (fromMs <= toMs) {
+      return { from: rawFrom as string, to: rawTo as string, defaulted: false };
+    }
+  } else if (fromMs !== undefined) {
+    return { from: rawFrom as string, to: new Date(now).toISOString(), defaulted: false };
+  } else if (toMs !== undefined) {
+    return { from: new Date(0).toISOString(), to: rawTo as string, defaulted: false };
+  }
+
+  const to = new Date(now).toISOString();
+  const from = new Date(now - DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  return { from, to, defaulted: true };
+}
+
+/** Resolve the `groupBy` query param, ignoring unknown values. */
+export function resolveGroupBy(query: Request["query"]): TokenGroupBy | undefined {
+  const raw = typeof query.groupBy === "string" ? query.groupBy : undefined;
+  return raw !== undefined && VALID_GROUP_BY.has(raw) ? (raw as TokenGroupBy) : undefined;
+}
+
+/** Resolve the token-series `granularity` query param, ignoring unknown values. */
+export function resolveTokenGranularity(query: Request["query"]): TokenTimeGranularity | undefined {
+  const raw = typeof query.granularity === "string" ? query.granularity : undefined;
+  return raw !== undefined && VALID_TOKEN_GRANULARITY.has(raw) ? (raw as TokenTimeGranularity) : undefined;
+}
+
+/** True when the caller asked for CSV via `?format=csv` (case-insensitive). */
+/*
+FNXC:SdlcFunnelColumns 2026-07-30-10:15:
+The project's own workflow columns, in the shape the funnel's trait mapping needs. Resolved from the
+project's DEFAULT workflow, which is the board the activity log's column ids come from.
+
+Returns `undefined` — not an empty array — when nothing resolves: undefined lets the core fall back to
+the built-in default (the previous behaviour), while `[]` would map EVERY column to OTHER and silently
+empty the funnel. That distinction is the whole reason this returns optionally.
+*/
+async function resolveFunnelColumnsForProject(
+  store: { getDefaultWorkflowId?: () => Promise<string | undefined> },
+): Promise<Array<{ id: string; traits: Array<{ trait: string }> }> | undefined> {
+  try {
+    const workflowId = await store.getDefaultWorkflowId?.();
+    if (!workflowId) return undefined;
+    const ir = await resolveWorkflowIrById(store as never, workflowId);
+    const columns = (ir as { columns?: Array<{ id?: unknown; traits?: Array<{ trait?: unknown }> }> }).columns ?? [];
+    const mapped = columns
+      .filter((column): column is { id: string; traits?: Array<{ trait?: unknown }> } => typeof column?.id === "string")
+      .map((column) => ({
+        id: column.id,
+        traits: (column.traits ?? [])
+          .map((trait) => trait?.trait)
+          .filter((trait): trait is string => typeof trait === "string")
+          .map((trait) => ({ trait })),
+      }));
+    return mapped.length > 0 ? mapped : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function wantsCsv(query: Request["query"]): boolean {
+  const raw = typeof query.format === "string" ? query.format : undefined;
+  return raw !== undefined && raw.toLowerCase() === "csv";
+}
+
+/**
+ * Stream a {@link CsvTable} as an `attachment` download. Sets the RFC-4180
+ * `text/csv` content-type (charset utf-8) and a `Content-Disposition` filename.
+ * Always sends a body — a header-only CSV for an empty result, never a 204.
+ */
+function sendCsv(res: Response, filename: string, table: CsvTable): void {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(serializeCsv(table));
+}
+
+const PRICING_FETCH_TIMEOUT_MS = 10_000;
+
+async function fetchLatestLiteLLMPricing(): Promise<unknown> {
+  const response = await fetch(LITELLM_PRICING_SOURCE_URL, {
+    signal: AbortSignal.timeout(PRICING_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new ApiError(
+      502,
+      `Failed to fetch pricing source: ${response.status} ${response.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`,
+    );
+  }
+  return response.json() as Promise<unknown>;
+}
+
+export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
+  const { router, getScopedStore, rethrowAsApiError } = ctx;
+
+  /**
+   * GET /api/command-center/tokens
+   * Token consumption + derived USD cost (U2 + U3) over a date range.
+   * Query: from, to (ISO-8601), groupBy (model|provider|node|agent|task).
+   */
+  router.get("/command-center/tokens", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      const groupBy = resolveGroupBy(req.query);
+      const granularity = resolveTokenGranularity(req.query);
+      const settings = await store.getGlobalSettingsStore().getSettings();
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Token analytics now runs on the AsyncDataLayer in backend mode; pass the
+      // async layer when present, otherwise the sync SQLite handle, and await.
+      const result = await aggregateTokenAnalytics(requireAsyncLayer(store, "Command Center token analytics"), {
+        from: range.from,
+        to: range.to,
+        groupBy,
+        granularity,
+        now: Date.now(),
+        pricingOverrides: settings.modelPricingOverrides,
+      });
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-tokens.csv", tokenAnalyticsToTable(result));
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate token analytics");
+    }
+  });
+
+  /**
+   * POST /api/command-center/pricing/fetch
+   * Fetch + persist user-editable model-pricing overrides from LiteLLM.
+   *
+   * FNXC:CommandCenter 2026-06-22-00:00:
+   * Operators need a one-click refresh from the pinned LiteLLM JSON dataset without adding HTTP to core pricing. Preserve existing overrides on fetch/parse failures and invalidate global settings caches after a successful write so Command Center cost reads use the refreshed rates immediately.
+   */
+  router.post("/command-center/pricing/fetch", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const json = await fetchLatestLiteLLMPricing();
+      const parsed = parseLiteLLMPricing(json);
+      if (parsed.count === 0) {
+        throw new ApiError(502, "No chat-mode pricing entries found in fetched LiteLLM data");
+      }
+
+      const settings = await store.getGlobalSettingsStore().getSettings();
+      const fetchedAt = new Date().toISOString();
+      await store.updateGlobalSettings({
+        modelPricingOverrides: {
+          ...(settings.modelPricingOverrides ?? {}),
+          ...parsed.overrides,
+        },
+        modelPricingFetchedAt: fetchedAt,
+        modelPricingSource: LITELLM_PRICING_SOURCE_URL,
+      });
+      invalidateAllGlobalSettingsCaches();
+
+      res.json({ count: parsed.count, fetchedAt, source: LITELLM_PRICING_SOURCE_URL });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to fetch model pricing");
+    }
+  });
+
+  /**
+   * GET /api/command-center/tools
+   * Tool-usage counts + autonomy ratio (U2) over a date range.
+   */
+  router.get("/command-center/tools", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Tool analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateToolAnalytics(requireAsyncLayer(store, "Command Center tool analytics"), {
+        from: range.from,
+        to: range.to,
+      });
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-tools.csv", toolAnalyticsToTable(result));
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate tool analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/activity
+   * Sessions/messages/active-nodes/stickiness (U2) over a date range.
+   */
+  router.get("/command-center/activity", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      /*
+      FNXC:SdlcFunnelColumns 2026-07-30-10:10:
+      PASS THE PROJECT'S OWN COLUMNS. The funnel maps column ids to SDLC stages by trait, and any id it
+      was not given folds to OTHER — so without this the Command Center funnel on a renamed or custom
+      board read as empty while the board was plainly busy. `aggregateSdlcFunnel`'s doc comment already
+      said callers with a custom workflow should supply their columns; this is the caller, and it did
+      not. Unresolvable workflow falls through to the built-in default, which is the previous behaviour.
+      */
+      const result = await aggregateActivityAnalytics(requireAsyncLayer(store, "Command Center activity analytics"), {
+        from: range.from,
+        to: range.to,
+        columns: await resolveFunnelColumnsForProject(store),
+      });
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-activity.csv", activityAnalyticsToTable(result));
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate activity analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/productivity
+   * Files/commits/PRs/LOC (U2) over a date range.
+   */
+  router.get("/command-center/productivity", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Productivity analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateProductivityAnalytics(requireAsyncLayer(store, "Command Center productivity analytics"), {
+        from: range.from,
+        to: range.to,
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-19:25: store supplied so the duration distribution
+         resolves the board's complete lanes instead of the literal 'done'. */
+      }, store);
+      if (wantsCsv(req.query)) {
+        sendCsv(
+          res,
+          "command-center-productivity.csv",
+          productivityAnalyticsToTable(result),
+        );
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate productivity analytics");
+    }
+  });
+
+  /**
+   * POST /api/command-center/productivity/backfill-loc
+   * Explicit operator action to backfill historical commit-association LOC stats.
+   *
+   * FNXC:CommandCenterLocBackfill 2026-06-21-00:00:
+   * The LOC backfill must never run during render-time analytics reads. Keep it an authenticated operator POST, resolve the project-scoped store before invoking the git-backed store method, and default to dry-run so operators can preview historical NULL-only updates before writing.
+   */
+  router.post("/command-center/productivity/backfill-loc", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const body = (req.body ?? {}) as { dryRun?: unknown };
+      const dryRun = typeof body.dryRun === "boolean" ? body.dryRun : true;
+      const result = await store.backfillCommitAssociationDiffStats({ dryRun });
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to backfill productivity LOC stats");
+    }
+  });
+
+  /**
+   * GET /api/command-center/team
+   * Per-agent store-derived tokens/cost, files changed, task counts, and live identity.
+   *
+   * FNXC:CommandCenter 2026-06-18-16:57:
+   * The Team endpoint must inherit Command Center auth and resolve getScopedStore(req) before aggregation so project-A callers cannot read project-B agent rows or task metrics. It intentionally omits GitHub issue stats; FN-6653 owns that overlay.
+   */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-12:20:
+Board-wide column trait flags for the analytics tallies, keyed by column ID.
+
+WIRING AN OPTION NOTHING FILLED. `columnFlagsByName` was added to both aggregators so
+`tasksInProgress`/`tasksInReview` come from column ROLES; neither route passed it, so both surfaces
+kept reporting **0 in-progress and 0 in-review** on a renamed board beside token and cost totals that
+were entirely correct. A zero next to a populated neighbour reads as "nobody is working".
+
+THE LIMIT, STATED RATHER THAN GLOSSED. This map is FLAT — one entry per column id, unioned across
+every workflow the project declares. On a board where two workflows use the SAME id for different
+roles, the merged flags make that column count for both roles. That is a real ambiguity and it cannot
+be resolved here for `team` analytics: its rows are already aggregated to `{agentId, columnName}` by
+SQL, so the workflow identity is gone before this code sees the data. Fixing that properly means
+grouping by workflow in the query, which is a change to the aggregation, not to this wiring.
+
+`workflow` analytics is different — its rows DO carry `workflowId`, so a per-workflow map is possible
+there and would be exact. I have not taken it in this change because it needs a second option shape
+on the aggregator; it is the obvious follow-up and is called out on the PR rather than left implied.
+*/
+/** Do two workflows disagree about what this column id MEANS? Only the roles the analytics tallies
+ *  read are compared — a difference in an unrelated trait is not a conflict for this purpose. */
+function isConflictingColumnFlags(
+  a: ReturnType<typeof resolveColumnFlags>,
+  b: ReturnType<typeof resolveColumnFlags>,
+): boolean {
+  return (a.countsTowardWip === true) !== (b.countsTowardWip === true)
+    || (a.mergeBlocker === true) !== (b.mergeBlocker === true)
+    || (a.humanReview === true) !== (b.humanReview === true);
+}
+
+async function resolveColumnFlagsByName(
+  store: Pick<TaskStore, "listWorkflowDefinitions" | "getWorkflowDefinition">,
+): Promise<Map<string, ReturnType<typeof resolveColumnFlags>>> {
+  const byColumn = new Map<string, ReturnType<typeof resolveColumnFlags>>();
+  const conflicting = new Set<string>();
+  try {
+    const definitions = await store.listWorkflowDefinitions();
+    for (const definition of definitions) {
+      const ir = typeof definition.ir === "string" ? parseWorkflowIr(definition.ir) : definition.ir;
+      const columns = ir && "columns" in ir ? ir.columns : undefined;
+      for (const column of columns ?? []) {
+        const flags = resolveColumnFlags(column);
+        const existing = byColumn.get(column.id);
+        if (existing === undefined) {
+          byColumn.set(column.id, flags);
+          continue;
+        }
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-17:20 (#2803 review — greptile P1):
+        A CONFLICTING id is DROPPED, not merged.
+
+        My first version merged flags across workflows with `{ ...existing, ...flags }`. Where two
+        workflows reuse one column id for DIFFERENT roles, that produced an entry carrying both, and
+        the aggregators then counted the same rows as in-progress AND in-review — a double count,
+        which is worse than the silent zero this wiring set out to fix. I had documented the flat-map
+        ambiguity in the PR body and shipped it anyway; documenting a defect is not resolving it.
+
+        Dropping the id leaves those rows on the aggregators' documented legacy behaviour: still
+        wrong for a renamed board, but wrong in ONE direction and never double counted. Unambiguous
+        ids — the overwhelming majority, and the whole board on a single-workflow project — keep the
+        resolved answer.
+
+        Exact per-workflow classification is possible for `workflow` analytics (its rows carry
+        `workflowId`) and impossible for `team` analytics at this seam (its rows are aggregated to
+        `{agentId, columnName}` by SQL before this code sees them). That asymmetry needs a second
+        option shape on the aggregator and a change to the team query — a separate change, named here
+        rather than approximated.
+        */
+        if (isConflictingColumnFlags(existing, flags)) conflicting.add(column.id);
+      }
+    }
+  } catch {
+    /* Unreadable definitions leave the map empty, so both aggregators keep their legacy ids. */
+  }
+  for (const id of conflicting) byColumn.delete(id);
+  return byColumn;
+}
+
+  router.get("/command-center/team", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      const settings = await store.getGlobalSettingsStore().getSettings();
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Team analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateTeamAnalytics(requireAsyncLayer(store, "Command Center team analytics"), {
+        from: range.from,
+        to: range.to,
+        now: Date.now(),
+        pricingOverrides: settings.modelPricingOverrides,
+        columnFlagsByName: await resolveColumnFlagsByName(store),
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
+      The store is the third argument so the analytics queries resolve which lanes carry the
+      complete / wip / human-review traits. Without it they filter on 'done' and
+      ('in-progress','in-review') and report zero completed work on any renamed board.
+      */
+      }, store);
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate team analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/workflows
+   * Per-workflow store-derived tokens/cost, files changed, and task counts.
+   */
+  router.get("/command-center/workflows", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      const settings = await store.getGlobalSettingsStore().getSettings();
+      const defaultWorkflowId = (await store.getDefaultWorkflowId()) ?? "builtin:coding";
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // Workflow analytics now runs on the AsyncDataLayer in backend mode; pass
+      // the async layer when present, otherwise the sync SQLite handle, and await.
+      const result = await aggregateWorkflowAnalytics(requireAsyncLayer(store, "Command Center workflow analytics"), {
+        from: range.from,
+        to: range.to,
+        now: Date.now(),
+        pricingOverrides: settings.modelPricingOverrides,
+        defaultWorkflowId,
+        columnFlagsByName: await resolveColumnFlagsByName(store),
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-18:35: store supplied so the per-workflow completed
+         and in-flight queries resolve the board's real lanes instead of 'done'/'in-progress'. */
+      }, store);
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-workflows.csv", workflowAnalyticsToTable(result));
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate workflow analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/github
+   * GitHub issues filed by Fusion and imported GitHub issues fixed by Fusion.
+   */
+  router.get("/command-center/github", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // GitHub issue analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateGithubIssueAnalytics(requireAsyncLayer(store, "Command Center GitHub analytics"), {
+        from: range.from,
+        to: range.to,
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-20:15: store supplied so resolved-issue counts use
+         the board's complete lanes instead of the literal 'done'. */
+      }, store);
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-github.csv", githubIssueAnalyticsToTable(result));
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate GitHub issue analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/gitlab
+   * GitLab issues/MRs filed by Fusion and imported GitLab source items fixed by Fusion.
+   */
+  router.get("/command-center/gitlab", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      // FNXC:PostgresCutover 2026-07-04-00:00:
+      // GitLab issue analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateGitlabIssueAnalytics(requireAsyncLayer(store, "Command Center GitLab analytics"), {
+        from: range.from,
+        to: range.to,
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-20:15: store supplied so resolved-issue counts use
+         the board's complete lanes instead of the literal 'done'. */
+      }, store);
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-gitlab.csv", gitlabIssueAnalyticsToTable(result));
+        return;
+      }
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate GitLab issue analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/signals/connectors
+   * Per-provider signal connector configuration status without secret values.
+   *
+   * FNXC:CommandCenter 2026-06-25-22:36:
+   * The Signals empty state must be honest about setup state. Expose configured booleans through the same scoped/authenticated Command Center route family, never the raw HMAC secret, so the UI can avoid implying data merely has not arrived when no provider is configured.
+   */
+  router.get("/command-center/signals/connectors", async (req, res) => {
+    try {
+      await getScopedStore(req);
+      res.json({ connectors: listSignalConnectorStatus() });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to list signal connector status");
+    }
+  });
+
+  /**
+   * GET /api/command-center/signals
+   * External Signals metrics backed by locally recorded incidents.
+   *
+   * FNXC:CommandCenter 2026-06-19-00:00:
+   * The Signals surface must not be a phantom endpoint. Mirror sibling Command Center routes by resolving getScopedStore(req) before reading incidents, so project-A callers only see project-A signal volume and MTTR stays the honest unavailable sentinel when no incidents are resolved. Include connector configuration separately from counts so the UI can distinguish "not configured" from "configured but quiet" without using the write-only ingestion bearer-token path.
+   */
+  router.get("/command-center/signals", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // Signal analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateSignalsAnalytics(requireAsyncLayer(store, "Command Center signal analytics"), {
+        from: range.from,
+        to: range.to,
+      });
+      const configured = resolveConfiguredSignalProviders();
+      res.json({
+        ...result,
+        connectors: {
+          configured,
+          anyConfigured: configured.length > 0,
+        },
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate signal analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/plugin-activations
+   * Project-scoped plugin/extension activation rows for Ecosystem analytics.
+   */
+  router.get("/command-center/plugin-activations", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const range = resolveRange(req.query);
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-13:15:
+      // Pass the async layer when in backend mode; otherwise pass the sync DB.
+      const dbOrLayer = requireAsyncLayer(store, "Command Center plugin analytics");
+      const result = await aggregatePluginActivations(dbOrLayer, {
+        from: range.from,
+        to: range.to,
+      });
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate plugin activation analytics");
+    }
+  });
+
+  /*
+  FNXC:TaskVerificationStatus 2026-07-30-00:00:
+  Command Center shares the persisted executor verification outcomes with task
+  detail. Resolve every task through this request-scoped store so results never
+  cross project boundaries.
+  */
+  router.get("/command-center/verification-requests", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const tasks = await store.listTasks({ limit: 50, includeArchived: false, slim: true });
+      const records = (await Promise.all(tasks.map((task) => store.getTaskVerificationRequestAsync(task.id))))
+        .filter((record): record is NonNullable<typeof record> => record !== null)
+        .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+      res.json({ requests: records.slice(0, 10) });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to read verification requests");
+    }
+  });
+
+  /**
+   * GET /api/command-center/live
+   * Live Mission-Control snapshot (U6a): active sessions/runs/nodes + current
+   * per-column task counts. No date range — current state only. Scoped + authed
+   * like every other endpoint.
+   */
+  router.get("/command-center/live", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // Live snapshot now runs on the AsyncDataLayer in backend mode.
+      const result = await composeLiveSnapshot(requireAsyncLayer(store, "Command Center live snapshot"));
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to compose live snapshot");
+    }
+  });
+};

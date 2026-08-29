@@ -1,0 +1,710 @@
+/* === New Task Modal === */
+/*
+FNXC:ModalTouchGeometry 2026-07-27-18:00:
+FN-8620 removes New Task's local floating geometry CSS. FloatingWindow owns its shared drag,
+resize, sheet, and tablet touch-target presentation; this component retains only form layout.
+*/
+.new-task-modal {
+  min-height: min(520px, 80vh);
+  pointer-events: auto;
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-07-27-20:05:
+The custom New Task header remains FloatingWindow's delegated drag surface. Keep its gesture
+contract explicit so tablet touch reaches the shared captured-pointer handler rather than page pan.
+*/
+.new-task-modal__header--draggable {
+  touch-action: none;
+}
+
+.new-task-modal .modal-body {
+  padding: var(--space-xl);
+  overflow-y: auto;
+  max-height: calc(80vh - 120px);
+  flex: 1;
+  min-height: 0;
+}
+.new-task-modal .form-group {
+  margin-top: 0;
+  margin-bottom: var(--space-xl);
+  padding: 0;
+}
+
+.new-task-modal .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.new-task-modal .form-group label {
+  margin-bottom: var(--space-sm);
+}
+
+.new-task-modal .checkbox-label {
+  margin-bottom: var(--space-xs) !important;
+}
+
+.task-form-primary-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.task-form-primary-section .form-group {
+  margin-bottom: 0;
+}
+
+/*
+FNXC:NewTaskGitHubReference 2026-06-24-00:00:
+The GitHub reference picker is a compact prompt-seeding helper inside the primary create flow, not a competing create action. Keep it token-sized, vertically stacked, and allowed to shrink so desktop floating windows and mobile sheets avoid horizontal overflow while unavailable states render as text instead of empty selects.
+*/
+.new-task-github-reference-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.new-task-github-reference-picker__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  min-width: 0;
+}
+
+.new-task-github-reference-picker__header label,
+.new-task-github-reference-picker__label {
+  margin-bottom: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.new-task-github-reference-picker__remote {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-task-github-reference-picker__remote-select,
+.new-task-github-reference-picker__select {
+  width: 100%;
+  min-width: 0;
+}
+
+.new-task-github-reference-picker__status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.task-form-primary-section .description-with-refine {
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.task-form-primary-section .description-with-refine textarea {
+  min-height: 120px;
+  padding: var(--space-md) calc(var(--space-2xl) * 2 + var(--space-sm) - var(--space-xs)) var(--space-md) var(--space-md);
+  line-height: 1.5;
+  background: var(--surface);
+}
+
+.task-form-primary-section .description-with-refine.description--fullscreen {
+  padding: var(--space-lg);
+  border: none;
+  background: var(--surface);
+}
+
+.task-form-primary-section .description-with-refine.description--fullscreen textarea {
+  min-height: unset;
+}
+
+.task-form-description-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  width: fit-content;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.task-form-description-actions .btn {
+  border-color: var(--border);
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.task-form-action-icon {
+  vertical-align: middle;
+}
+
+.task-form-more-options-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-xs);
+  margin: 0 0 var(--space-sm);
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.task-form-more-options-toggle:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.task-form-more-options-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.task-form-more-options-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
+.task-form-more-options-toggle svg {
+  color: var(--text-dim);
+}
+
+.task-form-more-options {
+  margin-left: var(--space-sm);
+  padding-left: var(--space-md);
+  border-left: 1px solid var(--border-subtle);
+  overflow: hidden;
+  max-height: 2400px;
+  opacity: 1;
+  transition:
+    max-height var(--transition-slow),
+    opacity var(--transition-normal),
+    margin-top var(--transition-normal),
+    padding var(--transition-normal),
+    border-color var(--transition-normal);
+}
+
+.task-form-more-options.collapsed {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  margin-top: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-left-color: transparent;
+}
+
+.task-form-more-options .form-group {
+  margin-bottom: var(--space-md);
+}
+
+.task-form-more-options .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.task-form-more-options .form-group label {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.4px;
+}
+
+.task-form-more-options .form-group small {
+  margin-top: var(--space-sm);
+  color: var(--text-muted);
+}
+
+.task-form-more-options .model-select-row {
+  margin-bottom: var(--space-sm);
+}
+
+.new-task-modal .form-group small {
+  display: block;
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.new-task-branch-error {
+  margin: 0 var(--space-xl) var(--space-sm);
+}
+
+.new-task-modal textarea {
+  min-height: calc(var(--space-xl) * 3 + var(--space-md));
+  transition: height var(--transition-instant);
+}
+
+.selected-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding: 0;
+}
+
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  max-width: 100%;
+}
+
+.dep-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-lg);
+  height: var(--space-lg);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  margin-left: var(--space-xs);
+  border-radius: 50%;
+  transition: background var(--transition-instant), color var(--transition-instant);
+}
+
+.dep-chip-remove:hover {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.dep-chip-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.model-select-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.model-select-row:last-child {
+  margin-bottom: 0;
+}
+
+.model-select-label {
+  width: calc(var(--space-xl) * 3);
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+/* === Workflow Steps Section (TaskForm & WorkflowResultsTab) === */
+.workflow-steps-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:NewTaskWorkflowDropdown 2026-06-30-18:35:
+The New Task create workflow selector is a real dropdown so workflow identity icons can appear in the trigger and option rows. Keep all sizing token-based and bounded inside both the floating desktop panel and the mobile full-screen sheet.
+*/
+.task-workflow-dropdown-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.task-workflow-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-form-inline-workflow-label,
+.task-workflow-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-workflow-trigger-icon,
+.task-workflow-option-icon {
+  flex: 0 0 auto;
+}
+
+.task-workflow-dropdown-menu {
+  width: min(calc(var(--space-xl) * 18), 100%);
+  min-width: min(calc(var(--space-xl) * 12), 100%);
+  max-width: 100%;
+  max-height: min(calc(var(--space-xl) * 12), calc(100dvh - var(--space-xl) * 2));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.task-workflow-dropdown-option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  align-items: flex-start;
+}
+
+.task-workflow-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.task-workflow-option-name,
+.task-workflow-option-id {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-workflow-default-badge {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+
+.workflow-steps-description {
+  margin-bottom: var(--space-xs);
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--space-xs);
+}
+
+.workflow-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.workflow-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.workflow-step-name {
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.workflow-step-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: calc(var(--space-xs) * 0.5);
+  line-height: 1.4;
+}
+
+/* Workflow step reorder controls */
+.workflow-step-order {
+  margin-top: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+}
+
+.workflow-step-order-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.workflow-step-order-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) calc(var(--space-xs) * 1.5);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.workflow-step-order-item + .workflow-step-order-item {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: calc(var(--space-xs) * 0.5);
+  padding-top: calc(var(--space-xs) * 1.5);
+}
+
+.workflow-step-order-item:hover {
+  background: var(--card-hover);
+}
+
+.workflow-step-order-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--space-lg) + var(--space-xs));
+  height: calc(var(--space-lg) + var(--space-xs));
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.workflow-step-order-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-step-order-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.workflow-step-order-actions .btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-xl);
+  height: var(--space-xl);
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+@media (hover: hover) {
+  .workflow-step-order-actions .btn-icon:hover:not(:disabled) {
+    background: var(--card-hover);
+    border-color: var(--border);
+    color: var(--text);
+  }
+}
+
+.workflow-step-order-actions .btn-icon:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.workflow-step-order-actions .btn-icon:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .workflow-step-order-actions .btn-icon {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* === New Task Modal Quick Fields === */
+.new-task-quick-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+}
+
+.new-task-quick-fields .form-group {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.new-task-quick-fields .form-group label {
+  margin-bottom: var(--space-xs);
+}
+
+.new-task-quick-fields .dep-trigger {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  /* TaskForm: cap description textarea height on mobile, restore in fullscreen */
+  .task-form-primary-section .description-with-refine textarea {
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .task-form-primary-section .description-with-refine.description--fullscreen textarea {
+    max-height: unset;
+  }
+
+  /* New task + task form: stacked mobile fields and bounded popovers */
+  .new-task-modal {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal.new-task-modal[style*="--keyboard-overlap"] {
+    height: var(--vv-height, 100dvh);
+    max-height: var(--vv-height, 100dvh);
+    transform: translateY(var(--vv-offset-top, 0px));
+    will-change: transform;
+  }
+
+  .new-task-modal .modal-body {
+    max-height: unset;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding: var(--space-md) var(--space-sm);
+  }
+
+  /*
+  FNXC:TaskModalResize 2026-07-26-15:30:
+  The physical-screen tablet path shares this CSS query with phone sheets. Restore the desktop
+  body density only when the runtime tablet class is present; phones keep their compact sheet
+  padding while the tablet resize surface gains no visible inset from its touch controls.
+  */
+  .new-task-modal.task-modal--tablet .modal-header {
+    padding: var(--modal-padding);
+  }
+
+  .new-task-modal.task-modal--tablet .modal-body {
+    padding: var(--space-xl);
+  }
+
+  .new-task-modal .form-group {
+    padding: 0 var(--space-md);
+  }
+
+  .model-select-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+  }
+
+  .model-select-label {
+    width: auto;
+    text-align: left;
+  }
+
+  .task-form .dep-dropdown {
+    left: 0;
+    right: 0;
+    max-width: 100%;
+    max-height: min(40dvh, calc(var(--space-2xl) * 6));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .task-form-description-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .task-form-description-actions .btn {
+    min-height: 36px;
+    flex: 1 1 auto;
+  }
+
+  .task-form-more-options-toggle {
+    margin: 0 var(--space-md) var(--space-sm);
+    width: calc(100% - var(--space-md) * 2);
+  }
+
+  .new-task-quick-fields {
+    padding: 0 var(--space-md);
+  }
+
+  .new-task-branch-error {
+    margin: 0 var(--space-md) var(--space-sm);
+  }
+
+  .new-task-github-reference-picker__remote-select,
+  .new-task-github-reference-picker__select {
+    min-height: calc(var(--space-xl) + var(--space-sm));
+  }
+
+  .new-task-quick-fields .dep-trigger {
+    width: 100%;
+    min-height: 36px;
+  }
+
+  .new-task-quick-fields .dep-dropdown {
+    left: 0;
+    right: 0;
+    max-width: 100%;
+    max-height: min(40dvh, calc(var(--space-2xl) * 6));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .task-form-more-options {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .task-form .checkbox-label {
+    flex-wrap: wrap;
+  }
+
+  .task-form .checkbox-label > div {
+    flex: 1;
+    min-width: 0;
+  }
+}

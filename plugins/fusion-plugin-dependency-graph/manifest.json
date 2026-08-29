@@ -1,0 +1,16 @@
+{
+  "id": "fusion-plugin-dependency-graph",
+  "name": "Dependency Graph",
+  "version": "0.1.0",
+  "description": "Top-level dependency graph dashboard view",
+  "dashboardViews": [
+    {
+      "viewId": "graph",
+      "label": "Graph",
+      "componentPath": "./dashboard-view",
+      "icon": "Network",
+      "placement": "more",
+      "order": 40
+    }
+  ]
+}

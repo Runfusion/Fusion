@@ -1,0 +1,514 @@
+/* === Executor Status Bar === */
+
+/**
+ * Footer status bar that displays real-time executor statistics.
+ * Fixed at bottom of viewport, only visible in project view.
+ *
+ * FNXC:FooterChrome 2026-06-22-18:00:
+ * The bottom executor footer must sit flush against main content without visible divider chrome; keep the draggable/layout affordances elsewhere, but do not draw a top border between content and footer or internal separator lines between footer groups.
+ */
+.executor-status-bar {
+  position: fixed;
+  /* See MobileNavBar.css — ICB compensation for Android Chrome's inflated
+     initial containing block. Defaults to 0px on healthy browsers. */
+  bottom: var(--icb-bottom-offset, 0px);
+  left: 0;
+  right: var(--icb-right-offset, 0px);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-lg);
+  background: var(--surface);
+  border-top: none;
+  font-size: 12px;
+  color: var(--text-muted);
+  height: 36px;
+  box-sizing: border-box;
+}
+
+/* State variants */
+.executor-status-bar--error {
+  background: var(--executor-status-error-bg);
+}
+
+.executor-status-bar--connecting,
+.executor-status-bar--loading {
+  background: var(--surface);
+}
+
+/* Individual stat segment */
+.executor-status-bar__segment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.executor-status-bar__segment--time {
+  color: var(--text-dim);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+FNXC:Terminal 2026-06-21-22:13:
+FN-6887 makes the footer status bar the canonical desktop/tablet terminal launcher surface. Mobile continues to use MobileNavBar's More sheet, so this segment is hidden at the mobile breakpoint.
+*/
+.executor-status-bar__segment--terminal-launcher {
+  flex-shrink: 0;
+}
+
+.executor-status-bar__segment--quick-chat-launcher {
+  flex-shrink: 0;
+}
+
+.executor-status-bar__footer-launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: calc(var(--space-lg) + var(--space-xs));
+  padding: 0 var(--space-xs);
+  border: none;
+  background: transparent;
+  /*
+   * FNXC:FooterLaunchers 2026-06-24-00:00:
+   * Quick Chat and Terminal are peer footer launchers. Pin both to the footer's compact UI font and color token so switching the launcher location does not make one control read heavier or dimmer than the other.
+   */
+  color: inherit;
+  font-family: var(--font-primary);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.executor-status-bar__footer-launcher:hover {
+  color: var(--text);
+}
+
+.executor-status-bar__footer-launcher:hover span {
+  text-decoration: underline;
+  text-underline-offset: calc(var(--space-xs) / 2);
+}
+
+.executor-status-bar__footer-launcher:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+*/
+.executor-status-bar__segment--fanout {
+  color: var(--color-error);
+  min-width: 0;
+}
+
+/* Colored dot indicator */
+/* Colored dot indicator */
+.executor-status-bar__indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  /* Force GPU compositing to keep indicator in sync with parent during scroll */
+  transform: translateZ(0);
+}
+
+.executor-status-bar__indicator--running {
+  background: var(--in-progress);
+}
+
+.executor-status-bar__indicator--running.executor-status-bar__indicator--active {
+  background: var(--in-progress);
+  animation: executor-pulse 1.5s ease-in-out infinite;
+}
+
+.executor-status-bar__indicator--blocked {
+  background: var(--triage);
+}
+
+.executor-status-bar__indicator--blocked.executor-status-bar__indicator--active {
+  background: var(--triage);
+}
+
+.executor-status-bar__indicator--queued {
+  background: var(--todo);
+}
+
+.executor-status-bar__indicator--review {
+  background: var(--in-review);
+}
+
+.executor-status-bar__indicator--fanout {
+  background: var(--color-error);
+}
+
+.executor-status-bar__indicator--connecting {
+  background: var(--color-warning);
+}
+
+.executor-status-bar__indicator--connecting.executor-status-bar__indicator--active {
+  animation: executor-pulse 1.5s ease-in-out infinite;
+}
+
+/* Numeric count display */
+.executor-status-bar__count {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1;
+}
+
+.executor-status-bar__count--warning {
+  color: var(--triage);
+}
+
+.executor-status-bar__count--error {
+  color: var(--color-error);
+}
+
+/* Label text */
+.executor-status-bar__label {
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+/* Mobile mode is component-owned so short landscape phones hide labels and
+   expose tap targets under the same viewport contract. */
+.executor-status-bar--mobile .executor-status-bar__label {
+  display: none;
+}
+
+.executor-status-bar__stat-tooltip {
+  position: fixed;
+  z-index: var(--z-popover, 60);
+  transform: translate(-50%, calc(-100% - var(--space-sm)));
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: inherit;
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.executor-status-bar__segment--stat {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: inherit;
+}
+
+.executor-status-bar--mobile .executor-status-bar__segment--stat {
+  min-width: var(--executor-status-touch-size, calc(var(--space-lg) * 2 + var(--space-xs)));
+  min-height: var(--executor-status-touch-size, calc(var(--space-lg) * 2 + var(--space-xs)));
+  justify-content: center;
+  cursor: pointer;
+}
+
+.executor-status-bar__segment--stat:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* Max concurrent display */
+.executor-status-bar__max {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.executor-status-bar__fanout-summary {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  max-width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Separator between count and max */
+.executor-status-bar__separator {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 0 2px;
+  line-height: 1;
+}
+
+/* Divider between segments */
+.executor-status-bar__divider {
+  display: none;
+}
+
+/* Project directory toggle/link */
+.executor-status-bar__segment--project-directory {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.executor-status-bar__folder-toggle {
+  --executor-status-touch-size: calc(var(--space-lg) * 2 + var(--space-xs));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  transform: translate(-2px, -1px);
+  transition: color var(--transition-fast);
+}
+
+/* Mobile keeps a tappable 40-ish px target. Desktop collapses to the icon
+   so it aligns on the same baseline as the surrounding status-bar text. */
+@media (pointer: coarse), (max-width: 768px) {
+  .executor-status-bar__folder-toggle {
+    min-width: var(--executor-status-touch-size);
+    min-height: var(--executor-status-touch-size);
+  }
+}
+
+.executor-status-bar__folder-toggle:hover {
+  color: var(--text);
+}
+
+.executor-status-bar__folder-toggle:focus-visible,
+.executor-status-bar__project-path:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.executor-status-bar__folder-toggle--active {
+  color: var(--todo);
+}
+
+.executor-status-bar__project-path {
+  min-width: 0;
+  max-width: min(44ch, 34vw);
+  min-height: var(--executor-status-touch-size, calc(var(--space-lg) * 2 + var(--space-xs)));
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  text-underline-offset: calc(var(--space-xs) / 2);
+  padding: 0 var(--space-xs);
+}
+
+.executor-status-bar__project-path:hover {
+  color: var(--todo);
+  text-decoration-color: var(--todo);
+}
+
+/* Spacer to push right-aligned elements */
+.executor-status-bar__spacer {
+  flex: 1;
+}
+
+/* Time display */
+.executor-status-bar__time {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executor-status-bar__icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Executor state badge */
+.executor-status-bar__state {
+  font-weight: 600;
+}
+
+.executor-status-bar__segment--engine-controls {
+  position: relative;
+}
+
+.executor-status-bar__state-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+.executor-status-bar__state-trigger:hover .executor-status-bar__state {
+  text-decoration: underline;
+  text-underline-offset: calc(var(--space-xs) / 2);
+}
+
+.executor-status-bar__state-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* Error message */
+.executor-status-bar__error,
+.executor-status-bar__connecting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.executor-status-bar__error {
+  color: var(--color-error);
+}
+
+.executor-status-bar__connecting {
+  color: var(--color-warning);
+}
+
+/* Loading message */
+.executor-status-bar__loading-text {
+  color: var(--text-muted);
+}
+
+/* Pulsing animation for active indicators */
+@keyframes executor-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.2);
+  }
+}
+
+/* Responsive: collapse on small screens */
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Elevating the fixed footer above `--mobile-nav-height` is only correct when the mobile tab bar is actually mounted (JS mode=mobile). Tablet-class devices in the ≤768 CSS px band stay mode=tablet with a left sidebar and no bottom tab bar; the width-only rule left a dead band under the footer and made it paint over board content. Keep width media as a no-JS fallback for true phones, then reassert desktop bottom/height when mode is tablet or desktop.
+*/
+@media (max-width: 768px) {
+  /*
+  FNXC:MobileFooter 2026-06-23-22:10:
+  The footer's "last updated" freshness text is useful but lower priority than terminal/script access, chat launch, and status counters on narrow mobile. Hide the time segment first when mobile footer space is tight instead of letting it squeeze controls or counts.
+  */
+  .executor-status-bar__segment--time {
+    display: none;
+  }
+
+  .executor-status-bar__fanout-summary {
+    max-width: 14ch;
+  }
+  /* Update the footer height token for mobile - must be on the wrapper, not on :root */
+  .project-content--with-footer {
+    --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  .executor-status-bar {
+    padding: var(--space-xs) var(--space-md);
+    gap: 4px;
+    font-size: 11px;
+    height: calc(var(--space-lg) * 2 + var(--space-xs));
+    overflow: hidden;
+    /* Must match the mobile nav bar's effective height. MobileNavBar floors
+       the bottom inset to 12px (Android Chrome under-reports the inset while
+       its address bar is collapsing), so we have to use the same floor here
+       or the footer ends up drawn inside the nav's padding area. */
+    bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+  }
+
+  /* Keyboard-open override: ignore ICB offset so the keyboard can cover the
+     footer instead of displacing it upward by keyboard height. */
+  .executor-status-bar.executor-status-bar--keyboard-open {
+    bottom: 0;
+  }
+
+  .executor-status-bar__segment {
+    min-width: 0;
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .executor-status-bar__project-path {
+    max-width: min(26ch, 30vw);
+  }
+
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-footer {
+  --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
+}
+
+html[data-viewport-mode="mobile"] .executor-status-bar {
+  padding: var(--space-xs) var(--space-md);
+  gap: 4px;
+  font-size: 11px;
+  height: calc(var(--space-lg) * 2 + var(--space-xs));
+  overflow: hidden;
+  bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+}
+
+html[data-viewport-mode="mobile"] .executor-status-bar.executor-status-bar--keyboard-open {
+  bottom: 0;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer,
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .dashboard-project-shell {
+  --executor-footer-height: 36px;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar {
+  bottom: var(--icb-bottom-offset, 0px);
+  height: 36px;
+  padding: var(--space-xs) var(--space-lg);
+  gap: var(--space-sm);
+  font-size: 12px;
+  overflow: visible;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar__segment--time {
+  display: flex;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar.executor-status-bar--keyboard-open {
+  bottom: var(--icb-bottom-offset, 0px);
+}
+
+/* Light theme support */
+[data-theme="light"] .executor-status-bar {
+  background: var(--surface);
+  border-top: none;
+}
+
+[data-theme="light"] .executor-status-bar__count {
+  color: var(--text);
+}
+
+[data-theme="light"] .executor-status-bar__state {
+  color: var(--color-success);
+}

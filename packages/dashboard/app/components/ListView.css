@@ -1,0 +1,1322 @@
+/* === List View === */
+.list-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-xl);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* FNXC:ListView 2026-06-23-23:42: No divider between the controls and quick-add. The controls row now carries action groups only; the aggregate top task count was removed while contextual section counts remain lower in the list.
+FNXC:ListView 2026-06-23-23:55: Bulk Edit, View, and New Task are one no-wrap action cluster so the primary list actions stay visually together instead of splitting across opposite edges or separate wrapped lines.
+FNXC:ListView 2026-06-23-00:25: The primary action cluster must stay on one physical row even when the list pane narrows; preserve max-content width and let the cluster scroll horizontally instead of wrapping individual actions onto separate lines.
+FNXC:ListView 2026-06-23-21:42: Center the Bulk Edit, View, and New Task cluster in both desktop sidebar controls and the mobile list toolbar so the primary actions read as a single balanced control group. */
+.list-sidebar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-xl) 0;
+  background: var(--surface);
+  border-bottom: 0;
+}
+
+.list-sidebar-controls__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.list-action-cluster,
+.list-sidebar-controls__actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+  inline-size: max-content;
+  min-width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.list-action-cluster::-webkit-scrollbar,
+.list-sidebar-controls__actions::-webkit-scrollbar {
+  display: none;
+}
+
+.list-action-cluster > .btn,
+.list-sidebar-controls__actions > .btn {
+  flex: 0 0 auto;
+}
+
+.list-sidebar-controls__actions--end {
+  justify-content: flex-end;
+}
+
+/*
+FNXC:ListView 2026-06-22-23:30:
+View options was oversized (full-width stacked button). Render it as a compact icon+label btn-sm consistent with its row-mates.
+*/
+.list-sidebar-controls__actions .list-view-options-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  white-space: nowrap;
+}
+
+.list-workflow-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+/* FNXC:ListView 2026-06-23-20:15: New Task owns the right action group; do not apply the old toolbar auto-margin behavior in the sidebar controls. */
+
+.list-toolbar .list-new-task-action {
+  margin-left: auto;
+}
+
+.list-action-cluster .list-new-task-action,
+.list-sidebar-controls__actions .list-new-task-action {
+  margin-left: 0;
+}
+
+.list-sidebar-summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.list-sidebar-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+}
+
+.list-view-options-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.list-toolbar-mobile-options {
+  padding: 0 var(--space-md) var(--space-sm);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.list-view-options-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+/* Section expand/collapse controls */
+.list-section-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.list-section-controls .btn {
+  white-space: nowrap;
+}
+
+.list-clear-column-filter-btn {
+  margin-left: var(--space-sm);
+}
+
+/* Selection stats */
+.list-selection-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
+  color: var(--text);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--todo) 30%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs) var(--space-md);
+}
+
+.selection-count {
+  font-weight: 500;
+  color: var(--todo);
+}
+
+/* Bulk edit toolbar */
+.bulk-edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-hover, color-mix(in srgb, var(--surface) 90%, var(--text) 10%));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-left: auto;
+}
+
+.bulk-edit-label {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bulk-edit-dropdown {
+  min-width: 180px;
+}
+
+.bulk-edit-node-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.bulk-edit-dropdown .model-combobox-trigger {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  padding: var(--space-xs) var(--space-md);
+}
+
+.bulk-node-select {
+  width: 100%;
+  min-height: calc(var(--space-lg) * 2 - var(--space-xs));
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.bulk-edit-apply-btn {
+  white-space: nowrap;
+}
+
+.bulk-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.bulk-edit-apply-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/*
+FNXC:ListContextMenu 2026-06-29-00:00:
+List rows and mobile cards expose the same task lifecycle menu as Board cards from right-click or mobile long-press. The popover is portal-positioned so table rows, split-pane sizing, and mobile card layout do not gain new in-flow width or height.
+*/
+.list-context-menu-popover {
+  position: fixed;
+  z-index: 1000;
+}
+
+.list-context-menu {
+  position: static;
+  min-width: var(--task-context-menu-min-width);
+  max-width: var(--task-context-menu-max-width);
+}
+
+/* Checkbox column in table */
+.list-header-checkbox,
+.list-cell-checkbox {
+  width: calc(var(--space-xl) + var(--space-md) + var(--space-xs));
+  text-align: center;
+  padding: var(--space-sm) var(--space-xs);
+}
+
+.list-header-checkbox input[type="checkbox"],
+.list-cell-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--todo);
+}
+
+.list-cell-checkbox input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Column toggle dropdown */
+.list-column-toggle {
+  position: relative;
+}
+
+.list-column-toggle .btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.list-create-area {
+  width: 100%;
+  padding: var(--space-md) var(--space-xl);
+  background: var(--surface);
+}
+
+.list-create-area .quick-entry-box {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* New class for QuickEntryBox positioned above the table in list view.
+   FNXC:ListView 2026-06-23-20:15: Remove the divider above quick-add by eliminating top padding; the controls and quick-add share the same surface without a visible seam. */
+.list-quick-entry-above-table {
+  width: 100%;
+  padding: 0 var(--space-xl) var(--space-md);
+  background: var(--surface);
+  border-top: 0;
+}
+
+.list-quick-entry-above-table .quick-entry-box {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.list-column-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 160px;
+  padding: var(--space-xs) 0;
+  z-index: 100;
+  box-shadow: var(--shadow);
+  animation: dropdown-in 0.15s ease-out;
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.list-column-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.list-column-dropdown-item:hover {
+  background: var(--card-hover);
+}
+
+.list-column-dropdown-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.list-column-dropdown-item.disabled:hover {
+  background: none;
+}
+
+.list-column-dropdown-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--todo);
+  cursor: pointer;
+}
+
+.list-column-dropdown-item.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
+/* Hide done tasks toggle */
+.list-hide-done-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Clickable workflow column filters. */
+.list-drop-zones {
+  display: flex;
+  gap: var(--space-sm);
+  overflow-x: auto;
+}
+
+.list-drop-zones--sidebar {
+  flex-wrap: wrap;
+}
+
+.list-drop-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.list-drop-zone:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.list-drop-zone.active {
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+  box-shadow: 0 0 0 1px var(--todo);
+}
+
+.drop-zone-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.drop-zone-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.drop-zone-count {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  min-width: 20px;
+  text-align: center;
+}
+
+/* Table container */
+.list-table-container {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+}
+
+/*
+FNXC:ListView 2026-06-22-00:40:
+Widen the split resize column so the task-list sidebar is easy to grab and drag (the 4px --space-xs target was hard to hit). The handle shows a centered grip line that brightens on hover/focus.
+
+FNXC:ListView 2026-06-22-18:00:
+List view should not show a wide divider gutter. Collapse the grid handle column to zero width and let the transparent resize handle overlap the single 1px sidebar border, preserving a comfortable touch target without making the visible divider wider.
+*/
+.list-split-layout {
+  display: grid;
+  grid-template-columns: auto 0 minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+/*
+FNXC:SidebarDivider 2026-06-22-18:00:
+The static 1px divider line lives on the sidebar pane's right border while the resize handle column has no visible width. This keeps one normal divider line between the task list and detail pane without a large gutter.
+*/
+.list-split-sidebar {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+
+/*
+FNXC:SidebarDivider 2026-06-22-18:00:
+The List split resize control is a transparent var(--space-sm)-wide drag hit-area that overlaps the single pane border. It tints a narrow centered band only on hover/active/focus, matching the left sidebar handle's "large target, slim visual" behavior without widening the visible divider.
+*/
+.list-split-resize-handle {
+  position: relative;
+  left: calc(var(--space-sm) / -2);
+  width: var(--space-sm);
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  z-index: 2;
+  transition: background var(--transition-fast);
+}
+
+.list-split-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-xs);
+  transform: translateX(-50%);
+}
+
+.list-split-resize-handle:hover::before,
+.list-split-resize-handle:active::before,
+.list-split-resize-handle:focus-visible::before {
+  background: color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.list-split-resize-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:SidebarDivider 2026-06-22-18:00:
+No border-left on the detail pane. Keeping a border-left here would produce a second faint line after the overlapping resize handle, so the list/detail split renders as one divider only.
+*/
+.list-split-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.list-split-detail-empty {
+  height: 100%;
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.list-split-detail-empty p {
+  margin-block: 0;
+  margin-inline: 0;
+}
+
+.list-split-detail-content {
+  height: 100%;
+  min-height: 0;
+}
+
+.list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.list-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.list-header-cell {
+  text-align: left;
+  padding: var(--space-md) var(--space-lg);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition-fast);
+  white-space: nowrap;
+}
+
+/* Reduce padding on ID column header to match data cells */
+.list-table th:first-child.list-header-cell {
+  padding-right: var(--space-sm);
+}
+
+.list-header-cell:hover {
+  color: var(--text);
+}
+
+.sort-icon {
+  vertical-align: middle;
+  margin-left: 4px;
+  opacity: 0.5;
+  transition: opacity var(--transition-fast);
+}
+
+.sort-icon.active {
+  opacity: 1;
+  color: var(--todo);
+}
+
+/* Table rows */
+.list-row {
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.list-row:hover {
+  background: var(--card-hover);
+}
+
+.list-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.list-row--selected {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+  box-shadow: inset 0 0 0 1px var(--todo);
+}
+
+.list-row.failed {
+  border-left: 3px solid var(--color-error-dark);
+}
+
+.list-row.paused {
+  opacity: 0.55;
+}
+
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+*/
+/*
+FNXC:ListView 2026-06-16-00:00:
+FN-6529 requires list-view agent-active tasks to use a simple static highlight instead of the animated board-card glow, so the list row keeps a flat inset indicator and subtle background without referencing agent-glow.
+*/
+.list-row.agent-active {
+  border-color: var(--in-progress);
+  background: color-mix(in srgb, var(--in-progress) 8%, transparent);
+  box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--in-progress);
+}
+
+/* Table cells */
+.list-cell {
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.list-cell-id {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: var(--space-md) var(--space-sm) var(--space-md) var(--space-lg); /* Reduced right padding to tighten space with title */
+}
+
+.list-cell-title {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+FNXC:ListView 2026-06-22-00:00:
+In the split sidebar the title cell must allow the title to wrap to two lines (handled by .list-title-text clamp) instead of being capped/truncated to one line, so the left panel can be dragged much narrower while titles stay legible.
+*/
+.list-split-sidebar .list-cell-title {
+  max-width: none;
+  white-space: normal;
+}
+
+.list-title-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.list-title-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+.list-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* FNXC:ListView 2026-06-21-01:42: Desktop list task titles clamp to two wrapped lines so longer task names remain legible in the narrower split sidebar without allowing unbounded row growth. */
+.list-title-text {
+  display: -webkit-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.list-cell-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.list-cell-deps {
+  text-align: center;
+}
+
+/* Badges */
+.list-status-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--text-muted);
+}
+
+
+.list-status-badge--triage {
+  background: var(--status-triage-bg);
+  color: var(--triage);
+}
+.list-status-badge--todo {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+.list-status-badge--in-progress {
+  background: var(--status-in-progress-bg);
+  color: var(--in-progress);
+}
+.list-status-badge--in-review {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+
+/*
+FNXC:TaskCardPlanReviewBadge 2026-07-11-12:16:
+ListView uses the same active-review token as TaskCard for the FN-7831 Reviewing badge. Keep the modifier styling token-only and geometry-neutral so grouped cards and table rows preserve existing responsive layout.
+*/
+.list-status-badge--reviewing {
+  background: color-mix(in srgb, var(--in-review) 18%, transparent);
+  color: var(--in-review);
+  box-shadow: inset 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--in-review) 35%, transparent);
+}
+
+/*
+FNXC:PlanReviewReplan 2026-07-15-12:15:
+FN-7985 marks a plan parked after its automatic review/revise budget runs out as a warning,
+not an ordinary triage hold. This shared ListView modifier applies to both grouped cards and
+rows while preserving their existing badge geometry.
+*/
+.list-status-badge--review-budget-exhausted {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  box-shadow: inset 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+@media (max-width: 768px) {
+  .list-status-badge--review-budget-exhausted {
+    max-width: 100%;
+    text-align: center;
+  }
+}
+.list-status-badge--done {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+.list-status-badge--archived {
+  background: var(--status-archived-bg);
+  color: var(--text-muted);
+}
+
+.list-status-badge.failed {
+  background: var(--status-error-bg);
+  color: var(--color-error-dark);
+}
+
+.list-status-badge.pulsing {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.list-column-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+}
+
+.list-dep-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 11px;
+  color: var(--triage);
+}
+
+.list-execution-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--radius-pill);
+  line-height: 1;
+}
+
+.list-execution-mode-badge svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.list-execution-mode-badge--fast {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+}
+
+/* Progress bar */
+.list-cell-progress {
+  min-width: 100px;
+}
+
+.list-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.list-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.list-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.list-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  min-width: 30px;
+  text-align: right;
+}
+
+/* Empty state */
+.list-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* Section headers for grouped list view */
+.list-section-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.list-section-header:hover {
+  background: var(--card-hover);
+}
+
+.list-section-header--collapsed {
+  background: var(--card);
+  border-bottom-color: var(--border);
+  transition: background var(--transition-fast);
+}
+
+.list-section-header--collapsed:hover {
+  background: var(--card-hover);
+}
+
+.list-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-sm);
+  color: var(--text-muted);
+  transition: transform var(--transition-fast), color var(--transition-fast);
+  transform: rotate(0deg);
+  vertical-align: middle;
+}
+
+.list-section-chevron--expanded {
+  transform: rotate(90deg);
+  color: var(--text);
+}
+
+.list-section-cell {
+  padding: calc(var(--space-sm) + var(--space-xs) * 0.5) var(--space-lg);
+  text-align: left;
+  font-weight: 600;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.list-section-dot {
+  display: inline-block;
+  width: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  height: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  border-radius: 50%;
+  margin-right: var(--space-sm);
+  vertical-align: middle;
+}
+
+.list-section-title {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: var(--space-sm);
+}
+
+.list-section-count {
+  display: inline-block;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  background: var(--card);
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  border-radius: var(--radius-pill);
+  min-width: calc(var(--space-lg) + var(--space-sm));
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* Section expand/collapse animation - only for expanded sections */
+@keyframes section-expand {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-xs) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.list-section-header ~ tr {
+  animation: section-expand var(--duration-normal) ease-out;
+}
+
+/* Empty section row */
+.list-section-empty {
+  background: var(--bg);
+}
+
+.list-section-empty:hover {
+  background: var(--bg); /* Prevent hover effect on empty section rows */
+}
+
+.list-empty-cell {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+FNXC:ListViewWindowing 2026-07-26-11:40:
+Each list section renders only a window of its tasks so a large project cannot inflate the DOM to the
+point where mobile browsers reclaim the backgrounded tab. This is the container for the shared
+"Load more" affordance that reveals the next increment; it only positions the button — the button
+itself reuses the board's `.btn.btn-secondary.btn-sm` primitive so List and Board read as one system.
+*/
+.list-section-load-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.list-section-load-more-row:hover {
+  background: transparent; /* not a task row — suppress the row hover affordance */
+}
+
+/* === List View Single-Pane Responsive ===
+FNXC:ListView 2026-08-03-05:47 (FN-8754):
+The component now decides split capability from measured List width. Keep these compact rules available
+at tablet widths, but do not hide split chrome with a viewport-only media rule: a tablet List surface
+can have sufficient room after dashboard chrome is accounted for.
+*/
+@media (max-width: 1024px) {
+  .list-toolbar {
+    padding: var(--space-md);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .list-create-area {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .list-column-toggle {
+    order: 3;
+    margin-left: auto;
+  }
+
+  .list-drop-zones {
+    padding: var(--space-sm) var(--space-md);
+    gap: calc(var(--space-xs) + var(--space-xs) * 0.5);
+  }
+
+  .drop-zone-label {
+    display: none;
+  }
+
+  .list-table-container {
+    overflow-x: auto;
+  }
+
+
+  .list-table {
+    min-width: auto;
+  }
+
+  .list-cell-title {
+    max-width: 150px;
+  }
+
+  .list-cell-date {
+    display: none;
+  }
+
+  .list-header-cell:nth-child(5),
+  .list-header-cell:nth-child(6) {
+    display: none;
+  }
+}
+
+/* === List View Single-Pane Cards (FN-1140, FN-7809) === */
+@media (max-width: 1024px) {
+  /* The JS-measured single-pane route renders cards; a wide tablet keeps its table and split detail. */
+  .list-view--single-pane .list-table {
+    display: none;
+  }
+
+  /* Mobile card layout */
+  .list-cards {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+  }
+
+  .list-card-section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-md) var(--space-sm);
+    cursor: pointer;
+    min-height: 36px;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .list-card-section-header:active {
+    opacity: 0.7;
+  }
+
+  .list-card-section-header:focus-visible {
+    outline: 2px solid var(--todo);
+    outline-offset: 1px;
+    border-radius: var(--radius-sm);
+  }
+
+  .list-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    margin: var(--space-xs) 0;
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+    min-height: 36px;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .list-card:hover {
+    background: var(--card-hover);
+    border-color: var(--text-muted);
+  }
+
+  .list-card:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring-strong);
+  }
+
+  .list-card:active {
+    background: var(--surface);
+    transform: scale(0.99);
+  }
+
+  .list-card.agent-active {
+    border-color: var(--in-progress);
+    background: color-mix(in srgb, var(--in-progress) 8%, transparent);
+    box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--in-progress);
+  }
+
+  .list-card-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .list-card-row + .list-card-row {
+    margin-top: var(--space-sm);
+  }
+
+  .list-card-id {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .list-card-spacer {
+    flex: 1;
+  }
+
+  .list-card-title {
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  .list-card-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .list-card-checkbox {
+    position: absolute;
+    top: var(--space-xs);
+    left: var(--space-xs);
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .list-card--selectable {
+    padding-left: var(--space-2xl);
+  }
+
+  .list-card-empty {
+    padding: var(--space-lg) var(--space-md);
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+    background: transparent;
+  }
+
+  /* Drop zones hidden on mobile — drag not practical on touch */
+  .list-drop-zones {
+    display: none;
+  }
+
+  .list-toolbar-mobile-options .list-drop-zones {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 0;
+  }
+
+  .list-toolbar-mobile-options .drop-zone-label {
+    display: inline;
+  }
+
+  /* Toolbar stacking on mobile */
+  .list-toolbar {
+    padding: var(--space-sm) var(--space-md);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    justify-content: center;
+  }
+
+  .list-toolbar .list-action-cluster {
+    justify-content: center;
+  }
+
+  .list-selection-stats {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .list-mobile-bulk-actions-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: 0 var(--space-md) var(--space-sm);
+  }
+
+  .list-mobile-bulk-actions-wrapper .bulk-edit-toolbar {
+    flex-wrap: wrap;
+    width: 100%;
+    margin: 0;
+  }
+
+  .list-mobile-bulk-actions-wrapper .bulk-edit-dropdown {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .list-mobile-bulk-actions-wrapper .bulk-node-select {
+    min-height: calc(var(--space-xl) + var(--space-md));
+  }
+
+  .list-mobile-bulk-actions-wrapper .bulk-delete-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .list-mobile-bulk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    margin: 0 var(--space-md) var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .list-mobile-bulk-actions__count {
+    color: var(--text-muted);
+    font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+    font-weight: 600;
+  }
+
+  .list-mobile-bulk-actions .btn {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  .list-mobile-bulk-actions .bulk-delete-btn {
+    margin-left: auto;
+    width: auto;
+  }
+
+  /* List column dropdown items: touch target on mobile */
+  .list-column-dropdown-item {
+    min-height: 36px;
+  }
+}
+
+/*
+FNXC:BoardWorkflows 2026-06-20-09:12:
+ListView needs a neutral workflow-loading shell under the same flag-aware gate as Board, avoiding a first-paint fallback to legacy list columns while workflow metadata revalidates.
+*/
+.list-view--workflow-skeleton {
+  gap: var(--space-lg);
+}
+
+.list-workflow-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.list-workflow-skeleton__row {
+  block-size: var(--space-xl);
+  inline-size: 100%;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--border) 70%, var(--surface));
+  animation: list-workflow-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.list-workflow-skeleton__row--header {
+  inline-size: 60%;
+}
+
+.list-workflow-skeleton__row--short {
+  inline-size: 78%;
+}
+
+@keyframes list-workflow-skeleton-pulse {
+  0%, 100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .list-view--workflow-skeleton {
+    gap: var(--space-md);
+  }
+
+  .list-workflow-skeleton {
+    padding: var(--space-md);
+  }
+}

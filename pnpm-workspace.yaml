@@ -1,0 +1,77 @@
+ignoredBuiltDependencies:
+  - '@google/genai'
+  - cpu-features
+  - electron-winstaller
+  - keytar
+  - sharp
+  - ssh2
+onlyBuiltDependencies:
+  - '@embedded-postgres/darwin-arm64'
+  - '@embedded-postgres/darwin-x64'
+  - '@embedded-postgres/linux-arm64'
+  - '@embedded-postgres/linux-x64'
+  - '@embedded-postgres/windows-x64'
+  - '@homebridge/node-pty-prebuilt-multiarch'
+  - esbuild
+  - koffi
+  - protobufjs
+overrides:
+  '@types/node': ^25.5.2
+  protobufjs: ^7.5.8
+  # FNXC:ModelCatalog 2026-07-16-18:15: Keep floating @fusion/droid-cli and
+  # @fusion/pi-llama-cpp imports on the ModelRuntime-capable pi SDK so the
+  # workspace cannot resolve conflicting pi type surfaces.
+  # FNXC:ModelCatalog 2026-07-22-12:00: Bumped workspace override pin 0.80.10 → 0.81.1
+  # to match guarded package manifests (cli/core/engine/dashboard/pi-claude-cli).
+  # FNXC:ModelCatalog 2026-07-24-12:00: FN-8564 advances the matched runtime pair
+  # to 0.82.0. Wildcard consumers must resolve the exact guarded Pi API surface.
+  # FNXC:DesktopPackaging 2026-07-25-17:15: Legacy `pnpm deploy` resolves pi-coding-agent's
+  # transitive ranges without the workspace lockfile. Pin the complete Pi runtime closure to one
+  # exact version so new agent-core or tui patches cannot split the packageable desktop tree.
+  # FNXC:DesktopPackaging 2026-07-26-22:55: Advance the matched closure 0.82.0 → 0.82.1 so
+  # electron-builder's production-dependency walk accepts pi-agent-core's pi-ai@^0.82.1 requirement
+  # (Desktop packaging PR-lane failure when deploy resolved a newer agent-core patch beside 0.82.0 ai).
+  # FNXC:DesktopPackaging 2026-08-12-20:46: Advance the matched closure 0.82.1 → 0.84.1.
+  # pi-coding-agent@0.84.1 adds pi-client and pi-protocol while pi-ai@0.84.1 adds pi-telemetry;
+  # none were in the pre-bump lockfile, so pin every sibling for electron-builder's lockfile-free walk.
+  '@earendil-works/pi-agent-core': 0.84.1
+  '@earendil-works/pi-ai': 0.84.1
+  '@earendil-works/pi-client': 0.84.1
+  '@earendil-works/pi-coding-agent': 0.84.1
+  '@earendil-works/pi-protocol': 0.84.1
+  '@earendil-works/pi-telemetry': 0.84.1
+  '@earendil-works/pi-tui': 0.84.1
+# FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+# Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
+# optional native payloads for both CPU families on the current OS so each
+# packaged macOS/Linux app contains the Postgres binaries selected at runtime.
+# Upstream publishes Windows x64 only, so unsupported Windows ARM64 is not listed.
+supportedArchitectures:
+  os:
+    - current
+  cpu:
+    - x64
+    - arm64
+packages:
+  - "packages/*"
+  - "plugins/examples/*"
+  - "plugins/fusion-plugin-paperclip-runtime"
+  - "plugins/fusion-plugin-dependency-graph"
+  - "plugins/fusion-plugin-cli-printing-press"
+  - "plugins/fusion-plugin-openclaw-runtime"
+  - "plugins/fusion-plugin-hermes-runtime"
+  - "plugins/fusion-plugin-droid-runtime"
+  - "plugins/fusion-plugin-acp-runtime"
+  - "plugins/fusion-plugin-cursor-runtime"
+  - "plugins/fusion-plugin-grok-runtime"
+  - "plugins/fusion-plugin-claude-runtime"
+  - "plugins/fusion-plugin-omp-runtime"
+  - "plugins/fusion-plugin-agent-browser"
+  - "plugins/fusion-plugin-whatsapp-chat"
+  - "plugins/fusion-plugin-roadmap"
+  - "plugins/fusion-plugin-todos"
+  - "plugins/fusion-plugin-even-realities-glasses"
+  - "plugins/fusion-plugin-reports"
+  - "plugins/fusion-plugin-compound-engineering"
+  - "plugins/fusion-plugin-quality"
+  - "plugins/fusion-plugin-linear-import"

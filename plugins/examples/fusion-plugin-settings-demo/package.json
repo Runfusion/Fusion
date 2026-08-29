@@ -1,0 +1,28 @@
+{
+  "name": "@fusion-plugin-examples/settings-demo",
+  "version": "0.2.86-beta.8",
+  "type": "module",
+  "description": "Example Fusion plugin demonstrating settings schema and runtime configuration",
+  "keywords": [
+    "fusion-plugin"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

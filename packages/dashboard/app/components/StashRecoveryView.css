@@ -1,0 +1,108 @@
+/*
+FNXC:StashRecoveryStyling 2026-06-20-01:33:
+FN-6789 mounts Stash Recovery as a flex child of .project-content; grow, zero min-width, and use 100% width so the view fills the viewport instead of collapsing to intrinsic content width, mirroring the FN-6446 SecretsView fix.
+*/
+.stash-recovery-view {
+  padding: var(--space-lg);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  width: 100%;
+}
+
+.stash-recovery-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.stash-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto auto;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.stash-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.stash-field-label {
+  display: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.stash-row-actions,
+.stash-row-actions-danger {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+.stash-action-btn {
+  white-space: nowrap;
+}
+
+.stash-status {
+  color: var(--text-muted);
+  grid-column: 1 / -1;
+}
+
+.stash-recovery-diff-modal {
+  max-width: 80vw;
+}
+
+.stash-recovery-diff-pre {
+  margin: 0;
+  padding: var(--space-md);
+  max-height: 50vh;
+  overflow: auto;
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .stash-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+  }
+
+  .stash-field-label {
+    display: inline;
+  }
+
+  .stash-row-actions,
+  .stash-row-actions-danger {
+    justify-content: stretch;
+  }
+
+  .stash-action-btn {
+    flex: 1;
+    min-height: var(--mobile-nav-height);
+  }
+
+  .stash-row-actions-danger .stash-action-btn {
+    width: 100%;
+  }
+
+  .stash-recovery-diff-modal {
+    width: 100%;
+    max-width: 100%;
+  }
+}

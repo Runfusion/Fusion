@@ -1,0 +1,1190 @@
+/* === File Browser === */
+.modal.file-browser-modal {
+  width: 90vw;
+  max-width: 95vw;
+  min-width: calc(var(--space-xl) * 15);
+  height: 80vh;
+  min-height: calc(var(--space-xl) * 13.333);
+  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - var(--space-lg));
+  overflow: hidden;
+  resize: both;
+}
+
+.floating-window--file-browser.floating-window--headerless .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--file-browser .file-browser-modal {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  resize: none;
+  border: none;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+.file-browser-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  min-height: 48px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.file-browser-modal-header:active {
+  cursor: grabbing;
+}
+
+.file-browser-header-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
+  font-weight: 600;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.file-browser-header-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.file-browser-modal-header .modal-close {
+  position: static;
+}
+
+.file-browser-header-path {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  margin-left: var(--space-sm);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.file-browser-sidebar {
+  width: calc(var(--space-xl) * 11.667);
+  min-width: calc(var(--space-xl) * 7.5);
+  border-right: calc(var(--space-xs) * 0.25) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.file-browser-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.file-browser-resize-handle {
+  position: relative;
+  width: var(--space-sm);
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  border: none;
+  padding: 0;
+  box-sizing: border-box;
+  touch-action: none;
+  transition: background var(--transition-fast);
+}
+
+.file-browser-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-xs);
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.file-browser-resize-handle:hover::before,
+.file-browser-resize-handle:active::before {
+  background: color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.file-browser-resize-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.file-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.file-browser-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+  background: var(--bg);
+}
+
+.file-browser-up {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: none;
+  border: none;
+  color: var(--todo);
+  cursor: pointer;
+  font-size: var(--space-md);
+  padding: var(--space-xs);
+}
+
+.file-browser-up:hover {
+  text-decoration: underline;
+}
+
+.file-browser-path {
+  font-size: var(--space-md);
+  color: var(--text-muted);
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser .file-browser-header-actions {
+  margin-left: var(--space-sm);
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.file-browser .file-browser-header-actions .btn-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.file-browser-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 calc(var(--space-xl) * 6);
+  min-width: calc(var(--space-xl) * 4.5);
+  max-width: calc(var(--space-xl) * 12);
+}
+
+.file-browser-search-icon {
+  position: absolute;
+  left: var(--space-sm);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/*
+FNXC:FileBrowser 2026-07-08-00:00:
+Search input left padding must exceed the leading icon's offset + width so the
+magnifier never overlaps placeholder/typed text. The prior calc(--space-lg + --space-md)
+collided exactly with the icon's right edge (--space-sm offset + 16px icon) under the
+compact spacing theme (space-sm:4px, space-md:8px, space-lg:12px -> 12+8=20 == 4+16),
+leaving zero gap. Anchor the padding to the same --space-sm offset the icon uses, plus
+the icon's box width, plus a visible gap, so the relationship stays theme-invariant.
+*/
+.file-browser-search-input {
+  width: 100%;
+  min-width: 0;
+  padding-left: calc(var(--space-sm) + 16px + var(--space-sm));
+}
+
+.file-browser-create-button {
+  white-space: nowrap;
+}
+
+.file-browser-new-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.file-browser-new-menu-trigger {
+  white-space: nowrap;
+}
+
+.file-browser-new-menu-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--space-xl) * 5.5);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.file-browser-new-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: calc(var(--space-lg) + var(--space-md));
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-browser-new-menu-item:hover,
+.file-browser-new-menu-item:focus-visible {
+  outline: none;
+  background: var(--card-hover);
+}
+
+.file-browser-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-xs) 0;
+  min-height: 0;
+}
+
+.file-browser-empty {
+  padding: var(--space-xl);
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.file-browser-search-results {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.file-browser-search-result {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.file-browser-search-result:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.file-node-path {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.file-browser-search-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+}
+
+.file-browser-search-status--error {
+  color: var(--color-error);
+}
+
+.file-browser-loading,
+.file-browser-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+  height: 100%;
+  color: var(--text-muted);
+}
+
+.file-node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  transition: background var(--transition-fast);
+}
+
+.file-node:hover {
+  background: var(--card-hover);
+}
+
+.file-node-icon {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+
+.file-node--directory .file-node-icon {
+  color: var(--todo);
+}
+
+.file-node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.file-node-size,
+.file-node-time {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.file-browser-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+  background: var(--surface);
+  gap: var(--space-md);
+}
+
+.file-browser-file-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+}
+
+.file-browser-mtime {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.file-browser-binary-indicator,
+.file-browser-preview-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.file-browser-loading {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--todo);
+}
+
+.file-browser-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.file-browser-error-banner {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+  padding: var(--space-sm) var(--space-lg);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+}
+
+.file-editor-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-browser-preview {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.file-browser-preview-media {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  border: none;
+}
+
+.file-browser-preview-media--image,
+.file-browser-preview-media--video {
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.file-browser-preview-media--audio {
+  width: min(100%, calc(var(--space-xl) * 18));
+}
+
+.file-browser-preview-media--pdf {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.file-browser-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-lg);
+  border-top: calc(var(--space-xs) * 0.25) solid var(--border);
+  background: var(--surface);
+  font-size: var(--space-md);
+  color: var(--text-muted);
+}
+
+.file-browser-unsaved {
+  color: var(--triage);
+  font-weight: 500;
+}
+
+.file-browser-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.file-browser-placeholder p {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  opacity: 0.7;
+}
+
+/*
+FNXC:FileBrowser 2026-06-22-17:25:
+Narrow Files windows use the same single-pane list/editor behavior as mobile even when the browser viewport is desktop-sized. Keep this separate from the mobile media query so a resized floating file editor becomes usable without forcing the entire FloatingWindow fullscreen.
+*/
+.file-browser-modal--narrow .file-browser-body {
+  flex-direction: column;
+}
+
+.file-browser-modal--narrow .file-browser-modal-header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.file-browser-modal--narrow .file-browser-header-title {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+
+.file-browser-modal--narrow .file-browser-header-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50vw;
+}
+
+.file-browser-modal--narrow .file-browser-header-actions {
+  flex-shrink: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.file-browser-modal--narrow .file-browser .file-browser-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.file-browser-modal--narrow .file-browser .file-browser-path {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+.file-browser-modal--narrow .file-browser .file-browser-header-actions {
+  width: 100%;
+  margin-left: 0;
+  justify-content: flex-start;
+}
+
+.file-browser-modal--narrow .file-editor-toolbar {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.file-browser-modal--narrow .file-editor-toolbar-actions {
+  margin-inline-start: auto;
+  justify-content: flex-end;
+}
+
+.file-browser-modal--narrow .file-editor-toolbar-actions[hidden] {
+  display: none;
+}
+
+.file-browser-modal--narrow .file-editor-toolbar-button {
+  min-height: calc(var(--space-lg) + var(--space-sm));
+  min-width: calc(var(--space-lg) + var(--space-sm));
+}
+
+.file-browser-modal--narrow .file-browser-sidebar {
+  width: 100%;
+  height: 40%;
+  border-right: none;
+  border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+}
+
+.file-browser-modal--narrow .file-browser-sidebar.mobile {
+  display: none;
+}
+
+.file-browser-modal--narrow .file-browser-sidebar.mobile.active {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  max-height: none;
+  border-bottom: none;
+}
+
+.file-browser-modal--narrow .file-browser-content.mobile {
+  display: none;
+}
+
+.file-browser-modal--narrow .file-browser-content.mobile.active {
+  display: flex;
+  flex: 1;
+  height: 100%;
+}
+
+.file-browser-modal--narrow .file-browser-back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  background: transparent;
+  border: calc(var(--space-xs) * 0.25) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  margin-right: var(--space-sm);
+}
+
+.file-browser-modal--narrow .file-browser-back-button:hover {
+  background: var(--card-hover);
+}
+
+.file-browser-modal--narrow .file-browser-back-button:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.file-browser-modal--narrow .file-browser-preview {
+  padding: var(--space-md);
+}
+
+.file-browser-modal--narrow .file-browser-preview-media--image,
+.file-browser-modal--narrow .file-browser-preview-media--video {
+  max-width: 100%;
+  max-height: calc(100dvh - var(--space-2xl) * 6.25);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .file-editor-line-numbers {
+    width: calc(var(--space-xl) * 1.75);
+    padding-left: var(--space-xs);
+    padding-right: var(--space-xs);
+  }
+
+  .floating-window--file-browser {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    max-width: none;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--file-browser .floating-window__resize-handle {
+    display: none;
+  }
+
+  .modal.file-browser-modal {
+    width: 100vw;
+    min-width: 0;
+    height: 100dvh;
+    min-height: 0;
+    max-width: 100vw;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    resize: none;
+  }
+
+  .file-browser-body {
+    flex-direction: column;
+  }
+
+  .file-browser-modal-header {
+    position: relative;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    min-height: 56px;
+    padding-block: calc(var(--space-md) + var(--space-xs)) var(--space-md);
+  }
+
+  /*
+  FNXC:FileBrowser 2026-06-23-23:25:
+  On phones the full-screen Files modal still uses the header as its drag handle, but the title row can wrap and the action controls consume much of the top bar. Preserve a large touch-safe grab area with touch-action:none and add a subtle handle marker so dragging is discoverable without adding a second toolbar.
+  */
+  .file-browser-modal-header::before {
+    content: "";
+    position: absolute;
+    top: var(--space-xs);
+    left: 50%;
+    width: calc(var(--space-xl) + var(--space-sm));
+    height: calc(var(--space-xs) * 0.75);
+    transform: translateX(-50%);
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--text-muted) 44%, transparent);
+  }
+
+  .file-browser-header-title {
+    overflow: hidden;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .file-browser-header-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50vw;
+  }
+
+  .file-browser-header-actions {
+    flex-shrink: 0;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .file-browser .file-browser-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .file-browser .file-browser-path {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+
+  .file-browser-search {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .file-browser .file-browser-header-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .file-browser-create-button {
+    flex: 1 1 calc(var(--space-xl) * 4.5);
+    justify-content: center;
+  }
+
+  .file-node-path {
+    flex-basis: 100%;
+    max-width: none;
+    margin-left: calc(var(--space-lg) + var(--space-sm));
+  }
+
+  .file-editor-toolbar {
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+
+  .file-editor-toolbar-actions {
+    margin-inline-start: auto;
+    justify-content: flex-end;
+  }
+
+  .file-editor-toolbar-actions[hidden] {
+    display: none;
+  }
+
+  .file-editor-toolbar-button {
+    min-height: calc(var(--space-lg) + var(--space-sm));
+    min-width: calc(var(--space-lg) + var(--space-sm));
+  }
+
+  .file-browser-modal-header .modal-close {
+    padding: var(--space-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .file-browser-sidebar {
+    width: 100%;
+    height: 40%;
+    border-right: none;
+    border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+  }
+
+  .file-browser-resize-handle {
+    display: none;
+  }
+
+  /* Mobile two-state view: show only list or editor at a time */
+  .file-browser-sidebar.mobile {
+    display: none;
+  }
+
+  .file-browser-sidebar.mobile.active {
+    display: flex;
+    flex: 1;
+    height: 100%;
+    max-height: none;
+    border-bottom: none;
+  }
+
+  .file-browser-content.mobile {
+    display: none;
+  }
+
+  .file-browser-content.mobile.active {
+    display: flex;
+    flex: 1;
+    height: 100%;
+  }
+
+  /* Back button styles */
+  .file-browser-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    border: calc(var(--space-xs) * 0.25) solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    margin-right: var(--space-sm);
+  }
+
+  .file-browser-back-button:hover {
+    background: var(--card-hover);
+  }
+
+  .file-browser-back-button:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .file-browser-preview {
+    padding: var(--space-md);
+  }
+
+  .file-browser-preview-media--image,
+  .file-browser-preview-media--video {
+    max-width: 100%;
+    max-height: calc(100dvh - var(--space-2xl) * 6.25);
+  }
+
+  .file-browser-preview-media--pdf {
+    min-height: calc(var(--space-xl) * 12);
+  }
+}
+
+/* File Browser Context Menu */
+.context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.file-browser-context-menu {
+  position: fixed;
+  min-width: calc(var(--space-xl) * 7.5);
+  background: var(--surface);
+  border: calc(var(--space-xs) * 0.25) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) * 0.5);
+  z-index: 1001;
+}
+
+.file-browser-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background var(--transition-fast);
+}
+
+.file-browser-context-menu__item:hover {
+  background: var(--card-hover);
+}
+
+.file-browser-context-menu__item-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.file-browser-context-menu__disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-browser-context-menu__disabled:hover {
+  background: none;
+}
+
+/* Delete action gets danger styling */
+.file-browser-context-menu__item--danger:hover {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+}
+
+.file-browser-context-menu__item--danger .file-browser-context-menu__item-icon {
+  color: var(--color-error);
+}
+
+.file-browser-context-menu__divider {
+  height: calc(var(--space-xs) * 0.25);
+  background: var(--border);
+  margin: var(--space-xs) var(--space-sm);
+}
+
+/* File Browser Operation Dialog */
+.file-browser-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  max-width: calc(var(--space-xl) * 17.5);
+  background: var(--surface);
+  border: calc(var(--space-xs) * 0.25) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-lg);
+  z-index: 1001;
+}
+
+.file-browser-dialog-title {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-sm);
+}
+
+.file-browser-dialog-message {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  color: var(--text-muted);
+  margin-bottom: var(--space-md);
+  line-height: 1.5;
+}
+
+.file-browser-dialog-info {
+  font-size: var(--space-md);
+  color: var(--text-dim);
+  margin-bottom: var(--space-md);
+  font-family: var(--font-mono);
+  word-break: break-all;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  border: calc(var(--space-xs) * 0.25) solid var(--border);
+}
+
+.file-browser-dialog-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: calc(var(--space-xs) * 0.25) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  font-family: var(--font-mono);
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: var(--space-md);
+}
+
+.file-browser-dialog-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 calc(var(--space-xs) * 0.5) color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.file-browser-dialog-error {
+  font-size: var(--space-md);
+  color: var(--color-error);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+
+.file-browser-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+/* File Editor Toolbar */
+.file-path {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  font-weight: 500;
+  color: var(--text);
+  font-family: var(--font-mono);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-mtime {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.file-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.file-actions .btn {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-sm) - var(--space-xs) * 0.5);
+}
+
+/* File Editor Container */
+.file-editor-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  min-height: 0;
+}
+
+.file-editor-codemirror {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-editor-codemirror .cm-editor {
+  height: 100%;
+}
+
+.file-editor-codemirror .cm-scroller {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+/* File Editor Toolbar */
+.file-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.file-editor-toolbar--expanded {
+  padding-top: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
+.file-editor-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.file-editor-toolbar-actions[hidden] {
+  display: none;
+}
+
+.file-editor-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space-sm) - var(--space-xs) * 0.5);
+  min-height: calc(var(--space-lg) + var(--space-sm));
+  padding: calc(var(--space-xs) + var(--space-xs) * 0.25) var(--space-sm);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  line-height: 1;
+}
+
+.file-editor-toolbar-button.btn-icon {
+  width: calc(var(--space-lg) + var(--space-sm));
+  padding: 0;
+}
+
+/* File Editor Preview */
+.file-editor-preview {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+
+/* File States */
+.file-error {
+  padding: var(--space-md) var(--space-lg);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-left: calc(var(--space-xs) - var(--space-xs) * 0.25) solid var(--color-error);
+  color: var(--color-error);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
+  margin: var(--space-md) var(--space-lg);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.file-binary-notice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  font-style: italic;
+}
+
+.file-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+.file-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+.placeholder-icon {
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+/* Keyboard Hints */
+.keyboard-hints {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-right: auto;
+}
+
+.keyboard-hints kbd {
+  background: var(--card);
+  border: calc(var(--space-xs) * 0.25) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.5);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-family: var(--font-mono);
+}

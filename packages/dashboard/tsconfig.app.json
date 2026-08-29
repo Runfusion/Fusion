@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    /*
+    FNXC:CIGateSpeed 2026-07-23-00:05:
+    tsconfig.base.json points tsBuildInfoFile at ${configDir}/dist/.tsbuildinfo, and
+    configDir is packages/dashboard for BOTH this config and tsconfig.json — so the two
+    `pnpm typecheck` programs clobbered each other's buildinfo and tsc re-checked the
+    full program on every run. A distinct file restores real incremental typechecking
+    (and lets CI cache both files).
+    */
+    "tsBuildInfoFile": "${configDir}/dist/.tsbuildinfo-app",
+    "rootDir": "..",
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "noEmit": true,
+    "types": ["vitest/globals", "@testing-library/jest-dom", "node", "vite/client"],
+    "paths": {
+      "node-pty": ["./src/types/node-pty/index.d.ts"],
+      "@fusion/dashboard/app/components/TaskCard": ["./app/components/TaskCard.tsx"],
+      "@fusion/dashboard/app/components/ViewHeader": ["./app/components/ViewHeader.tsx"],
+      "@fusion/dashboard/app/api/tasks/task-content": ["./app/api/tasks/task-content.ts"],
+      "@fusion/dashboard/app/plugins/types": ["./app/plugins/types.ts"],
+      "@fusion/dashboard/app/utils/projectStorage": ["./app/utils/projectStorage.ts"]
+    }
+  },
+  "include": ["app/**/*"],
+  "exclude": ["app/**/*.test.ts", "app/**/*.test.tsx", "app/**/__tests__/**/*"]
+}

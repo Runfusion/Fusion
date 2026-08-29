@@ -1,0 +1,645 @@
+import { useCallback, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { Task, TaskDetail } from "@fusion/core";
+import type { SectionId } from "../components/SettingsModal";
+import type { ToastType } from "./useToast";
+import { removeScopedItem } from "../utils/projectStorage";
+import { readBoardWorkflowSelection } from "../utils/boardWorkflowSelection";
+import { applyLocalTaskPatch } from "./useTasks";
+
+/*
+FNXC:TaskDetailActivity 2026-06-30-22:15:
+Keep `chat` as the public initial-tab id for the renamed Activity task-detail tab so existing dashboard callers and deep links remain compatible until the future planner Chat tab ships under its own contract. Legacy `logs` callers are also preserved by TaskDetailModal, which opens Activity → Feed instead of rendering a top-level Logs tab.
+*/
+export type DetailTaskTab =
+  | "summary"
+  /*
+  FNXC:TaskRecommendations 2026-08-08-07:15:
+  Recommendations are a shared completed-task detail tab. Keep the public modal-manager union in
+  sync so every dashboard host can request it without falling back to a local-only tab type.
+  */
+  | "recommendations"
+  | "chat"
+  | "definition"
+  | "logs"
+  /*
+  FNXC:SharedBranchPromotionAdvisories 2026-08-08-02:16:
+  FN-8823 routes landed-member promotion advisories directly to their persisted
+  Review items, so every Task Detail host must accept the existing review tab.
+  */
+  | "changes"
+  | "review"
+  | "comments"
+  | "model"
+  | "workflow"
+  | "pr"
+  | "retries";
+
+export type DetailTaskOrigin = "list-mobile";
+export type DetailTaskInitialAction = "refine";
+
+export interface DetailTaskOpenOptions {
+  origin?: DetailTaskOrigin;
+  initialAction?: DetailTaskInitialAction;
+}
+
+export interface DetailTaskInitialActionRequest {
+  action: DetailTaskInitialAction;
+  requestId: number;
+}
+
+interface UseModalManagerOptions {
+  projectId?: string;
+  planningSessions: Array<{ id: string }>;
+}
+
+/**
+ * State and handler contract for App-level modal/overlay orchestration.
+ */
+export interface ModalManager {
+  // State
+  newTaskModalOpen: boolean;
+  newTaskInitialDescription: string | null;
+  newTaskInitialWorkflowId: string | null | undefined;
+  isPlanningOpen: boolean;
+  planningInitialPlan: string | null;
+  planningSourceIssue: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string } | undefined;
+  planningResumeSessionId: string | undefined;
+  planningWorkflowId: string | null | undefined;
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:20:
+  Monotonic counter bumped by every payload-carrying planning entry point (initial plan handoff, resume/session open). The kept-alive embedded Planning instance keys on it so explicit handoffs remount with the pre-keep-alive fresh-open semantics (auto-start, session load), while plain sidebar navigation (openPlanning/closePlanning) leaves it untouched and restores the live instance.
+  */
+  planningEntryGeneration: number;
+  // Can be Task (optimistic open) or TaskDetail (full data with prompt)
+  detailTask: (Task | TaskDetail) | null;
+  detailTaskInitialTab: DetailTaskTab | undefined;
+  detailTaskInitialAction: DetailTaskInitialActionRequest | null;
+  detailTaskOrigin: DetailTaskOrigin | null;
+  groupModalGroupId: string | null;
+  settingsOpen: boolean;
+  settingsInitialSection: SectionId | undefined;
+  schedulesOpen: boolean;
+  githubImportOpen: boolean;
+  usageOpen: boolean;
+  usageAnchorRect: DOMRect | null;
+  terminalOpen: boolean;
+  terminalInitialCommand: string | undefined;
+  terminalInitialCommandGeneration: number;
+  filesOpen: boolean;
+  fileBrowserWorkspace: string;
+  fileBrowserInitialFile: string | null;
+  activityLogOpen: boolean;
+  gitManagerOpen: boolean;
+  workflowEditorOpen: boolean;
+  /** When the workflow editor opens, which internal panel to pre-select (U9 redirect stubs). */
+  workflowEditorInitialPanel?: "settings";
+  /** When the workflow editor opens, which modal action to start. */
+  workflowEditorInitialAction?: "create";
+  /** When the workflow editor opens for editing, which workflow id to pre-select. */
+  workflowEditorInitialWorkflowId?: string;
+  agentsOpen: boolean;
+  scriptsOpen: boolean;
+  setupWizardOpen: boolean;
+  modelOnboardingOpen: boolean;
+  anyModalOpen: boolean;
+
+  // Handlers
+  openNewTask: (workflowId?: string | null) => void;
+  openNewTaskWithDescription: (description: string) => void;
+  closeNewTask: () => void;
+
+  openPlanning: () => void;
+  openPlanningWithInitialPlan: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
+  resumePlanning: () => void;
+  openPlanningWithSession: (sessionId: string) => void;
+  /**
+  FNXC:PlanningModals 2026-07-23-00:00:
+  One-shot consumption of the seeded initial plan. Embedded Planning calls this the moment its
+  auto-start fires; the payload must not survive that start, because Planning unmounts on
+  main-content navigation and a still-set planningInitialPlan re-auto-started a duplicate
+  planning session on every navigate-back remount.
+  */
+  clearPlanningInitialPlan: () => void;
+  closePlanning: () => void;
+
+
+  openDetailTask: (
+    task: Task | TaskDetail,
+    initialTab?: DetailTaskTab,
+    options?: DetailTaskOpenOptions,
+  ) => void;
+  openDetailWithChangesTab: (task: Task | TaskDetail) => void;
+  updateDetailTask: (updated: Partial<TaskDetail>) => void;
+  closeDetailTask: () => void;
+
+  openGroupModal: (groupId: string) => void;
+  closeGroupModal: () => void;
+
+  openSettings: (section?: SectionId) => void;
+  /*
+  FNXC:Settings 2026-06-22-00:00:
+  Sets the Settings initial/active section WITHOUT opening the modal overlay. Used by the embedded main-content Settings view so header/sidebar/deep-link entry points can carry a requested section while navigating to taskView === "settings" instead of mounting the dialog.
+  */
+  setSettingsSection: (section?: SectionId) => void;
+  closeSettings: () => void;
+
+  openSchedules: () => void;
+  closeSchedules: () => void;
+
+  openGitHubImport: () => void;
+  closeGitHubImport: () => void;
+
+  openUsage: (anchorRect?: DOMRect | null) => void;
+  closeUsage: () => void;
+
+  toggleTerminal: () => void;
+  closeTerminal: () => void;
+
+  openFiles: (workspace?: string, initialFile?: string | null) => void;
+  closeFiles: () => void;
+  setFileWorkspace: (workspace: string) => void;
+
+  openActivityLog: () => void;
+  closeActivityLog: () => void;
+
+  openGitManager: () => void;
+  closeGitManager: () => void;
+
+  openWorkflowEditor: (initialPanelOrAction?: "settings" | "create", initialWorkflowId?: string) => void;
+  closeWorkflowEditor: () => void;
+
+  openAgents: () => void;
+  closeAgents: () => void;
+
+  openScripts: () => void;
+  closeScripts: () => void;
+  runScript: (name: string, command: string) => Promise<void>;
+
+  openSetupWizard: () => void;
+  closeSetupWizard: () => void;
+
+  openModelOnboarding: () => void;
+  closeModelOnboarding: () => void;
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Switching the active project must dismiss modals that show the previous project's data
+  (task detail, group, new task, GitHub import, files, git manager,
+  activity log, workflow editor, scripts, terminal) and drop pending planning payloads so
+  Planning does not reopen the old project's plan. Cross-project modals (settings,
+  schedules, usage, agents, setup wizard, model onboarding) stay open.
+  */
+  closeProjectScopedModals: () => void;
+
+  onPlanningTaskCreated: (task: Task, addToast: (message: string, type?: ToastType) => void) => void;
+  onPlanningTasksCreated: (tasks: Task[], addToast: (message: string, type?: ToastType) => void) => void;
+}
+
+/**
+ * Centralized modal manager for dashboard App-level UI state.
+ *
+ * Encapsulates all modal open/close booleans, related resume/initial payloads,
+ * and cross-modal transitions (for example, script runner -> terminal handoff).
+ */
+export function useModalManager(options: UseModalManagerOptions): ModalManager {
+  const { t } = useTranslation("app");
+  const { planningSessions } = options;
+
+  const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
+  const [newTaskInitialDescription, setNewTaskInitialDescription] = useState<string | null>(null);
+  const [newTaskInitialWorkflowId, setNewTaskInitialWorkflowId] = useState<string | null | undefined>(undefined);
+  const [isPlanningOpen, setIsPlanningOpen] = useState(false);
+  const [planningInitialPlan, setPlanningInitialPlan] = useState<string | null>(null);
+  const [planningResumeSessionId, setPlanningResumeSessionId] = useState<string | undefined>(undefined);
+  const [planningWorkflowId, setPlanningWorkflowId] = useState<string | null | undefined>(undefined);
+  const [planningSourceIssue, setPlanningSourceIssue] = useState<{ provider: "github"; repository: string; issueNumber: number; url: string; title?: string } | undefined>(undefined);
+  // FNXC:PlanningKeepAlive 2026-07-22-12:20: see ModalManager.planningEntryGeneration.
+  const [planningEntryGeneration, setPlanningEntryGeneration] = useState(0);
+  // Can be Task (optimistic open) or TaskDetail (full data with prompt)
+  const [detailTask, setDetailTask] = useState<(Task | TaskDetail) | null>(null);
+  /**
+   * FNXC:TaskDetailTabs 2026-06-17-00:00:
+   * FN-6532 makes Chat the default task-detail view whenever a task opens without an explicit tab request.
+   *
+   * FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+   * Store omitted task-detail tabs as `undefined` so done tasks can resolve the implicit landing tab to Summary without stealing explicit Chat requests.
+   */
+  const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<DetailTaskTab | undefined>(undefined);
+  /*
+  FNXC:DoneTaskRefine 2026-07-01-00:00:
+  Done-task card/list context menus must open the existing Task Detail refinement modal after right-click or long-press. Store refinement as a one-shot action request with a monotonically increasing id so selecting Refine again for an already-open task reopens the composer without duplicating API/form logic outside TaskDetailContent.
+  */
+  const [detailTaskInitialAction, setDetailTaskInitialAction] = useState<DetailTaskInitialActionRequest | null>(null);
+  const detailTaskInitialActionRequestIdRef = useRef(0);
+  const [detailTaskOrigin, setDetailTaskOrigin] = useState<DetailTaskOrigin | null>(null);
+  const [groupModalGroupId, setGroupModalGroupId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [githubImportOpen, setGitHubImportOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageAnchorRect, setUsageAnchorRect] = useState<DOMRect | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
+  const [terminalInitialCommandGeneration, setTerminalInitialCommandGeneration] = useState(0);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
+  const [fileBrowserInitialFile, setFileBrowserInitialFile] = useState<string | null>(null);
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [gitManagerOpen, setGitManagerOpen] = useState(false);
+  const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
+  const [workflowEditorInitialPanel, setWorkflowEditorInitialPanel] = useState<"settings" | undefined>(undefined);
+  const [workflowEditorInitialAction, setWorkflowEditorInitialAction] = useState<"create" | undefined>(undefined);
+  const [workflowEditorInitialWorkflowId, setWorkflowEditorInitialWorkflowId] = useState<string | undefined>(undefined);
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+  const [modelOnboardingOpen, setModelOnboardingOpen] = useState(false);
+
+  const anyModalOpen = Boolean(
+    detailTask ||
+      groupModalGroupId ||
+      settingsOpen ||
+      newTaskModalOpen ||
+      /*
+      FNXC:Navigation 2026-06-21-00:00:
+      FN-6886 reuses Planning Mode state only as docked-view payload storage, so it must not make the app behave as though a blocking modal overlay is open.
+      */
+      terminalOpen ||
+      filesOpen ||
+      activityLogOpen ||
+      gitManagerOpen ||
+      workflowEditorOpen ||
+      scriptsOpen ||
+      agentsOpen ||
+      usageOpen ||
+      schedulesOpen ||
+      githubImportOpen ||
+      setupWizardOpen ||
+      modelOnboardingOpen,
+  );
+
+  /*
+  FNXC:TaskWorkflowSelection 2026-08-18-03:33:
+  The New Task dialog must inherit the currently selected board workflow on every open surface.
+  Explicit workflow ids and explicit null take precedence, while the aggregate sentinel never crosses
+  this task-creation boundary.
+  */
+  const resolveNewTaskInitialWorkflowId = useCallback((workflowId: unknown): string | null | undefined => {
+    if (typeof workflowId === "string" || workflowId === null) return workflowId;
+    return readBoardWorkflowSelection(options.projectId) ?? undefined;
+  }, [options.projectId]);
+  const openNewTask = useCallback((workflowId?: string | null) => {
+    setNewTaskInitialDescription(null);
+    setNewTaskInitialWorkflowId(resolveNewTaskInitialWorkflowId(workflowId));
+    setNewTaskModalOpen(true);
+  }, [resolveNewTaskInitialWorkflowId]);
+  const openNewTaskWithDescription = useCallback((description: string) => {
+    setNewTaskInitialDescription(description);
+    setNewTaskInitialWorkflowId(resolveNewTaskInitialWorkflowId(undefined));
+    setNewTaskModalOpen(true);
+  }, [resolveNewTaskInitialWorkflowId]);
+  const closeNewTask = useCallback(() => {
+    setNewTaskModalOpen(false);
+    setNewTaskInitialDescription(null);
+    setNewTaskInitialWorkflowId(undefined);
+  }, []);
+
+  const openPlanning = useCallback(() => {
+    // FNXC:PlanningModals 2026-06-20-20:10:
+    // A fresh planning open must clear any resume-session id / initial plan left
+    // by a prior resumePlanning/openPlanningWith* flow; otherwise the modal reopens
+    // into the stale session or pre-fills an old plan instead of starting blank.
+    setPlanningResumeSessionId(undefined);
+    setPlanningInitialPlan(null);
+    setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
+    setIsPlanningOpen(true);
+  }, []);
+  const openPlanningWithInitialPlan = useCallback((initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => {
+    // FNXC:PlanningModals 2026-06-20-20:10: clear a stale resume-session id so the
+    // supplied initial plan is honored rather than being overridden by an old session.
+    setPlanningResumeSessionId(undefined);
+    setPlanningInitialPlan(initialPlan);
+    setPlanningWorkflowId(workflowId);
+    setPlanningSourceIssue(sourceIssue);
+    // FNXC:PlanningKeepAlive 2026-07-22-12:20: payload-carrying entries bump the generation so the kept-alive instance remounts with fresh-open semantics.
+    setPlanningEntryGeneration((generation) => generation + 1);
+    setIsPlanningOpen(true);
+  }, []);
+  const resumePlanning = useCallback(() => {
+    const session = planningSessions[0];
+    if (!session) return;
+    setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
+    setPlanningResumeSessionId(session.id);
+    setPlanningEntryGeneration((generation) => generation + 1);
+    setIsPlanningOpen(true);
+  }, [planningSessions]);
+  const openPlanningWithSession = useCallback((sessionId: string) => {
+    setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
+    setPlanningResumeSessionId(sessionId);
+    setPlanningEntryGeneration((generation) => generation + 1);
+    setIsPlanningOpen(true);
+  }, []);
+  const clearPlanningInitialPlan = useCallback(() => {
+    // FNXC:GitHubPlanningSourceIssue 2026-08-09-08:09: The seed and its GitHub
+    // provenance are one atomic handoff. After auto-start consumes the seed, retaining
+    // sourceIssue would incorrectly attach it to a later plan started in the same view.
+    setPlanningInitialPlan(null);
+    setPlanningSourceIssue(undefined);
+  }, []);
+  const closePlanning = useCallback(() => {
+    setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
+    setPlanningResumeSessionId(undefined);
+    setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
+  }, []);
+
+  const openDetailTask = useCallback((
+    task: Task | TaskDetail,
+    initialTab?: DetailTaskTab,
+    options?: DetailTaskOpenOptions,
+  ) => {
+    setDetailTask(task);
+    setDetailTaskInitialTab(initialTab);
+    setDetailTaskInitialAction(options?.initialAction ? { action: options.initialAction, requestId: detailTaskInitialActionRequestIdRef.current += 1 } : null);
+    setDetailTaskOrigin(options?.origin ?? null);
+  }, []);
+  const openDetailWithChangesTab = useCallback((task: Task | TaskDetail) => {
+    setDetailTask(task);
+    setDetailTaskInitialTab("changes");
+    setDetailTaskInitialAction(null);
+    setDetailTaskOrigin(null);
+  }, []);
+  /*
+  FNXC:TaskDetailStateStability 2026-08-09-07:13:
+  This callback receives locally-authored patches from the open detail view, not competing server
+  snapshots. FN-5148 pins the id rule: reject an explicit foreign id but accept an absent id; FN-8796
+  must not turn absent/equal local clocks into stale evidence. AppModals owns live board/SSE arbitration.
+  */
+  const updateDetailTask = useCallback((updated: Partial<TaskDetail>) => {
+    setDetailTask((prev) => {
+      if (!prev || (updated.id !== undefined && updated.id !== prev.id)) return prev;
+      return applyLocalTaskPatch(prev, { ...updated, id: prev.id });
+    });
+  }, []);
+  const closeDetailTask = useCallback(() => {
+    setDetailTask(null);
+    setDetailTaskInitialAction(null);
+    setDetailTaskOrigin(null);
+  }, []);
+
+  const openGroupModal = useCallback((groupId: string) => {
+    setGroupModalGroupId(groupId);
+  }, []);
+  const closeGroupModal = useCallback(() => {
+    setGroupModalGroupId(null);
+  }, []);
+
+  const openSettings = useCallback((section?: SectionId) => {
+    setSettingsInitialSection(section);
+    setSettingsOpen(true);
+  }, []);
+  const setSettingsSection = useCallback((section?: SectionId) => {
+    setSettingsInitialSection(section);
+  }, []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setSettingsInitialSection(undefined);
+  }, []);
+
+  const openSchedules = useCallback(() => setSchedulesOpen(true), []);
+  const closeSchedules = useCallback(() => setSchedulesOpen(false), []);
+
+  const openGitHubImport = useCallback(() => setGitHubImportOpen(true), []);
+  const closeGitHubImport = useCallback(() => setGitHubImportOpen(false), []);
+
+  const openUsage = useCallback((anchorRect?: DOMRect | null) => {
+    setUsageAnchorRect(anchorRect ?? null);
+    setUsageOpen(true);
+  }, []);
+  const closeUsage = useCallback(() => {
+    setUsageOpen(false);
+    setUsageAnchorRect(null);
+  }, []);
+
+  const toggleTerminal = useCallback(() => {
+    setTerminalOpen((prev) => !prev);
+  }, []);
+  const closeTerminal = useCallback(() => {
+    setTerminalOpen(false);
+    setTerminalInitialCommand(undefined);
+  }, []);
+
+  const openFiles = useCallback((workspace?: string, initialFile?: string | null) => {
+    if (typeof workspace === "string" && workspace) {
+      setFileBrowserWorkspace(workspace);
+    }
+    if (typeof initialFile === "string" || initialFile === null) {
+      setFileBrowserInitialFile(initialFile);
+    } else {
+      setFileBrowserInitialFile(null);
+    }
+    setFilesOpen(true);
+  }, []);
+  const closeFiles = useCallback(() => {
+    setFilesOpen(false);
+    setFileBrowserInitialFile(null);
+  }, []);
+  const setFileWorkspace = useCallback((workspace: string) => {
+    if (typeof workspace === "string" && workspace) {
+      setFileBrowserWorkspace(workspace);
+    }
+  }, []);
+
+  const openActivityLog = useCallback(() => setActivityLogOpen(true), []);
+  const closeActivityLog = useCallback(() => setActivityLogOpen(false), []);
+
+  const openGitManager = useCallback(() => setGitManagerOpen(true), []);
+  const closeGitManager = useCallback(() => setGitManagerOpen(false), []);
+
+  const openWorkflowEditor = useCallback((initialPanelOrAction?: "settings" | "create", initialWorkflowId?: string) => {
+    const isSettingsOpen = initialPanelOrAction === "settings";
+    const isCreateOpen = initialPanelOrAction === "create";
+    setWorkflowEditorInitialPanel(isSettingsOpen ? "settings" : undefined);
+    setWorkflowEditorInitialAction(isCreateOpen ? "create" : undefined);
+    setWorkflowEditorInitialWorkflowId(!isSettingsOpen && !isCreateOpen ? initialWorkflowId : undefined);
+    setWorkflowEditorOpen(true);
+  }, []);
+  const closeWorkflowEditor = useCallback(() => {
+    setWorkflowEditorOpen(false);
+    setWorkflowEditorInitialPanel(undefined);
+    setWorkflowEditorInitialAction(undefined);
+    setWorkflowEditorInitialWorkflowId(undefined);
+  }, []);
+
+  const openAgents = useCallback(() => setAgentsOpen(true), []);
+  const closeAgents = useCallback(() => setAgentsOpen(false), []);
+
+  const openScripts = useCallback(() => setScriptsOpen(true), []);
+  const closeScripts = useCallback(() => setScriptsOpen(false), []);
+  const runScript = useCallback(async (_name: string, command: string) => {
+    setScriptsOpen(false);
+    setTerminalInitialCommand(command);
+    setTerminalInitialCommandGeneration((generation) => generation + 1);
+    setTerminalOpen(true);
+  }, []);
+
+  const openSetupWizard = useCallback(() => setSetupWizardOpen(true), []);
+  const closeSetupWizard = useCallback(() => setSetupWizardOpen(false), []);
+
+  const openModelOnboarding = useCallback(() => setModelOnboardingOpen(true), []);
+  const closeModelOnboarding = useCallback(() => setModelOnboardingOpen(false), []);
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
+  Project swap left the previous project's modals open (a task-detail modal for project A
+  kept rendering over project B's board) and kept planning resume/initial-plan payloads,
+  so the docked Planning view re-entered project A's session. Close every project-scoped
+  modal and clear their payloads in one transition; deliberately leave settings,
+  schedules, usage, agents, setup wizard, and model onboarding alone — they are not
+  project-scoped surfaces.
+  */
+  const closeProjectScopedModals = useCallback(() => {
+    setDetailTask(null);
+    setDetailTaskInitialTab(undefined);
+    setDetailTaskInitialAction(null);
+    setDetailTaskOrigin(null);
+    setGroupModalGroupId(null);
+    setNewTaskModalOpen(false);
+    setNewTaskInitialDescription(null);
+    setNewTaskInitialWorkflowId(undefined);
+    setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
+    setPlanningSourceIssue(undefined);
+    setPlanningResumeSessionId(undefined);
+    setPlanningWorkflowId(undefined);
+    setGitHubImportOpen(false);
+    setFilesOpen(false);
+    setFileBrowserInitialFile(null);
+    setActivityLogOpen(false);
+    setGitManagerOpen(false);
+    setWorkflowEditorOpen(false);
+    setWorkflowEditorInitialPanel(undefined);
+    setWorkflowEditorInitialAction(undefined);
+    setWorkflowEditorInitialWorkflowId(undefined);
+    setScriptsOpen(false);
+    setTerminalOpen(false);
+    setTerminalInitialCommand(undefined);
+  }, []);
+
+  const clearQuickAddPlanningDrafts = useCallback(() => {
+    /*
+    FNXC:QuickAddPlanningPreserve 2026-06-22-00:00:
+    Planning completion, not planning exit, is the only modal-manager transition that clears preserved quick-add drafts. Use the active project id so scoped drafts are removed from the correct workspace.
+    */
+    removeScopedItem("kb-quick-entry-text", options.projectId);
+    removeScopedItem("kb-inline-create-text", options.projectId);
+  }, [options.projectId]);
+
+  const onPlanningTaskCreated = useCallback((task: Task, addToast: (message: string, type?: ToastType) => void) => {
+    addToast(t("modalManager.createdFromPlanning", "Created {{id}} from planning mode", { id: task.id }), "success");
+    clearQuickAddPlanningDrafts();
+    setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
+  }, [clearQuickAddPlanningDrafts, t]);
+
+  const onPlanningTasksCreated = useCallback((tasks: Task[], addToast: (message: string, type?: ToastType) => void) => {
+    const ids = tasks.map((task) => task.id).join(", ");
+    addToast(t("modalManager.createdMultipleFromPlanning", "Created {{ids}} from planning mode", { ids }), "success");
+    clearQuickAddPlanningDrafts();
+    setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
+  }, [clearQuickAddPlanningDrafts, t]);
+
+  return {
+    newTaskModalOpen,
+    newTaskInitialDescription,
+    newTaskInitialWorkflowId,
+    isPlanningOpen,
+    planningInitialPlan,
+    planningSourceIssue,
+    planningResumeSessionId,
+    planningWorkflowId,
+    planningEntryGeneration,
+    detailTask,
+    detailTaskInitialTab,
+    detailTaskInitialAction,
+    detailTaskOrigin,
+    groupModalGroupId,
+    settingsOpen,
+    settingsInitialSection,
+    schedulesOpen,
+    githubImportOpen,
+    usageOpen,
+    usageAnchorRect,
+    terminalOpen,
+    terminalInitialCommand,
+    terminalInitialCommandGeneration,
+    filesOpen,
+    fileBrowserWorkspace,
+    fileBrowserInitialFile,
+    activityLogOpen,
+    gitManagerOpen,
+    workflowEditorOpen,
+    workflowEditorInitialPanel,
+    workflowEditorInitialAction,
+    workflowEditorInitialWorkflowId,
+    agentsOpen,
+    scriptsOpen,
+    setupWizardOpen,
+    modelOnboardingOpen,
+    anyModalOpen,
+    openNewTask,
+    openNewTaskWithDescription,
+    closeNewTask,
+    openPlanning,
+    openPlanningWithInitialPlan,
+    resumePlanning,
+    openPlanningWithSession,
+    clearPlanningInitialPlan,
+    closePlanning,
+    openDetailTask,
+    openDetailWithChangesTab,
+    updateDetailTask,
+    closeDetailTask,
+    openGroupModal,
+    closeGroupModal,
+    openSettings,
+    setSettingsSection,
+    closeSettings,
+    openSchedules,
+    closeSchedules,
+    openGitHubImport,
+    closeGitHubImport,
+    openUsage,
+    closeUsage,
+    toggleTerminal,
+    closeTerminal,
+    openFiles,
+    closeFiles,
+    setFileWorkspace,
+    openActivityLog,
+    closeActivityLog,
+    openGitManager,
+    closeGitManager,
+    openWorkflowEditor,
+    closeWorkflowEditor,
+    openAgents,
+    closeAgents,
+    openScripts,
+    closeScripts,
+    runScript,
+    openSetupWizard,
+    closeSetupWizard,
+    openModelOnboarding,
+    closeModelOnboarding,
+    closeProjectScopedModals,
+    onPlanningTaskCreated,
+    onPlanningTasksCreated,
+  };
+}

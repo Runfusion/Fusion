@@ -1,0 +1,187 @@
+.task-token-stats-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.task-token-stats-panel h4,
+.task-token-stats-panel h5 {
+  margin: 0;
+  color: var(--text);
+}
+
+.task-token-stats-panel h5 {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) / 8);
+  color: var(--text-muted);
+}
+
+.task-token-stats-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-token-stats-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 3), 1fr));
+  gap: var(--space-sm);
+}
+
+.task-token-stats-panel__metric {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  /* Establish an inline-size container so the value can scale itself to
+     the metric's actual width — keeps long token counts (8-10+ digits with
+     thousand separators) inside the box on narrow grid columns. */
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-token-stats-panel__label {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) / 8);
+  color: var(--text-muted);
+}
+
+.task-token-stats-panel__value {
+  font-family: var(--font-mono);
+  /* Fluid size: scales with the metric's container width so values are as
+     large as they can be without overflowing the box. The cqw factor is
+     tuned so a 10-digit comma-separated count (e.g. 1,234,567,890) at the
+     monospace width still fits inside the metric's padded inline area;
+     the ceiling lets short values look bold without becoming oversized. */
+  font-size: clamp(13px, 13cqw, 28px);
+  color: var(--text);
+  font-weight: 700;
+  min-width: 0;
+  /* Safety net: if a value somehow exceeds the calculated width (e.g. a
+     non-digit unit suffix in formatDuration), break instead of overflowing. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.15;
+}
+
+.task-token-stats-panel__timestamps {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 4), 1fr));
+  gap: var(--space-sm);
+}
+
+.task-token-stats-panel__timestamp-row {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.task-token-stats-panel__timestamp-row dt {
+  margin: 0;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) / 8);
+  color: var(--text-muted);
+}
+
+.task-token-stats-panel__timestamp-row dd {
+  margin: var(--space-xs) 0 0;
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.task-token-stats-panel__details {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 5), 1fr));
+  gap: var(--space-sm);
+}
+
+.task-token-stats-panel__detail-row {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.task-token-stats-panel__detail-row dt {
+  margin: 0;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) / 8);
+  color: var(--text-muted);
+}
+
+.task-token-stats-panel__detail-row dd {
+  margin: var(--space-xs) 0 0;
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.task-token-stats-panel__imported-source-link {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.task-token-stats-panel__imported-source-link:hover {
+  text-decoration: underline;
+}
+
+.task-token-stats-panel__imported-source-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.task-token-stats-panel__cache-ratio {
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.task-token-stats-panel__cache-ratio-label {
+  color: var(--text-muted);
+}
+
+.task-token-stats-panel__cache-ratio-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.task-token-stats-panel__cache-breakdown {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.task-token-stats-panel__empty,
+.task-token-stats-panel__loading {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-muted);
+  padding: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .task-token-stats-panel {
+    padding: var(--space-sm);
+  }
+
+  .task-token-stats-panel__timestamps,
+  .task-token-stats-panel__details {
+    grid-template-columns: 1fr;
+  }
+}

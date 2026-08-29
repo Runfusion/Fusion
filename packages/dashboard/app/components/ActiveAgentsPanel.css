@@ -1,0 +1,190 @@
+/* === Active Agents Panel === */
+.active-agents-panel {
+  margin-top: var(--space-xl);
+  margin-bottom: var(--space-lg);
+}
+
+.active-agents-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: var(--space-md);
+}
+
+.active-agents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-md);
+}
+
+.live-agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.live-agent-card:hover {
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--border) 65%, var(--text) 35%);
+}
+
+.live-agent-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.live-agent-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.live-agent-card-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.live-agent-task {
+  font-family: var(--font-mono);
+}
+
+.live-agent-card-activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.live-agent-card-now-doing,
+.live-agent-card-last-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-agent-card-now-doing {
+  color: var(--text);
+}
+
+.live-agent-card-transcript {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.live-agent-card-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.live-agent-card-status {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text);
+  opacity: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-agent-card-status-sub {
+  font-style: italic;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-agent-card-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-agent-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.live-agent-streaming-dot {
+  color: var(--color-success);
+  animation: pulse 1.5s infinite;
+}
+
+.live-agent-card-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.live-agent-card-footer-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.live-agent-card-next-heartbeat {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-agent-card-logs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.live-agent-card-logs-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--border) 65%, var(--text) 35%);
+}
+
+@media (max-width: 768px) {
+  .active-agents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .live-agent-card {
+    min-width: 0;
+    overflow: hidden;
+  }
+}
+

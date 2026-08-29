@@ -1,0 +1,6 @@
+{
+  "id": "fusion-plugin-cursor-runtime",
+  "name": "Cursor Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Provides Cursor CLI-backed model provider and runtime integration"
+}

@@ -1,0 +1,36 @@
+/* ── Chat Launcher FAB ──────────────────────────────────────────────── */
+
+.quick-chat-fab {
+  --quick-chat-fab-size: calc(var(--space-xl) * 2);
+
+  position: fixed;
+  width: var(--quick-chat-fab-size);
+  height: var(--quick-chat-fab-size);
+  border: 1px solid color-mix(in srgb, var(--todo) 45%, var(--border));
+  border-radius: 50%;
+  background: var(--todo);
+  color: var(--cta-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--quick-chat-fab-shadow);
+  cursor: grab;
+  touch-action: none;
+  z-index: 1000;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+}
+
+.quick-chat-fab:hover {
+  transform: translateY(var(--quick-chat-fab-lift));
+  box-shadow: var(--quick-chat-fab-shadow-hover);
+  filter: brightness(1.04);
+}
+
+.quick-chat-fab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.quick-chat-fab:active {
+  cursor: grabbing;
+}

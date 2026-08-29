@@ -1,0 +1,14 @@
+{
+  "id": "fusion-plugin-openclaw-runtime",
+  "name": "OpenClaw Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Provides OpenClaw runtime for Fusion AI agents",
+  "author": "Fusion Team",
+  "homepage": "https://github.com/gsxdsm/fusion",
+  "runtime": {
+    "runtimeId": "openclaw",
+    "name": "OpenClaw Runtime",
+    "description": "OpenClaw-backed AI session using the local OpenClaw gateway",
+    "version": "0.1.0"
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "name": "@fusion/dashboard",
+  "version": "0.77.0-beta.8",
+  "license": "MIT",
+  "description": "Fusion dashboard: React UI and HTTP API server for monitoring and controlling the Fusion AI coding agent.",
+  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Runfusion/Fusion",
+    "directory": "packages/dashboard"
+  },
+  "bugs": {
+    "url": "https://github.com/Runfusion/Fusion/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./planning": {
+      "types": "./src/planning.ts",
+      "import": "./src/planning.ts"
+    },
+    "./app/components/TaskCard": {
+      "types": "./app/components/TaskCard.tsx",
+      "import": "./app/components/TaskCard.tsx"
+    },
+    "./app/components/ViewHeader": {
+      "types": "./app/components/ViewHeader.tsx",
+      "import": "./app/components/ViewHeader.tsx"
+    },
+    "./app/utils/copyToClipboard": {
+      "types": "./app/utils/copyToClipboard.ts",
+      "import": "./app/utils/copyToClipboard.ts"
+    },
+    "./app/utils/projectStorage": {
+      "types": "./app/utils/projectStorage.ts",
+      "import": "./app/utils/projectStorage.ts"
+    },
+    "./app/plugins/pluginViewRegistry": {
+      "types": "./app/plugins/pluginViewRegistry.tsx",
+      "import": "./app/plugins/pluginViewRegistry.tsx"
+    },
+    "./app/plugins/types": {
+      "types": "./app/plugins/types.ts",
+      "import": "./app/plugins/types.ts"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "gen:locales": "node scripts/sync-locales.mjs",
+    "verify:locale-chunks": "node scripts/assert-locale-chunks.mjs",
+    "prebuild": "node scripts/sync-locales.mjs",
+    "build": "vite build && tsc && node -e \"require('node:fs').copyFileSync('src/registry-manifest.json','dist/registry-manifest.json')\"",
+    "prebuild:client": "node scripts/sync-locales.mjs",
+    "build:client": "vite build",
+    "predev:serve": "node scripts/sync-locales.mjs",
+    "dev": "pnpm build && pnpm typecheck && pnpm dev:serve",
+    "dev:serve": "vite dev",
+    "pretest": "node ../../scripts/ensure-test-artifacts.mjs",
+    "test": "node scripts/run-quality-tests.mjs",
+    "test:quality:app": "node scripts/run-quality-tests.mjs --group app",
+    "test:quality:app:foundation-api": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-foundation-api --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:quality:app:foundation-ui": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-foundation-ui --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:quality:app:foundation-hooks-utils": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-foundation-hooks-utils --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:quality:app:components-a": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-components-a --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:quality:app:components-b": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-components-b --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:quality:app:app": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-app --reporter=default --silent=passed-only --exclude '**/build-output.test.ts'",
+    "test:quality:app:chat": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-chat --reporter=default --silent=passed-only --exclude '**/build-output.test.ts'",
+    "test:quality:app:settings": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-settings --reporter=default --silent=passed-only --exclude '**/build-output.test.ts'",
+    "test:quality:app:backfill": "pnpm run test:quality:app:backfill-1 && pnpm run test:quality:app:backfill-2 && pnpm run test:quality:app:backfill-3 && pnpm run test:quality:app:backfill-4",
+    "test:quality:app:backfill-1": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-backfill --silent=passed-only --reporter=dot --shard=1/4",
+    "test:quality:app:backfill-2": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-backfill --silent=passed-only --reporter=dot --shard=2/4",
+    "test:quality:app:backfill-3": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-backfill --silent=passed-only --reporter=dot --shard=3/4",
+    "test:quality:app:backfill-4": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-app-quality-backfill --silent=passed-only --reporter=dot --shard=4/4",
+    "test:quality:api": "node scripts/run-quality-tests.mjs --group api",
+    "test:quality:api:curated": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:quality:api:backfill": "pnpm run test:quality:api:backfill-1 && pnpm run test:quality:api:backfill-2",
+    "test:app": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:api": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-api --silent=passed-only --reporter=dot",
+    "test:deep": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --project dashboard-api --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test:browser-smoke": "node scripts/browser-layout-smoke.mjs",
+    "test:touch-geometry": "vitest run --project dashboard-browser-touch --silent=passed-only --reporter=dot",
+    "test:build": "pnpm build && FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --project dashboard-api --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts src/__tests__/plugin-registry-dist.test.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
+    "test:quality:api:backfill-1": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality-backfill --silent=passed-only --reporter=dot --shard=1/2",
+    "test:quality:api:backfill-2": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality-backfill --silent=passed-only --reporter=dot --shard=2/2"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-javascript": "^6.2.3",
+    "@codemirror/lang-json": "^6.0.1",
+    "@codemirror/lang-markdown": "^6.3.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "@codemirror/view": "^6.36.4",
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@fontsource/pixelify-sans": "^5.3.0",
+    "@fusion-plugin-examples/claude-runtime": "workspace:*",
+    "@fusion-plugin-examples/cli-printing-press": "workspace:*",
+    "@fusion-plugin-examples/compound-engineering": "workspace:*",
+    "@fusion-plugin-examples/cursor-runtime": "workspace:*",
+    "@fusion-plugin-examples/dependency-graph": "workspace:*",
+    "@fusion-plugin-examples/droid-runtime": "workspace:*",
+    "@fusion-plugin-examples/grok-runtime": "workspace:*",
+    "@fusion-plugin-examples/hermes-runtime": "workspace:*",
+    "@fusion-plugin-examples/omp-runtime": "workspace:*",
+    "@fusion-plugin-examples/openclaw-runtime": "workspace:*",
+    "@fusion-plugin-examples/paperclip-runtime": "workspace:*",
+    "@fusion-plugin-examples/quality": "workspace:*",
+    "@fusion-plugin-examples/roadmap": "workspace:*",
+    "@fusion/core": "workspace:*",
+    "@fusion/engine": "workspace:*",
+    "@fusion/i18n": "workspace:*",
+    "@types/multer": "^2.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xyflow/react": "^12.11.2",
+    "archiver": "^7.0.1",
+    "express": "^5.1.0",
+    "html2canvas": "^1.4.1",
+    "i18next": "^26.3.6",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "i18next-resources-to-backend": "^1.2.2",
+    "ioredis": "^5.6.0",
+    "lucide-react": "^1.7.0",
+    "mermaid": "^11.4.0",
+    "multer": "^2.1.1",
+    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-i18next": "^17.0.8",
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "unified": "^11.0.5",
+    "ws": "^8.18.0",
+    "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "sherpa-onnx-node": "1.13.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.5.0",
+    "@types/archiver": "^7.0.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "jsdom": "^29.1.1",
+    "tinyrainbow": "^3.1.1",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.10"
+  },
+  "private": true
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@fusion-plugin-examples/dependency-graph",
+  "version": "0.1.67-beta.8",
+  "type": "module",
+  "description": "Dependency graph dashboard view plugin for Fusion",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dashboard-view": {
+      "types": "./dist/dashboard-view.d.ts",
+      "import": "./dist/dashboard-view.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/copy-css.mjs",
+    "pretest": "node ../../scripts/ensure-test-artifacts.mjs",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*",
+    "lucide-react": "^0.542.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.5.2",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

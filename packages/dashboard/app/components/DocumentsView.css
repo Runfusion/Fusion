@@ -1,0 +1,1112 @@
+/* === Documents View Redesign === */
+.documents-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+FNXC:Navigation 2026-06-22-01:10:
+The header row now comes from the shared .view-header (which supplies the --space-lg top/side padding).
+
+FNXC:ViewHeader 2026-06-23-03:45:
+The shared ViewHeader now owns the surface background without a bottom divider, so this wrapper drops its own border-bottom/background to avoid a doubled divider under the title row. The controls row keeps its own side/bottom padding so the tab bar/search stay aligned.
+
+FNXC:ViewHeader 2026-06-22-12:00:
+Artifacts controls are the first page content below the shared header, so add a top inset there instead of on the header wrapper. This keeps the tab/search row from bumping against the title divider while preserving the existing body alignment.
+*/
+.documents-view-header {
+  background: var(--surface);
+}
+
+.documents-view-count {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.documents-controls-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: nowrap;
+  padding: var(--space-lg) var(--space-lg) var(--space-lg);
+}
+
+.documents-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.documents-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.documents-tab:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.documents-tab.active {
+  color: var(--todo);
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.documents-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.documents-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: inherit;
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+}
+
+.documents-hidden-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.documents-hidden-toggle[aria-pressed="true"] {
+  color: var(--todo);
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.documents-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.documents-search-icon {
+  position: absolute;
+  left: var(--space-sm);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.documents-search-input {
+  width: 100%;
+  min-width: 120px;
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) calc(var(--space-sm) + 24px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.documents-search-input:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+}
+
+.documents-search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.documents-search-clear {
+  position: absolute;
+  right: var(--space-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.documents-search-clear:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.documents-search-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* FNXC:DocumentsView 2026-06-22-01:00: ViewHeader supplies the top padding, so the scrollable content body drops its top inset to avoid doubling the gap under the header (keeps horizontal + bottom padding). */
+.documents-view-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-lg) var(--space-lg);
+}
+
+.documents-view-loading,
+.documents-view-empty,
+.documents-view-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-2xl);
+  color: var(--text-muted);
+  min-height: 200px;
+}
+
+.documents-view-empty-icon {
+  margin-bottom: var(--space-md);
+  color: var(--text-dim);
+}
+
+.documents-view-empty-hint {
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+  margin-top: var(--space-xs);
+}
+
+.documents-view-error {
+  color: var(--color-error);
+}
+
+.documents-view-error .btn {
+  margin-top: var(--space-md);
+}
+
+.documents-project-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.documents-project-layout--mobile {
+  grid-template-columns: 1fr;
+}
+
+.documents-view-sidebar {
+  width: 100%;
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.markdown-file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.markdown-file-list-item {
+  margin: 0;
+}
+
+.markdown-file-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  border: none;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.markdown-file-list-item:last-child .markdown-file-item {
+  border-bottom: none;
+}
+
+.markdown-file-item:hover {
+  background: var(--card-hover);
+}
+
+.markdown-file-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.markdown-file-item--selected {
+  border-left-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.markdown-file-item-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.markdown-file-item-path {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.markdown-file-item-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.documents-view-main {
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--card);
+  padding: var(--space-lg);
+}
+
+.documents-mobile-back {
+  margin-bottom: var(--space-md);
+}
+
+.documents-content-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  width: 100%;
+}
+
+.documents-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:DocumentsView 2026-07-11-13:40:
+Task-document header actions group the Markdown/Plain toggle with the new Edit (and Cancel/Save while editing) buttons so the in-place CodeMirror editing controls stay in the header instead of a second toolbar. The editor container mirrors .artifacts-gallery-viewer-editor sizing so the embedded FileEditor gets real height inside the right pane.
+*/
+.documents-task-document-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.documents-task-document-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 45dvh;
+  flex: 1;
+}
+
+.documents-task-document-editor .file-editor-container {
+  flex: 1;
+  min-height: 40dvh;
+}
+
+.documents-file-path-header {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-word;
+  flex: 1;
+}
+
+.documents-content-viewer-text {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-md);
+  min-height: 220px;
+}
+
+/* Container chrome only; markdown styles delegated to .markdown-body */
+.documents-content-markdown {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-md);
+  min-height: 220px;
+}
+
+.documents-content-state {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.documents-content-state--error {
+  color: var(--color-error);
+}
+
+/*
+FNXC:DocumentsView 2026-07-10-17:40:
+FN-7811 reuses the Project Files shell for Task Documents, while task-scoped sidebar groups preserve task id/title/status context before each selectable document entry. Keep these styles scoped so Project Files continues to own the generic markdown-file list visuals.
+
+FNXC:DocumentsView 2026-07-11-19:03:
+FN-7834 requires task-document groups to scan as discrete task containers, not a flat sequence of peer rows. Keep the stronger card/header hierarchy and inter-group gap scoped under .documents-task-documents-sidebar so Project Files' shared .markdown-file-item list and the Artifacts gallery remain visually unchanged.
+
+FNXC:DocumentsView 2026-07-11-21:12:
+FN-7836 requires loaded Task Documents to render visible task-card groups even when 50+ tasks exist. The sidebar is a scrolling flex column; each card must opt out of flex shrink before overflow is clipped, otherwise browser layout compresses every group into border-only lines while the DOM/text still exists.
+*/
+.documents-task-documents-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--surface);
+}
+
+.documents-task-sidebar-group {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+
+.documents-task-sidebar-group:last-child {
+  border-bottom: thin solid var(--border);
+}
+
+.documents-task-sidebar-group-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  background: color-mix(in srgb, var(--todo) 8%, var(--card));
+  border-bottom: thin solid var(--border);
+}
+
+.documents-task-sidebar-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.documents-task-sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+  min-width: 0;
+}
+
+.documents-task-sidebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.documents-task-documents-sidebar .documents-task-document-list {
+  background: var(--card);
+}
+
+.documents-task-document-item {
+  border-left-color: transparent;
+  padding-inline-start: var(--space-lg);
+  background: color-mix(in srgb, var(--surface) 44%, transparent);
+}
+
+.documents-task-document-item:hover {
+  background: var(--card-hover);
+}
+
+.documents-task-document-item.markdown-file-item--selected {
+  border-left-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 14%, var(--card));
+}
+
+/*
+FNXC:DocumentsView 2026-07-11-22:04:
+FN-7845 places registered task artifacts under the same task group as documents, as peer outputs with a small subsection label and icon-bearing rows. Keep these rules scoped to the Task Documents sidebar/right pane so Project Files' shared .markdown-file-item base and the standalone Artifacts gallery remain unchanged.
+*/
+.documents-task-artifacts-subsection {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: thin solid var(--border);
+  background: color-mix(in srgb, var(--surface) 38%, transparent);
+}
+
+.documents-task-artifacts-label {
+  padding: var(--space-sm) var(--space-lg) var(--space-xs);
+  color: var(--text-dim);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.documents-task-artifact-list {
+  background: transparent;
+}
+
+.documents-task-artifact-item {
+  background: transparent;
+}
+
+.documents-task-artifact-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--text);
+}
+
+.documents-task-artifact-title-row .markdown-file-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.documents-task-artifact-viewer {
+  min-height: 0;
+}
+
+.documents-task-artifact-meta {
+  align-items: center;
+}
+
+.documents-task-artifact-open-task {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--todo);
+  cursor: pointer;
+  font: inherit;
+}
+
+.documents-task-artifact-open-task:hover {
+  text-decoration: underline;
+}
+
+.documents-task-artifact-open-task:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.documents-task-artifact-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.documents-task-artifact-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.documents-task-artifact-media {
+  display: block;
+  width: 100%;
+  max-height: min(60dvh, 42rem);
+  object-fit: contain;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.documents-task-artifact-audio {
+  width: 100%;
+}
+
+.documents-task-artifact-pdf {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.documents-task-artifact-pdf iframe {
+  width: 100%;
+  min-height: 60dvh;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.documents-task-artifact-doc-content {
+  min-height: 45dvh;
+}
+
+.documents-task-artifact-download {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.documents-task-artifact-download p {
+  margin: 0;
+}
+
+/*
+FNXC:DocumentsView 2026-07-11-14:30:
+The meta line (author · revision · date) renders as its own row directly under the path+actions header row; the viewer column's gap is too tall between two related header rows, so the meta pulls itself closer to the path box it annotates.
+*/
+.documents-task-document-meta {
+  padding: 0;
+  border-bottom: none;
+  flex-wrap: wrap;
+  margin-top: calc(-1 * var(--space-sm));
+}
+
+.documents-group-task-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.documents-group-task-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documents-group-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.documents-group-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  justify-self: end;
+}
+
+.documents-group-task-link {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+  min-height: 36px;
+}
+
+.documents-group-task-link:hover {
+  border-color: var(--todo);
+  color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+}
+
+.documents-group-task-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Document Card */
+.document-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.document-card:hover {
+  border-color: var(--text-dim);
+}
+
+.document-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.document-mode-toggle {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  line-height: 1;
+}
+
+.document-mode-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.document-mode-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.document-mode-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.document-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.document-card-separator {
+  color: var(--border);
+}
+
+.document-card-content {
+  padding: var(--space-md);
+}
+
+.document-card-content-text {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-primary);
+}
+
+/*
+FNXC:ArtifactRegistry 2026-06-21-23:15:
+The artifacts tab is a thumbnail-first responsive media gallery for agent-created images and videos, while audio, document, and generic artifacts keep coherent card previews in the same grid.
+*/
+.documents-artifact-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-lg);
+  align-items: stretch;
+}
+
+.documents-artifact-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.documents-artifact-card:hover,
+.documents-artifact-card:focus-within {
+  transform: translateY(calc(-1 * var(--space-xs) / 2));
+  border-color: var(--todo);
+  box-shadow: var(--shadow-lg);
+  background: var(--card-hover);
+}
+
+.documents-artifact-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border-bottom: thin solid var(--border);
+}
+
+.documents-artifact-preview--expandable {
+  position: relative;
+  cursor: zoom-in;
+  border: 0;
+}
+
+.documents-artifact-preview--expandable:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring-strong);
+}
+
+.documents-artifact-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--bg);
+}
+
+.documents-artifact-expand-hint {
+  position: absolute;
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  border-radius: var(--radius-pill);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(var(--space-xs));
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.documents-artifact-preview--expandable:hover .documents-artifact-expand-hint,
+.documents-artifact-preview--expandable:focus-visible .documents-artifact-expand-hint {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.documents-artifact-audio {
+  width: calc(100% - var(--space-xl));
+}
+
+.documents-artifact-document,
+.documents-artifact-generic {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  padding: var(--space-lg);
+  color: var(--text-muted);
+  text-align: center;
+  background: linear-gradient(135deg, var(--surface), var(--bg));
+}
+
+.documents-artifact-document p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.documents-artifact-generic {
+  text-decoration: none;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.documents-artifact-generic:hover,
+.documents-artifact-generic:focus-visible {
+  color: var(--todo);
+  background: var(--card-hover);
+}
+
+.documents-artifact-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.documents-artifact-header,
+.documents-artifact-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.documents-artifact-type-badge {
+  display: inline-flex;
+  align-items: center;
+  border: thin solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.documents-artifact-author {
+  min-width: 0;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documents-artifact-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.documents-artifact-description {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.documents-artifact-task-link {
+  align-self: flex-start;
+  margin-top: auto;
+}
+
+.documents-artifact-lightbox-overlay {
+  padding: var(--space-xl);
+}
+
+.documents-artifact-lightbox {
+  display: flex;
+  flex-direction: column;
+  width: min(90vw, 72rem);
+  max-height: min(90vh, 48rem);
+  overflow: hidden;
+  border: thin solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.documents-artifact-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: thin solid var(--border);
+}
+
+.documents-artifact-lightbox-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documents-artifact-lightbox-media-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--space-lg);
+  background: var(--bg);
+}
+
+.documents-artifact-lightbox-media {
+  display: block;
+  max-width: 100%;
+  max-height: calc(90vh - var(--space-2xl) - var(--space-xl));
+  object-fit: contain;
+  border-radius: var(--radius-md);
+}
+
+
+@media (max-width: 768px) {
+  /* Documents View mobile: ViewHeader supplies its own responsive padding; only the controls row needs tightening here. */
+  .documents-controls-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+    padding: 0 var(--space-md) var(--space-md);
+  }
+
+  /*
+  FNXC:ArtifactsView 2026-07-11-11:30:
+  On mobile the two-line-wrapping "Project Files"/"Task Documents" tabs grew past 44px while the
+  one-line Artifacts tab stayed at 44px, so the buttons rendered at mismatched sizes. Stretch the
+  row, forbid label wrapping, and pin every tab to the standard 44px mobile control height; the row
+  scrolls horizontally when the labels do not fit.
+  */
+  .documents-tab-bar {
+    width: 100%;
+    align-items: stretch;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .documents-tab {
+    flex: 1 0 auto;
+    justify-content: center;
+    height: 44px;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  .documents-hidden-toggle {
+    width: 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .documents-search-input {
+    max-width: none;
+    width: 100%;
+  }
+
+  .documents-view-content {
+    padding: var(--space-md);
+  }
+
+  .documents-project-layout,
+  .documents-project-layout--mobile {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .documents-view-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: none;
+  }
+
+  .markdown-file-item {
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .documents-view-main {
+    padding: var(--space-md);
+  }
+
+  .documents-content-viewer {
+    width: 100%;
+  }
+
+  .documents-content-viewer-text {
+    min-height: 160px;
+  }
+
+  .documents-task-sidebar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .documents-group-status {
+    justify-self: start;
+  }
+
+  .documents-group-count {
+    justify-self: end;
+  }
+
+  .documents-group-task-link {
+    width: 100%;
+    justify-self: stretch;
+    min-height: 44px;
+  }
+
+  .documents-group-task-title {
+    max-width: 11rem;
+  }
+
+  .documents-task-document-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .documents-artifact-gallery,
+  .documents-artifact-gallery--mobile {
+    grid-template-columns: 1fr;
+  }
+
+  .documents-artifact-preview,
+  .documents-artifact-document,
+  .documents-artifact-generic {
+    min-height: 10rem;
+  }
+
+  .documents-artifact-expand-hint {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .documents-artifact-lightbox-overlay {
+    padding: var(--space-sm);
+  }
+
+  .documents-artifact-lightbox {
+    width: 100%;
+    max-height: calc(100vh - var(--space-lg));
+  }
+
+  .documents-artifact-lightbox-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .documents-artifact-lightbox-media-frame {
+    padding: var(--space-sm);
+  }
+
+  .documents-artifact-lightbox-media {
+    max-height: calc(100vh - var(--space-2xl) - var(--space-xl));
+  }
+
+  .documents-artifact-meta,
+  .documents-artifact-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .documents-artifact-task-link {
+    width: 100%;
+    min-height: calc(var(--space-xl) + var(--space-sm));
+  }
+
+  /* Document mode toggle: ensure adequate touch target on mobile */
+  .document-mode-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}

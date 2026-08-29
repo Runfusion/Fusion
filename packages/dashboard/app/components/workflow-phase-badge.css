@@ -1,0 +1,17 @@
+/* FNXC:WorkflowPhaseBadge 2026-06-28-00:00: Phase badge CSS is co-located with the shared phaseBadge() helper so every surface that renders the badge stays themed, including the quick-add drop-down, New Task dialog, inline create, and workflow results instead of only the lazy WorkflowResultsTab. */
+.phase-badge {
+  margin-inline-start: var(--space-xs);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.phase-badge--pre-merge {
+  background-color: color-mix(in srgb, var(--ws-pre-merge) 15%, transparent);
+  color: var(--ws-pre-merge);
+}
+
+.phase-badge--post-merge {
+  background-color: color-mix(in srgb, var(--ws-post-merge) 15%, transparent);
+  color: var(--ws-post-merge);
+}

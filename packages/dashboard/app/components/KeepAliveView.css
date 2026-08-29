@@ -1,0 +1,18 @@
+/*
+FNXC:KeepAlive 2026-07-22-12:20:
+Keep-alive wrapper for mounted-but-hidden surfaces. Visible: plain in-flow flex child filling the host (so footer-safe padding and flex sizing chains apply). Hidden: out-of-flow absolute overlay (no layout space consumed) that keeps a real box via visibility (never display:none) so xterm/FitAddon geometry inside never collapses to zero (see mobile-terminal-blank-render-zero-geometry-container.md).
+*/
+.keep-alive-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.keep-alive-view--hidden {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}

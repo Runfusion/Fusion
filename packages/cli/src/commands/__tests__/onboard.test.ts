@@ -1,0 +1,405 @@
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { PassThrough } from "node:stream";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockRunInit = vi.fn(async () => {});
+const mockResolveProject = vi.fn();
+const mockProviderAuthFactory = vi.fn();
+const mockGetDefaultCentralDbPath = vi.fn();
+const mockGetModelRegistryModelsPath = vi.fn(() => "/tmp/models.json");
+
+const globalSettingsState: Record<string, any> = {};
+
+class MockGlobalSettingsStore {
+  async init() {}
+  async getSettings() {
+    return { ...globalSettingsState };
+  }
+  async updateSettings(update: Record<string, any>) {
+    Object.assign(globalSettingsState, update);
+  }
+}
+
+const centralInitMock = vi.fn(async () => {});
+const centralCloseMock = vi.fn(async () => {});
+class MockCentralCore {
+  async init() {
+    await centralInitMock();
+  }
+  async close() {
+    await centralCloseMock();
+  }
+}
+
+vi.mock("../init.js", () => ({ runInit: mockRunInit }));
+vi.mock("../project-context.js", () => ({ resolveProject: mockResolveProject }));
+vi.mock("../provider-auth.js", () => ({
+  wrapAuthStorageWithApiKeyProviders: vi.fn(() => mockProviderAuthFactory()),
+}));
+vi.mock("../auth-paths.js", () => ({
+  getModelRegistryModelsPath: mockGetModelRegistryModelsPath,
+}));
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  ModelRegistry: { create: vi.fn(() => ({})) },
+}));
+vi.mock("@fusion/engine", () => ({
+  createFusionAuthStorage: vi.fn(() => ({})),
+  createFusionModelRegistry: vi.fn(async () => ({})),
+}));
+vi.mock("@fusion/core", () => ({
+  CentralCore: MockCentralCore,
+  GlobalSettingsStore: MockGlobalSettingsStore,
+  getDefaultCentralDbPath: mockGetDefaultCentralDbPath,
+}));
+
+const { __testUtils, runOnboard } = await import("../onboard.js");
+const { composeLocalProviderRegistry, normalizeLocalBaseUrl, parseModelIds, persistLocalProviderRegistry } = __testUtils;
+
+function inputFrom(lines: string[]): PassThrough {
+  const input = new PassThrough();
+  let index = 0;
+  const pump = () => {
+    if (index >= lines.length) {
+      input.end();
+      return;
+    }
+    input.write(`${lines[index++]}\n`);
+    setTimeout(pump, 1);
+  };
+  setTimeout(pump, 0);
+  return input;
+}
+
+function makeProviderAuth() {
+  return {
+    getApiKeyProviders: vi.fn(() => [
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "openai-codex", name: "Codex" },
+    ]),
+    getOAuthProviders: vi.fn(() => [{ id: "openai-codex", name: "Codex" }]),
+    hasApiKey: vi.fn(() => false),
+    hasAuth: vi.fn(() => false),
+    setApiKey: vi.fn(),
+  };
+}
+
+describe("onboard", () => {
+  it("isCliOnboardingComplete handles marker presence correctly", () => {
+    expect(__testUtils.isCliOnboardingComplete({})).toBe(false);
+    expect(__testUtils.isCliOnboardingComplete({ cliOnboardingCompletedAt: "" })).toBe(false);
+    expect(__testUtils.isCliOnboardingComplete({ cliOnboardingCompletedAt: "2026-06-01T00:00:00.000Z" })).toBe(
+      true,
+    );
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    for (const key of Object.keys(globalSettingsState)) delete globalSettingsState[key];
+    mockGetDefaultCentralDbPath.mockReturnValue(join(mkdtempSync(join(tmpdir(), "fn-onboard-db-")), "fusion-central.db"));
+    mockGetModelRegistryModelsPath.mockReturnValue(join(mkdtempSync(join(tmpdir(), "fn-onboard-models-")), "models.json"));
+    mockResolveProject.mockRejectedValue(new Error("no project"));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prompt helper supports defaults, explicit input, yes/no parsing, and choice/skip", async () => {
+    const defaultSession = __testUtils.createPromptSession(inputFrom([""]));
+    await expect(defaultSession.prompt("Name", "default")).resolves.toBe("default");
+    defaultSession.close();
+
+    const explicitSession = __testUtils.createPromptSession(inputFrom(["value", "yes"]));
+    await expect(explicitSession.prompt("Name")).resolves.toBe("value");
+    await expect(explicitSession.promptYesNo("Proceed", false)).resolves.toBe(true);
+    explicitSession.close();
+
+    const choiceSession = __testUtils.createPromptSession(inputFrom(["2", "2"]));
+    await expect(
+      choiceSession.promptChoice(
+        "Provider",
+        [
+          { id: "a", label: "A" },
+          { id: "b", label: "B" },
+        ],
+        { allowSkip: true },
+      ),
+    ).resolves.toBe("b");
+    await expect(
+      choiceSession.promptChoice("Provider", [{ id: "a", label: "A" }], { allowSkip: true }),
+    ).resolves.toBeUndefined();
+    choiceSession.close();
+  });
+
+  it("composes and persists custom providers without losing registry fields", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fn-models-")), "nested", "models.json");
+    const config = {
+      id: "local", name: "Local", baseUrl: normalizeLocalBaseUrl("http://localhost:8080/v1/"),
+      modelIds: parseModelIds("qwen, , qwen, llama"), reasoning: true, qwenChatTemplate: true,
+    };
+    persistLocalProviderRegistry(path, config);
+    const first = JSON.parse(readFileSync(path, "utf8"));
+    expect(first.providers.local.apiKey).toBeUndefined();
+    expect(first.providers.local.baseUrl).toBe("http://localhost:8080/v1");
+    expect(first.providers.local.models).toEqual([
+      { id: "qwen", reasoning: true, compat: { thinkingFormat: "qwen-chat-template", chatTemplateKwargs: { enable_thinking: { $var: "thinking.enabled" } } } },
+      { id: "llama", reasoning: true, compat: { thinkingFormat: "qwen-chat-template", chatTemplateKwargs: { enable_thinking: { $var: "thinking.enabled" } } } },
+    ]);
+
+    const merged = composeLocalProviderRegistry({ unknownTop: true, providers: { local: { unknown: "kept", models: [{ id: "old" }] }, other: { api: "other" } } }, { ...config, apiKey: "secret", modelIds: ["new"], reasoning: false, qwenChatTemplate: false });
+    expect(merged).toMatchObject({ unknownTop: true, providers: { other: { api: "other" }, local: { unknown: "kept", apiKey: "secret", models: [{ id: "old" }, { id: "new" }] } } });
+    expect(() => composeLocalProviderRegistry([], config)).toThrow("JSON object");
+    writeFileSync(path, "{ not json");
+    expect(() => persistLocalProviderRegistry(path, config)).toThrow("Cannot update malformed");
+    expect(readFileSync(path, "utf8")).toBe("{ not json");
+    expect(() => normalizeLocalBaseUrl("relative")).toThrow("absolute http");
+  });
+
+  it("runOnboard initializes central db when missing", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({
+      input: inputFrom(["y", "4", "y", "y", "n", "y"]),
+    });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Creating central DB"));
+    expect(centralInitMock).toHaveBeenCalled();
+  });
+
+  it("runOnboard reports central db already exists", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const existingPath = mockGetDefaultCentralDbPath();
+    mkdirSync(dirname(existingPath), { recursive: true });
+    writeFileSync(existingPath, "db");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ input: inputFrom(["y", "4", "y", "y", "n", "y"]) });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Central DB already exists"));
+  });
+
+  it("registers a blank-key local provider through the custom picker", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const path = mockGetModelRegistryModelsPath();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({
+      input: inputFrom(["y", "3", "local", "Local server", "http://localhost:8080/v1/", "", "qwen, , qwen", "y", "y", "n", "n", "n"]),
+    });
+
+    const registry = JSON.parse(readFileSync(path, "utf8"));
+    expect(registry.providers.local).toMatchObject({ api: "openai-completions", baseUrl: "http://localhost:8080/v1" });
+    expect(registry.providers.local.apiKey).toBeUndefined();
+    expect(registry.providers.local.models).toHaveLength(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("local/qwen"));
+  });
+
+  it("waits for API-key persistence before reporting onboarding success", async () => {
+    const providerAuth = makeProviderAuth();
+    let persisted = false;
+    providerAuth.setApiKey.mockImplementation(async () => {
+      await Promise.resolve();
+      persisted = true;
+    });
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const logSpy = vi.spyOn(console, "log").mockImplementation((message: string) => {
+      if (message.includes("Stored API key")) expect(persisted).toBe(true);
+    });
+
+    await runOnboard({ input: inputFrom(["y", "1", "test-key", "y", "y", "n", "y"]) });
+    expect(providerAuth.setApiKey).toHaveBeenCalledWith("openrouter", "test-key");
+    expect(logSpy).toHaveBeenCalledWith("✓ Stored API key for openrouter");
+  });
+
+  it("stores API key, runs init, persists global testMode and completion marker", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ input: inputFrom(["y", "1", "test-key", "y", "y", "y", "y"]) });
+
+    expect(providerAuth.setApiKey).toHaveBeenCalledWith("openrouter", "test-key");
+    expect(mockRunInit).toHaveBeenCalledTimes(1);
+    expect(globalSettingsState.testMode).toBe(true);
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+    expect(logSpy).toHaveBeenCalledWith("  fn dashboard      # launch dashboard");
+    expect(logSpy).toHaveBeenCalledWith("  fn task create    # create your first task");
+    expect(globalSettingsState.setupComplete).toBeUndefined();
+  });
+
+  it("re-runs only with force when marker already exists", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalSettingsState.cliOnboardingCompletedAt = "2026-06-01T00:00:00.000Z";
+
+    await runOnboard({ input: inputFrom(["y", "4", "y", "y", "n", "y"]) });
+    expect(logSpy).toHaveBeenCalledWith("Onboarding already completed. Re-run with --force to run it again.");
+    expect(providerAuth.setApiKey).not.toHaveBeenCalled();
+    expect(mockRunInit).not.toHaveBeenCalled();
+
+    await runOnboard({ force: true, input: inputFrom(["n", "n", "n", "n"]) });
+    expect(globalSettingsState.cliOnboardingCompletedAt).not.toBe("2026-06-01T00:00:00.000Z");
+  });
+
+  it("validates bad maxConcurrent locally without process exit", () => {
+    expect(() => __testUtils.validateMaxConcurrent("99")).toThrow(
+      "maxConcurrent must be an integer between 1 and 10.",
+    );
+  });
+
+  it("cleans up SIGINT listeners when prompt is cancelled", async () => {
+    const input = new PassThrough();
+    const before = process.listenerCount("SIGINT");
+    const session = __testUtils.createPromptSession(input);
+    const during = process.listenerCount("SIGINT");
+    expect(during).toBeGreaterThanOrEqual(before);
+
+    const pending = session.prompt("Name");
+    process.emit("SIGINT");
+    await expect(pending).rejects.toThrow(__testUtils.PROMPT_CANCELLED_ERROR);
+    session.close();
+    expect(process.listenerCount("SIGINT")).toBeLessThanOrEqual(before);
+  });
+
+  it("runSkippableStep declines without running body and accepts once", async () => {
+    const declineSession = __testUtils.createPromptSession(inputFrom(["n"]));
+    const declineBody = vi.fn(async () => {});
+    await expect(__testUtils.runSkippableStep(declineSession, "Sample", declineBody)).resolves.toBe(false);
+    expect(declineBody).not.toHaveBeenCalled();
+    declineSession.close();
+
+    const acceptSession = __testUtils.createPromptSession(inputFrom(["y"]));
+    const acceptBody = vi.fn(async () => {});
+    await expect(__testUtils.runSkippableStep(acceptSession, "Sample", acceptBody)).resolves.toBe(true);
+    expect(acceptBody).toHaveBeenCalledTimes(1);
+    acceptSession.close();
+  });
+
+  /*
+  FNXC:Onboarding 2026-08-19-03:38:
+  Auto-launch fires while the operator is starting something ELSE — a dashboard, a `pnpm dev
+  --tunnel`. Its questions interrupt work nobody asked to interrupt, and a dev server stopped on
+  "Run ai provider setup now?" never listens, so nothing is served and no tunnel can point at it.
+  The non-interactive path prepares the install and asks nothing.
+  */
+  it("asks nothing when not interactive, but still prepares the install", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    // No input at all: any prompt would hang or cancel rather than pass.
+    await runOnboard({ interactive: false });
+
+    expect(centralInitMock).toHaveBeenCalled();
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+    // The interactive-only steps must not have run.
+    expect(mockRunInit).not.toHaveBeenCalled();
+    expect(providerAuth.setApiKey).not.toHaveBeenCalled();
+    const printed = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(printed).not.toMatch(/Run ai provider setup now/i);
+    expect(printed).toMatch(/dashboard|fn onboard/i);
+  });
+
+  it("allows fully skipping onboarding steps while still persisting completion marker", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+
+    await runOnboard({ input: inputFrom(["n", "n", "n", "n"]) });
+
+    /*
+    FNXC:Onboarding 2026-08-19-03:38:
+    The central DB is no longer skippable: declining left an install Fusion cannot run on, and the
+    prompt blocked non-interactive startups outright (a `pnpm dev --tunnel` sat on it and never
+    listened). Skipping every OPTIONAL step must still leave a created database.
+    */
+    expect(centralInitMock).toHaveBeenCalled();
+    expect(mockRunInit).not.toHaveBeenCalled();
+    expect(globalSettingsState.testMode).toBeUndefined();
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+    expect(providerAuth.setApiKey).not.toHaveBeenCalled();
+  });
+
+  it("supports selective skip for provider while running init and settings", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+
+    await runOnboard({ input: inputFrom(["n", "y", "y", "n", "y"]) });
+    expect(providerAuth.setApiKey).not.toHaveBeenCalled();
+    expect(mockRunInit).toHaveBeenCalledTimes(1);
+    expect(globalSettingsState.testMode).toBe(false);
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+  });
+
+  it("supports selective skip for project setup while other steps run", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+
+    await runOnboard({ input: inputFrom(["y", "4", "n", "y", "n", "y"]) });
+    expect(mockRunInit).not.toHaveBeenCalled();
+    expect(globalSettingsState.testMode).toBe(false);
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+  });
+
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  The star ask runs after onboarding is complete, is one-shot, and must never be able to cost the
+  operator their setup: declining, or ending input on the question, still leaves onboarding stamped.
+  */
+  it("asks for a GitHub star once onboarding completes and stamps the answer", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ input: inputFrom(["n", "n", "n", "n", "y"]) });
+
+    const printed = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    // The question itself goes to the readline prompt stream, so assert on the answer's output.
+    expect(printed).toMatch(/Star it here/i);
+    expect(printed).toContain("https://github.com/Runfusion/Fusion");
+    expect(typeof globalSettingsState.githubStarPromptDismissedAt).toBe("string");
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+  });
+
+  it("never asks for a star again once it has been dismissed", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const firstLog = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ input: inputFrom(["n", "n", "n", "n", "n"]) });
+    expect(firstLog.mock.calls.map((call) => String(call[0])).join("\n")).toMatch(/won't ask again/i);
+    const dismissedAt = globalSettingsState.githubStarPromptDismissedAt;
+    expect(typeof dismissedAt).toBe("string");
+    firstLog.mockRestore();
+
+    const secondLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runOnboard({ force: true, input: inputFrom(["n", "n", "n", "n"]) });
+
+    expect(secondLog.mock.calls.map((call) => String(call[0])).join("\n")).not.toMatch(/GitHub/i);
+    expect(globalSettingsState.githubStarPromptDismissedAt).toBe(dismissedAt);
+    expect(__testUtils.shouldAskGithubStar(globalSettingsState)).toBe(false);
+    expect(__testUtils.shouldAskGithubStar({})).toBe(true);
+    expect(__testUtils.shouldAskGithubStar({ githubStarPromptDismissedAt: "  " })).toBe(true);
+  });
+
+  it("does not ask for a star on the non-interactive auto-launch path", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ interactive: false });
+
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).not.toMatch(/GitHub/i);
+    expect(globalSettingsState.githubStarPromptDismissedAt).toBeUndefined();
+  });
+
+  it("treats cancellation distinctly from skip and does not persist completion", async () => {
+    const providerAuth = makeProviderAuth();
+    mockProviderAuthFactory.mockReturnValue(providerAuth);
+    const cancelledInput = new PassThrough();
+    cancelledInput.end();
+
+    await expect(runOnboard({ input: cancelledInput })).rejects.toThrow("Onboarding cancelled.");
+    expect(globalSettingsState.cliOnboardingCompletedAt).toBeUndefined();
+  });
+});

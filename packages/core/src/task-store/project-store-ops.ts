@@ -1,0 +1,1082 @@
+/**
+ * FNXC:CodeOrganization 2026-07-22-12:00:
+ * Domain rename from remaining-ops-1: project store open, checkout claims, run-audit,
+ * workflow step/definition helpers, and related foundation ops.
+ *
+ * FNXC:StoreModularization 2026-06-25-00:00:
+ * Extracted from the monolithic packages/core/src/store.ts as a pure
+ * behavior-preserving refactor. Each function receives the TaskStore
+ * instance as its first parameter and performs byte-identical work.
+ */
+import {TaskStore, storeLog, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX, WORKFLOW_MOVE_POLICY_TIMEOUT_MS} from "../store.js";
+import { resolveCapacityPoolId } from "../workflows/workflow-capacity.js";
+import {resolveWorkflowIntakeFacts} from "./task-creation.js";
+import {TransitionRejectionError} from "./errors.js";
+import * as schema from "../postgres/schema/index.js";
+import {and, eq, inArray, isNull, ne, or, sql} from "drizzle-orm";
+import {mkdir, writeFile} from "node:fs/promises";
+import {join} from "node:path";
+import type {Task, ColumnId, CheckoutClaimPrecondition, ActivityLogEntry, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, GoalCitation, GoalCitationFilter} from "../types.js";
+import {parseWorkflowIr, downgradeIrToV1IfPure} from "../workflows/workflow-ir.js";
+import {makeTransitionRejection} from "../tasks/transition-types.js";
+import {getWorkflowExtensionRegistry} from "../workflows/workflow-extension-registry.js";
+import type {WorkflowMovePolicyInput} from "../workflows/workflow-extension-types.js";
+import "../builtin-traits.js";
+import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput} from "../workflows/workflow-definition-types.js";
+import {normalizeTaskPriority} from "../tasks/task-priority.js";
+import type {AsyncDataLayer, DbTransaction} from "../postgres/data-layer.js";
+import {projectScopeFor, recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
+import {EvalStore} from "../eval/eval-store.js";
+import {AsyncEvalStore} from "../async-stores/async-eval-store.js";
+import {BackwardCompat, ProjectRequiredError} from "../central/migration.js";
+import {CentralCore} from "../central/central-core.js";
+import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
+import {generateTaskLineageId} from "../tasks/task-lineage.js";
+import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
+import {preserveDurableTaskWedgeInvariants, type TaskRow} from "../task-store/persistence.js";
+import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
+import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
+import {upsertTaskRowInTransaction, buildTaskInsertValues} from "./async/async-persistence.js";
+import {readTaskRowInTransaction} from "./async/async-persistence.js";
+import {withTaskWorkflowSerialization} from "./async/async-workflow-workitems.js";
+import {recordActivityLogEntry as recordActivityLogEntryAsync} from "./async/async-audit.js";
+import {applyOriginalDescription} from "../tasks/original-description-policy.js";
+import {isPlanReviewSatisfied} from "../planner/plan-approval.js";
+import {createCurrentPlanEvidence} from "../planner/spec-lock.js";
+import {appendPlanEvidenceInTransaction} from "./plan-evidence.js";
+import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
+import {listGoalCitations as listGoalCitationsAsync} from "./async/async-events.js";
+import type {RunAuditEventRow} from "../task-store/row-types.js";
+
+export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer, consumerId?: string,): Promise<TaskStore> {
+    if (!asyncLayer) {
+      throw new Error("TaskStore.getOrCreateForProject requires a project-bound PostgreSQL AsyncDataLayer");
+    }
+    /*
+    FNXC:PostgresCutover 2026-07-13-20:05:
+    The fallback CentralCore must be bound to the caller's AsyncDataLayer.
+    Post-cutover, a layer-less CentralCore has no database at all (legacy
+    SQLite CentralDatabase is deleted; init() is a graceful no-op with
+    db=null), so project lookups return empty and resolveProjectContext
+    throws ProjectRequiredError — surfaced as `Project "<id>" not found`
+    even though central.projects in PostgreSQL has the row. This broke every
+    projectId-only boot through the startup factory (engine InProcessRuntime,
+    dashboard project-store-resolver): dashboard UI came up but the engine
+    never connected.
+    */
+    const central = centralCore ?? new CentralCore(undefined, { asyncLayer });
+    let initializedHere = false;
+
+    if (!centralCore) {
+      await central.init();
+      initializedHere = true;
+    }
+
+    try {
+      const compat = new BackwardCompat(central);
+      const context = await compat.resolveProjectContext(process.cwd(), projectId);
+      const resolvedGlobalSettingsDir = globalSettingsDir
+        ?? (process.env.VITEST === "true"
+          ? join(context.workingDirectory, ".fusion-global-settings")
+          : undefined);
+      const store = new TaskStore(
+        context.workingDirectory,
+        resolvedGlobalSettingsDir,
+        { asyncLayer, ...(consumerId ? { consumerId } : {}) },
+      );
+      await store.init();
+      return store;
+    } catch (error) {
+      if (error instanceof ProjectRequiredError) {
+        if (projectId) {
+          throw new Error(`Project "${projectId}" not found`);
+        }
+        throw new Error(error.message);
+      }
+      throw error;
+    } finally {
+      if (initializedHere) {
+        await central.close();
+      }
+    }
+  }
+
+export async function listGoalCitationsImpl(store: TaskStore, filter: GoalCitationFilter = {}): Promise<GoalCitation[]> {
+        const layer = store.asyncLayer!;
+    return listGoalCitationsAsync(layer.db, filter);
+}
+
+export type PlanningDependencyInvalidation = {
+  /** Dependencies observed before this mutation; protects against stale snapshots. */
+  expectedCurrentDependencies: readonly string[];
+};
+
+function sameDependencySet(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length
+    && actual.every((dependency, index) => dependency === expected[index]);
+}
+
+export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: string, task: Task, auditInput?: RunAuditEventInput, planningInvalidation?: PlanningDependencyInvalidation, specPlanPrompt?: string,): Promise<void> {
+    const id = store.getTaskIdFromDir(dir);
+    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:10:
+    // Backend mode: upsert the task row + audit event in one async Drizzle
+    // transaction (upsertTaskRowInTransaction + recordRunAuditEventWithinTransaction).
+    // This preserves the atomicity invariant: the audit row commits or rolls
+    // back with the task mutation.
+    //
+    // FNXC:SoftDeleteResurrectionGuard 2026-06-26:
+    // P0 fix (review #7): the backend branch previously blind-upserted the
+    // row with no deletedAt re-read, so a write racing a soft-delete would
+    // silently resurrect the tombstoned task (R7 / VAL-DATA-005/006). The
+    // sync branch enforces this via patchTaskRowInTransaction + the
+    // throwSoftDeletedWriteBlocked guard. The backend branch now re-reads the
+    // existing row (includeDeleted) inside the same transaction; if deletedAt
+    // is set it throws TaskDeletedError (after recording the resurrection-
+    // blocked audit event) instead of upserting.
+        const layer = store.asyncLayer!;
+    const existingRow = await layer.transactionImmediate(async (tx) => {
+      const persist = async () => {
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      /*
+      FNXC:SpecLock 2026-08-11-02:04:
+      A full PROMPT.md rewrite publishes evidence and clears approval in this task-row transaction,
+      so rollback cannot expose either half alone. FN-8969 requires the shared append path here:
+      it reads the durable version column with unbound-safe scope, retries PK races, and dedupes by
+      sourceHash rather than trusting a snapshot version that can be stale.
+      */
+      if (specPlanPrompt !== undefined) {
+        await appendPlanEvidenceInTransaction(tx, {
+          projectId: layer.projectId,
+          taskId: id,
+          buildEvidence: (version) => createCurrentPlanEvidence({
+            version,
+            sourceRevision: Date.now(),
+            capturedAt: new Date().toISOString(),
+            prompt: specPlanPrompt,
+            bindings: {
+              dependencies: task.dependencies ?? [],
+              missionId: task.missionId,
+              sliceId: task.sliceId,
+              sourceParentTaskId: task.sourceParentTaskId,
+            },
+          }),
+        });
+      }
+      if (row && row.deletedAt != null) {
+        return { deletedAt: row.deletedAt as string };
+      }
+      /*
+      FNXC:PostgresCutover 2026-07-10:
+      Changed-columns write (parity with sqlite's patchTaskRowInTransaction):
+      a full-row upsert from the caller's snapshot silently clobbered any
+      column another writer committed since the caller's read — the
+      lost-update class behind triage's `status` clear never sticking. Only
+      an absent row falls back to the full upsert (create-recovery).
+      */
+      if (row) {
+        const existing = store.pgRowToTaskRow(row);
+        if (planningInvalidation && !sameDependencySet(
+          store.rowToTask(existing).dependencies ?? [],
+          planningInvalidation.expectedCurrentDependencies,
+        )) {
+          throw new Error(`Planning dependency invalidation conflict for ${id}: dependencies changed before the lifecycle mutation committed`);
+        }
+        preserveDurableTaskWedgeInvariants(existing, task);
+        const changedColumns = store.getChangedTaskColumns(existing, task);
+        if (changedColumns.size > 0) {
+          const context = store.createTaskPersistSerializationContext(task, existing);
+          const allValues = buildTaskInsertValues(task as unknown as Record<string, unknown>, context);
+          const setValues: Record<string, unknown> = { updatedAt: task.updatedAt };
+          for (const column of changedColumns) {
+            if (column === "id") continue;
+            setValues[column as string] = allValues[column as string];
+          }
+          /*
+          FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+          Project-scope changed-column updates (parity with other multi-project task writes).
+          */
+          const updateConds = [eq(schema.project.tasks.id, id)];
+          if (layer.projectId) updateConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+          await tx
+            .update(schema.project.tasks)
+            .set(setValues as never)
+            .where(and(...updateConds));
+        }
+      } else {
+        // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
+        const context = store.createTaskPersistSerializationContext(task);
+        await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+      }
+      if (planningInvalidation) {
+        /*
+        FNXC:PlanningDependencyReseed 2026-08-04-01:57:
+        A dependency mutation supersedes a plan handoff only while its graph
+        continuation is still pending. Persist the new dependencies, replan
+        fence, and retirement together under the workflow serialization lock:
+        a worker that wins the lock first becomes `running` and is preserved;
+        a pending item cannot be claimed between this query and cancellation.
+        */
+        const workItemConditions = [
+          eq(schema.project.workflowWorkItems.taskId, id),
+          eq(schema.project.workflowWorkItems.kind, "task"),
+          inArray(schema.project.workflowWorkItems.state, ["runnable", "held", "retrying"]),
+        ];
+        if (layer.projectId) workItemConditions.push(eq(schema.project.workflowWorkItems.projectId, layer.projectId));
+        await tx.update(schema.project.workflowWorkItems).set({
+          state: "cancelled",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastError: "cancelled-by-planning-dependency-reseed",
+          updatedAt: task.updatedAt,
+        }).where(and(...workItemConditions));
+      }
+      if (auditInput) {
+        await recordRunAuditEventWithinTransaction(tx, auditInput);
+      }
+      return undefined;
+      };
+      const dependencyIds = planningInvalidation
+        ? [...new Set(task.dependencies ?? [])].filter((dependencyId) => dependencyId !== id).sort()
+        : [];
+      const persistWithDependencyTargetValidation = async (): Promise<void | { deletedAt: string }> => {
+        /*
+        FNXC:DependencyIntegrity 2026-08-20-17:53:
+        Test-only ordering barrier: production never sets this private seam. It proves a mutation
+        holding its prerequisite lock serializes a forced delete until that mutation either commits
+        or rolls back, rather than relying on timing-sensitive concurrent PostgreSQL tests.
+        */
+        await (store as unknown as { __afterDependencyTargetLocksForTest?: () => void | Promise<void> }).__afterDependencyTargetLocksForTest?.();
+        const liveDependencyRows = dependencyIds.length === 0
+          ? []
+          : await tx.select({ id: schema.project.tasks.id })
+            .from(schema.project.tasks)
+            .where(and(
+              projectScopeFor(schema.project.tasks.projectId, layer.projectId),
+              isNull(schema.project.tasks.deletedAt),
+              inArray(schema.project.tasks.id, dependencyIds),
+            ));
+        if (liveDependencyRows.length !== dependencyIds.length) {
+          const liveIds = new Set(liveDependencyRows.map((row) => row.id));
+          const missingDependencyId = dependencyIds.find((dependencyId) => !liveIds.has(dependencyId));
+          throw new Error(`Dependency task ${missingDependencyId} not found`);
+        }
+        return persist();
+      };
+      /*
+      FNXC:DependencyIntegrity 2026-08-20-17:53:
+      Dependency targets are advisory-locked before their dependent's persistence lock and then
+      re-read inside this transaction. A forced delete holds the same target lock, so a writer
+      that validated a live prerequisite before waiting cannot commit its edge after that task is
+      tombstoned. Sort target IDs to retain deterministic ordering for multi-dependency mutations.
+      */
+      const serializeDependencyTargets = async (index: number): Promise<void | { deletedAt: string }> => {
+        if (index >= dependencyIds.length) {
+          return withTaskWorkflowSerialization(tx, layer.projectId, id, persistWithDependencyTargetValidation);
+        }
+        return withTaskWorkflowSerialization(tx, layer.projectId, dependencyIds[index], () =>
+          serializeDependencyTargets(index + 1));
+      };
+      if (planningInvalidation) {
+        return serializeDependencyTargets(0);
+      }
+      /*
+      FNXC:PlanningDependencyReseed 2026-08-04-01:57:
+      Planning invalidation shares this task-scoped transaction lock with
+      claim/continuation writers. The former plan-review-result condition is
+      retained because that persisted graph edge has the same serialization
+      requirement.
+      */
+      if (task.workflowStepResults?.some(isPlanReviewSatisfied)) {
+        return withTaskWorkflowSerialization(tx, layer.projectId, id, persist);
+      }
+      return persist();
+    });
+    if (existingRow?.deletedAt) {
+      store.throwSoftDeletedWriteBlocked(id, existingRow.deletedAt, auditInput?.mutationType ?? "atomicWriteTaskJsonWithAudit", {
+        agentId: auditInput?.agentId,
+        runId: auditInput?.runId,
+        timestamp: auditInput?.timestamp,
+      });
+    }
+    await store.writeTaskJsonFile(dir, task);
+    return;
+}
+
+export async function duplicateTaskImpl(store: TaskStore, id: string): Promise<Task> {
+    const sourceTask = await store.getTask(id);
+    const now = new Date().toISOString();
+
+    return store.createTaskWithDistributedReservation({ description: sourceTask.description }, {
+      createTaskWithId: async (newId) => {
+        // FN-5077: duplicated drift-stripped fragments may normalize to null and should remain unset.
+        const normalizedTitle = normalizeTitleForTaskId(sourceTask.title, newId);
+        if (normalizedTitle.changed) {
+          const removed = extractTaskIdTokens(sourceTask.title ?? "").filter((token) => token !== newId.toUpperCase());
+          storeLog.log(`[title-id-drift] normalized title for ${newId}: removed=[${removed.join(",")}]`);
+        }
+        const newTask: Task = {
+          id: newId,
+          lineageId: generateTaskLineageId(),
+          title: normalizedTitle.title ?? undefined,
+          description: `${sourceTask.description}\n\n(Duplicated from ${id})`,
+          priority: normalizeTaskPriority(sourceTask.priority),
+          /*
+          FNXC:MergedPlanningColumn 2026-07-31-22:35 (missed creation surface — duplicate):
+          Same fix as refine: resolve the default workflow's intake lane instead of the legacy
+          `"triage"` literal, which the merged coding workflow no longer declares.
+          */
+          column: ((await resolveWorkflowIntakeFacts(store)).intake ?? "triage") as Task["column"],
+          modelPresetId: sourceTask.modelPresetId,
+          sourceType: "task_duplicate",
+          sourceParentTaskId: id,
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [{ timestamp: now, action: `Duplicated from ${id}` }],
+          columnMovedAt: now,
+          createdAt: now,
+          updatedAt: now,
+          baseBranch: sourceTask.baseBranch,
+        };
+
+        await store.maybeResolveTombstonedTaskId(newId, {}, "duplicateTask");
+        await store.assertTaskIdAvailable(newId);
+
+        const newDir = store.taskDir(newId);
+        await store.atomicCreateTaskJson(newDir, newTask, "duplicateTask");
+        const sanitizedPrompt = sanitizeFileScopeInPromptContent(sourceTask.prompt);
+        if (sanitizedPrompt.dropped.length > 0) {
+          storeLog.log(`[file-scope-sanitize] duplicate ${newId} from ${id}: dropped=[${sanitizedPrompt.dropped.join(",")}]`);
+        }
+        await mkdir(newDir, { recursive: true });
+        await writeFile(join(newDir, "PROMPT.md"), sanitizedPrompt.sanitized);
+
+        if (store.isWatching) store.taskCache.set(newId, { ...newTask });
+        store.emit("task:created", newTask);
+        await store.invokeTaskCreatedHook(newTask);
+        return newTask;
+      },
+    });
+  }
+
+export async function listStrandedRefinementsImpl(store: TaskStore, options?: { freshnessThresholdMs?: number; }): Promise<Array<{ task: Task; reasons: Array<"untriaged-stale" | "awaiting-approval" | "failed" | "stuck-killed" | "recovery-backoff">; nextRecoveryAt?: string; ageMs: number; }>> {
+    /*
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Backend-mode: async Drizzle SELECT on project.tasks WHERE sourceType='task_refine'
+    AND column='triage' AND deletedAt IS NULL. The classification logic below is pure
+    computation and runs identically in both backends.
+    */
+    const defaultFreshnessThresholdMs = 10 * 60 * 1000;
+    const requestedThresholdMs = options?.freshnessThresholdMs;
+    const freshnessThresholdMs = Number.isFinite(requestedThresholdMs) && (requestedThresholdMs ?? 0) >= 0
+      ? requestedThresholdMs as number
+      : defaultFreshnessThresholdMs;
+
+    const layer = store.asyncLayer!;
+    const pgRows = await layer.db.select()
+      .from(schema.project.tasks)
+      .where(and(
+        isNull(schema.project.tasks.deletedAt),
+        eq(schema.project.tasks.sourceType, 'task_refine'),
+        eq(schema.project.tasks.column, 'triage'),
+      ))
+      .orderBy(schema.project.tasks.createdAt);
+    const rows = pgRows.map((r) => store.pgRowToTaskRow(r as Record<string, unknown>)) as unknown as TaskRow[];
+
+    const now = Date.now();
+    const stranded: Array<{
+      task: Task;
+      reasons: Array<"untriaged-stale" | "awaiting-approval" | "failed" | "stuck-killed" | "recovery-backoff">;
+      nextRecoveryAt?: string;
+      ageMs: number;
+    }> = [];
+
+    for (const row of rows) {
+      const task = store.rowToTask(row);
+      if (task.paused) {
+        continue;
+      }
+
+      const reasons: Array<"untriaged-stale" | "awaiting-approval" | "failed" | "stuck-killed" | "recovery-backoff"> = [];
+      const createdAtMs = Date.parse(task.createdAt);
+      const ageMs = Number.isFinite(createdAtMs) ? Math.max(0, now - createdAtMs) : 0;
+
+      if (task.status === undefined && ageMs > freshnessThresholdMs) {
+        reasons.push("untriaged-stale");
+      }
+      if (task.status === "awaiting-approval") {
+        reasons.push("awaiting-approval");
+      }
+      if (task.status === "failed") {
+        reasons.push("failed");
+      }
+      if (task.status === "stuck-killed") {
+        reasons.push("stuck-killed");
+      }
+      if (task.nextRecoveryAt) {
+        const nextRecoveryAtMs = Date.parse(task.nextRecoveryAt);
+        if (Number.isFinite(nextRecoveryAtMs) && nextRecoveryAtMs > now) {
+          reasons.push("recovery-backoff");
+        }
+      }
+
+      if (reasons.length > 0) {
+        stranded.push({
+          task,
+          reasons,
+          nextRecoveryAt: task.nextRecoveryAt,
+          ageMs,
+        });
+      }
+    }
+
+    return stranded;
+  }
+
+export async function tryClaimCheckoutImpl(store: TaskStore, taskId: string, claim: { agentId: string; nodeId: string; runId: string | null; leaseEpoch: number; renewedAt: string; }, precondition: CheckoutClaimPrecondition,): Promise<{ ok: true; task: Task } | { ok: false; reason: "row_not_found" | "precondition_failed"; current: Task | null }> {
+    const current = await store.getTask(taskId);
+    if (!current) {
+      return { ok: false, reason: "row_not_found", current: null };
+    }
+
+    // FNXC:AgentRoutingBackend 2026-07-12-00:00: PG backend branch for
+    // tryClaimCheckout — the SQLite path below is unreachable in backend mode.
+        const layer = store.asyncLayer!;
+    const now = new Date().toISOString();
+    const projectScope = layer.projectId ? sql`AND project_id = ${layer.projectId}` : sql``;
+    const rows = await layer.db.execute(sql`
+      UPDATE project.tasks SET
+        checked_out_by = ${claim.agentId},
+        checked_out_at = COALESCE(checked_out_at, ${now}),
+        checkout_node_id = ${claim.nodeId},
+        checkout_run_id = ${claim.runId},
+        checkout_lease_renewed_at = ${claim.renewedAt},
+        checkout_lease_epoch = ${claim.leaseEpoch}
+      WHERE id = ${taskId}
+        ${projectScope}
+        AND deleted_at IS NULL
+        AND COALESCE(checked_out_by, '') = COALESCE(${precondition.expectedCheckedOutBy ?? ''}, '')
+        AND COALESCE(checkout_node_id, '') = COALESCE(${precondition.expectedNodeId ?? ''}, '')
+        AND COALESCE(checkout_lease_epoch, 0) = COALESCE(${precondition.expectedLeaseEpoch ?? 0}, 0)
+      RETURNING id
+    `);
+    const changes = (rows as unknown[]).length;
+    const post = await store.getTask(taskId);
+    if (changes === 0) {
+      return { ok: false, reason: "precondition_failed", current: post };
+    }
+    if (!post) {
+      return { ok: false, reason: "row_not_found", current: null };
+    }
+    return { ok: true, task: post };
+}
+
+export async function evaluateWorkflowMovePoliciesImpl(store: TaskStore, input: WorkflowMovePolicyInput): Promise<void> {
+    const policies = getWorkflowExtensionRegistry().list("move-policy");
+    for (const definition of policies) {
+      const extension = definition.extension;
+      if (definition.degraded || extension.kind !== "move-policy" || !extension.evaluate) continue;
+
+      let decision: Awaited<ReturnType<NonNullable<typeof extension.evaluate>>>;
+      try {
+        decision = await new Promise<Awaited<ReturnType<NonNullable<typeof extension.evaluate>>>>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            reject(new Error(`timed out after ${WORKFLOW_MOVE_POLICY_TIMEOUT_MS}ms`));
+          }, WORKFLOW_MOVE_POLICY_TIMEOUT_MS);
+          Promise.resolve(extension.evaluate?.(input))
+            .then((value) => {
+              clearTimeout(timer);
+              resolve(value as Awaited<ReturnType<NonNullable<typeof extension.evaluate>>>);
+            })
+            .catch((error) => {
+              clearTimeout(timer);
+              reject(error);
+            });
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        storeLog.warn("Workflow move-policy extension faulted", {
+          phase: "moveTaskInternal:move-policy",
+          taskId: input.task.id,
+          extensionId: definition.id,
+          fallback: extension.fallback,
+          error: message,
+        });
+        if (extension.fallback === "degradeToDefault") {
+          getWorkflowExtensionRegistry().degrade([definition.id], "runtime-fault", message);
+          continue;
+        }
+        throw new TransitionRejectionError(
+          makeTransitionRejection(
+            "guard-rejected",
+            "transition.rejected.workflowMovePolicy",
+            extension.fallback === "parkNeedsAttention",
+            `Move policy '${definition.id}' failed: ${message}`,
+          ),
+          `Cannot move ${input.task.id} to '${input.toColumn}': move policy '${definition.id}' failed`,
+        );
+      }
+
+      if (!decision.allowed) {
+        throw new TransitionRejectionError(
+          makeTransitionRejection(
+            "guard-rejected",
+            "transition.rejected.workflowMovePolicy",
+            true,
+            decision.reason,
+          ),
+          decision.message,
+        );
+      }
+    }
+  }
+
+export async function recordRunAuditEventImpl(store: TaskStore, input: RunAuditEventInput): Promise<RunAuditEvent> {
+    // FNXC:RuntimeWorkflowAsync 2026-06-24-16:11:
+    // Backend-mode: delegate to the async data-layer helper. The data-layer
+    // RunAuditEvent has taskId: string | null (DB shape); the store's public
+    // RunAuditEvent type has taskId: string | undefined. Map null → undefined.
+        const layer = store.asyncLayer!;
+    const raw = await recordRunAuditEventAsync(layer, {
+      timestamp: input.timestamp,
+      taskId: input.taskId,
+      agentId: input.agentId,
+      runId: input.runId,
+      domain: input.domain,
+      mutationType: input.mutationType,
+      target: input.target,
+      metadata: input.metadata,
+    });
+    return {
+      ...raw,
+      taskId: raw.taskId ?? undefined,
+      domain: raw.domain as RunAuditEvent["domain"],
+      metadata: raw.metadata ?? undefined,
+    };
+}
+
+export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFilter = {}): RunAuditEvent[] {
+    /*
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Intentional PG safe-default: this sync reader returns [] in backend mode. The production
+    callers (executor.ts:5482, self-healing.ts:908/1078) use typeof guards + handle empty
+    gracefully (no crash, graceful degrade to "no audit events found"). The authoritative
+    async read is queryRunAuditEvents (async-audit.ts). This sync API stays as the test/mock
+    fallback — 37+ test files call it directly. Not a follow-up; this is the correct PG behavior.
+    */
+    if (store.backendMode) return [];
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (options.runId) {
+      conditions.push("runId = ?");
+      params.push(options.runId);
+    }
+
+    if (options.taskId) {
+      conditions.push("taskId = ?");
+      params.push(options.taskId);
+    }
+
+    if (options.agentId) {
+      conditions.push("agentId = ?");
+      params.push(options.agentId);
+    }
+
+    if (options.domain) {
+      conditions.push("domain = ?");
+      params.push(options.domain);
+    }
+
+    if (options.mutationType) {
+      conditions.push("mutationType = ?");
+      params.push(options.mutationType);
+    }
+
+    // Inclusive time range: timestamp >= startTime AND timestamp <= endTime
+    if (options.startTime) {
+      conditions.push("timestamp >= ?");
+      params.push(options.startTime);
+    }
+
+    if (options.endTime) {
+      conditions.push("timestamp <= ?");
+      params.push(options.endTime);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limitClause = options.limit ? `LIMIT ${Math.max(1, options.limit)}` : "";
+    const orderClause = "ORDER BY timestamp DESC, rowid DESC";
+
+    // Cast params to the expected SQLite input type
+    const sqlParams = params as (string | number | null)[];
+
+    const rows = store.db.prepare(`
+      SELECT * FROM runAuditEvents
+      ${whereClause}
+      ${orderClause}
+      ${limitClause}
+    `).all(...sqlParams) as unknown as RunAuditEventRow[];
+
+    return rows.map((row) => store.rowToRunAuditEvent(row));
+  }
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — DEAD SYNC PATH, do not convert):
+The literal below would leak a merge-queue entry on a renamed board — a card leaving review would
+never be dequeued — except that this function does not run in production.
+
+It is the SQLite-mode twin. The live path is `dequeueMergeQueueOnColumnExitInTransaction`
+(`async-merge-coordination.ts`), called from `moves.ts`, and it is ALREADY converted: it takes
+`moveReviewColumns` and the caller supplies them. This body reaches for `store.db.prepare`, which
+throws in PostgreSQL backend mode, so a renamed board never gets far enough to be mis-dequeued.
+
+Converting it would mean threading a lane set into a function whose first statement cannot execute.
+DELIBERATE-LITERAL — marked, not merely described. The audit note below already said "do not
+convert", but a prose note is invisible to the census, so this stayed in `byFile` as apparent debt
+and the next fleet pass re-derives the same conclusion. The marker moves it to `deliberateByFile`,
+which is where a reviewed-and-kept literal belongs.
+
+Recorded instead, so the census entry is not mistaken for unconverted debt — and so that whoever
+finally deletes the sync SQLite residue can take this with it.
+*/
+export function dequeueMergeQueueOnColumnExitImpl(store: TaskStore, taskId: string, previousColumn: ColumnId, nextColumn: ColumnId, now: string): void {
+    if (previousColumn !== "in-review" || nextColumn === "in-review") {
+      return;
+    }
+
+    const queueRow = store.db.prepare("SELECT leasedBy, leaseExpiresAt FROM mergeQueue WHERE taskId = ?").get(taskId) as {
+      leasedBy: string | null;
+      leaseExpiresAt: string | null;
+    } | undefined;
+    if (!queueRow) {
+      return;
+    }
+
+    const leaseIsExpired = queueRow.leaseExpiresAt != null && queueRow.leaseExpiresAt <= now;
+    if (!queueRow.leasedBy || leaseIsExpired) {
+      store.db.prepare("DELETE FROM mergeQueue WHERE taskId = ?").run(taskId);
+      store.insertRunAuditEventRow({
+        taskId,
+        domain: "database",
+        mutationType: "mergeQueue:auto-cleanup-stale-row",
+        target: taskId,
+        metadata: {
+          taskId,
+          previousColumn,
+          nextColumn,
+          leasedBy: queueRow.leasedBy,
+          leaseExpiresAt: queueRow.leaseExpiresAt,
+          cleanedAt: now,
+          reason: "column-exit",
+        },
+      });
+      return;
+    }
+
+    store.insertRunAuditEventRow({
+      taskId,
+      domain: "database",
+      mutationType: "mergeQueue:stale-lease-on-column-exit",
+      target: taskId,
+      metadata: {
+        taskId,
+        previousColumn,
+        nextColumn,
+        leasedBy: queueRow.leasedBy,
+        leaseExpiresAt: queueRow.leaseExpiresAt,
+      },
+    });
+  }
+
+export async function updateIssueInfoImpl(store: TaskStore, id: string, issueInfo: import("../types.js").IssueInfo | null,): Promise<Task> {
+    return store.withTaskLock(id, async () => {
+      const dir = store.taskDir(id);
+      const task = await store.readTaskJson(dir);
+
+      const previous = task.issueInfo;
+      const badgeChanged =
+        previous?.url !== issueInfo?.url ||
+        previous?.number !== issueInfo?.number ||
+        previous?.state !== issueInfo?.state ||
+        previous?.title !== issueInfo?.title ||
+        previous?.stateReason !== issueInfo?.stateReason;
+      const linkChanged = previous?.number !== issueInfo?.number || previous?.url !== issueInfo?.url;
+
+      if (issueInfo) {
+        task.issueInfo = issueInfo;
+        if (!previous || linkChanged) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "Issue linked",
+            outcome: `Issue #${issueInfo.number}: ${issueInfo.url}`,
+          });
+        } else if (badgeChanged) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "Issue updated",
+            outcome: `Issue #${issueInfo.number} badge metadata refreshed`,
+          });
+        }
+      } else {
+        task.issueInfo = undefined;
+        if (previous?.number) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "Issue unlinked",
+            outcome: `Issue #${previous.number} removed`,
+          });
+        }
+      }
+
+      task.updatedAt = new Date().toISOString();
+
+      await store.atomicWriteTaskJson(dir, task);
+      if (store.isWatching) store.taskCache.set(id, { ...task });
+
+      if (badgeChanged) {
+        store.emit("task:updated", task);
+      }
+
+      return task;
+    });
+  }
+
+export async function listWorkflowStepsImpl(store: TaskStore): Promise<import("../types.js").WorkflowStep[]> {
+    if (store.workflowStepsCache) return store.workflowStepsCache;
+        /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
+    Backend mode reads stored steps from project.workflow_steps via the async
+    layer, replacing the SqliteFinalRemoval-era interim fail-soft that
+    returned plugin-contributed steps only (stored steps were dropped until
+    the async helper existed). Listing parity with the sync branch below:
+    compiled-step rows stay filtered out, plugin steps are appended.
+    */
+    const table = schema.project.workflowSteps;
+    const pgRows = await store.asyncLayer!.db
+      .select()
+      .from(table)
+      .where(projectScopeFor(table.projectId, store.asyncLayer!.projectId))
+      .orderBy(table.createdAt);
+    const storedPgSteps = pgRows
+      .map((row) => store.applyLegacyWorkflowStepOverrides(store.toStoredWorkflowStep({
+        ...row,
+        migrated_fragment_id: row.migratedFragmentId,
+      } as unknown as Parameters<typeof store.toStoredWorkflowStep>[0])))
+      .filter((step) => !step.templateId?.startsWith(WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX));
+    const pluginSteps = store._pluginWorkflowStepTemplates
+      .map(({ template }) => store.resolvePluginWorkflowStep(template.id))
+      .filter((step): step is import("../types.js").WorkflowStep => Boolean(step));
+    store.workflowStepsCache = [...storedPgSteps, ...pluginSteps];
+    return store.workflowStepsCache;
+}
+
+export async function getWorkflowStepImpl(store: TaskStore, id: string): Promise<import("../types.js").WorkflowStep | undefined> {
+    if (id.startsWith("plugin:")) {
+      const pluginStep = store.resolvePluginWorkflowStep(id);
+      if (pluginStep) {
+        return pluginStep;
+      }
+    }
+
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
+    Backend mode previously fell through to the sync store.db read and threw
+    "SQLite Database is not available" (reachable via ensureWorkflowStepForTemplate
+    and the executor's workflow-step gate). Async lookup: by id, then by
+    templateId (earliest created), then built-in template — same resolution
+    order as the sync branch.
+    */
+        const table = schema.project.workflowSteps;
+    const mapRow = (row: typeof table.$inferSelect) =>
+      store.applyLegacyWorkflowStepOverrides(store.toStoredWorkflowStep({
+        ...row,
+        migrated_fragment_id: row.migratedFragmentId,
+      } as unknown as Parameters<typeof store.toStoredWorkflowStep>[0]));
+    const byIdRows = await store.asyncLayer!.db
+      .select()
+      .from(table)
+      .where(and(eq(table.id, id), projectScopeFor(table.projectId, store.asyncLayer!.projectId)))
+      .limit(1);
+    if (byIdRows[0]) return mapRow(byIdRows[0]);
+    const byTemplateRows = await store.asyncLayer!.db
+      .select()
+      .from(table)
+      .where(and(eq(table.templateId, id), projectScopeFor(table.projectId, store.asyncLayer!.projectId)))
+      .orderBy(table.createdAt)
+      .limit(1);
+    if (byTemplateRows[0]) return mapRow(byTemplateRows[0]);
+    const pgTemplate = store.getBuiltInWorkflowTemplate(id);
+    return pgTemplate ? store.toBuiltInWorkflowStep(pgTemplate) : undefined;
+}
+
+/** Test-only seam for proving the narrow retry handles a post-allocation race. */
+export let workflowDefinitionBeforeInsertForTesting: ((id: string, backendMode: boolean) => void | Promise<void>) | undefined;
+
+export function __setWorkflowDefinitionBeforeInsertForTesting(
+  hook: typeof workflowDefinitionBeforeInsertForTesting,
+): void {
+  workflowDefinitionBeforeInsertForTesting = hook;
+}
+
+export async function createWorkflowDefinitionImpl(store: TaskStore, input: WorkflowDefinitionInput,): Promise<WorkflowDefinition> {
+    /*
+    Rollback compat (#1405): persist a pure-v1-equivalent graph in the v1 shape so a
+    binary downgrade can still load the row.
+
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+    The `flagOnForCreate` read is DELETED and the downgrade is now unconditional —
+    which is what it already was. The ternary was `flagOn ? ir : downgrade(ir)`, and
+    `flagOn` reads the retired raw `experimentalFeatures.workflowColumns` key that no
+    production writer sets, so every real project has ALWAYS taken the downgrade arm.
+    Removing the branch changes no persisted byte; it deletes a flag read.
+
+    The downgrade itself is KEPT deliberately. It is a compatibility affordance, not
+    cutover machinery: it only fires for a graph that is exactly equivalent to pure v1
+    (default columns, default placements, no v2-only features), and `upgradeV1ToV2`
+    re-reads it into an identical v2 graph. Retiring it would break a binary downgrade
+    for no benefit, and stale binaries opening these databases is an observed event in
+    this project, not a hypothetical.
+    */
+    return store.withConfigLock(async () => {
+      const name = input.name?.trim();
+      if (!name) throw new Error("Workflow name is required");
+      // Validate the IR shape up front so we never persist a malformed graph.
+      const ir = parseWorkflowIr(input.ir);
+      // Residual A: also reject save-blocking trait composition conflicts here,
+      // not only in the editor's client-side validation.
+      store.assertWorkflowIrTraitsValid(ir);
+      const layout = input.layout ?? {};
+      const now = new Date().toISOString();
+      /*
+      FNXC:WorkflowDefinitionIdAllocator 2026-07-21-12:00:
+      The global occupancy scan prevents stale per-project counters, but cannot
+      close a multi-process race after allocation. Retry only a confirmed
+      `workflows.id` PK conflict: withConfigLock serializes this process, not
+      another process, and retrying every unique error would hide unrelated
+      constraints from plugin and API callers.
+      */
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const id = await nextWorkflowDefinitionIdAsyncImpl(store);
+        const definition: WorkflowDefinition = {
+          id,
+          name,
+          description: input.description ?? "",
+          icon: normalizeWorkflowIcon(input.icon),
+          kind: input.kind === "fragment" ? "fragment" : "workflow",
+          ir,
+          layout,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        try {
+          await workflowDefinitionBeforeInsertForTesting?.(id, store.backendMode);
+          /*
+          FNXC:MultiProjectIsolation 2026-08-15-22:10:
+          Stamp the bound layer's project explicitly, like the FN-8997 workflowSteps insert does.
+          FN-8998 scopes every workflow-definition READ by `layer.projectId`; leaving the INSERT to
+          the session GUC default splits the write/read authority, so a layer bound in JS over a
+          bypass connection creates a row it can never read back ('' normalizes to the GUC/legacy
+          partition via the fusion_assign_project_id trigger, preserving unbound behavior).
+          */
+                    await store.asyncLayer!.db.insert(schema.project.workflows).values({
+            projectId: store.asyncLayer!.projectId?.trim() ?? "",
+            id: definition.id,
+            name: definition.name,
+            description: definition.description,
+            icon: definition.icon ?? null,
+            ir: downgradeIrToV1IfPure(definition.ir) as unknown as object,
+            layout: definition.layout as unknown as object,
+            kind: definition.kind,
+            createdAt: definition.createdAt,
+            updatedAt: definition.updatedAt,
+          });
+
+        } catch (error) {
+          if (!isWorkflowDefinitionIdPrimaryKeyCollision(error)) throw error;
+          continue;
+        }
+
+        store.workflowDefinitionsCache = null;
+                return definition;
+      }
+      throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");
+    });
+  }
+
+export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { targetColumn: string; workflowId: string; countPending: boolean; excludeTaskId: string; }): number {
+    const { targetColumn, workflowId, countPending, excludeTaskId } = params;
+    // Candidate rows: in the column now, or (optionally) mid-transition into it.
+    // LEFT JOIN the selection row so we can scope by effective workflow id in JS.
+    const rows = store.db
+      .prepare(
+        `SELECT t.id AS id, t."column" AS col, t.transitionPending AS tp, s.workflowId AS wid
+         FROM tasks t
+         LEFT JOIN task_workflow_selection s ON s.taskId = t.id
+         WHERE t.deletedAt IS NULL
+           AND t.id != ?
+           AND (t."column" = ? OR (t.transitionPending IS NOT NULL AND t.transitionPending != ''))`,
+      )
+      .all(excludeTaskId, targetColumn) as Array<{
+        id: string;
+        col: string;
+        tp: string | null;
+        wid: string | null;
+      }>;
+
+    let count = 0;
+    for (const row of rows) {
+      const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
+      if (effectiveWorkflowId !== workflowId) continue;
+
+      if (row.col === targetColumn) {
+        count += 1;
+        continue;
+      }
+      // Not committed into the column — only counts if it has reserved the slot
+      // via a transitionPending marker targeting this column AND countPending.
+      if (!countPending || !row.tp) continue;
+      let toColumn: string | undefined;
+      try {
+        const parsed = JSON.parse(row.tp) as { toColumn?: unknown };
+        if (typeof parsed.toColumn === "string") toColumn = parsed.toColumn;
+      } catch {
+        // Corrupt marker — treat as not holding this slot.
+      }
+      if (toColumn === targetColumn) count += 1;
+    }
+    return count;
+  }
+
+export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, params: { tx: DbTransaction; targetColumn: string; workflowId: string; countPending: boolean; excludeTaskId: string; }): Promise<number> {
+    const { tx, targetColumn, workflowId, countPending, excludeTaskId } = params;
+    const rows = await tx
+      .select({
+        id: schema.project.tasks.id,
+        col: schema.project.tasks.column,
+        tp: schema.project.tasks.transitionPending,
+        wid: schema.project.taskWorkflowSelection.workflowId,
+      })
+      .from(schema.project.tasks)
+      .leftJoin(
+        schema.project.taskWorkflowSelection,
+        eq(schema.project.taskWorkflowSelection.taskId, schema.project.tasks.id),
+      )
+      .where(
+        and(
+          isNull(schema.project.tasks.deletedAt),
+          ne(schema.project.tasks.id, excludeTaskId),
+          or(
+            eq(schema.project.tasks.column, targetColumn),
+            and(
+              sql`${schema.project.tasks.transitionPending} IS NOT NULL`,
+              sql`${schema.project.tasks.transitionPending} != ''`,
+            ),
+          ),
+        ),
+      );
+
+    let count = 0;
+    for (const row of rows) {
+      const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
+      if (effectiveWorkflowId !== workflowId) continue;
+
+      if (row.col === targetColumn) {
+        count += 1;
+        continue;
+      }
+      if (!countPending || !row.tp) continue;
+      let toCol: string | undefined;
+      try {
+        const parsed = JSON.parse(row.tp) as { toColumn?: unknown };
+        if (typeof parsed.toColumn === "string") toCol = parsed.toColumn;
+      } catch {
+        // Corrupt marker — treat as not holding this slot.
+      }
+      if (toCol === targetColumn) count += 1;
+    }
+    return count;
+  }
+
+export function generateSpecifiedPromptImpl(store: TaskStore, task: Task): string {
+    /*
+    FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+    Non-AI specified PROMPT.md (direct create into non-intake columns) must include the
+    operator's original description near the top, same contract as AI-planned specs.
+    Bootstrap stubs use buildBootstrapPrompt and intentionally skip this path.
+    */
+    const deps =
+      task.dependencies.length > 0
+        ? task.dependencies.map((d) => `- **Task:** ${d}`).join("\n")
+        : "- **None**";
+
+    // Get current settings to check for ntfy configuration
+    const settings = store.getSettingsSync();
+    const notificationsSection =
+      settings.ntfyEnabled && settings.ntfyTopic
+        ? `\n## Notifications\n\nntfy topic: \`${settings.ntfyTopic}\`\n`
+        : "";
+
+    const heading = task.title ? `${task.id}: ${task.title}` : task.id;
+    const base = `# ${heading}
+
+**Created:** ${task.createdAt.split("T")[0]}
+**Size:** M
+
+## Mission
+
+${task.description}
+
+## Dependencies
+
+${deps}
+
+## Steps
+
+### Step 1: Implementation
+
+- [ ] Implement the required changes
+- [ ] Verify changes work correctly
+
+### Step 2: Testing & Verification
+
+- [ ] Lint passes
+- [ ] All tests pass
+- [ ] Typecheck passes
+- [ ] No regressions introduced
+
+### Step 3: Documentation & Delivery
+
+- [ ] Update relevant documentation
+
+## Acceptance Criteria
+
+- [ ] All steps complete
+- [ ] All tests passing
+${notificationsSection}`;
+    return applyOriginalDescription(base, task.description ?? "");
+  }
+
+export async function recordActivityImpl(store: TaskStore, entry: Omit<ActivityLogEntry, "id" | "timestamp">): Promise<ActivityLogEntry> {
+    // FNXC:RuntimeWorkflowAsync 2026-06-24-16:01:
+    // Backend-mode: delegate to the async audit helper (async-audit.ts).
+        const layer = store.asyncLayer!;
+    return recordActivityLogEntryAsync(layer.db, layer.projectId ?? "", entry);
+}
+
+export function getEvalStoreImpl(store: TaskStore): EvalStore | AsyncEvalStore {
+    if (!store.evalStore) {
+      // FNXC:EvalStore 2026-06-27-12:30:
+      // PG backend mode returns the AsyncDataLayer-backed AsyncEvalStore. The
+      // sync EvalStore(store.db) dereferences the absent SQLite handle, which
+      // 500'd the dashboard /api/evals routes.
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("EvalStore is not available: AsyncDataLayer not initialized in backend mode");
+      }
+      store.evalStore = new AsyncEvalStore(layer);
+
+    }
+    return store.evalStore;
+  }

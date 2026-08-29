@@ -1,0 +1,320 @@
+/**
+ * FNXC:ChatSearch 2026-07-07-14:00:
+ * PostgreSQL port of the upstream sqlite chat-store.content-search.test.ts (FN-7631) plus
+ * coverage for the FN-7628 edit/rewind store primitives. The sqlite ChatStore path is gone on
+ * this branch (Database.init throws — SqliteFinalRemoval), so these exercise the async
+ * Drizzle helpers directly against a real PostgreSQL database:
+ *   - searchChatSessionsByMessageContent: content match, dedup to most-recent match,
+ *     wildcard escaping (%/_ literal), scope filtering, empty-query/empty-scope no-ops.
+ *   - deleteChatMessagesFrom: truncation from a target message (inclusive), retained
+ *     ordering, wrong-session/not-found no-op.
+ *   - updateChatMessageMetadata: merge (default) vs replace, missing-message error.
+ *
+ * Skipped when PostgreSQL is unreachable (FUSION_PG_TEST_SKIP=1) so the merge gate stays
+ * green without a running server. Mirrors the satellite-db-injected-stores harness.
+ */
+
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
+import {
+  addChatMessage,
+  addChatMessageAttachment,
+  createChatSession,
+  deleteChatMessagesFrom,
+  getChatMessages,
+  getChatSession,
+  setInFlightGeneration,
+  searchChatSessionsByMessageContent,
+  updateChatMessageMetadata,
+} from "../../async-stores/async-chat-store.js";
+import type { ChatInFlightGenerationState, ChatMessage, ChatSession } from "../../chat/chat-types.js";
+
+/*
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the async chat-store search/edit primitives are), and every assertion
+is unchanged.
+*/
+interface Ctx {
+  layer: AsyncDataLayer;
+}
+
+let sessionCounter = 0;
+let messageCounter = 0;
+
+async function makeSession(ctx: Ctx, title: string | null = "Untitled"): Promise<ChatSession> {
+  const now = new Date().toISOString();
+  const id = `chat-cs-${++sessionCounter}`;
+  return createChatSession(ctx.layer.db, {
+    id,
+    agentId: "agent-001",
+    title,
+    status: "active",
+    projectId: null,
+    modelProvider: null,
+    modelId: null,
+    cliSessionFile: null,
+    createdAt: now,
+    updatedAt: now,
+  } as ChatSession);
+}
+
+async function addMessage(
+  ctx: Ctx,
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  metadata: Record<string, unknown> | null = null,
+): Promise<ChatMessage> {
+  // Monotonic createdAt so most-recent-match dedup is deterministic.
+  const createdAt = new Date(Date.now() + ++messageCounter).toISOString();
+  return addChatMessage(ctx.layer.db, {
+    id: `msg-cs-${messageCounter}`,
+    sessionId,
+    role,
+    content,
+    thinkingOutput: null,
+    metadata,
+    attachments: undefined,
+    createdAt,
+  });
+}
+
+pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_chat_search_test",
+  });
+  let ctx: Ctx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  it("matches by message content, dedups to the most recent match, and respects scope", async () => {
+    const session = await makeSession(ctx, "Weekend plans");
+    await addMessage(ctx, session.id, "user", "Let's talk about the quarterly roadmap");
+    const single = await searchChatSessionsByMessageContent(ctx.layer.db, "roadmap", [session.id]);
+    expect(single.get(session.id)).toBe("Let's talk about the quarterly roadmap");
+
+    // Assistant-only match.
+    const deploySession = await makeSession(ctx);
+    await addMessage(ctx, deploySession.id, "user", "How do I deploy?");
+    await addMessage(ctx, deploySession.id, "assistant", "Use the falcon deploy script");
+    const assistantMatch = await searchChatSessionsByMessageContent(ctx.layer.db, "falcon", [deploySession.id]);
+    expect(assistantMatch.get(deploySession.id)).toBe("Use the falcon deploy script");
+
+    // Dedup: one entry per session, most recent matching message wins.
+    const multi = await makeSession(ctx);
+    await addMessage(ctx, multi.id, "user", "first mention of gizmo");
+    await addMessage(ctx, multi.id, "assistant", "second mention of gizmo here");
+    await addMessage(ctx, multi.id, "user", "third gizmo reference, most recent");
+    const deduped = await searchChatSessionsByMessageContent(ctx.layer.db, "gizmo", [multi.id]);
+    expect(deduped.size).toBe(1);
+    expect(deduped.get(multi.id)).toBe("third gizmo reference, most recent");
+
+    // No match / empty query / empty scope.
+    expect((await searchChatSessionsByMessageContent(ctx.layer.db, "nonexistent-term", [session.id])).size).toBe(0);
+    expect((await searchChatSessionsByMessageContent(ctx.layer.db, "   ", [session.id])).size).toBe(0);
+    expect((await searchChatSessionsByMessageContent(ctx.layer.db, "anything", [])).size).toBe(0);
+
+    // Scope: an identical message in an out-of-scope session is not returned.
+    const outOfScope = await makeSession(ctx);
+    await addMessage(ctx, outOfScope.id, "user", "Let's talk about the quarterly roadmap");
+    const scoped = await searchChatSessionsByMessageContent(ctx.layer.db, "roadmap", [session.id]);
+    expect(scoped.size).toBe(1);
+    expect(scoped.has(outOfScope.id)).toBe(false);
+  });
+
+  it("treats literal % and _ as literal characters, not LIKE wildcards", async () => {
+    const literalSession = await makeSession(ctx);
+    await addMessage(ctx, literalSession.id, "user", "Discount is 50% off, use code A_B");
+    const otherSession = await makeSession(ctx);
+    await addMessage(ctx, otherSession.id, "user", "Discount is 50X off, use code AZB");
+
+    const percentResult = await searchChatSessionsByMessageContent(
+      ctx.layer.db, "50%", [literalSession.id, otherSession.id],
+    );
+    expect(percentResult.has(literalSession.id)).toBe(true);
+    expect(percentResult.has(otherSession.id)).toBe(false);
+
+    const underscoreResult = await searchChatSessionsByMessageContent(
+      ctx.layer.db, "A_B", [literalSession.id, otherSession.id],
+    );
+    expect(underscoreResult.has(literalSession.id)).toBe(true);
+    expect(underscoreResult.has(otherSession.id)).toBe(false);
+  });
+
+  it("deleteChatMessagesFrom truncates from the target (inclusive) and preserves retained order", async () => {
+    const session = await makeSession(ctx);
+    const m1 = await addMessage(ctx, session.id, "user", "first turn");
+    const m2 = await addMessage(ctx, session.id, "assistant", "first reply");
+    const m3 = await addMessage(ctx, session.id, "user", "second turn");
+    const m4 = await addMessage(ctx, session.id, "assistant", "second reply");
+
+    const { deletedIds, retained } = await deleteChatMessagesFrom(ctx.layer.db, session.id, m3.id);
+    expect(deletedIds).toEqual([m3.id, m4.id]);
+    expect(retained.map((m) => m.id)).toEqual([m1.id, m2.id]);
+
+    const remaining = await getChatMessages(ctx.layer.db, session.id);
+    expect(remaining.map((m) => m.content)).toEqual(["first turn", "first reply"]);
+  });
+
+  it("deleteChatMessagesFrom is a no-op for a wrong-session or unknown target", async () => {
+    const sessionA = await makeSession(ctx);
+    const sessionB = await makeSession(ctx);
+    const a1 = await addMessage(ctx, sessionA.id, "user", "keep me");
+    const b1 = await addMessage(ctx, sessionB.id, "user", "other session");
+
+    const wrongSession = await deleteChatMessagesFrom(ctx.layer.db, sessionA.id, b1.id);
+    expect(wrongSession.deletedIds).toEqual([]);
+    expect(wrongSession.retained.map((m) => m.id)).toEqual([a1.id]);
+
+    const unknown = await deleteChatMessagesFrom(ctx.layer.db, sessionA.id, "msg-does-not-exist");
+    expect(unknown.deletedIds).toEqual([]);
+    expect((await getChatMessages(ctx.layer.db, sessionA.id)).length).toBe(1);
+  });
+
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  Attachment appends and metadata merges are separate jsonb update paths from
+  initial inserts. They must independently enforce the arbitrary-text NUL
+  invariant so a later tool-derived mutation cannot poison a chat row.
+  */
+  it("sanitizes attachment appends and metadata merge updates at their jsonb boundaries", async () => {
+    const session = await makeSession(ctx);
+    const message = await addMessage(ctx, session.id, "user", "hello", { clean: true });
+
+    const attached = await addChatMessageAttachment(ctx.layer.db, session.id, message.id, {
+      id: "att\u0000-1",
+      filename: "fu\u0000sion.log",
+      originalName: "fu\u0000sion.log",
+      mimeType: "text/plain\u0000",
+      size: 1,
+      createdAt: "2026-08-05T01:54:00.000Z",
+    });
+    expect(attached.attachments).toEqual([{
+      id: "att-1",
+      filename: "fusion.log",
+      originalName: "fusion.log",
+      mimeType: "text/plain",
+      size: 1,
+      createdAt: "2026-08-05T01:54:00.000Z",
+    }]);
+
+    const merged = await updateChatMessageMetadata(ctx.layer.db, message.id, {
+      ["tool\u0000result"]: { text: "\u0000fnlvl=info\u0000" },
+    });
+    expect(merged.metadata).toEqual({ clean: true, toolresult: { text: "fnlvl=info" } });
+  });
+
+  it("updateChatMessageMetadata merges by default, replaces on merge:false, and throws for missing messages", async () => {
+    const session = await makeSession(ctx);
+    const message = await addMessage(ctx, session.id, "user", "hello", { mentions: ["@a"] });
+
+    const merged = await updateChatMessageMetadata(ctx.layer.db, message.id, { piParentLeafId: "leaf-1" });
+    expect(merged.metadata).toEqual({ mentions: ["@a"], piParentLeafId: "leaf-1" });
+
+    const replaced = await updateChatMessageMetadata(
+      ctx.layer.db, message.id, { only: true }, { merge: false },
+    );
+    expect(replaced.metadata).toEqual({ only: true });
+
+    await expect(
+      updateChatMessageMetadata(ctx.layer.db, "msg-missing", { x: 1 }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  A completed tool result can contain Fusion's raw logger framing
+  (U+0000fnlvl=infoU+0000). Checkpoint persistence must strip it recursively
+  before jsonb binding, preserve all replay fields, and leave the input owned
+  by the live chat callback untouched.
+  */
+  it("persists the NUL-marked in-flight tool snapshot and reads back its sanitized shape", async () => {
+    const session = await makeSession(ctx);
+    const snapshot: ChatInFlightGenerationState = {
+      status: "generating",
+      streamingText: "prefix\u0000fnlvl=info\u0000suffix",
+      streamingThinking: "thought\u0000stream",
+      toolCalls: [{
+        toolName: "ba\u0000sh",
+        args: { command: "tail\u0000 /tmp/fusion.log" },
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "log \u0000fnlvl=info\u0000 line" }],
+          ["nested\u0000key"]: ["a\u0000b"],
+        },
+        status: "completed",
+      }],
+      replayFromEventId: 4,
+      updatedAt: "2026-08-05T01:54:00.000Z",
+    };
+
+    const updated = await setInFlightGeneration(ctx.layer.db, session.id, snapshot);
+    expect(updated?.inFlightGeneration).toMatchObject({
+      status: "generating",
+      streamingText: "prefixfnlvl=infosuffix",
+      streamingThinking: "thoughtstream",
+      replayFromEventId: 4,
+      toolCalls: [{
+        toolName: "bash",
+        args: { command: "tail /tmp/fusion.log" },
+        result: {
+          content: [{ type: "text", text: "log fnlvl=info line" }],
+          nestedkey: ["ab"],
+        },
+      }],
+    });
+    expect(snapshot.streamingText).toBe("prefix\u0000fnlvl=info\u0000suffix");
+    expect((snapshot.toolCalls[0].result as { content: Array<{ text: string }> }).content[0]?.text).toBe("log \u0000fnlvl=info\u0000 line");
+
+    const persisted = await getChatSession(ctx.layer.db, session.id);
+    expect(persisted?.inFlightGeneration).toEqual(updated?.inFlightGeneration);
+    await expect(setInFlightGeneration(ctx.layer.db, session.id, null)).resolves.toBeDefined();
+    expect((await getChatSession(ctx.layer.db, session.id))?.inFlightGeneration).toBeNull();
+  });
+
+  /*
+  FNXC:PostgresMigrationNulSanitize 2026-07-20:
+  Production incident: the CEO agent's chat turn crashed mid-conversation
+  because a tool call piped raw Windows CLI diagnostics output (containing a
+  literal U+0000 byte) straight into the chat message body. Postgres rejected
+  the INSERT with PostgresError code 22P05 ("unsupported Unicode escape
+  sequence" / "\u0000 cannot be converted to text"), which aborted the write
+  and killed the turn. addChatMessage now sanitizes content/thinkingOutput
+  (text) and metadata/attachments (jsonb) before insert — verify a message
+  containing a raw NUL byte round-trips instead of throwing.
+  */
+  it("addChatMessage strips a raw U+0000 byte instead of throwing (regression for the CEO-agent chat crash)", async () => {
+    const session = await makeSession(ctx);
+
+    const diagnosticDump =
+      "===FUSION DB AGENTS===\n===NODES===\n\u0000===RUNNING PROCESSES===\n";
+    const sent = await addMessage(ctx, session.id, "assistant", diagnosticDump, {
+      toolOutput: `payload\u0000tail`,
+    });
+
+    expect(sent.content).toBe(
+      "===FUSION DB AGENTS===\n===NODES===\n===RUNNING PROCESSES===\n",
+    );
+    expect(sent.metadata).toEqual({ toolOutput: "payloadtail" });
+
+    const [persisted] = await getChatMessages(ctx.layer.db, session.id);
+    expect(persisted.content).toBe(
+      "===FUSION DB AGENTS===\n===NODES===\n===RUNNING PROCESSES===\n",
+    );
+    expect(persisted.metadata).toEqual({ toolOutput: "payloadtail" });
+  });
+});

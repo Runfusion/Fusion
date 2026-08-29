@@ -1,0 +1,214 @@
+import React, { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { ChevronDown, Download, Upload } from "lucide-react";
+import "./SettingsSyncLog.css";
+import { linkifyFilePaths } from "../utils/filePathLinkify";
+import { LoadingSpinner } from "./LoadingSpinner";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface SyncLogEntry {
+  id: string;
+  timestamp: string;
+  direction: "push" | "pull";
+  result: "success" | "conflict" | "error";
+  nodeId: string;
+  nodeName: string;
+  details?: string;
+}
+
+interface SettingsSyncLogProps {
+  /** The node ID this log is for */
+  nodeId: string;
+  /** Sync history entries to display — provided by parent */
+  entries: SyncLogEntry[];
+  /** Show loading state */
+  loading?: boolean;
+  /** When true, hides the node name filter (used when showing log for a single node) */
+  singleNode?: boolean;
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+/**
+ * Component that displays recent settings sync operations as a chronological list
+ * with filtering by direction and node name.
+ */
+export function SettingsSyncLog({
+  nodeId: _nodeId,
+  entries,
+  loading = false,
+  singleNode = false,
+}: SettingsSyncLogProps) {
+  const { t } = useTranslation("app");
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [directionFilter, setDirectionFilter] = useState<"all" | "push" | "pull">("all");
+  const [nodeFilter, setNodeFilter] = useState<string>("all");
+
+  // Toggle expanded state
+  const handleToggle = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
+
+  // Extract unique node names for filter dropdown
+  const uniqueNodes = useMemo(() => {
+    const nodes = new Set<string>();
+    for (const entry of entries) {
+      nodes.add(entry.nodeName);
+    }
+    return Array.from(nodes).sort();
+  }, [entries]);
+
+  // Filter entries based on current filters
+  const filteredEntries = useMemo(() => {
+    let result = [...entries];
+
+    // Filter by direction
+    if (directionFilter !== "all") {
+      result = result.filter((entry) => entry.direction === directionFilter);
+    }
+
+    // Filter by node name
+    if (!singleNode && nodeFilter !== "all") {
+      result = result.filter((entry) => entry.nodeName === nodeFilter);
+    }
+
+    // Sort by timestamp descending (newest first)
+    result.sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      return timeB - timeA;
+    });
+
+    return result;
+  }, [entries, directionFilter, nodeFilter, singleNode]);
+
+  // Format timestamp for display
+  const formatTimestamp = useCallback((isoTimestamp: string): string => {
+    const date = new Date(isoTimestamp);
+    return date.toLocaleString();
+  }, []);
+
+  // Get result badge class
+  const getResultBadgeClass = useCallback((result: SyncLogEntry["result"]): string => {
+    switch (result) {
+      case "success":
+        return "settings-sync-log__badge--success";
+      case "conflict":
+        return "settings-sync-log__badge--conflict";
+      case "error":
+        return "settings-sync-log__badge--error";
+      default:
+        return "";
+    }
+  }, []);
+
+  // Get result display text
+  const getResultText = useCallback((result: SyncLogEntry["result"]): string => {
+    switch (result) {
+      case "success":
+        return t("syncLog.resultSuccess", "Success");
+      case "conflict":
+        return t("syncLog.resultConflict", "Conflict");
+      case "error":
+        return t("syncLog.resultError", "Error");
+      default:
+        return result;
+    }
+  }, [t]);
+
+  return (
+    <div className="settings-sync-log">
+      <button
+        className="settings-sync-log__header"
+        type="button"
+        onClick={handleToggle}
+        aria-expanded={isExpanded}
+        data-testid="settings-sync-log-header"
+      >
+        <ChevronDown
+          size={16}
+          className={`settings-sync-log__chevron ${isExpanded ? "settings-sync-log__chevron--expanded" : ""}`}
+        />
+        <span>
+          {t("syncLog.entryCount", { count: entries.length, defaultValue_one: "{{count}} entry", defaultValue_other: "{{count}} entries" })}
+        </span>
+      </button>
+
+      {isExpanded && (
+        <>
+          <div className="settings-sync-log__filters">
+            <label>
+              {t("syncLog.filterDirection", "Direction:")}
+              <select
+                value={directionFilter}
+                onChange={(e) => setDirectionFilter(e.target.value as "all" | "push" | "pull")}
+              >
+                <option value="all">{t("syncLog.filterAll", "All")}</option>
+                <option value="push">{t("syncLog.filterPush", "Push")}</option>
+                <option value="pull">{t("syncLog.filterPull", "Pull")}</option>
+              </select>
+            </label>
+
+            {!singleNode && (
+              <label>
+                {t("syncLog.filterNode", "Node:")}
+                <select
+                  value={nodeFilter}
+                  onChange={(e) => setNodeFilter(e.target.value)}
+                >
+                  <option value="all">{t("syncLog.filterAllNodes", "All Nodes")}</option>
+                  {uniqueNodes.map((nodeName) => (
+                    <option key={nodeName} value={nodeName}>
+                      {nodeName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {loading && entries.length === 0 ? (
+            <div className="settings-sync-log__empty"><LoadingSpinner label={t("syncLog.loading", "Loading...")} /></div>
+          ) : filteredEntries.length === 0 ? (
+            <div className="settings-sync-log__empty">{t("syncLog.noHistory", "No sync history available")}</div>
+          ) : (
+            <div className="settings-sync-log__list">
+              {filteredEntries.map((entry) => (
+                <div key={entry.id} className="settings-sync-log__entry">
+                  <span className="settings-sync-log__entry-timestamp">
+                    {formatTimestamp(entry.timestamp)}
+                  </span>
+
+                  <span className="settings-sync-log__entry-direction">
+                    {entry.direction === "push" ? (
+                      <Upload size={14} data-testid="upload-icon" />
+                    ) : (
+                      <Download size={14} data-testid="download-icon" />
+                    )}
+                  </span>
+
+                  <span
+                    className={`settings-sync-log__entry-result ${getResultBadgeClass(entry.result)}`}
+                  >
+                    {getResultText(entry.result)}
+                  </span>
+
+                  {!singleNode && (
+                    <span className="settings-sync-log__entry-node">{entry.nodeName}</span>
+                  )}
+
+                  {entry.details && (
+                    <span className="settings-sync-log__entry-details" title={entry.details}>
+                      {linkifyFilePaths(entry.details ?? "")}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

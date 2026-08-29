@@ -1,0 +1,4068 @@
+/* === Detail Modal === */
+/*
+FNXC:TaskDetailLayout 2026-08-01-04:23:
+SHELL NAMING MAP — read before fixing any Task Detail inset/padding bug. "Task Detail modal"
+is ONE surface with THREE shells, and only one of them lives in this file's `.modal-overlay`
+rules: (1) the fixed desktop modal (`.modal-overlay` + `.modal.task-detail-modal`, this file),
+(2) the tablet popup and desktop pop-out (FloatingWindow.css — class floating-window--task-detail),
+and (3) the mobile full-screen sheet. The right-
+padding bug recurred across FN-8630, FN-8634, and the 2026-08-01 tablet fix precisely because
+fixes landed only in shell (1) while the reporter was looking at shell (2).
+As of 2026-08-17 shell (2) no longer carries FN-8015's shared inline-end body gutter (deleted for
+every caller — see FloatingWindow.css), so an uneven right inset there is now the child's own
+padding, not an inherited reservation.
+*/
+.task-detail-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.modal.task-detail-modal {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+FNXC:TaskDetail 2026-06-22-20:00:
+The gray top header band (task id + column badge) was over-padded. Trim its vertical padding for a more compact band, scoped to the task-detail header so the shared global .modal-header (used by other modals) is unaffected. Keep horizontal padding from --modal-padding; only the block padding shrinks.
+*/
+.task-detail-content > .modal-header {
+  padding-block: var(--space-sm);
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.detail-column-badge {
+  font-size: 0.6875rem;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  letter-spacing: 0.03125rem;
+  text-transform: uppercase;
+}
+
+/*
+FNXC:WorkflowBadges 2026-06-30-00:00:
+Task detail workflow badges share the board badge's slight token-based icon-to-label gap so the canonical metadata badge stays readable while preserving inline truncation and timestamp ownership.
+*/
+.detail-workflow-badge {
+  column-gap: calc(var(--space-xs) / 2);
+  font-size: 0.6875rem;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  letter-spacing: 0.03125rem;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+.badge-triage {
+  background: var(--status-triage-bg);
+  color: var(--triage);
+}
+.badge-todo {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+.badge-in-progress {
+  background: var(--status-in-progress-bg);
+  color: var(--in-progress);
+}
+.badge-in-review {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+.badge-done {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+
+/*
+FNXC:TaskDetailLayout 2026-08-01-00:48:
+FN-8634 requires perceived-empty shell insets to remain symmetric for Task Detail modal,
+pop-out, embedded, and responsive shells in both scrollbar states. A painted track occupies
+its end-side band, so the padded content must not share the scrolling element that owns it.
+Keep shell content padding on `.detail-body-content`; `.detail-body` owns scrolling only.
+
+Activity's non-Interventions first-row end clearance remains deliberately asymmetric and
+child-local so `.activity-expand-toggle--overlay` cannot cover log text (FN-8166/FN-8624).
+It is excluded from shell-inset symmetry; FN-7581 Interventions remains at zero clearance.
+*/
+.detail-body {
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+  flex: 1;
+  /*
+  FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
+  Containing block for kept-alive tab bodies (KeepAliveView): their hidden state is position:absolute inset:0, so a hidden terminal/planner-chat body consumes no layout space beside the active tab while keeping a real box for xterm-safe geometry.
+  */
+  position: relative;
+}
+
+/*
+FNXC:TaskDetailTitleSpacing 2026-08-04-18:07:
+The shared task-detail wrapper intentionally uses a smaller block-start inset than its
+side and bottom inset so every modal, embedded, pop-out, and mobile shell keeps the
+user-facing title close to the ID toolbar without changing canonical content spacing.
+*/
+.detail-body-content {
+  min-width: 0;
+  padding: calc(var(--space-lg) + var(--space-xs));
+  padding-block-start: var(--space-md);
+}
+
+.detail-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.detail-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detail-body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.detail-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Activity views that delegate vertical scrolling use a flex body so their inner
+   section can stretch to the remaining space above the shared action bar. */
+/*
+FNXC:TaskDetailFeed 2026-08-04-08:12:
+FN-8779 requires long Activity Feed histories to scroll only inside Task Detail's
+shrinkable middle region. Keep the shared action footer outside this flex chain so it
+remains visible and operable in modal, floating, embedded, and mobile hosts.
+*/
+.detail-body--feed,
+.detail-body--agent-log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: hidden;
+}
+
+/*
+FNXC:TaskDetailPadding 2026-07-01-12:00:
+Task-detail tabs share the `.detail-body` outer content inset so switching Activity, planner Chat, Plan, or standard sections does not shift the shell padding. Chat-like tabs may only change flex and internal-scroll ownership here; transcript/composer spacing stays inside their own surfaces.
+
+FNXC:TaskDetailLayout 2026-08-01-00:58:
+FN-8634 moves shell padding into `.detail-body-content` to leave the scrollbar outside the
+content inset. When a tab delegates scrolling to an inner surface, that wrapper must preserve
+the previous direct-child flex contract so the transcript and agent log still fill the modal.
+*/
+.detail-body--chat,
+.detail-body--planner-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: hidden;
+}
+
+.detail-body--feed > .detail-body-content,
+.detail-body--agent-log > .detail-body-content,
+.detail-body--chat > .detail-body-content,
+.detail-body--planner-chat > .detail-body-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: var(--space-md);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  position: relative;
+}
+
+/*
+FNXC:TaskDetailTitle 2026-08-05-17:54:
+The measured text stays in flow while the interactive overlay changes state, so eligibility has
+one geometry in every task-detail host instead of depending on whether its button is present.
+*/
+.detail-title-measurement {
+  display: block;
+}
+
+.detail-title--collapsed .detail-title-measurement {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/*
+FNXC:TaskDetail 2026-06-22-20:00:
+Summarize-as-title is an in-field affordance, not a separate full-width row: it sits inline with the title, pinned to the far right and bottom of the title area. Use a nowrap flex row where the title flexes to fill and the button is pushed right (margin-left:auto) and bottom-aligned (align-self:flex-end). The button shrinks to its content so it never steals title space.
+*/
+.detail-heading-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: nowrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.detail-heading-row .detail-title {
+  margin-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.detail-title-control {
+  display: block;
+  width: 100%;
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.detail-title-control:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.detail-summarize-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  padding: 0;
+  cursor: pointer;
+  text-align: right;
+  margin-left: auto;
+  align-self: flex-end;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.detail-summarize-title-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.detail-summarize-title-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.detail-summarize-title-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/*
+FNXC:TaskDetailMeta 2026-06-13-17:32:
+The task-detail modal metadata must keep priority, execution mode, provenance, PR context, and timestamps in one horizontal row that wraps as needed instead of stacking each child as a separate line.
+*/
+.detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-lg);
+}
+
+.detail-provenance {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: 0;
+  margin-bottom: 0;
+  color: var(--text-muted);
+}
+
+.detail-provenance svg {
+  width: 1em;
+  height: 1em;
+}
+
+.detail-provenance-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--todo);
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+}
+
+.detail-provenance-link:hover {
+  text-decoration: underline;
+}
+
+.detail-provenance-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.detail-provenance-context {
+  display: inline-block;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.detail-timestamps {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+  color: var(--text-dim);
+  margin-top: 0;
+}
+
+.detail-timestamp-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
+.detail-timestamp-label {
+  color: var(--text-muted);
+}
+
+.detail-timestamp-separator {
+  color: var(--text-dim);
+}
+
+@media (max-width: 768px) {
+  /*
+  FNXC:TaskDetail 2026-06-22-20:00:
+  Keep summarize-as-title pinned bottom-right inline with the title on mobile too (no wrap to a separate row), matching the desktop in-field affordance.
+  */
+  .detail-heading-row {
+    align-items: flex-end;
+  }
+
+  .detail-summarize-title-btn {
+    flex-shrink: 0;
+  }
+
+  .detail-meta {
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  /*
+  FNXC:PlannerOversight 2026-07-04-17:00:
+  FN-7517: the oversight-controls cluster (priority + execution-mode + the
+  Oversight trigger) must wrap without overflowing the mobile modal width
+  rather than forcing horizontal scroll.
+
+  FNXC:PlannerOversight 2026-07-05-00:00:
+  FN-7604: the level-select/nudge/stop/explain controls collapse behind the
+  single `.detail-oversight-menu-trigger` button at EVERY viewport now (no
+  longer a mobile-only branch), so the cluster only ever needs to fit
+  priority + execution-mode + the trigger on one row; `flex-wrap: wrap`
+  remains as a safety fallback so the cluster never forces horizontal scroll
+  if it still overflows at very narrow widths. The `.detail-oversight-menu`
+  positioning (`right: 0`) is already declared once on the base rule above
+  and applies at every width, so no mobile-only override is needed here.
+  */
+  .detail-meta-inline-controls {
+    /*
+    FNXC:QuickAddActionRow 2026-07-20-12:00:
+    FN-8421 keeps the Task Detail action row at the mobile touch floor while
+    the default compact Quick Add alias serves desktop and tablet widths.
+    */
+    --detail-priority-control-min-height: var(--quick-entry-action-row-height-mobile);
+
+    flex-wrap: wrap;
+  }
+
+  .detail-provenance {
+    align-items: center;
+  }
+
+  /*
+  FNXC:TaskDetailWorkflow 2026-06-30-07:37:
+  Task details show workflow identity in the Updated timestamp section across desktop and mobile. Keep the canonical badge inline with Created/Updated metadata so header rows, embedded detail hosts, and mobile back-header details do not render duplicate workflow badges or empty mobile-only shells.
+  */
+  .detail-timestamps {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+
+  .detail-provenance-context {
+    max-width: 20ch;
+  }
+
+  .detail-timestamp-item {
+    align-items: baseline;
+    flex-wrap: nowrap;
+  }
+}
+
+.detail-meta-inline-controls {
+  /*
+  FNXC:TaskDetail 2026-06-22-20:00:
+  Priority chip and speed (execution-mode) toggle share one min-height token so they render at identical, equal height. Reduced from the old calc(space-2xl + space-xs) (~too tall) to a compact 30px that stays legible and tappable. Both controls also get trimmed vertical padding to match.
+
+  FNXC:TaskDetail 2026-07-05-00:00:
+  FN-7585 — Priority, Execution-mode, and Oversight (both the desktop chip and
+  the mobile overflow-trigger variant) previously diverged: Priority inherited
+  `.card-priority-badge`'s pill radius with a *transparent* border (so the
+  common `normal` level rendered as borderless text), while Execution-mode and
+  the Oversight mobile trigger are `.btn.btn-sm` pills with `--radius-md` and a
+      visible `--border` color. Add one shared `--detail-control-border-radius`
+  token here so all four controls resolve the same border-radius from a single
+  source; each control below also pins the same `--btn-border-width` width and
+  `--border` color so the cluster reads as one uniform control group. Only the
+  border/radius/size are unified — per-level tint backgrounds (priority
+  low/high/urgent, oversight observe/steer/autonomous/off, execution-mode
+  fast) are untouched.
+  */
+  /*
+  FNXC:QuickAddActionRow 2026-07-20-12:00:
+  FN-8421 completes FN-8287's shared-square contract. Desktop and tablet must
+  alias Quick Add's compact control token, not make every action equally tall
+  with the former space-calc box; the mobile rule above raises the same alias
+  to the touch-floor token.
+  */
+  --detail-priority-control-min-height: var(--quick-entry-action-row-height-desktop);
+  --detail-control-border-radius: var(--radius-md);
+
+  display: flex;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:TaskDetail 2026-07-17-17:30:
+FN-8287 extends the FN-7585/FN-7633 height-pinned pattern into one square-box
+rule for every inline action: the FN-8194/FN-8209 attach, GitHub, and priority
+icons now share the oversight and execution-mode controls' tokenized height,
+width, border, and radius. Pinning both dimensions prevents theme-specific
+space or icon tokens from making this cluster visually uneven.
+*/
+.detail-inline-attach,
+.detail-inline-github-toggle,
+.detail-priority-trigger,
+.detail-oversight-menu-trigger,
+.detail-execution-mode-toggle {
+  height: var(--detail-priority-control-min-height);
+  min-height: var(--detail-priority-control-min-height);
+  width: var(--detail-priority-control-min-height);
+  min-width: var(--detail-priority-control-min-height);
+  box-sizing: border-box;
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--detail-control-border-radius);
+}
+
+/*
+FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
+FN-8396 requires every inline action icon to resolve to `--icon-size-sm` at
+all desktop, tablet, and mobile widths. The global `.btn-icon > svg` rule
+cannot reach ProviderIcon's wrapped SVG, so keep this descendant rule scoped
+to Task Detail instead of changing global button behavior or adding an
+explicit size prop to the Oversight Eye/EyeOff icons.
+*/
+.detail-meta-inline-controls svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  flex-shrink: 0;
+}
+
+/*
+FNXC:QuickAddActionRow 2026-07-17-12:00:
+FN-8209: Task Detail uses the same compact icon-only priority affordance as
+Quick Add. Keep the picker anchored to its trigger so it remains usable when
+the metadata row wraps at mobile widths.
+*/
+.detail-priority-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.detail-priority-picker-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.detail-priority-picker-heading,
+.detail-priority-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+}
+
+.detail-priority-picker-heading {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.detail-priority-picker-option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.detail-priority-picker-option:hover,
+.detail-priority-picker-option.selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.detail-priority-picker-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:TaskDetail 2026-07-17-00:00:
+FN-8243 — restore the tokenized `.detail-priority-select:focus-visible` rule
+required by css-hygiene-scan.test.ts's focus-coverage allow-list. The base
+`.detail-priority-select` styling was dropped during the FN-8209 Priority
+select→picker migration, but the hygiene allow-list still expects this
+focus-visible selector. Use `--focus-ring-strong` to match the sibling
+`.detail-oversight-select` / `.detail-priority-picker-option` focus rules;
+no raw colors so the tokenized-focus assertion stays green.
+*/
+.detail-priority-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.detail-priority-picker-option:disabled {
+  cursor: wait;
+}
+
+.detail-execution-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-execution-mode-toggle--fast {
+  color: var(--color-warning);
+}
+
+.detail-execution-mode-toggle--saving {
+  opacity: 0.75;
+}
+
+.detail-execution-mode-toggle:disabled {
+  cursor: wait;
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-17:00:
+FN-7517 task-detail planner-overseer controls (quick level-change select,
+manual nudge / stop / explain buttons, explain panel). Reuses the same
+`.card-oversight-badge--*` status-color modifiers FN-7516's TaskCard badge
+already declares (see TaskCard.css) so oversight-level color stays a single
+semantic source.
+
+FNXC:PlannerOversight 2026-07-05-00:00:
+FN-7604 — the desktop-only `.detail-oversight-chip` wrapper (the inline
+quick-level-change chip rendered outside the overflow menu) was removed along
+with the desktop inline branch it styled; the level select now renders only
+inside `.detail-oversight-menu-item--select` (see below). `.detail-oversight-select`
+itself stays — the dropdown menu item reuses this class for the native
+`<select>` styling.
+*/
+.detail-oversight-select {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  min-height: inherit;
+}
+
+.detail-oversight-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.detail-oversight-select:disabled {
+  cursor: wait;
+}
+
+.detail-oversight-select option {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.detail-overseer-nudge,
+.detail-overseer-stop,
+.detail-overseer-explain {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: var(--detail-priority-control-min-height);
+  padding-block: var(--space-xs);
+  box-sizing: border-box;
+}
+
+.detail-overseer-nudge svg,
+.detail-overseer-stop svg,
+.detail-overseer-explain svg {
+  width: 1em;
+  height: 1em;
+}
+
+.detail-overseer-nudge--saving,
+.detail-overseer-stop--saving {
+  opacity: 0.75;
+}
+
+.detail-overseer-nudge:disabled,
+.detail-overseer-stop:disabled,
+.detail-overseer-explain:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-20:30:
+FN-7546 — group label + always-visible disabled-reason helper for the
+Nudge/Stop/Explain cluster, so operators no longer rely on a mouse-hover
+`title` alone to understand what the controls are or why Nudge is inert.
+Both are gated by the same condition as the buttons themselves (never an
+empty shell when oversight is Off/unresolved). Uses the same muted-text /
+small-caption convention as `.detail-overseer-explain-panel__empty` rather
+than a one-off style.
+*/
+.detail-oversight-controls-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--detail-priority-control-min-height);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.detail-oversight-controls-helper {
+  display: inline-flex;
+  align-items: center;
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.detail-overseer-explain-panel {
+  margin-top: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt, var(--surface));
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.detail-overseer-explain-panel__loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.detail-overseer-explain-panel__grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-xs) var(--space-sm);
+  margin: 0;
+}
+
+.detail-overseer-explain-panel__grid dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.detail-overseer-explain-panel__grid dd {
+  margin: 0;
+}
+
+.detail-overseer-explain-panel__empty {
+  color: var(--text-muted);
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-19:00:
+FN-7545 — overflow menu for the oversight action controls. Reuses the same
+`.detail-move-dropdown` / `.detail-move-menu` popover tokens/pattern
+(position/border/radius/shadow) so the two overflow menus in this modal look
+and behave consistently. The popover opens DOWNWARD (`top: calc(100% + ...)`)
+since the trigger lives in the header cluster rather than the footer, unlike
+`.detail-move-menu` which opens upward from the footer.
+
+FNXC:PlannerOversight 2026-07-05-00:00:
+FN-7604 — this overflow menu is now the single universal surface at every
+viewport (desktop and mobile); it is no longer mobile-only.
+*/
+/*
+FNXC:TaskDetail 2026-07-05-14:00:
+FN-7618 — Priority (`<label>`) and Execution-mode (`<button>`) are direct
+flex children of `.detail-meta-inline-controls { align-items: stretch }`, so
+they stretch to the shared `--detail-priority-control-min-height` row height.
+FN-7604 wrapped the Oversight trigger in this `position: relative` div
+(required for the popover's absolute positioning), which became the flex
+child instead of the trigger itself — so the trigger only got its own
+intrinsic `min-height` and never stretched to match its taller siblings.
+Make the wrapper an `inline-flex` with `align-items: stretch` so it
+participates in the cluster's stretch on every viewport (desktop and
+mobile); the trigger below fills the wrapper's full height. The popover
+(`.detail-oversight-menu`) stays `position: absolute`, so this does not
+affect its size or anchoring — only the trigger's box height changes.
+*/
+.detail-oversight-menu-dropdown {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.detail-oversight-menu-trigger {
+  /*
+  FNXC:PlannerOversight 2026-07-05-00:00:
+  FN-7604 — this trigger is now the single universal surface at every
+  viewport (the desktop-only `.detail-oversight-chip` it used to swap in for
+  was removed). Its shared square sizing is declared with every inline action
+  above; this stretch fallback only preserves the dropdown wrapper contract.
+  */
+  align-self: stretch;
+}
+
+
+.detail-oversight-menu {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
+  max-width: min(calc(100vw - var(--space-lg) * 2), 280px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.detail-oversight-menu-item {
+  /*
+  FNXC:PlannerOversight 2026-07-04-19:00:
+  FN-7545 — 36px touch-target floor for the collapsed mobile menu items,
+  matching the project's existing `--settings-inline-touch-target` /
+  `--wf-editor-touch-target` calc(space-lg + space-lg + space-xs) formula
+  (SettingsModal.css / WorkflowNodeEditor.css) so tap targets stay comfortable
+  without hardcoding a raw pixel value.
+  */
+  --detail-oversight-menu-item-min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: var(--detail-oversight-menu-item-min-height);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  box-sizing: border-box;
+  transition: background var(--transition-fast);
+}
+
+label.detail-oversight-menu-item--select {
+  cursor: default;
+  justify-content: space-between;
+}
+
+.detail-oversight-menu-item--select .detail-oversight-select {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.detail-oversight-menu-item:hover {
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+button.detail-oversight-menu-item:focus {
+  outline: none;
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+button.detail-oversight-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button.detail-oversight-menu-item svg {
+  width: 1em;
+  height: 1em;
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-20:30:
+FN-7546 — the same group label / disabled-reason helper base rules above,
+adapted to the overflow-menu's padded list-item layout so they read as
+ordinary (non-interactive) menu rows rather than floating text.
+*/
+.detail-oversight-menu .detail-oversight-controls-label,
+.detail-oversight-menu .detail-oversight-controls-helper {
+  padding: var(--space-xs) var(--space-md);
+  min-height: 0;
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-18:00:
+FN-7519 Intervention Timeline styles. Attaches to the closest existing seam
+(no literal `.task-oversight-controls` class exists in merged FN-7517 code)
+and mirrors the FN-7517 explain-panel's sizing/radius/token language.
+Design tokens only; `.status-dot--skipped` extends the shared `.status-dot`
+convention with the muted semantic token (no analogous modifier existed
+for a "skipped" outcome upstream).
+*/
+.task-oversight-timeline {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt, var(--surface));
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.task-oversight-timeline__heading {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.task-oversight-timeline__loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.task-oversight-timeline__empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.task-oversight-timeline .status-dot--skipped {
+  background: var(--color-muted);
+}
+
+.planner-intervention-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.planner-intervention-entry {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.planner-intervention-entry__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.planner-intervention-entry__stage {
+  font-weight: 600;
+}
+
+.planner-intervention-entry__outcome {
+  color: var(--text-muted);
+}
+
+.planner-intervention-entry__timestamp {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs, 0.75rem);
+}
+
+.planner-intervention-entry__reason {
+  margin: var(--space-xs) 0 0;
+}
+
+.planner-intervention-entry__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs, 0.75rem);
+}
+
+.planner-intervention-entry__attempts {
+  padding: 0 var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, var(--radius-md));
+}
+
+.planner-intervention-entry__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.planner-intervention-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, var(--radius-md));
+  color: inherit;
+  text-decoration: none;
+  font-size: var(--font-size-xs, 0.75rem);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-intervention-source-link--inert {
+  opacity: 0.75;
+}
+
+.planner-intervention-source-link__kind {
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .task-oversight-timeline {
+    padding: var(--space-xs);
+  }
+
+  .planner-intervention-entry__header {
+    gap: var(--space-xs);
+  }
+
+  .planner-intervention-entry__timestamp {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .planner-intervention-source-link {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .planner-intervention-entry__links {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+
+/* Error alert in task detail modal */
+.detail-error-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin: var(--space-md) 0 var(--space-lg);
+  padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2);
+  background: color-mix(in srgb, var(--color-error-dark) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error-dark) 30%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.detail-error-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.detail-error-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-error-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-error-dark);
+  margin-bottom: var(--space-xs);
+}
+
+.detail-error-message {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.detail-error-detail,
+.detail-error-hint {
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.detail-error-detail {
+  color: var(--text);
+}
+
+.detail-error-hint {
+  color: var(--text-muted);
+}
+
+.detail-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.detail-error-retry-picker {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.detail-error-retry-picker .select {
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .detail-error-actions {
+    align-items: stretch;
+  }
+
+  .detail-error-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+.task-pause-reason {
+  margin: var(--space-md) 0 var(--space-lg);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.task-pause-reason-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.task-pause-stderr {
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detail-section {
+  margin-top: var(--space-lg);
+}
+
+.detail-pr-tab {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+.detail-pr-tab .detail-section,
+.detail-pr-section {
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .detail-pr-tab {
+    gap: var(--space-md);
+  }
+}
+
+.detail-provider-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-meta-label-icon {
+  vertical-align: middle;
+  margin-right: var(--space-xs);
+}
+
+.detail-source-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.detail-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin: 0;
+}
+
+.detail-source-grid dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-xs);
+}
+
+.detail-source-grid dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.detail-source-link {
+  color: var(--todo);
+  text-decoration: underline;
+}
+
+.detail-source-link--summary {
+  text-decoration: none;
+}
+
+.detail-source-link:hover {
+  color: var(--text);
+}
+
+.detail-source-empty {
+  color: var(--text-dim);
+}
+
+.detail-source-edit-group {
+  margin-top: var(--space-sm);
+}
+
+.detail-source-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.detail-source-edit-group small {
+  display: block;
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.detail-source-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.detail-source-section .detail-source-header {
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.detail-source-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.detail-source-section .detail-source-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.detail-source-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.detail-source-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  line-height: 1.6;
+}
+
+.detail-source-provider-badge svg {
+  width: 1em;
+  height: 1em;
+}
+
+.detail-source-number {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.detail-github-tracking-enable {
+  margin-left: auto;
+  align-self: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  padding-block: calc(var(--space-xs) / 2);
+  padding-inline: var(--space-sm);
+  line-height: 1.2;
+}
+
+.detail-source-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: calc(var(--space-lg) + var(--space-xl) - var(--space-xs));
+  min-height: calc(var(--space-lg) + var(--space-xl) - var(--space-xs));
+  padding: var(--space-xs);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.detail-source-section .detail-source-toggle {
+  flex: 0 0 auto;
+}
+
+.detail-source-header .detail-source-toggle {
+  margin-left: var(--space-sm);
+}
+
+.detail-source-toggle:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.detail-source-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.detail-source-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+.detail-source-section .detail-source-grid {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.detail-github-tracking-section,
+.detail-gitlab-tracking-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  padding: var(--space-xs) var(--space-md);
+}
+
+.detail-source-provider-badge--stale {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.detail-github-tracking-section .detail-source-header,
+.detail-gitlab-tracking-section .detail-source-header {
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.detail-github-tracking-section .detail-source-summary,
+.detail-gitlab-tracking-section .detail-source-summary {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.detail-github-tracking-section .detail-source-empty,
+.detail-gitlab-tracking-section .detail-source-empty {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-github-tracking-section .detail-source-toggle,
+.detail-gitlab-tracking-section .detail-source-toggle {
+  flex: 0 0 auto;
+}
+
+.detail-github-tracking-section .detail-github-tracking-enable {
+  align-self: center;
+}
+
+.detail-github-tracking-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  align-self: center;
+  flex: 0 0 auto;
+  min-width: var(--space-lg);
+  min-height: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.detail-github-tracking-content,
+.detail-gitlab-tracking-content {
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--border);
+}
+
+.detail-github-tracking-grid,
+.detail-gitlab-tracking-grid {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.detail-github-issue-state {
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.detail-github-issue-state--open {
+  color: var(--color-success);
+}
+
+.detail-github-issue-state--closed {
+  color: var(--text-muted);
+}
+
+.detail-gitlab-item-state {
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.detail-gitlab-item-state--stale {
+  color: var(--color-warning);
+}
+
+.detail-github-tracking-controls,
+.detail-gitlab-tracking-controls {
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.detail-github-tracking-helper {
+  display: block;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.detail-github-tracking-repo-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.detail-github-tracking-repo-row .input {
+  flex: 1;
+}
+
+.detail-github-tracking-error {
+  color: var(--color-error);
+}
+
+/* Feed and Raw Logs stretch to fill the remaining modal body height so their
+   respective list viewers use the available space above the action bar. */
+.detail-section--feed,
+.detail-section--agent-log {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: var(--space-lg);
+}
+
+.detail-section--feed > .detail-activity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail-section--feed .detail-activity-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.task-detail-content > .modal-actions {
+  flex: 0 0 auto;
+}
+
+.detail-section--chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* FNXC:TaskDetailChat 2026-06-13-19:55: Chat box should sit in the chat view without excess vertical spacing around the composer (FN-6418), so the chat section opts out of the shared top margin used by other detail tabs. */
+  margin-top: 0;
+}
+
+/*
+FNXC:TaskDetailChat 2026-06-16-22:13:
+Expanded chat should take over the modal except for the task title row, so users keep task ID and column context while tabs and modal actions stay hidden.
+
+FNXC:TaskDetailChat 2026-06-22-13:27:
+Expanded chat must also cover the task metadata row — priority, execution mode, provenance/Created by, and Created/Updated timestamps — so the chat grows all the way up to the title row instead of stopping below secondary metadata controls.
+
+FNXC:TaskDetailActivity 2026-06-30-23:55:
+The same expanded-mode chrome collapse now applies to all Activity segments: Live, Feed, and Raw Logs. Keep the legacy `--chat-expanded` class for test and styling compatibility while treating it as Activity-expanded behavior.
+*/
+.task-detail-content--chat-expanded .detail-meta {
+  display: none;
+}
+
+.task-detail-content--chat-expanded .detail-tabs {
+  /* FNXC:TaskDetailActivity 2026-06-30-23:59: Expanded Activity still needs the top-level Activity tab dropdown because the in-panel view selector was removed. Keep the tab strip visible so Live, Feed, and Raw remain switchable while the footer and metadata chrome stay collapsed. */
+  display: flex;
+}
+
+.task-detail-content--chat-expanded .modal-actions {
+  display: none;
+}
+
+.task-detail-content--chat-expanded .modal-header {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding-block: var(--space-sm);
+}
+
+.task-detail-content--chat-expanded .detail-body--chat {
+  flex: 1;
+  min-height: 0;
+}
+
+.task-detail-content--chat-expanded .detail-section--chat {
+  flex: 1;
+  min-height: 0;
+  margin-top: 0;
+}
+
+.task-detail-content--chat-expanded .detail-activity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.task-detail-content--chat-expanded .detail-activity-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
+Planner Chat defaults to a focused state, but operator steering says large screens should keep the full task-detail context visible. Desktop therefore uses the same internal-scroll chat body without hiding rows; narrow/mobile layouts collapse nonessential title/provenance/actions so the composer remains reachable while header identity and close/back controls stay available.
+
+FNXC:TaskDetailPlannerChat 2026-06-30-20:06:
+Expanded Planner Chat must still expose task Priority, Execution Mode, and the tab bar on mobile. Hide only lower-priority metadata in the metadata row so inline handlers and tab navigation remain reachable without overlapping the transcript/composer.
+
+FNXC:TaskDetailPlannerChat 2026-07-02-00:04:
+Expanded Planner Chat must keep the task title and workflow badge visible on mobile. The title preserves task identity, and the workflow badge is owned by the timestamps row, so this mode hides lower-priority metadata but not `.detail-heading-row` or `.detail-timestamps`; timestamp labels inside that row can hide so the workflow badge remains compact.
+
+FNXC:TaskDetailPlannerChat 2026-07-02-00:17:
+Planner Chat should not open expanded by default. When the user expands it, the view should behave like Activity expansion: the chat panel takes nearly the whole modal, with only task title and workflow identity left above it for context.
+*/
+.detail-section--planner-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 0;
+}
+
+.task-detail-content--planner-chat-expanded .detail-body--planner-chat {
+  flex: 1;
+  min-height: 0;
+}
+
+.task-detail-content--planner-chat-expanded .detail-section--planner-chat {
+  flex: 1;
+  min-height: 0;
+}
+
+.task-detail-content--planner-chat-expanded .detail-near-duplicate-banner,
+.task-detail-content--planner-chat-expanded .detail-plan-approval-banner,
+.task-detail-content--planner-chat-expanded .task-fields-section,
+.task-detail-content--planner-chat-expanded .branch-group-card,
+.task-detail-content--planner-chat-expanded .workspace-worktrees-summary,
+.task-detail-content--planner-chat-expanded .modal-actions,
+.task-detail-content--planner-chat-expanded .detail-tabs,
+.task-detail-content--planner-chat-expanded .detail-meta-inline-controls,
+.task-detail-content--planner-chat-expanded .detail-provenance {
+  display: none;
+}
+
+.task-detail-content--planner-chat-expanded .modal-header {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding-block: var(--space-sm);
+}
+
+.task-detail-content--planner-chat-expanded .detail-meta {
+  flex: 0 0 auto;
+  margin-bottom: var(--space-sm);
+}
+
+.task-detail-content--planner-chat-expanded .detail-timestamps .detail-timestamp-item,
+.task-detail-content--planner-chat-expanded .detail-timestamps .detail-timestamp-separator {
+  display: none;
+}
+
+
+.detail-spec-edit-trigger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .detail-spec-edit-trigger {
+    align-items: stretch;
+  }
+
+  .detail-spec-edit-trigger .btn {
+    flex: 1 1 auto;
+  }
+}
+
+.detail-attachments-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.detail-attachment-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs);
+  background: var(--card);
+}
+
+.detail-attachment-link {
+  display: block;
+}
+
+.detail-attachment-image {
+  display: block;
+  max-width: 150px;
+  max-height: 100px;
+  border-radius: var(--radius-sm);
+}
+
+.detail-attachment-meta {
+  margin-top: var(--space-xs);
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.detail-attachment-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg) 65%, var(--text));
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.detail-empty-inline {
+  margin-bottom: var(--space-sm);
+  opacity: 0.5;
+}
+
+.detail-hidden-file-input {
+  display: none;
+}
+
+.dep-remove-btn {
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.dep-trigger-wrap {
+  position: relative;
+}
+
+.detail-blocking-item--stale {
+  color: var(--color-warning);
+  font-size: 0.75rem;
+}
+
+.modal-actions-spacer {
+  flex: 1;
+}
+
+/* Detail modal split-menu dropdowns */
+.detail-actions-dropdown,
+.detail-move-dropdown {
+  position: relative;
+}
+
+.detail-move-actions-in-review {
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+}
+
+.detail-move-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-move-btn__label {
+  flex: 1;
+}
+
+.detail-move-btn__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  margin-right: calc(-1 * var(--space-xs));
+  margin-block: calc(-1 * var(--space-xs));
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .detail-move-btn:hover .detail-move-btn__arrow {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+  }
+}
+
+.detail-actions-menu,
+.detail-move-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-xs));
+  z-index: 50;
+  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.detail-actions-menu {
+  left: 0;
+}
+
+.detail-move-menu {
+  right: 0;
+}
+
+.detail-actions-menu-item,
+.detail-move-menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.detail-actions-menu-item:hover,
+.detail-move-menu-item:hover {
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.detail-actions-menu-item:focus,
+.detail-move-menu-item:focus {
+  outline: none;
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.detail-actions-menu-note {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+}
+
+/*
+FNXC:TaskDetailModalResponsive 2026-06-16-19:13:
+FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset and modal max-height subtraction must use the same `--overlay-padding-top` value so the `.modal-actions` footer remains on-screen, while the modal uses more of the tablet viewport to avoid a cramped layout.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .modal-overlay:has(.task-detail-modal) {
+    --overlay-padding-top: 6vh;
+  }
+
+  .modal.task-detail-modal {
+    width: 98vw;
+    max-width: 98vw;
+    height: 92vh;
+    max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - var(--space-md));
+  }
+
+  .detail-tabs {
+    width: 100%;
+    max-inline-size: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .detail-tab {
+    touch-action: pan-x pan-y;
+  }
+}
+
+@media (max-width: 768px) {
+  .detail-move-btn__arrow {
+    padding: var(--space-xs);
+  }
+
+  /* Full-screen sheet on mobile. Desktop `min-width: 480px` would otherwise
+     push the modal off narrow viewports; overlay padding-top leaves awkward
+     gaps. Resize is disabled (touchscreens can't drag the grip). */
+  .modal-overlay:has(.task-detail-modal) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .modal.task-detail-modal {
+    width: 100vw;
+    min-width: 0;
+    max-width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    resize: none;
+  }
+
+
+  .detail-body--chat {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: hidden;
+  }
+
+  .detail-section--chat {
+    flex: 1;
+    min-height: 0;
+    margin-top: 0;
+  }
+
+  .task-detail-content--chat-expanded .detail-tabs {
+    display: flex;
+  }
+
+  .task-detail-content--chat-expanded .modal-actions {
+    display: none;
+  }
+
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-08-13-12:20:
+The inclusive legacy phone query also matches the 768px tablet boundary. FloatingWindow grants
+that boundary drag and resize, so its inner panel must fill the floating host rather than viewport.
+*/
+@media (min-width: 768px) and (max-width: 768px) {
+  .modal.task-detail-modal {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: inherit;
+  }
+}
+
+/*
+FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
+FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
+mobile list/modal/nested task-detail surface, layered purely on top of the unchanged
+FN-7583/FN-7586 dismissal routing (popstate / fusion:native-back / useNavigationHistory stack).
+Gated to mobile via `.task-detail-modal--mobile-transition` (TaskDetailModal.tsx local resize
+listener); desktop never receives this class. A true finger-tracked interactive predictive-back
+is not feasible from a Capacitor single-page WebView today — see task FN-7587 notes.
+*/
+@media (max-width: 768px) {
+  .task-detail-modal--mobile-transition {
+    animation: task-detail-modal-mobile-slide-fade-in var(--duration-normal) ease-out;
+  }
+}
+
+@keyframes task-detail-modal-mobile-slide-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--space-xl, 24px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-detail-modal--mobile-transition {
+    animation: none;
+  }
+}
+
+.detail-actions-menu-item-danger {
+  color: var(--color-error);
+}
+
+.detail-actions-menu-item-danger:hover {
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+.detail-refine-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  z-index: 100;
+}
+
+.detail-refine-modal {
+  max-width: min(90vw, calc(var(--space-2xl) * 16));
+  width: 90%;
+  margin: 0;
+}
+
+/*
+FNXC:TaskDetail 2026-06-22-18:40:
+Embedded in the full-width board-card panel the detail content must be width-bounded so it cannot overflow and get clipped on the right. Constrain the embedded root and its header/body to the host width (width:100%; min-width:0; max-width:100%); min-width:0 lets inner flex rows (header title row, tabs, action bars) shrink and wrap instead of forcing horizontal overflow. Vertical scroll stays on .detail-body.
+*/
+.task-detail-content--embedded {
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-detail-content--embedded .modal-header,
+.task-detail-content--embedded .detail-body,
+.task-detail-content--embedded .detail-tabs,
+.task-detail-content--embedded .modal-actions {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-detail-content--embedded .detail-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.task-detail-content--embedded .detail-tab {
+  touch-action: pan-x pan-y;
+}
+
+/* The gray header row must wrap (task id left, Back-to-board right) instead of overflowing on narrow panels. */
+.task-detail-content--embedded .modal-header {
+  flex-wrap: wrap;
+  row-gap: var(--space-xs);
+}
+
+.task-detail-content--embedded .detail-title-row {
+  min-width: 0;
+}
+
+.task-detail-content--embedded .modal-header-actions {
+  min-width: 0;
+}
+
+/*
+FNXC:TaskDetail 2026-06-22-18:40:
+"Back to board" affordance inside the gray header. margin-left:auto pushes it to the far right (across from the task id on the left); it shares the header-actions row but stays pinned right and wraps when space is tight. Theme tokens only.
+*/
+.task-detail-header-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.task-detail-header-back-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+/*
+FNXC:TaskDetail 2026-06-22-20:15:
+The footer Actions/Move dropdown buttons sit at the BOTTOM of the embedded panel, so the menus must open UPWARD (above the button). The earlier embedded rule opened them downward (top:100%), which dropped the menu off the panel bottom where the body's overflow clipped it — the popups appeared to vanish. Anchor to bottom:100% so they always open above the trigger and stay on-screen.
+*/
+.task-detail-content--embedded .detail-actions-menu,
+.task-detail-content--embedded .detail-move-menu {
+  bottom: calc(100% + var(--space-xs));
+  top: auto;
+}
+
+.detail-refine-title {
+  margin: 0;
+}
+
+.detail-refine-help {
+  margin-bottom: var(--space-md);
+  opacity: 0.8;
+}
+
+.detail-refine-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.detail-refine-input-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-sm);
+  gap: var(--space-sm);
+}
+
+.detail-refine-char-count {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.task-changes-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  min-height: 180px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.task-changes-state--loading,
+.task-changes-state--error {
+  flex-direction: row;
+  min-height: auto;
+  padding: var(--space-md);
+  justify-content: flex-start;
+  border-style: solid;
+}
+
+.task-changes-state--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
+}
+
+.task-changes-state-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 440px;
+  line-height: 1.5;
+}
+
+.task-changes-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.changes-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.changes-header h4 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.changes-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.changes-header-actions-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xs);
+}
+
+.changes-header-actions-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Keep the compact Refresh and expand buttons visually aligned in the Changes
+   header even though one is text and the other is icon-only. */
+.task-changes-tab .changes-header-actions-secondary > .btn {
+  height: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  box-sizing: border-box;
+}
+
+.task-changes-tab .changes-header-actions-secondary > .btn-icon {
+  width: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  min-width: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  min-height: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+.changes-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.changes-nav-indicator {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  min-width: 32px;
+  text-align: center;
+}
+
+.changes-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.changes-file-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.changes-file-item.expanded {
+  border-color: var(--text-dim);
+  background: var(--surface);
+}
+
+.changes-file-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-file-header:hover {
+  background: var(--card-hover);
+}
+
+.changes-file-header:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.changes-file-header:active {
+  background: var(--border);
+}
+
+.changes-file-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.changes-file-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Semantic status colors for changed-file entries — theme-aware via CSS variables */
+.changes-file-status--added {
+  color: var(--color-success);
+}
+
+.changes-file-status--modified {
+  color: var(--color-info);
+}
+
+.changes-file-status--deleted {
+  color: var(--color-error-dark);
+}
+
+.changes-file-status--unknown {
+  color: var(--text-muted);
+}
+
+/* Stat summary in changes header */
+.changes-stat-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--space-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.changes-stat-summary .diff-add {
+  color: var(--color-success);
+}
+
+.changes-stat-summary .diff-del {
+  color: var(--color-error-dark);
+}
+
+/* Task-specific changes header: stacked title + stats layout */
+.task-changes-tab .task-changes-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-changes-tab .task-changes-header-title h4 {
+  margin: 0;
+}
+
+.task-changes-tab .task-changes-stats {
+  margin-left: calc(var(--space-lg) + var(--space-sm)); /* align with text after icon + gap */
+}
+
+@media (max-width: 768px) {
+  .task-changes-tab .changes-header {
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .task-changes-tab .changes-header-actions-wrapper {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .task-changes-tab .changes-header-actions,
+  .task-changes-tab .changes-header-actions-secondary {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .task-changes-tab .changes-header-actions {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .task-changes-tab .changes-header-actions-secondary {
+    margin-left: auto;
+  }
+
+  .task-changes-tab .task-changes-header-title {
+    gap: var(--space-xs);
+  }
+
+  .task-changes-tab .task-changes-stats {
+    margin-left: calc(var(--space-lg) + var(--space-xs));
+  }
+}
+
+/* Truncate parent dirs from the LEFT so the filename stays visible. JSX
+ * wraps the path in `<bdo dir="ltr">` to preserve readable left-to-right
+ * display while `direction: rtl` flips the ellipsis to the start. */
+.changes-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.changes-file-stat {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.changes-file-content {
+  border-top: 1px solid var(--border);
+}
+
+.changes-diff-patch {
+  margin: 0;
+  padding: var(--space-sm) 0;
+  background: color-mix(in srgb, var(--bg) 86%, var(--text));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.changes-diff-patch.changes-diff-patch--wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.changes-diff-patch.changes-diff-patch--nowrap {
+  white-space: pre;
+  word-break: normal;
+}
+
+/* Summary section - styled for done tasks with success accent */
+.detail-summary {
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 25%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+}
+
+.detail-summary h4 {
+  color: var(--color-success);
+  margin-bottom: var(--space-md);
+}
+
+.detail-summary .markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.detail-summary .markdown-body p:first-child {
+  margin-top: 0;
+}
+
+.detail-summary .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+/*
+FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+The done-task Summary tab is a scrollable overview composed from existing detail data. Reuse detail-section/markdown conventions and tokenized spacing/colors so the new landing tab preserves modal hierarchy across desktop and mobile.
+*/
+.detail-section--summary {
+  overflow-y: auto;
+}
+
+.task-summary-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-summary-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-lg);
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.task-summary-section h4,
+.task-summary-section h5 {
+  margin: 0;
+}
+
+.task-summary-section h5 {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  font-weight: 600;
+}
+
+.task-summary-markdown {
+  color: var(--text);
+}
+
+.task-summary-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+}
+
+.task-summary-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 3), 1fr));
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.task-summary-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.task-summary-stats dt {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  text-transform: uppercase;
+  letter-spacing: calc(var(--btn-border-width) * 0.5);
+}
+
+.task-summary-stats dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-summary-diff-add {
+  color: var(--color-success);
+}
+
+.task-summary-diff-del {
+  color: var(--color-error);
+}
+
+/*
+FNXC:TaskDetailSummaryTokenCost 2026-06-27-00:00:
+The done-task Summary token-cost section must reuse task-summary card hierarchy while showing per-model counts and cost without hardcoded colors or spacing.
+
+FNXC:TaskDetailSummaryTokenCost 2026-06-28-00:00:
+The desktop table needs a token-scale min-width and non-anywhere model-name wrapping so narrow right-dock containers scroll horizontally instead of collapsing MODEL values to one character per line.
+
+FNXC:TaskDetailSummaryTokenCost 2026-07-11-00:00:
+Mobile per-model breakdowns must stay real tables and scroll horizontally inside .task-summary-token-table-wrap, matching the Command Center .cc-table-wrap pattern. Do not stack rows into cards; side-by-side model token/cost columns are the user-facing scan path.
+
+FNXC:TaskDetailSummaryTab 2026-08-01-07:15:
+Mobile token/cost scrolling requires min-width: 0 containment through the Summary flex ancestors. Overflow-x alone cannot shrink an intrinsically wide table's flex/grid child, so the wrapper must own horizontal overflow rather than widening the detail body.
+*/
+.task-summary-token-table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.task-summary-token-table {
+  width: 100%;
+  min-width: calc(var(--space-2xl) * 16);
+  border-collapse: collapse;
+  color: var(--text);
+}
+
+.task-summary-token-table th,
+.task-summary-token-table td {
+  padding: var(--space-sm);
+  border-bottom: var(--btn-border-width) solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.task-summary-token-table th {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: calc(var(--btn-border-width) * 0.5);
+}
+
+.task-summary-token-table tbody td:not(:first-child),
+.task-summary-token-table tfoot td {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.task-summary-token-table tfoot th,
+.task-summary-token-table tfoot td {
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.task-summary-model-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.task-summary-model-label span:last-child {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.task-summary-cost-unavailable {
+  color: var(--color-warning);
+}
+
+.task-summary-file-list,
+.task-summary-work-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-summary-file-list li,
+.task-summary-work-list li {
+  min-width: 0;
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.task-summary-file-list li {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  overflow-wrap: anywhere;
+}
+
+.task-summary-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-summary-work-list li {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
+}
+
+.task-summary-work-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:WorkflowStepResults 2026-07-09-00:45:
+FN-7727: bounded, read-only history of prior failed pre-merge review attempts
+(`WorkflowStepResult.priorAttempts`), surfaced as a collapsed <details> so it
+does not clutter the default workflow-results view. Rendered only when a step
+has history; no shell appears otherwise.
+*/
+.task-summary-prior-attempts {
+  margin-left: calc(var(--space-sm) * 2);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+}
+
+.task-summary-prior-attempts summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.task-summary-prior-attempts-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-summary-prior-attempts-list li {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+}
+
+.task-summary-prior-attempts-timestamp {
+  margin-left: var(--space-sm);
+  color: var(--text-muted);
+}
+
+.task-summary-prior-attempts-output {
+  margin: var(--space-xs) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+.task-summary-status {
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.task-summary-status--done,
+.task-summary-status--passed {
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  color: var(--color-success);
+}
+
+.task-summary-status--skipped,
+.task-summary-status--advisory_failure,
+.task-summary-status--pending {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+
+.task-summary-status--failed {
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  color: var(--color-error);
+}
+
+.task-summary-retries {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .detail-section--summary {
+    padding-inline: var(--space-sm);
+  }
+
+  .task-summary-tab {
+    gap: var(--space-md);
+  }
+
+  .task-summary-section {
+    padding: var(--space-md);
+  }
+
+  .task-summary-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .task-summary-work-list li {
+    align-items: flex-start;
+  }
+
+  .task-summary-prior-attempts {
+    margin-left: 0;
+  }
+}
+
+/* Spec tab layout - allows SpecEditor to fill available vertical space */
+.detail-section--spec {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 0;
+}
+
+/*
+FNXC:TaskDetailPlan 2026-06-30-00:00:
+The Plan prompt editor is a task-detail body surface, not a narrow prose inset. Scope full-width guards to the Plan prompt section so modal and embedded cards align markdown, empty fallback, inline edit, and AI revision controls without changing unrelated detail sections.
+
+FNXC:TaskDetailPlan 2026-07-04-00:00:
+The original operator prompt is now rendered as Markdown (shared PROMPT.md renderer) and collapsed by default behind a chevron toggle, superseding the earlier plain-preserved-text rule. It reuses the .detail-source-header/.detail-source-toggle collapsible pattern already used for GitLab tracking/retries, and shares the .detail-section--plan-prompt markdown width/wrapping contract so expanded content never overflows. The empty state stays unboxed and toggle-free so absent descriptions do not create a misleading prompt shell.
+*/
+.detail-section--original-prompt,
+.detail-section--plan-prompt {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.detail-section--original-prompt .markdown-body {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.detail-original-prompt-empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.detail-section--plan-prompt .markdown-body,
+.detail-section--plan-prompt .detail-prompt,
+.detail-section--plan-prompt .spec-loading,
+.detail-section--plan-prompt .spec-editor-edit-mode,
+.detail-section--plan-prompt .spec-editor-revision,
+.detail-section--plan-prompt .spec-editor-textarea,
+.detail-section--plan-prompt .spec-editor-feedback {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.detail-section--plan-prompt .markdown-body,
+.detail-section--plan-prompt .detail-prompt {
+  overflow-wrap: anywhere;
+}
+
+.task-detail-content--embedded .detail-section--plan-prompt {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Back button for changed-files modal - hidden on desktop */
+.changed-files-back-button {
+  display: none;
+}
+
+/* Changed-files loading spinner */
+.changed-files-loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: changed-files-spin 0.6s linear infinite;
+}
+
+@keyframes changed-files-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Changed-files empty state */
+.changed-files-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl) var(--space-lg);
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.changed-files-empty-icon {
+  font-size: 24px;
+  opacity: 0.6;
+}
+
+/* Changed-files error state */
+.changed-files-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.changed-files-error-icon {
+  flex-shrink: 0;
+}
+
+/* Renamed file label */
+.changed-files-renamed {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Mobile responsive for changed-files modal */
+@media (max-width: 768px) {
+  .changed-files-modal .changed-files-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  /* Mobile two-state view: show only list or diff at a time */
+  .changed-files-sidebar.mobile {
+    display: none;
+  }
+
+  .changed-files-sidebar.mobile.active {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    border-right: none;
+    border-bottom: none;
+    max-height: none;
+    overflow-y: auto;
+    padding: 0;
+    background: var(--surface);
+  }
+
+  .changed-files-sidebar.mobile.active .file-browser-list {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .changed-files-sidebar.mobile.active .gm-diff-loading,
+  .changed-files-sidebar.mobile.active .changed-files-loading {
+    margin: var(--space-lg);
+  }
+
+  .changed-files-sidebar.mobile.active .gm-diff-error,
+  .changed-files-sidebar.mobile.active .changed-files-error {
+    margin: var(--space-lg);
+  }
+
+  .changed-files-sidebar.mobile.active .file-browser-empty,
+  .changed-files-sidebar.mobile.active .changed-files-empty {
+    flex: 1;
+  }
+
+  /* Larger touch targets for file entries on mobile */
+  .changed-files-sidebar.mobile .changed-files-entry {
+    padding: calc(var(--space-sm) + var(--space-xs) / 2) var(--space-md);
+    min-height: 36px;
+  }
+
+  /* Clearer active state on mobile */
+  .changed-files-sidebar.mobile .changed-files-entry.active {
+    background: var(--card-hover);
+    border-left: calc(var(--btn-border-width) * 3) solid var(--in-progress);
+  }
+
+  .changed-files-content.mobile {
+    display: none;
+  }
+
+  .changed-files-content.mobile.active {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: var(--space-sm);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+  }
+
+  .changed-files-modal .file-browser-file-info {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .changed-files-modal .file-browser-file-info strong {
+    font-size: 12px;
+    word-break: break-all;
+  }
+
+  /* Diff viewer fills available space on mobile */
+  .changed-files-content.mobile.active .changed-files-diff-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .changed-files-content.mobile.active .gm-diff-viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .changed-files-content.mobile.active .gm-diff-patch {
+    flex: 1;
+    max-height: none;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Back button styles for mobile */
+  .changed-files-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+    padding: 0 var(--space-md);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    margin-right: var(--space-sm);
+  }
+
+  .changed-files-back-button:hover {
+    background: var(--card-hover);
+  }
+
+  .changed-files-back-button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring-strong);
+  }
+
+  .detail-section--spec {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .detail-section--original-prompt,
+  .detail-section--original-prompt .markdown-body {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .detail-section--plan-prompt .detail-spec-edit-trigger,
+  .detail-section--plan-prompt .spec-editor-actions-row,
+  .detail-section--plan-prompt .spec-editor-revision-actions {
+    align-items: stretch;
+  }
+
+  .detail-section--plan-prompt .spec-editor-actions-row,
+  .detail-section--plan-prompt .spec-editor-revision-actions {
+    flex-wrap: wrap;
+  }
+
+  .detail-section--plan-prompt .spec-editor-actions-row .btn,
+  .detail-section--plan-prompt .spec-editor-revision-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .detail-section--plan-prompt .spec-editor-char-count {
+    flex: 1 1 auto;
+  }
+}
+
+.detail-section h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.detail-prompt {
+  padding: calc(var(--space-md) + var(--space-xs) / 2);
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+}
+
+.spec-loading {
+  padding: calc(var(--space-md) + var(--space-xs) / 2);
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.spec-loading::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: task-detail-spec-spinner-spin 0.8s linear infinite;
+}
+
+@keyframes task-detail-spec-spinner-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* === Modal Edit Mode Styles === */
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.task-detail-mobile-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: calc(var(--space-2xl) + var(--space-xs));
+  padding: 0 var(--space-sm);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
+  line-height: 1;
+}
+
+.task-detail-mobile-back svg {
+  width: 1em;
+  height: 1em;
+}
+
+.modal-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.modal-edit-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.modal-edit-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.modal-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.modal-edit-form .form-group textarea {
+  min-height: 160px;
+}
+
+.modal-edit-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.modal-edit-input:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.modal-edit-input::placeholder {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.modal-edit-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modal-edit-textarea {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.modal-edit-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.modal-edit-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.modal-edit-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Edit-mode hint text now lives in modal-actions footer */
+.modal-edit-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/*
+FNXC:PlanApproval 2026-07-04-21:35:
+FN-7559: truthful informational label shown instead of the manual Approve/Reject
+Plan affordance when a task's awaiting-approval hold is from release authorization
+(not the manual gate) — auto-approve-all does not bypass this gate.
+*/
+.modal-hold-reason {
+  font-size: 12px;
+  color: var(--triage);
+}
+
+.modal-edit-hint kbd {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+/* Card saving state */
+.card.card-saving {
+  opacity: 0.7;
+}
+
+/* === Detail Tabs === */
+/*
+FNXC:TaskDetailTabs 2026-06-21-00:00:
+The mobile global `* { touch-action: pan-y; }` lock from FN-6365 prevents horizontal swipe gestures unless each known horizontal scroller opts back into pan-x.
+The overflowing task-detail tab strip must keep horizontal touch panning enabled so conditional and plugin tabs remain reachable on narrow touch viewports (FN-6864), matching the FN-6450 agent-detail tab precedent.
+
+FNXC:TaskDetailTabs 2026-06-22-18:00:
+Remove the divider between the tab selector and the detail area below. Keep the active-tab underline as the only local selection affordance.
+
+FNXC:TaskDetailTabs 2026-06-25-16:55:
+Task-detail tabs must remain reachable as a one-row horizontal scroller on mobile across the Board modal and List embedded pane. The tab strip is the scroller, opts out of the global mobile pan-y lock with pan-x pan-y, and keeps tab children non-shrinking so conditional and plugin tabs overflow-scroll instead of clipping or compressing.
+
+FNXC:TaskDetailTabs 2026-06-26-00:35:
+`touch-action` is not inherited, so the tab buttons must also opt into pan-x because they are the real touch targets. A container-only opt-in leaves touches that start on a `.detail-tab` under the global mobile `* { touch-action: pan-y; }` lock and blocks horizontal swipes.
+*/
+.detail-tabs {
+  display: flex;
+  gap: 0;
+  width: 100%;
+  max-inline-size: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  margin-bottom: var(--space-md);
+}
+
+.detail-tab {
+  flex-shrink: 0;
+  touch-action: pan-x pan-y;
+  padding: var(--space-sm) var(--space-lg);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  font-family: inherit;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.detail-tab:hover {
+  color: var(--text);
+}
+.detail-tab:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.detail-tab-active {
+  border-bottom-color: var(--in-progress);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* === Activity View Selector === */
+/*
+FNXC:TaskDetailActivity 2026-06-30-23:59:
+The Activity tab itself is the Live/Feed/Raw dropdown trigger. Keep it in the `.detail-tabs` scroller with the same tab sizing and active underline, and keep the Activity panel toolbar only for the expand affordance so no duplicate in-content selector or empty mobile shell remains.
+
+FNXC:TaskDetailActivity 2026-07-01-00:00:
+The Activity view menu is portaled to the document body and fixed-positioned because `.detail-tabs` uses overflow scrolling on mobile. Keep overflow containment on the tab strip and move only the menu overlay out of that clipping chain.
+
+FNXC:TaskDetailActivity 2026-07-04-18:37:
+The body-portaled menu must paint above the owning task-detail modal/popup while task-detail FloatingWindow shells sit in the board-layer band. Keep this below global utility overlays but above normal task-detail/modal chrome so Activity never hides behind its own moving popup.
+*/
+.detail-tab-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.detail-tab--activity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-tab-chevron {
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+  flex: 0 0 auto;
+}
+
+.activity-view-menu {
+  position: fixed;
+  z-index: 1000;
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.activity-view-menu-item {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+  padding: var(--space-xs) var(--space-sm);
+  white-space: nowrap;
+}
+
+.activity-view-menu-item:hover,
+.activity-view-menu-item:focus-visible,
+.activity-view-menu-item[aria-current="true"] {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.activity-view-menu-item[aria-current="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/*
+FNXC:TaskDetailActivity 2026-07-27-02:15:
+FN-8624 requires Task Detail content insets to stay symmetric at every breakpoint,
+including modal, pop-out, and embedded surfaces. The fixed Live/Feed overlay can cover
+only the first row, so its tokenized clearance belongs there rather than on this container;
+this generalizes FN-8166's mobile-only correction to desktop and tablet.
+*/
+.detail-activity {
+  position: relative;
+  padding-inline-end: 0;
+}
+
+.detail-activity:not(.detail-activity--interventions) > h4,
+.detail-activity:not(.detail-activity--interventions) > .detail-log-truncated,
+.detail-activity:not(.detail-activity--interventions) > .detail-log-loading,
+.detail-activity:not(.detail-activity--interventions) > .detail-log-empty,
+.detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child {
+  padding-inline-end: calc(var(--space-2xl) + var(--space-md));
+}
+
+/* FNXC:PlannerOversight 2026-07-27-02:15: Retain the explicit zero inset for the overlay-free Interventions segment; it documents the FN-7581 full-width timeline contract even though the shared container is now symmetric. */
+.detail-activity--interventions {
+  padding-inline-end: 0;
+}
+
+/*
+FNXC:TaskDetailActivity 2026-07-01-00:00:
+Live and Feed Activity expansion overlays the content instead of reserving a toolbar row. Feed keeps enough tokenized inline padding that the fixed affordance does not cover log text; Raw uses AgentLogViewer's fullscreen button and does not render this Activity toggle.
+*/
+.activity-expand-toggle {
+  flex: 0 0 auto;
+  min-inline-size: var(--space-2xl);
+  min-block-size: var(--space-2xl);
+  padding: 0;
+}
+
+/*
+FNXC:TaskActivityFeedCopy 2026-08-18-18:11:
+Feed's copy and expansion actions share one tokenized overlay group so the bounded log remains scroll-owned and both controls stay reachable in modal, embedded, floating, and mobile hosts.
+*/
+.detail-activity-actions {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-activity-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.detail-activity-copy svg {
+  flex: 0 0 auto;
+}
+
+.activity-expand-toggle--overlay {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 3;
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.detail-activity-actions .activity-expand-toggle--overlay {
+  position: static;
+  inset: auto;
+}
+
+.detail-activity-actions ~ h4,
+.detail-activity-actions ~ .detail-log-truncated,
+.detail-activity-actions ~ .detail-log-loading,
+.detail-activity-actions ~ .detail-log-empty,
+.detail-activity-actions ~ .detail-activity-list > .detail-log-entry:first-child {
+  padding-inline-end: calc((var(--space-2xl) * 4) + var(--space-lg));
+}
+
+.detail-log-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  min-height: calc(var(--space-2xl) + var(--space-md));
+}
+
+.detail-log-loading svg {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 768px) {
+  .activity-view-menu {
+    max-inline-size: calc(100vw - (var(--space-md) * 2));
+  }
+
+  /*
+  FNXC:TaskDetailActivity 2026-07-27-02:15:
+  FN-8624 keeps the base container symmetric; at mobile sizes the smaller fixed
+  overlay needs correspondingly smaller first-row clearance without covering log text.
+  */
+  .detail-activity:not(.detail-activity--interventions) > h4,
+  .detail-activity:not(.detail-activity--interventions) > .detail-log-truncated,
+  .detail-activity:not(.detail-activity--interventions) > .detail-log-loading,
+  .detail-activity:not(.detail-activity--interventions) > .detail-log-empty,
+  .detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child {
+    padding-inline-end: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .activity-expand-toggle {
+    min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .activity-expand-toggle--overlay {
+    top: var(--space-sm);
+    right: var(--space-sm);
+  }
+
+  .detail-activity-actions {
+    top: var(--space-sm);
+    right: var(--space-sm);
+    gap: var(--space-xs);
+  }
+
+  .detail-activity-actions ~ h4,
+  .detail-activity-actions ~ .detail-log-truncated,
+  .detail-activity-actions ~ .detail-log-loading,
+  .detail-activity-actions ~ .detail-log-empty,
+  .detail-activity-actions ~ .detail-activity-list > .detail-log-entry:first-child {
+    padding-inline-end: calc((var(--space-2xl) * 4) + var(--space-md));
+  }
+
+  .detail-log-loading {
+    min-height: calc(var(--space-2xl) + var(--space-lg));
+  }
+
+
+  .detail-tab {
+    min-height: 36px;
+    touch-action: pan-x pan-y;
+  }
+
+  .detail-source-grid,
+  .detail-source-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-github-tracking-repo-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .detail-priority-select {
+    min-height: var(--detail-priority-control-min-height);
+  }
+
+  .detail-source-header {
+    flex-wrap: wrap;
+  }
+
+  .detail-source-summary {
+    flex-wrap: wrap;
+  }
+
+  .detail-source-section .detail-source-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .detail-github-tracking-section .detail-source-header,
+  .detail-gitlab-tracking-section .detail-source-header {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .detail-github-tracking-section .detail-source-summary,
+  .detail-gitlab-tracking-section .detail-source-summary {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .detail-github-tracking-section .detail-github-tracking-enable {
+    margin-left: auto;
+    min-width: calc(var(--space-lg) + var(--space-xl) - var(--space-xs));
+    min-height: calc(var(--space-lg) + var(--space-xl) - var(--space-xs));
+    padding-block: var(--space-xs);
+    justify-content: center;
+  }
+
+  .detail-github-tracking-section .detail-github-tracking-spinner {
+    margin-left: auto;
+  }
+
+  .detail-github-tracking-section .detail-source-header .detail-source-toggle,
+  .detail-gitlab-tracking-section .detail-source-header .detail-source-toggle {
+    margin-left: 0;
+  }
+
+  /*
+  FNXC:TaskDetailModalResponsive 2026-07-16-00:00:
+  FN-8189 hides the mobile `.detail-body` scrollbar so a non-overlay vertical
+  track cannot reserve right-edge layout space and recreate the lopsided gutter
+  fixed by FN-8166. Keep touch scrolling automatic; desktop retains its thin,
+  visible scrollbar outside this breakpoint.
+  */
+  .detail-body {
+    padding: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+
+  .detail-body-content {
+    padding: calc(var(--space-md) + var(--space-xs) / 2);
+    padding-block-start: var(--space-sm);
+  }
+
+  .detail-body::-webkit-scrollbar {
+    display: none;
+  }
+
+  .detail-title {
+    font-size: 16px;
+  }
+
+  /*
+  FNXC:TaskDetailModalResponsive 2026-07-22-00:00:
+  FN-8492 requires the task-detail footer to keep Actions, Move, and the
+  Merge/review control on one row from 320 CSS px through the 768px mobile
+  breakpoint without horizontal overflow. `nowrap` alone only trades wrapping
+  for overflow, so scoped tokenized packing, flex shrink guards, and label
+  ellipsis let every text-bearing footer control yield while upward menus stay
+  unclipped.
+
+  FNXC:TaskDetailModalResponsive 2026-07-22-17:12:
+  FN-8501 requires the flexible spacer—not the Move dropdown wrapper—to absorb
+  available mobile row space. Keeping the wrapper content-sized puts the primary
+  transition at the trailing edge while its controls retain the FN-8492 shrink
+  and ellipsis safeguards for dense review variants.
+  */
+  .task-detail-content .modal-actions {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2) calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .task-detail-content .modal-actions-spacer {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .task-detail-content .detail-actions-dropdown,
+  .task-detail-content .detail-move-dropdown {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .task-detail-content .detail-move-dropdown {
+    flex: 0 1 auto;
+  }
+
+  .task-detail-content .detail-move-actions-in-review {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 0;
+    gap: var(--space-xs);
+  }
+
+  .task-detail-content .detail-move-actions-in-review > div,
+  .task-detail-content .detail-move-actions-in-review > .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .task-detail-content .modal-actions .btn {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    padding-inline: var(--space-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .task-detail-content .detail-move-btn {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .task-detail-content .detail-footer-button-label,
+  .task-detail-content .detail-move-btn__label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .task-detail-content .detail-move-btn__arrow,
+  .task-detail-content .modal-actions .btn > svg {
+    flex-shrink: 0;
+  }
+
+  /* Mobile dropdown menus — position above action bar, constrained to viewport */
+  .detail-actions-menu,
+  .detail-move-menu {
+    bottom: calc(100% + var(--space-xs));
+    max-width: calc(100vw - calc(var(--space-lg) + var(--space-md)));
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-header {
+    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2);
+  }
+
+  .detail-tabs {
+    display: flex;
+    width: 100%;
+    max-inline-size: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .detail-tab {
+    touch-action: pan-x pan-y;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
+  }
+
+  /* Task detail modal: prevent header clipping + full-screen refine flow */
+  .detail-title-row {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .modal-header-actions {
+    flex-shrink: 0;
+  }
+
+  .detail-refine-overlay {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .detail-refine-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .detail-refine-textarea {
+    font-size: 16px;
+  }
+
+  .modal-edit-form .form-group {
+    padding: 0;
+  }
+
+  /* Task edit modal: cap description textarea height on mobile so form stays visible */
+  .modal-edit-form .form-group textarea {
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Modal edit button: touch target on mobile */
+  .modal-edit-btn {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .task-detail-mobile-back {
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+    min-width: calc(var(--space-2xl) + var(--space-xs));
+  }
+
+}
+
+
+.detail-in-review-stall {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.detail-in-review-stall-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-in-review-stall-headline {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detail-in-review-stall-reason {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.detail-in-review-stall-description,
+.detail-in-review-stall-action {
+  color: var(--text);
+}
+
+.detail-in-review-stall-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--text-muted);
+}
+
+.detail-log-entry--stall-highlight {
+  outline: 2px solid color-mix(in srgb, var(--color-warning) 60%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  transition: outline-color var(--transition-slow);
+}
+
+@media (max-width: 768px) {
+  .detail-in-review-stall-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.detail-near-duplicate-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  margin-bottom: var(--space-md);
+}
+
+/*
+FNXC:PlanReviewReplan 2026-07-15-11:09:
+Plan-approval holds must explain why the operator is being asked before Approve/Reject.
+Reuse the near-duplicate banner layout; replan-cap escalations use a stronger warning tint.
+*/
+.detail-plan-approval-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-info, var(--in-progress)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info, var(--in-progress)) 28%, transparent);
+  margin-bottom: var(--space-md);
+}
+
+.detail-plan-approval-banner--replan-cap {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 32%, transparent);
+}
+
+.detail-plan-approval-banner__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-plan-approval-banner__headline {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detail-plan-approval-banner__copy {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.detail-plan-approval-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+@media (max-width: 768px) {
+  .detail-plan-approval-banner__actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.detail-near-duplicate-banner__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-near-duplicate-banner__headline {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detail-near-duplicate-banner__copy {
+  margin: 0;
+  color: var(--text);
+}
+
+.detail-near-duplicate-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .detail-near-duplicate-banner__actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.detail-retries-grid dd {
+  font-weight: 600;
+}
+
+.detail-retries-warning {
+  margin: var(--space-sm) 0 0;
+  color: var(--color-error);
+  font-size: 0.75rem;
+}
+
+/*
+FNXC:Workspace 2026-06-21-00:00:
+Flat read-only per-sub-repo worktree list for a workspace task (U3/KTD5 dashboard floor).
+Read-only list/placeholder only — not the deferred rich per-repo-status component.
+*/
+.workspace-worktrees-summary {
+  margin: var(--space-sm) 0 0;
+}
+.workspace-worktrees-placeholder {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, inherit);
+  margin-bottom: var(--space-xs);
+}
+.workspace-worktrees-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.workspace-worktrees-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  font-size: 0.75rem;
+  font-family: var(--font-mono, monospace);
+}
+.workspace-worktrees-repo {
+  font-weight: 600;
+}
+.workspace-worktrees-branch {
+  color: var(--text-muted, inherit);
+}
+/*
+FNXC:Workspace 2026-08-20-00:56:
+The full Task Detail list exposes durable per-repo base decisions; the compact card stays count-only.
+Fallback uses the existing warning status treatment because it is observable divergence, not an error.
+*/
+.workspace-worktrees-base {
+  color: var(--text-muted, inherit);
+}
+.workspace-worktrees-base-fallback {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-xs);
+}
+.workspace-worktrees-status {
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-xs);
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+}
+.workspace-worktrees-status--landed {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+}
+.workspace-worktrees-status--pending {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+}
+.workspace-worktrees-status--failed,
+.workspace-worktrees-failure,
+.workspace-worktrees-failure-message {
+  color: var(--color-error);
+  background: var(--status-error-bg);
+}
+.workspace-worktrees-failure,
+.workspace-worktrees-failure-message {
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+.workspace-worktrees-sha {
+  color: var(--color-success);
+}
+@media (max-width: 768px) {
+  .workspace-worktrees-item--wrapping {
+    gap: var(--space-xs);
+  }
+}
+
+/*
+FNXC:TaskDetailTerminal 2026-07-10-00:00:
+FN-7813's interactive task Terminal tab hosts an embedded TerminalModal, so the section must provide a real flex height and keep terminal scrolling internal to the shell instead of the surrounding detail modal.
+
+FNXC:TaskDetailTerminal 2026-07-11-00:00:
+Mobile Task Detail needs a shorter embedded terminal than the desktop/tablet shell so tab context and controls remain reachable above the fold; keep the value token-based and large enough for an interactive shell.
+*/
+.detail-section--worktree-terminal {
+  display: flex;
+  flex-direction: column;
+  min-height: min(60dvh, calc(var(--space-2xl) * 16));
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .detail-section--worktree-terminal {
+    min-height: min(50dvh, calc(var(--space-2xl) * 11));
+  }
+}
+
+/*
+FNXC:SpecLockTaskDetail 2026-08-09-07:36:
+The retained alignment report belongs in the existing Task Detail section hierarchy. These styles
+reuse source-grid spacing so long structural finding labels and immutable provenance wrap on narrow right-dock and mobile hosts.
+*/
+.spec-lock-provenance {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.spec-lock-findings {
+  display: grid;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0 0;
+  padding-inline-start: var(--space-lg);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .spec-lock-report .detail-source-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* FNXC:AIMergeReviewReconciliation 2026-08-20-21:56: approved-but-unconfirmed findings need neutral status chrome rather than the rejected treatment, while terminal review state remains actionable on narrow hosts. */
+.ai-merge-review-reconciliation {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-info-border);
+  border-radius: var(--radius-md);
+  background: var(--color-info-subtle);
+}
+.ai-merge-review-reconciliation-terminal {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-subtle);
+}
+.ai-merge-review-reconciliation h3 { margin: 0; }
+.ai-merge-review-reconciliation p { margin: var(--space-2) 0 0; }
+.ai-merge-review-reconciliation ul { margin: var(--space-2) 0 0; }
+@media (max-width: 768px) {
+  .ai-merge-review-reconciliation { margin-inline: var(--space-2); }
+}
+
+/*
+FNXC:RepositoryScope 2026-08-21-00:29:
+Task Detail exposes pre-land scope corrections beside acquired repository evidence. The controls
+use existing form and spacing tokens so desktop and compact modal layouts retain keyboard-accessible
+operator recovery without treating acquisition count as task intent.
+*/
+.workspace-repository-scope-controls {
+  display: grid;
+  gap: var(--space-sm);
+  margin-block: var(--space-md);
+}
+.workspace-repository-scope-controls label {
+  display: grid;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+.workspace-repository-scope-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.workspace-repository-scope-error { color: var(--color-danger-text); }
+.workspace-repository-scope-history {
+  margin: var(--space-sm) 0;
+  padding-inline-start: var(--space-lg);
+}

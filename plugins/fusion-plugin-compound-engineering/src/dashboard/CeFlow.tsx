@@ -1,0 +1,693 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
+import type { PlanningQuestion } from "@fusion/core";
+import type { CeActivityTurn, CeConversationTurn, CeSession } from "../session/session-store.js";
+import { getStage } from "../session/stage-registry.js";
+import { canRenderRichly } from "./ce-question-support.js";
+
+/**
+ * CeFlow — the interactive renderer (U6).
+ *
+ * Renders the four interaction types CeFlow expresses richly (`text`,
+ * `single_select`, `multi_select`, `confirm`), the FULL conversation so far —
+ * past questions and answers as proper chat bubbles, the agent's working
+ * traces (thinking / tool activity) as collapsible blocks — and, while a turn
+ * runs, a LIVE working pane streaming the agent's current output.
+ *
+ * Steering: alongside any selectable question the user can attach free-text
+ * guidance to their answer (`{value, comment}`) or send guidance WITHOUT
+ * answering (`{feedback}`) — the stage system prompt instructs the agent to
+ * treat both as first-class input.
+ *
+ * When a turn carries a question CeFlow CANNOT express, it degrades to a
+ * plain chat view that is VISUALLY MARKED as degraded (R8/AE1) — the stage is
+ * still completable there via a free-text answer.
+ *
+ * It does NOT import `PlanningModeModal` or any dashboard internal (KTD3 scope
+ * boundary); it only consumes the `PlanningQuestion` shape for parity.
+ */
+
+export interface CeFlowProps {
+  session?: CeSession;
+  busy?: boolean;
+  error?: string;
+  /** Submit an answer to the current question. */
+  onAnswer: (questionId: string, response: unknown) => void;
+  /** Resume an interrupted/error session. */
+  onResume?: () => void;
+  /** Cancel an in-flight session while preserving it as interrupted. */
+  onCancel?: () => void;
+  /** Back to the launcher. */
+  onClose?: () => void;
+  /** Open the completed stage artifact. */
+  onOpenArtifact?: (artifactPath: string) => void;
+  /** Pipeline stage available after this session. Debug is intentionally manual-only. */
+  nextStageId?: string;
+  /** Start the next pipeline stage. */
+  onStartNextStage?: (stageId: string) => void;
+}
+
+/*
+FNXC:CompoundEngineeringFlow 2026-07-10-22:51:
+The active flow uses registry labels, explicit choice confirmation, secondary optional guidance, accessible async status announcements, and hierarchical recovery/completion actions. Debug remains a manual investigation and must never appear as automatic next-stage progression.
+*/
+
+function humanizeIdentifier(value: string): string {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function stageLabel(stageId: string): string {
+  return getStage(stageId)?.label ?? humanizeIdentifier(stageId);
+}
+
+// ── Transcript parsing ───────────────────────────────────────────────────────
+
+/**
+ * FNXC:CompoundEngineeringUI 2026-06-17-00:52:
+ * CE flow markup keeps its rendered text and test ids stable while adding shared .input/.btn/.btn-icon hooks so dashboard theme spacing and focus conventions style interactive controls consistently.
+ */
+const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
+
+type DisplayItem =
+  | { kind: "chat"; role: "user" | "agent"; text: string }
+  | { kind: "qa-answer"; question?: PlanningQuestion; response: unknown }
+  | { kind: "activity"; turns: CeActivityTurn[] }
+  | { kind: "complete" };
+
+function tryParseJson(text: string): Record<string, unknown> | undefined {
+  if (!text.startsWith("{")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Turn the persisted history (chat turns + serialized control records) into
+ * renderable items. Control records are no longer hidden — questions, answers,
+ * and working traces are the conversation.
+ */
+function isNearTranscriptBottom(container: HTMLOListElement): boolean {
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
+}
+
+function parseHistory(history: CeConversationTurn[]): DisplayItem[] {
+  const items: DisplayItem[] = [];
+  const questionsById = new Map<string, PlanningQuestion>();
+  for (const turn of history) {
+    const obj = tryParseJson(turn.text);
+    if (obj && turn.role === "agent") {
+      const q = obj.question as PlanningQuestion | undefined;
+      if (q && typeof q.id === "string" && typeof q.question === "string") {
+        questionsById.set(q.id, q);
+        continue;
+      }
+      const activity = obj.activity as { turns?: CeActivityTurn[] } | undefined;
+      if (activity && Array.isArray(activity.turns)) {
+        items.push({ kind: "activity", turns: activity.turns });
+        continue;
+      }
+      if (obj.complete === true) {
+        items.push({ kind: "complete" });
+        continue;
+      }
+    }
+    if (obj && turn.role === "user" && "answer" in obj) {
+      items.push({
+        kind: "qa-answer",
+        question: typeof obj.questionId === "string" ? questionsById.get(obj.questionId) : undefined,
+        response: obj.answer,
+      });
+      continue;
+    }
+    items.push({ kind: "chat", role: turn.role, text: turn.text });
+  }
+  return items;
+}
+
+/** Human-readable rendering of an answer payload (option ids → labels). */
+function formatAnswer(
+  response: unknown,
+  question?: PlanningQuestion,
+): { main: string; comment?: string; feedbackOnly?: boolean } {
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    const r = response as Record<string, unknown>;
+    if (typeof r.feedback === "string") return { main: r.feedback, feedbackOnly: true };
+    if ("value" in r) {
+      const base = formatAnswer(r.value, question);
+      return {
+        main: base.main,
+        ...(typeof r.comment === "string" && r.comment ? { comment: r.comment } : {}),
+      };
+    }
+  }
+  const label = (id: unknown): string =>
+    question?.options?.find((o) => o.id === id)?.label ?? String(id);
+  if (Array.isArray(response)) return { main: response.map(label).join(", ") };
+  if (typeof response === "boolean") return { main: response ? "Yes" : "No" };
+  return { main: label(response) };
+}
+
+// ── Working-trace rendering ──────────────────────────────────────────────────
+
+/** Render thinking/text/tool activity turns (persisted trace or live pane). */
+function ActivityTrace({ turns, live }: { turns: CeActivityTurn[]; live?: boolean }) {
+  return (
+    <div
+      className={`ce-flow-activity${live ? " is-live" : ""}`}
+      data-testid={live ? "ce-flow-live-activity" : "ce-flow-activity-trace"}
+    >
+      {turns.map((t, i) =>
+        t.kind === "tool" ? (
+          <div
+            key={i}
+            className={`ce-activity-tool${t.isError ? " is-error" : t.done ? " is-done" : " is-running"}`}
+            data-testid="ce-activity-tool"
+          >
+            <span className="ce-activity-tool-marker">{t.isError ? "✗" : t.done ? "✓" : "▸"}</span> {t.text}
+          </div>
+        ) : (
+          <pre key={i} className={`ce-activity-block ce-activity-${t.kind}`} data-kind={t.kind}>
+            {t.text}
+          </pre>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** Render the full conversation: chat, Q&A bubbles, and working traces. */
+function Transcript({ history }: { history: CeConversationTurn[] }) {
+  const items = useMemo(() => parseHistory(history), [history]);
+  const transcriptRef = useRef<HTMLOListElement | null>(null);
+  const previousHistoryLengthRef = useRef(0);
+  const previousScrollHeightRef = useRef(0);
+  const [isFollowing, setIsFollowing] = useState(true);
+
+  useLayoutEffect(() => {
+    const container = transcriptRef.current;
+    if (!container) return;
+
+    const previousHistoryLength = previousHistoryLengthRef.current;
+    const previousScrollHeight = previousScrollHeightRef.current || container.scrollHeight;
+    const wasNearBottom = previousScrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
+    const firstContentLoad = previousHistoryLength === 0 && history.length > 0;
+    const newContentArrived = history.length !== previousHistoryLength;
+
+    if (firstContentLoad || (newContentArrived && (isFollowing || wasNearBottom))) {
+      container.scrollTop = container.scrollHeight;
+    }
+
+    previousHistoryLengthRef.current = history.length;
+    previousScrollHeightRef.current = container.scrollHeight;
+    setIsFollowing(isNearTranscriptBottom(container));
+  }, [history, isFollowing]);
+
+  const handleScroll = useCallback(() => {
+    const container = transcriptRef.current;
+    if (!container) return;
+    setIsFollowing(isNearTranscriptBottom(container));
+  }, []);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined" || !isFollowing) return;
+    const container = transcriptRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [isFollowing]);
+
+  if (items.length === 0) return null;
+  return (
+    <ol ref={transcriptRef} className="ce-flow-transcript" data-testid="ce-flow-transcript" onScroll={handleScroll}>
+      {items.map((item, i) => {
+        switch (item.kind) {
+          case "chat":
+            return (
+              <li key={i} className={`ce-flow-turn ce-flow-turn-${item.role}`} data-role={item.role}>
+                <span className="ce-flow-turn-role">{item.role === "agent" ? "Agent" : "You"}</span>
+                <span className="ce-flow-turn-text">{item.text}</span>
+              </li>
+            );
+          case "qa-answer": {
+            const a = formatAnswer(item.response, item.question);
+            return (
+              <li
+                key={i}
+                className={`ce-flow-turn ce-flow-turn-user ce-flow-turn-answer${a.feedbackOnly ? " is-steering" : ""}`}
+                data-testid="ce-flow-past-answer"
+              >
+                <span className="ce-flow-turn-role">{a.feedbackOnly ? "You steered" : "You answered"}</span>
+                <span className="ce-flow-turn-text">{a.main}</span>
+                {a.comment ? (
+                  <span className="ce-flow-turn-comment" data-testid="ce-flow-answer-comment">
+                    {a.comment}
+                  </span>
+                ) : null}
+              </li>
+            );
+          }
+          case "activity":
+            return (
+              <li key={i} className="ce-flow-turn ce-flow-turn-agent ce-flow-turn-activity">
+                <details className="ce-flow-activity-details" data-testid="ce-flow-activity">
+                  <summary>Agent work ({item.turns.length} step{item.turns.length === 1 ? "" : "s"})</summary>
+                  <ActivityTrace turns={item.turns} />
+                </details>
+              </li>
+            );
+          case "complete":
+            return (
+              <li key={i} className="ce-flow-turn ce-flow-turn-agent ce-flow-turn-done">
+                <span className="ce-flow-turn-text">✓ Stage complete</span>
+              </li>
+            );
+        }
+      })}
+    </ol>
+  );
+}
+
+// ── Question rendering ───────────────────────────────────────────────────────
+
+/** Rich renderer for a single supported question type. */
+function RichQuestion({
+  question,
+  disabled,
+  onAnswer,
+}: {
+  question: PlanningQuestion;
+  disabled: boolean;
+  onAnswer: (questionId: string, response: unknown) => void;
+}) {
+  const [text, setText] = useState("");
+  const [single, setSingle] = useState<string | null>(null);
+  const [multi, setMulti] = useState<string[]>([]);
+
+  const submit = (response: unknown) => onAnswer(question.id, response);
+
+  return (
+    <div className="ce-flow-question" data-testid="ce-flow-question" data-qtype={question.type}>
+      <p className="ce-flow-question-text">{question.question}</p>
+      {question.description ? <p className="ce-flow-question-desc">{question.description}</p> : null}
+
+      {question.type === "text" ? (
+        <form
+          className="ce-flow-text"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) submit(text.trim());
+          }}
+        >
+          <textarea
+            className="input"
+            data-testid="ce-flow-text-input"
+            aria-label={question.question}
+            value={text}
+            disabled={disabled}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+          />
+          <button type="submit" className="btn btn-primary" disabled={disabled || !text.trim()}>
+            Send
+          </button>
+        </form>
+      ) : null}
+
+      {question.type === "confirm" ? (
+        <div className="ce-flow-confirm">
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-testid="ce-flow-confirm-yes"
+            disabled={disabled}
+            onClick={() => submit(true)}
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            className="btn"
+            data-testid="ce-flow-confirm-no"
+            disabled={disabled}
+            onClick={() => submit(false)}
+          >
+            No
+          </button>
+        </div>
+      ) : null}
+
+      {question.type === "single_select" ? (
+        <div className="ce-flow-choice-group" data-testid="ce-flow-single">
+          <ul className="ce-flow-options" aria-label={question.question}>
+            {(question.options ?? []).map((opt) => (
+              <li key={opt.id}>
+                <button
+                  type="button"
+                  className={`ce-flow-option btn${single === opt.id ? " is-selected" : ""}`}
+                  data-option={opt.id}
+                  disabled={disabled}
+                  aria-pressed={single === opt.id}
+                  onClick={() => setSingle(opt.id)}
+                >
+                  <span className="ce-flow-option-label">{opt.label}</span>
+                  {opt.description ? <span className="ce-flow-option-desc">{opt.description}</span> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className="btn btn-primary ce-flow-choice-submit"
+            data-testid="ce-flow-single-submit"
+            disabled={disabled || single === null}
+            onClick={() => {
+              if (single !== null) submit(single);
+            }}
+          >
+            Confirm choice
+          </button>
+        </div>
+      ) : null}
+
+      {question.type === "multi_select" ? (
+        <form
+          className="ce-flow-options"
+          data-testid="ce-flow-multi"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (multi.length > 0) submit(multi);
+          }}
+        >
+          <ul>
+            {(question.options ?? []).map((opt) => {
+              const checked = multi.includes(opt.id);
+              return (
+                <li key={opt.id}>
+                  <label className="ce-flow-checkbox">
+                    <input
+                      className="ce-flow-checkbox-input"
+                      type="checkbox"
+                      data-option={opt.id}
+                      checked={checked}
+                      disabled={disabled}
+                      onChange={(e) =>
+                        setMulti((prev) =>
+                          e.target.checked ? [...prev, opt.id] : prev.filter((id) => id !== opt.id),
+                        )
+                      }
+                    />
+                    <span className="ce-flow-option-label">{opt.label}</span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          <button
+            type="submit"
+            className="btn btn-primary ce-flow-choice-submit"
+            data-testid="ce-flow-multi-submit"
+            disabled={disabled || multi.length === 0}
+          >
+            Confirm selection
+          </button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Degraded chat fallback (R8/AE1). Used when a question can't be expressed by
+ * the rich renderer. Visibly marked as degraded; the stage is still completable
+ * because the user can answer in free text, which is submitted back through the
+ * same answer route.
+ */
+function DegradedQuestion({
+  question,
+  disabled,
+  onAnswer,
+}: {
+  question: PlanningQuestion;
+  disabled: boolean;
+  onAnswer: (questionId: string, response: unknown) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <div className="ce-flow-question ce-flow-degraded" data-testid="ce-flow-degraded" data-qtype={question.type}>
+      <p className="ce-flow-degraded-banner" role="status" data-testid="ce-flow-degraded-banner">
+        ⚠ Chat fallback — this prompt can&apos;t be shown as buttons here. Answer in your own words below.
+      </p>
+      <p className="ce-flow-question-text">{question.question}</p>
+      {question.description ? <p className="ce-flow-question-desc">{question.description}</p> : null}
+      {Array.isArray(question.options) && question.options.length > 0 ? (
+        <ul className="ce-flow-degraded-options">
+          {question.options.map((opt) => (
+            <li key={opt.id}>{opt.label}</li>
+          ))}
+        </ul>
+      ) : null}
+      <form
+        className="ce-flow-text"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (text.trim()) onAnswer(question.id, text.trim());
+        }}
+      >
+        <textarea
+          className="input"
+          data-testid="ce-flow-degraded-input"
+          aria-label={question.question}
+          value={text}
+          disabled={disabled}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+        />
+        <button type="submit" className="btn btn-primary" disabled={disabled || !text.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Question panel with steering. Wraps the rich/degraded renderer and adds the
+ * guidance channel for selectable questions:
+ * - guidance typed + an option clicked  → `{value, comment}` (answer + steer),
+ * - guidance typed + "Send guidance"    → `{feedback}` (steer without answering).
+ * Free-text questions skip the extra box — their answer field already takes
+ * the user's own words.
+ */
+function QuestionPanel({
+  question,
+  disabled,
+  onAnswer,
+}: {
+  question: PlanningQuestion;
+  disabled: boolean;
+  onAnswer: (questionId: string, response: unknown) => void;
+}) {
+  const [guidance, setGuidance] = useState("");
+  const rich = canRenderRichly(question);
+
+  const submitWithGuidance = (questionId: string, response: unknown) => {
+    const comment = guidance.trim();
+    onAnswer(questionId, comment ? { value: response, comment } : response);
+    setGuidance("");
+  };
+
+  const sendGuidanceOnly = () => {
+    const feedback = guidance.trim();
+    if (!feedback) return;
+    onAnswer(question.id, { feedback });
+    setGuidance("");
+  };
+
+  const showGuidance = rich && question.type !== "text";
+
+  return (
+    <div className="ce-flow-question-panel">
+      {rich ? (
+        <RichQuestion question={question} disabled={disabled} onAnswer={submitWithGuidance} />
+      ) : (
+        <DegradedQuestion question={question} disabled={disabled} onAnswer={onAnswer} />
+      )}
+      {showGuidance ? (
+        <details className="ce-flow-guidance ce-flow-progressive-disclosure" data-testid="ce-flow-guidance">
+          <summary className="ce-flow-guidance-summary">Add guidance (optional)</summary>
+          <label className="ce-flow-guidance-label" htmlFor="ce-flow-guidance-input">
+            Attach context to your answer, or send guidance on its own
+          </label>
+          <div className="ce-flow-guidance-row">
+            <textarea
+              id="ce-flow-guidance-input"
+              className="input"
+              data-testid="ce-flow-guidance-input"
+              value={guidance}
+              disabled={disabled}
+              onChange={(e) => setGuidance(e.target.value)}
+              rows={2}
+              placeholder="e.g. focus on the mobile flow, skip auth for now…"
+            />
+            <button
+              type="button"
+              className="btn"
+              data-testid="ce-flow-guidance-send"
+              disabled={disabled || !guidance.trim()}
+              onClick={sendGuidanceOnly}
+            >
+              Send guidance
+            </button>
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Flow surface ─────────────────────────────────────────────────────────────
+
+export function CeFlow(props: CeFlowProps) {
+  const {
+    session,
+    busy,
+    error,
+    onAnswer,
+    onResume,
+    onCancel,
+    onClose,
+    onOpenArtifact,
+    nextStageId,
+    onStartNextStage,
+  } = props;
+
+  const question = session?.currentQuestion ?? undefined;
+
+  if (!session) {
+    return (
+      <div className="ce-flow card" data-testid="ce-flow-empty">
+        <p>No active session.</p>
+        {onClose ? (
+          <button type="button" className="btn" onClick={onClose}>
+            Back
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const status = session.status;
+  const settledTerminal = status === "completed";
+  const recoverable = status === "interrupted" || status === "error";
+  const cancellable = status === "launching" || status === "active" || status === "awaiting_input";
+  const working = status === "active" || status === "launching";
+  const currentStageLabel = stageLabel(session.stage);
+  const automaticNextStageId = nextStageId && nextStageId !== "debug" && session.stage !== "debug" ? nextStageId : undefined;
+
+  return (
+    <div className="ce-flow card" data-testid="ce-flow" data-status={status} data-stage={session.stage}>
+      <header className="ce-flow-header">
+        <h3>{currentStageLabel}</h3>
+        <span className="ce-flow-status" data-testid="ce-flow-status" role="status" aria-live="polite" aria-atomic="true">
+          {humanizeIdentifier(status)}
+        </span>
+        {onCancel && cancellable ? (
+          <button
+            type="button"
+            className="btn btn-icon ce-flow-cancel"
+            data-testid="ce-flow-cancel"
+            onClick={onCancel}
+            disabled={Boolean(busy)}
+            aria-label="Cancel session"
+            title="Cancel session"
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+        {onClose ? (
+          <button type="button" className="btn ce-flow-close" onClick={onClose}>
+            Close
+          </button>
+        ) : null}
+      </header>
+
+      <Transcript history={session.conversationHistory} />
+
+      {working || (busy && status !== "awaiting_input") ? (
+        <div className="ce-flow-working" data-testid="ce-flow-thinking" role="status" aria-live="polite" aria-atomic="false">
+          <p className="ce-flow-working-label">
+            <span className="ce-flow-pulse" aria-hidden="true" />
+            Agent working…
+          </p>
+          {session.liveActivity && session.liveActivity.length > 0 ? (
+            <ActivityTrace turns={session.liveActivity} live />
+          ) : null}
+        </div>
+      ) : null}
+
+      {error ? (
+        <p className="ce-flow-error" role="alert" data-testid="ce-flow-error">
+          {error}
+        </p>
+      ) : null}
+
+      {status === "awaiting_input" && question ? (
+        <QuestionPanel key={question.id} question={question} disabled={Boolean(busy)} onAnswer={onAnswer} />
+      ) : null}
+
+      {recoverable ? (
+        <div className="ce-flow-recover ce-flow-action-state" data-testid="ce-flow-recover">
+          <p className="ce-flow-error" role="alert">
+            Session {status}{session.error ? `: ${session.error}` : ""}.
+          </p>
+          {onResume ? (
+            <button type="button" className="btn btn-primary" data-testid="ce-flow-resume" onClick={onResume} disabled={Boolean(busy)}>
+              Resume
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {settledTerminal ? (
+        <div className="ce-flow-complete ce-flow-action-state" data-testid="ce-flow-complete" role="status" aria-live="polite">
+          <p>{currentStageLabel} complete.</p>
+          {session.artifactPath ? (
+            <p className="ce-flow-artifact-path" data-testid="ce-flow-artifact-path">
+              Artifact: {session.artifactPath}
+            </p>
+          ) : null}
+          <div className="ce-flow-complete-actions">
+            {session.artifactPath && onOpenArtifact ? (
+              <button type="button" className="btn" onClick={() => onOpenArtifact(session.artifactPath!)}>
+                Open artifact
+              </button>
+            ) : null}
+            {automaticNextStageId && onStartNextStage ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => onStartNextStage(automaticNextStageId)}
+              >
+                Start {stageLabel(automaticNextStageId)}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default CeFlow;

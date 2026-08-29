@@ -1,0 +1,163 @@
+name: Mobile Builds
+
+# Auto-trigger disabled; workflow preserved for manual use via workflow_dispatch.
+on:
+  workflow_dispatch:
+
+jobs:
+  build-web:
+    name: Build web bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Build dashboard client
+        run: pnpm --filter @fusion/dashboard build
+
+      - name: Upload dashboard dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-dist-client
+          path: packages/dashboard/dist/client
+          retention-days: 30
+
+  build-ios:
+    name: Build iOS artifact
+    runs-on: macos-latest
+    needs: build-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Cache iOS DerivedData
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-derived-data-${{ hashFiles('packages/mobile/**', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-derived-data-
+
+      - name: Download dashboard artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist-client
+          path: packages/dashboard/dist/client
+
+      - name: Check iOS platform directory
+        id: ios-check
+        run: |
+          if [ -d packages/mobile/ios ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Platform directory not found, skipping native build"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync Capacitor iOS project
+        if: steps.ios-check.outputs.exists == 'true'
+        run: pnpm --filter @fusion/mobile cap sync ios
+
+      - name: Build unsigned IPA
+        if: steps.ios-check.outputs.exists == 'true'
+        run: |
+          xcodebuild \
+            -workspace packages/mobile/ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          APP_PATH="$(find "$RUNNER_TEMP/DerivedData" -name App.app -type d | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Unable to locate built App.app"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/ios-artifacts/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/ios-artifacts/Payload/App.app"
+          (
+            cd "$RUNNER_TEMP/ios-artifacts"
+            zip -r fusion-ios.ipa Payload
+          )
+
+      - name: Upload iOS artifact
+        if: steps.ios-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fusion-ios-ipa
+          path: ${{ runner.temp }}/ios-artifacts/fusion-ios.ipa
+          retention-days: 30
+
+  build-android:
+    name: Build Android artifact
+    runs-on: ubuntu-latest
+    needs: build-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node and install dependencies
+        uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:MobileAndroidBuild 2026-06-28-00:00:
+      # Capacitor 7 @capacitor/android compiles its Android library with JavaVersion.VERSION_21; manual Android Gradle builds must provision JDK 21 because JDK 17 fails with `invalid source release: 21`.
+      - name: Setup Java 21
+        uses: actions/setup-java@v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Android Gradle caches
+        uses: actions/cache@v6
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('packages/mobile/android/**/*.gradle*', 'packages/mobile/android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Download dashboard artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist-client
+          path: packages/dashboard/dist/client
+
+      - name: Check Android platform directory
+        id: android-check
+        run: |
+          if [ -d packages/mobile/android ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Platform directory not found, skipping native build"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync Capacitor Android project
+        if: steps.android-check.outputs.exists == 'true'
+        run: pnpm --filter @fusion/mobile cap sync android
+
+      - name: Build APK
+        if: steps.android-check.outputs.exists == 'true'
+        run: |
+          cd packages/mobile/android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload Android artifact
+        if: steps.android-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fusion-android-apk
+          path: packages/mobile/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30

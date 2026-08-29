@@ -1,0 +1,1079 @@
+/**
+ * Skills runtime adapter for fn dashboard.
+ *
+ * Provides skills discovery, execution toggling, and catalog fetching capabilities
+ * by integrating with the pi-coding-agent package manager and skills.sh API.
+ */
+
+import { access, readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import { join, relative, dirname, resolve, sep } from "node:path";
+import {
+  computeSkillId,
+  getSkillSettingState,
+  normalizeStoredSkillPath,
+  parseSkillId,
+  resolvePluginSkillBodyPath,
+  resolvePluginSkillEnabled,
+  superviseSpawn,
+} from "@fusion/core";
+export { computeSkillId, getSkillSettingState, parseSkillId } from "@fusion/core";
+import type { TaskStore } from "@fusion/core";
+import type { ChildProcess } from "node:child_process";
+
+/**
+ * Check if a path exists asynchronously using access().
+ * Preferred over existsSync() to avoid blocking the Node event loop.
+ */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Minimal interface matching pi-coding-agent's PathMetadata.
+ * Duplicated here to avoid direct dependency on the pi-coding-agent package in the dashboard.
+ */
+interface PathMetadata {
+  source: string;
+  scope: "user" | "project" | "temporary";
+  origin: "package" | "top-level";
+  baseDir?: string;
+}
+
+/**
+ * Minimal interface matching pi-coding-agent's ResolvedResource.
+ * Duplicated here to avoid direct dependency on the pi-coding-agent package in the dashboard.
+ */
+interface ResolvedResource {
+  path: string;
+  enabled: boolean;
+  metadata: PathMetadata;
+}
+
+/**
+ * Discovered skill with computed metadata.
+ */
+export interface DiscoveredSkill {
+  id: string;
+  name: string;
+  path: string;
+  relativePath: string;
+  enabled: boolean;
+  /** Optional human-readable description (currently set for plugin skills). */
+  description?: string;
+  metadata: {
+    source: string;
+    scope: "user" | "project" | "temporary";
+    origin: "package" | "top-level";
+    baseDir?: string;
+  };
+}
+
+/**
+ * Catalog entry from skills.sh.
+ */
+export interface CatalogEntry {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  repo?: string;
+  npmPackage?: string;
+  tags?: string[];
+  installs?: number;
+  installation: {
+    installed: boolean;
+    matchingSkillIds: string[];
+    matchingPaths: string[];
+  };
+}
+
+/**
+ * Result of fetching the skills catalog.
+ */
+export interface CatalogFetchResult {
+  entries: CatalogEntry[];
+  auth: {
+    mode: "authenticated" | "unauthenticated" | "fallback-unauthenticated";
+    tokenPresent: boolean;
+    fallbackUsed: boolean;
+  };
+}
+
+/**
+ * Toggle execution skill result.
+ */
+export interface ToggleSkillResult {
+  settingsPath: "skills" | "packages[].skills";
+  pattern: string;
+  targetFile: string;
+}
+
+/**
+ * A file entry in a skill directory.
+ */
+export interface SkillFileEntry {
+  name: string;
+  relativePath: string;
+  type: "file" | "directory";
+}
+
+/**
+ * Content of a skill including its SKILL.md and supplementary files.
+ */
+export interface SkillContent {
+  name: string;
+  skillMd: string;
+  files: SkillFileEntry[];
+}
+
+/**
+ * Upstream error codes for catalog fetch failures.
+ */
+export type UpstreamErrorCode = "upstream_timeout" | "upstream_http_error" | "upstream_invalid_payload";
+
+/**
+ * Upstream error with code.
+ */
+export interface UpstreamError {
+  error: string;
+  code: UpstreamErrorCode;
+}
+
+/**
+ * Skills adapter interface exposed via ServerOptions.
+ */
+export interface InstallSkillResultSuccess {
+  success: true;
+}
+
+export interface InstallSkillResultError {
+  error: string;
+  code: "invalid_source" | "spawn_error" | "install_failed" | "install_timeout";
+}
+
+export type InstallSkillResult = InstallSkillResultSuccess | InstallSkillResultError;
+
+export interface SkillsAdapter {
+  /**
+   * Discover all skills available in the project.
+   * Combines top-level skills and package-scoped skills.
+   */
+  discoverSkills(rootDir: string, projectStore?: TaskStore): Promise<DiscoveredSkill[]>;
+
+  /**
+   * Toggle a skill's enabled/disabled state.
+   * Updates project settings and returns persistence info.
+   */
+  toggleExecutionSkill(
+    rootDir: string,
+    input: { skillId: string; enabled: boolean },
+    projectStore?: TaskStore,
+  ): Promise<ToggleSkillResult>;
+
+  /**
+   * Install a skill from skills.sh into the current project.
+   */
+  installSkill(input: { source: string; skill?: string; cwd: string }): Promise<InstallSkillResult>;
+
+  /**
+   * Fetch the skills.sh catalog with optional authentication.
+   */
+  fetchCatalog(input: { limit: number; query?: string }): Promise<CatalogFetchResult | UpstreamError>;
+
+  /**
+   * Read the contents of a skill's SKILL.md file and list supplementary files.
+   */
+  readSkillContent(rootDir: string, skillId: string, projectStore?: TaskStore): Promise<SkillContent>;
+
+  /*
+  FNXC:Skills 2026-06-23-04:15:
+  Read a single supplementary file's text for the detail-pane file viewer. The SkillsView detail pane lists referenced files; clicking one must show its content. The `files` array carried only name/path/type, so a per-file content endpoint is required. `relativePath` is the skill-dir-relative path returned by readSkillContent; it is resolved + path-traversal-guarded against the skill directory so a request can never escape the skill root.
+  */
+  readSkillFileContent(rootDir: string, skillId: string, relativePath: string, projectStore?: TaskStore): Promise<SkillFileContent>;
+}
+
+/*
+FNXC:Skills 2026-06-23-04:15:
+Payload for the per-file viewer. `isText` is false for binary/oversized files so the UI renders a "cannot preview" notice instead of garbled bytes; `content` is empty in that case.
+*/
+export interface SkillFileContent {
+  name: string;
+  relativePath: string;
+  content: string;
+  isText: boolean;
+}
+
+/**
+ * Reduce any skill-name form to a single bare token (lowercased) for dedup:
+ *   "ce-work/SKILL.md" / "<src>::skills/ce-work/SKILL.md" / "ce-work" → "ce-work"
+ * Mirrors the editor-side helper (app/components/nodes/node-summary.ts); kept
+ * local because the dashboard client bundle (app/) and server source (src/) are
+ * separate build roots that do not share value imports.
+ */
+export function bareSkillName(name: string): string {
+  if (!name) return "";
+  const withoutSkillMd = name.replace(/\/SKILL\.md$/i, "");
+  const lastPathSegment = withoutSkillMd.split("/").pop() ?? withoutSkillMd;
+  const afterNamespace = lastPathSegment.split(":").pop() ?? lastPathSegment;
+  return afterNamespace.toLowerCase();
+}
+
+function isValidInstallSource(source: string): boolean {
+  return /^[^/]+\/[^/]+$/.test(source);
+}
+
+function captureStream(stream: NodeJS.ReadableStream | null | undefined): Promise<string> {
+  if (!stream) {
+    return Promise.resolve("");
+  }
+
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    });
+    stream.once("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    stream.once("close", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+  });
+}
+
+async function waitForSupervisedExit(
+  child: ChildProcess,
+  exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }>,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  const spawnError = new Promise<never>((_, reject) => {
+    child.once("error", reject);
+  });
+  return Promise.race([exitPromise, spawnError]);
+}
+
+/**
+ * Check if a skill path is enabled in the settings.
+ * Checks both top-level skills and package-scoped skills.
+ * Defaults to disabled when the settings file says nothing about the skill.
+ */
+function isSkillEnabled(
+  skillId: string,
+  settings: { skills?: string[]; packages?: Array<{ source: string; skills?: string[] }> },
+): boolean {
+  return getSkillSettingState(skillId, settings) === "enabled";
+}
+
+/**
+ * Create the skills adapter implementation.
+ */
+export function createSkillsAdapter(options: {
+  /** Package manager for skill resolution */
+  packageManager: {
+    resolve(onMissing?: (source: string) => Promise<unknown>): Promise<{
+      skills: ResolvedResource[];
+      [key: string]: ResolvedResource[];
+    }>;
+  };
+  /** Project settings path helper */
+  getSettingsPath: (rootDir: string) => string;
+  /**
+   * Optional source of plugin-contributed skills (e.g. compound-engineering
+   * ce-*). These are materialized for executor sessions by the engine but are
+   * NOT seen by the disk-scanning package manager, so without this the editor
+   * skill catalog omits them. Lazy thunk: plugins may load after the adapter is
+   * created, so it is invoked per discovery rather than captured eagerly.
+   */
+  getPluginSkills?: (rootDir: string, projectStore?: TaskStore) =>
+    | Array<{
+      pluginId: string;
+      pluginRoot?: string;
+      skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] };
+    }>
+    | Promise<Array<{
+      pluginId: string;
+      pluginRoot?: string;
+      skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] };
+    }>>;
+  /** Optional superviseSpawn seam for tests */
+  superviseSpawn?: typeof superviseSpawn;
+}): SkillsAdapter {
+  return {
+    async discoverSkills(rootDir: string, projectStore?: TaskStore): Promise<DiscoveredSkill[]> {
+      // Resolve all resources including skills
+      const resolved = await options.packageManager.resolve();
+      const skillResources = resolved.skills ?? [];
+
+      // Load current settings to check enabled state
+      const settingsPath = options.getSettingsPath(rootDir);
+      let settings: { skills?: string[]; packages?: unknown[] } = {};
+      if (await pathExists(settingsPath)) {
+        try {
+          settings = JSON.parse(await readFile(settingsPath, "utf-8")) as typeof settings;
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
+      const discoveredSkills: DiscoveredSkill[] = [];
+
+      for (const resource of skillResources) {
+        // Compute relative path for the skill.
+        // Guard against baseDir being the parent of the skills directory,
+        // which causes relative() to already include "skills/" in the result.
+        const relPath = relative(resource.metadata.baseDir ?? "", resource.path)
+          .replaceAll("\\", "/");
+        const skillRelativePath = relPath.startsWith("skills/") ? relPath : `skills/${relPath}`;
+
+        const skillId = computeSkillId(resource.metadata.source, skillRelativePath);
+        const skillName = extractSkillName(skillRelativePath, resource.metadata.source);
+
+        discoveredSkills.push({
+          id: skillId,
+          name: skillName,
+          path: resource.path,
+          relativePath: skillRelativePath,
+          enabled: isSkillEnabled(skillId, settings as Parameters<typeof isSkillEnabled>[1]),
+          metadata: {
+            source: resource.metadata.source,
+            scope: resource.metadata.scope,
+            origin: resource.metadata.origin,
+            baseDir: resource.metadata.baseDir,
+          },
+        });
+      }
+
+      // Merge plugin-contributed skills (e.g. compound-engineering ce-*). The
+      // package manager only scans disk (cwd/agentDir/configured packages), so
+      // plugin skills — which the engine materializes for sessions separately —
+      // would otherwise never appear in the editor catalog. Dedup against disk
+      // skills by bare name so a plugin skill that is also installed on disk is
+      // not listed twice.
+      /*
+       * FNXC:PluginSkills 2026-07-10-00:00:
+       * Skill discovery is project-scoped: plugin contributions must be resolved for the requesting rootDir's project_plugin_states, not the daemon startup directory. This keeps /api/skills/discovered from leaking daemon-root plugin skills into unrelated projects while still surfacing skills enabled only for the requested managed project.
+       *
+       * FNXC:PluginSkills 2026-07-12-00:00:
+       * Plugin skill body paths now come from skillFiles (GitHub #2018) through @fusion/core's traversal-guarded resolver when pluginRoot is available. Discovered plugin skill path is the absolute on-disk SKILL.md location for FN-7857 consumers, while missing pluginRoot keeps the old name-derived relative path for compatibility.
+       */
+      /*
+       * FNXC:Skills 2026-07-14-16:13:
+       * Plugin skill discovery receives the already-resolved project TaskStore so PostgreSQL callers reuse its AsyncDataLayer-backed PluginStore. Creating a root-only PluginStore here re-entered the removed SQLite Database path and made the Skills page fail after migration.
+       */
+      const pluginSkills = await (projectStore
+        ? options.getPluginSkills?.(rootDir, projectStore)
+        : options.getPluginSkills?.(rootDir)) ?? [];
+      if (pluginSkills.length > 0) {
+        const seenBareNames = new Set(discoveredSkills.map((s) => bareSkillName(s.name)));
+        for (const { pluginId, pluginRoot, skill } of pluginSkills) {
+          const name = skill.name?.trim();
+          if (!name) continue;
+          const bare = bareSkillName(name);
+          if (seenBareNames.has(bare)) continue;
+          seenBareNames.add(bare);
+          const resolvedBodyPath = pluginRoot
+            ? resolvePluginSkillBodyPath({ name, skillFiles: skill.skillFiles ?? [] }, pluginRoot)
+            : null;
+          const relativePath = resolvedBodyPath?.relativePath ?? `skills/${name}/SKILL.md`;
+          const id = computeSkillId(`plugin:${pluginId}`, relativePath);
+          const enabled = resolvePluginSkillEnabled(
+            settings as Parameters<typeof resolvePluginSkillEnabled>[0],
+            pluginId,
+            name,
+            skill.enabled,
+            relativePath,
+          );
+          discoveredSkills.push({
+            id,
+            name,
+            path: resolvedBodyPath?.absolutePath ?? relativePath,
+            relativePath,
+            enabled,
+            description: skill.description,
+            metadata: {
+              source: `plugin:${pluginId}`,
+              scope: "user",
+              origin: "package",
+            },
+          });
+        }
+      }
+
+      return discoveredSkills;
+    },
+
+    async toggleExecutionSkill(
+      rootDir: string,
+      input: { skillId: string; enabled: boolean },
+      projectStore?: TaskStore,
+    ): Promise<ToggleSkillResult> {
+      const { skillId, enabled } = input;
+      const parsed = parseSkillId(skillId);
+      if (!parsed) {
+        throw new Error(`Invalid skill ID format: ${skillId}`);
+      }
+
+      const { source, relativePath } = parsed;
+
+      // Validate that the skill exists in discovered skills
+      const discovered = await this.discoverSkills(rootDir, projectStore);
+      const skillExists = discovered.some((s) => s.id === skillId);
+      if (!skillExists) {
+        throw new Error(`Skill not found: ${skillId}`);
+      }
+
+      // Load settings
+      const settingsPath = options.getSettingsPath(rootDir);
+      const settingsDir = dirname(settingsPath);
+      if (!await pathExists(settingsDir)) {
+        await mkdir(settingsDir, { recursive: true });
+      }
+
+      let settings: Record<string, unknown> = {};
+      if (await pathExists(settingsPath)) {
+        try {
+          settings = JSON.parse(await readFile(settingsPath, "utf-8")) as Record<string, unknown>;
+        } catch {
+          // Start fresh on parse error
+        }
+      }
+
+      // Ensure skills and packages arrays exist
+      if (!Array.isArray(settings.skills)) {
+        settings.skills = [];
+      }
+      if (!Array.isArray(settings.packages)) {
+        settings.packages = [];
+      }
+
+      const isTopLevel = source === "*";
+      const skillPath = normalizeStoredSkillPath(relativePath);
+
+      if (isTopLevel) {
+        // Toggle in top-level skills
+        const skills = settings.skills as string[];
+        const prefix = enabled ? "+" : "-";
+
+        // Remove any existing entry for this path (both + and -)
+        const existingIdx = skills.findIndex((s) => {
+          const p = s.startsWith("+") || s.startsWith("-") ? s.slice(1) : s;
+          return p === skillPath;
+        });
+        if (existingIdx !== -1) {
+          skills.splice(existingIdx, 1);
+        }
+
+        // Add the new entry
+        skills.push(`${prefix}${skillPath}`);
+
+        settings.skills = skills;
+
+        await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+        return {
+          settingsPath: "skills",
+          pattern: `${prefix}${skillPath}`,
+          targetFile: settingsPath,
+        };
+      } else {
+        // Toggle in package-scoped skills
+        const packages = settings.packages as Array<{ source: string; skills?: string[] }>;
+        const prefix = enabled ? "+" : "-";
+
+        // Find or create the package entry
+        let pkgEntry = packages.find((p) => {
+          const pkgSource = typeof p === "string" ? p : p.source;
+          return pkgSource === source;
+        });
+
+        if (!pkgEntry) {
+          // Create new package entry as object
+          pkgEntry = { source, skills: [] };
+          packages.push(pkgEntry);
+        } else if (typeof pkgEntry === "string") {
+          // Convert string entry to object, preserving the source string value
+          const idx = packages.indexOf(pkgEntry);
+          pkgEntry = { source, skills: [] };
+          packages[idx] = pkgEntry;
+        } else {
+          // pkgEntry is already an object - ensure skills array exists
+          // and preserve other fields like extensions, prompts, themes
+          if (!Array.isArray(pkgEntry.skills)) {
+            pkgEntry.skills = [];
+          }
+        }
+
+        // Ensure skills array exists
+        if (!Array.isArray(pkgEntry.skills)) {
+          pkgEntry.skills = [];
+        }
+
+        // Remove any existing entry for this path
+        const existingIdx = pkgEntry.skills.findIndex((s) => {
+          const p = s.startsWith("+") || s.startsWith("-") ? s.slice(1) : s;
+          return p === skillPath;
+        });
+        if (existingIdx !== -1) {
+          pkgEntry.skills.splice(existingIdx, 1);
+        }
+
+        // Add the new entry
+        pkgEntry.skills.push(`${prefix}${skillPath}`);
+
+        settings.packages = packages;
+        await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+        return {
+          settingsPath: "packages[].skills",
+          pattern: `${prefix}${skillPath}`,
+          targetFile: settingsPath,
+        };
+      }
+    },
+
+    async installSkill(input: { source: string; skill?: string; cwd: string }): Promise<InstallSkillResult> {
+      const source = input.source.trim();
+      if (!isValidInstallSource(source)) {
+        return {
+          error: "Invalid source format. Use owner/repo.",
+          code: "invalid_source",
+        };
+      }
+
+      const npxArgs = ["skills", "add", source];
+      const skill = input.skill?.trim();
+      if (skill) {
+        npxArgs.push("--skill", skill);
+      }
+      npxArgs.push("-y", "-a", "pi");
+
+      const runSpawn = options.superviseSpawn ?? superviseSpawn;
+      const supervised = runSpawn("npx", npxArgs, {
+        cwd: input.cwd,
+        shell: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        maxLifetimeMs: 60_000,
+      });
+
+      try {
+        const stderrPromise = captureStream(supervised.child.stderr);
+        const stdoutPromise = captureStream(supervised.child.stdout);
+        const exit = await waitForSupervisedExit(supervised.child, supervised.waitExit());
+        const [stderr, stdout] = await Promise.all([stderrPromise, stdoutPromise]);
+
+        if (exit.signal === "SIGKILL") {
+          return {
+            error: "Skill installation timed out.",
+            code: "install_timeout",
+          };
+        }
+
+        if ((exit.code ?? 1) !== 0) {
+          const detail = stderr.trim() || stdout.trim() || "Skill installation failed.";
+          return {
+            error: detail,
+            code: "install_failed",
+          };
+        }
+
+        return { success: true };
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : "Failed to start skill installer.",
+          code: "spawn_error",
+        };
+      }
+    },
+
+    async fetchCatalog(input: { limit: number; query?: string }): Promise<CatalogFetchResult | UpstreamError> {
+      const { limit, query } = input;
+      const boundedLimit = Math.min(Math.max(1, limit), 100);
+
+      // Get skills.sh token if available
+      const token = process.env.SKILLS_SH_TOKEN;
+      const catalogUrl = buildCatalogUrl(boundedLimit, query);
+      const publicSearchQuery = getPublicSearchQuery(query);
+
+      // No token available - use public search endpoint for valid search queries only.
+      // Empty/short queries return a deterministic empty catalog result.
+      if (!token) {
+        if (!publicSearchQuery) {
+          return buildEmptyCatalogResult({
+            mode: "unauthenticated",
+            tokenPresent: false,
+            fallbackUsed: false,
+          });
+        }
+
+        return fetchPublicCatalog(boundedLimit, publicSearchQuery, {
+          mode: "unauthenticated",
+          tokenPresent: false,
+          fallbackUsed: false,
+        });
+      }
+
+      // Try authenticated v1 catalog endpoint first
+      try {
+        const authResponse = await fetch(catalogUrl, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+
+        if (authResponse.ok) {
+          const data = await authResponse.json().catch(() => null);
+          if (data) {
+            return normalizeCatalogResponse(data, false);
+          }
+
+          return {
+            error: "Invalid upstream response format",
+            code: "upstream_invalid_payload",
+          };
+        }
+
+        // 400/401/403 from authenticated request - fall back to public search endpoint
+        if (authResponse.status === 400 || authResponse.status === 401 || authResponse.status === 403) {
+          if (!publicSearchQuery) {
+            return buildEmptyCatalogResult({
+              mode: "fallback-unauthenticated",
+              tokenPresent: true,
+              fallbackUsed: true,
+            });
+          }
+
+          return fetchPublicCatalog(boundedLimit, publicSearchQuery, {
+            mode: "fallback-unauthenticated",
+            tokenPresent: true,
+            fallbackUsed: true,
+          });
+        }
+
+        // Upstream error
+        return {
+          error: `Upstream returned ${authResponse.status}: ${authResponse.statusText}`,
+          code: "upstream_http_error",
+        };
+      } catch (err) {
+        const error = err as Error;
+        if (isTimeoutError(error)) {
+          return { error: "Upstream request timed out", code: "upstream_timeout" };
+        }
+        return {
+          error: error.message || "Upstream request failed",
+          code: "upstream_http_error",
+        };
+      }
+    },
+
+    async readSkillContent(rootDir: string, skillId: string, projectStore?: TaskStore): Promise<SkillContent> {
+      const parsed = parseSkillId(skillId);
+      if (!parsed) {
+        throw new Error(`Invalid skill ID format: ${skillId}`);
+      }
+
+      const discovered = await this.discoverSkills(rootDir, projectStore);
+      const skill = discovered.find((entry) => entry.id === skillId);
+      if (!skill) {
+        throw new Error(`Skill not found: ${skillId}`);
+      }
+
+      /*
+      FNXC:PluginSkills 2026-07-12-00:00:
+      GitHub #2017 requires plugin skills to be inspectable from the same on-disk SKILL.md/reference files that sessions load. FN-7860 makes plugin skill.path an absolute package path, so plugin entries now use the regular traversal-guarded disk reader instead of a runtime placeholder.
+      */
+      let skillDir = skill.path;
+      try {
+        const skillPathStat = await stat(skill.path);
+        skillDir = skillPathStat.isFile() ? dirname(skill.path) : skill.path;
+      } catch {
+        skillDir = dirname(skill.path);
+      }
+
+      const skillMdPath = join(skillDir, "SKILL.md");
+      let skillMd = "";
+      try {
+        skillMd = await readFile(skillMdPath, "utf-8");
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      const entries = await readdir(skillDir, { withFileTypes: true }).catch(() => []);
+      const files: SkillFileEntry[] = entries
+        .filter((entry) => entry.name !== "SKILL.md")
+        .map((entry) => ({
+          name: entry.name,
+          relativePath: entry.name,
+          type: entry.isDirectory() ? "directory" : "file",
+        }));
+
+      return {
+        name: skill.name,
+        skillMd,
+        files,
+      };
+    },
+
+    /*
+    FNXC:Skills 2026-06-23-04:15:
+    Per-file content read for the detail-pane viewer. Resolves the skill directory the same way readSkillContent does, then joins the requested relativePath. Guards against path traversal (resolved target must stay inside the skill dir) and refuses to read SKILL.md through this path (the SKILL.md view has its own endpoint). Binary/oversized files return isText:false with empty content so the UI shows a non-previewable notice rather than garbled output.
+    */
+    async readSkillFileContent(rootDir: string, skillId: string, relativePath: string, projectStore?: TaskStore): Promise<SkillFileContent> {
+      const parsed = parseSkillId(skillId);
+      if (!parsed) {
+        throw new Error(`Invalid skill ID format: ${skillId}`);
+      }
+
+      const discovered = await this.discoverSkills(rootDir, projectStore);
+      const skill = discovered.find((entry) => entry.id === skillId);
+      if (!skill) {
+        throw new Error(`Skill not found: ${skillId}`);
+      }
+      /*
+      FNXC:PluginSkills 2026-07-12-00:00:
+      Plugin skill reference files are read from the resolved plugin skill directory with the same traversal guard as native skills, so dashboard inspection matches the body delivered to sessions.
+      */
+      let skillDir = skill.path;
+      try {
+        const skillPathStat = await stat(skill.path);
+        skillDir = skillPathStat.isFile() ? dirname(skill.path) : skill.path;
+      } catch {
+        skillDir = dirname(skill.path);
+      }
+
+      const normalizedRelative = relativePath.replaceAll("\\", "/");
+      const resolvedSkillDir = resolve(skillDir);
+      const targetPath = resolve(resolvedSkillDir, normalizedRelative);
+      // Path-traversal guard: the resolved target must stay inside the skill dir.
+      if (targetPath !== resolvedSkillDir && !targetPath.startsWith(resolvedSkillDir + sep)) {
+        throw new Error(`Invalid skill file path: ${relativePath}`);
+      }
+
+      let fileStat;
+      try {
+        fileStat = await stat(targetPath);
+      } catch {
+        throw new Error(`Skill file not found: ${relativePath}`);
+      }
+      if (fileStat.isDirectory()) {
+        throw new Error(`Skill file not found: ${relativePath}`);
+      }
+
+      const name = normalizedRelative.split("/").filter(Boolean).pop() ?? normalizedRelative;
+      // 2 MB ceiling keeps the viewer responsive and avoids streaming huge blobs.
+      const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
+      if (fileStat.size > MAX_PREVIEW_BYTES) {
+        return { name, relativePath: normalizedRelative, content: "", isText: false };
+      }
+
+      const buffer = await readFile(targetPath);
+      // Heuristic: a NUL byte in the first chunk means binary -> non-previewable.
+      const sample = buffer.subarray(0, Math.min(buffer.length, 8000));
+      const isBinary = sample.includes(0);
+      if (isBinary) {
+        return { name, relativePath: normalizedRelative, content: "", isText: false };
+      }
+
+      return {
+        name,
+        relativePath: normalizedRelative,
+        content: buffer.toString("utf-8"),
+        isText: true,
+      };
+    },
+  };
+}
+
+/**
+ * Extract skill name from path and source.
+ */
+export function extractSkillName(skillPath: string, source: string): string {
+  // Get the last two path components (category/name or just name)
+  const parts = skillPath.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length >= 2) {
+    // Return last two parts joined
+    return parts.slice(-2).join("/");
+  }
+  if (parts.length === 1) {
+    return parts[0]!;
+  }
+  // Fallback to source
+  return source;
+}
+
+/**
+ * Build the authenticated catalog URL.
+ */
+function buildCatalogUrl(limit: number, query?: string): string {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+
+  const normalizedQuery = query?.trim();
+  if (normalizedQuery) {
+    params.set("q", normalizedQuery);
+  }
+
+  return `https://skills.sh/api/v1/skills?${params.toString()}`;
+}
+
+/**
+ * Build the public search URL.
+ *
+ * The search API requires a non-empty query that meets minimum length.
+ */
+function buildSearchUrl(limit: number, query: string): string {
+  const params = new URLSearchParams();
+  params.set("q", query);
+  params.set("limit", String(limit));
+
+  return `https://skills.sh/api/search?${params.toString()}`;
+}
+
+/**
+ * Fetch and normalize catalog data from the public /api/search endpoint.
+ */
+const MIN_PUBLIC_SEARCH_QUERY_LENGTH = 2;
+
+function getPublicSearchQuery(query?: string): string | null {
+  const normalized = query?.trim() ?? "";
+  return normalized.length >= MIN_PUBLIC_SEARCH_QUERY_LENGTH ? normalized : null;
+}
+
+function buildEmptyCatalogResult(auth: CatalogFetchResult["auth"]): CatalogFetchResult {
+  return {
+    entries: [],
+    auth,
+  };
+}
+
+async function fetchPublicCatalog(
+  limit: number,
+  query: string,
+  auth: CatalogFetchResult["auth"],
+): Promise<CatalogFetchResult | UpstreamError> {
+  const url = buildSearchUrl(limit, query);
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!response.ok) {
+      return {
+        error: `Upstream returned ${response.status}: ${response.statusText}`,
+        code: "upstream_http_error",
+      };
+    }
+
+    const data = await response.json().catch(() => null);
+    if (!data) {
+      return {
+        error: "Invalid upstream response format",
+        code: "upstream_invalid_payload",
+      };
+    }
+
+    return normalizeSearchResponse(data, auth);
+  } catch (err) {
+    const error = err as Error;
+    if (isTimeoutError(error)) {
+      return { error: "Upstream request timed out", code: "upstream_timeout" };
+    }
+    return {
+      error: error.message || "Upstream request failed",
+      code: "upstream_http_error",
+    };
+  }
+}
+
+/**
+ * Normalize public search endpoint response shape to CatalogFetchResult.
+ */
+function normalizeSearchResponse(
+  data: unknown,
+  auth: CatalogFetchResult["auth"],
+): CatalogFetchResult | UpstreamError {
+  if (!data || typeof data !== "object") {
+    return {
+      error: "Invalid upstream response format",
+      code: "upstream_invalid_payload",
+    };
+  }
+
+  const record = data as Record<string, unknown>;
+  if (!Array.isArray(record.skills)) {
+    return {
+      error: "Invalid upstream response format: expected { skills: [...] }",
+      code: "upstream_invalid_payload",
+    };
+  }
+
+  return {
+    entries: record.skills.map(normalizeSearchEntry),
+    auth,
+  };
+}
+
+/**
+ * Normalize a single /api/search skill entry to CatalogEntry.
+ */
+function normalizeSearchEntry(entry: unknown): CatalogEntry {
+  if (!entry || typeof entry !== "object") {
+    return {
+      id: "",
+      slug: "",
+      name: "Unknown",
+      installation: { installed: false, matchingSkillIds: [], matchingPaths: [] },
+    };
+  }
+
+  const record = entry as Record<string, unknown>;
+  const id = String(record.id ?? record.skillId ?? "");
+  const nameCandidate = String(record.name ?? record.skillId ?? id);
+
+  return {
+    id,
+    slug: id,
+    name: nameCandidate || "Unknown",
+    repo: record.source ? String(record.source) : undefined,
+    installs: typeof record.installs === "number" ? record.installs : undefined,
+    installation: {
+      installed: false,
+      matchingSkillIds: [],
+      matchingPaths: [],
+    },
+  };
+}
+
+function isTimeoutError(error: Error): boolean {
+  const message = error.message?.toLowerCase() ?? "";
+  return error.name === "TimeoutError" || message.includes("timeout");
+}
+
+/**
+ * Normalize catalog response to handle both array and wrapped formats.
+ */
+function normalizeCatalogResponse(
+  data: unknown,
+  fallbackUsed: boolean,
+): CatalogFetchResult | UpstreamError {
+  if (!data || typeof data !== "object") {
+    return {
+      error: "Invalid upstream response format",
+      code: "upstream_invalid_payload",
+    };
+  }
+
+  // Handle array format
+  if (Array.isArray(data)) {
+    return {
+      entries: data.map(normalizeEntry),
+      auth: {
+        mode: fallbackUsed ? "fallback-unauthenticated" : "authenticated",
+        tokenPresent: !fallbackUsed,
+        fallbackUsed,
+      },
+    };
+  }
+
+  // Handle wrapped format { skills: [...] }
+  const record = data as Record<string, unknown>;
+  const skills = record.skills;
+  if (Array.isArray(skills)) {
+    return {
+      entries: skills.map(normalizeEntry),
+      auth: {
+        mode: fallbackUsed ? "fallback-unauthenticated" : "authenticated",
+        tokenPresent: !fallbackUsed,
+        fallbackUsed,
+      },
+    };
+  }
+
+  return {
+    error: "Invalid upstream response format: expected array or { skills: [...] }",
+    code: "upstream_invalid_payload",
+  };
+}
+
+/**
+ * Normalize a single catalog entry.
+ */
+function normalizeEntry(entry: unknown): CatalogEntry {
+  if (!entry || typeof entry !== "object") {
+    return {
+      id: "",
+      slug: "",
+      name: "Unknown",
+      installation: { installed: false, matchingSkillIds: [], matchingPaths: [] },
+    };
+  }
+
+  const record = entry as Record<string, unknown>;
+  const id = String(record.id ?? record.slug ?? "");
+  const slug = String(record.slug ?? record.name ?? id);
+  const name = String(record.name ?? record.title ?? slug);
+  const description = record.description ? String(record.description) : undefined;
+  const repo = record.repo ? String(record.repo) : undefined;
+  const npmPackage = record.npmPackage ? String(record.npmPackage) : undefined;
+  const tags = Array.isArray(record.tags) ? record.tags.map(String) : undefined;
+  const installs = typeof record.installs === "number" ? record.installs : undefined;
+
+  return {
+    id,
+    slug,
+    name,
+    description,
+    repo,
+    npmPackage,
+    tags,
+    installs,
+    installation: {
+      installed: false,
+      matchingSkillIds: [],
+      matchingPaths: [],
+    },
+  };
+}
+
+/**
+ * Read project settings from .fusion/settings.json.
+ */
+export async function readProjectSettings(projectPath: string): Promise<Record<string, unknown>> {
+  const fusionSettings = join(projectPath, ".fusion", "settings.json");
+
+  if (await pathExists(fusionSettings)) {
+    try {
+      return JSON.parse(await readFile(fusionSettings, "utf-8")) as Record<string, unknown>;
+    } catch {
+      // Return empty on parse error
+    }
+  }
+
+  return {};
+}
+
+/**
+ * Write project settings to .fusion/settings.json atomically.
+ */
+export async function writeProjectSettings(projectPath: string, settings: Record<string, unknown>): Promise<void> {
+  const settingsDir = join(projectPath, ".fusion");
+  const settingsPath = join(settingsDir, "settings.json");
+
+  if (!await pathExists(settingsDir)) {
+    await mkdir(settingsDir, { recursive: true });
+  }
+
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+}
+
+/**
+ * Get the settings file path for a project.
+ */
+export function getProjectSettingsPath(rootDir: string): string {
+  return join(rootDir, ".fusion", "settings.json");
+}

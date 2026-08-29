@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { bundledClaudeBridgeBinPath, resolveBundledClaudeBridgeBinary } from "../cli-spawn.js";
+describe("staged Claude bridge resolver", () => { it("only accepts an identity-pinned bridge beneath its plugin root", () => { const root="/tmp/plugin"; const path=bundledClaudeBridgeBinPath(root); expect(resolveBundledClaudeBridgeBinary({pluginRoot:root,exists:(candidate)=>candidate===path})).toMatchObject({kind:"resolved",path}); }); it("does not fall back to PATH", () => expect(resolveBundledClaudeBridgeBinary({pluginRoot:"/tmp/plugin",exists:()=>false}).kind).toBe("not_resolved")); });

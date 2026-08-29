@@ -1,0 +1,700 @@
+/* === InsightsView === */
+.insights-view {
+  /*
+  FNXC:Insights 2026-06-23-19:20:
+  Insights page horizontal dividers should default invisible with the current seamless header treatment. Keep a local token so themes can restore those dividers with --insights-divider-color or the shared --chrome-divider-color.
+  */
+  --insights-divider-color: var(--chrome-divider-color, transparent);
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+FNXC:Insights 2026-06-22-01:00:
+Header migrated to the shared ViewHeader component (.view-header). The old .insights-view-header / .insights-view-title / .insights-view-actions rules were removed; the count badge and action toggles still render inside ViewHeader's actions slot, so their styling rules are retained below.
+*/
+.insights-view-count {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+/* Model configuration row — collapsible, below the action bar */
+.insights-model-config {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: var(--chrome-divider-width, 1px) solid var(--insights-divider-color);
+  background: var(--surface-subtle);
+}
+
+.insights-model-label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.insights-model-config .model-combobox {
+  max-width: 320px;
+}
+
+/* Gear toggle with active indicator */
+.insights-model-toggle {
+  position: relative;
+}
+
+.insights-model-indicator {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--todo, #f59e0b);
+}
+
+.insights-view-close {
+  color: var(--text-muted);
+}
+
+.insights-view-close:hover {
+  color: var(--text);
+}
+
+.insights-refresh-btn {
+  flex: 0 0 auto;
+}
+
+/* Status region */
+.insights-status-region {
+  padding: var(--space-md) var(--space-lg);
+  flex-shrink: 0;
+}
+
+.insights-status-region:empty {
+  padding: 0;
+}
+
+.insights-status-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+}
+
+.insights-status-message--success {
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
+}
+
+.insights-status-message--error {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+}
+
+.insights-status-message--info {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+/* Error callout */
+.insights-error-callout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 var(--space-lg) var(--space-md);
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--color-error);
+  font-size: 0.8125rem;
+  flex-shrink: 0;
+}
+
+/* Run info */
+.insights-run-info {
+  padding: 0 var(--space-lg) var(--space-md);
+  flex-shrink: 0;
+}
+
+.insights-run-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Loading state */
+.insights-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-2xl);
+  color: var(--text-muted);
+}
+
+/* Error state */
+.insights-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-2xl);
+  text-align: center;
+}
+
+.insights-error p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Empty state */
+.insights-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-2xl);
+  text-align: center;
+  flex: 1;
+}
+
+.insights-empty h3 {
+  margin: 0;
+  font-size: 1.125rem;
+  color: var(--text);
+}
+
+.insights-empty p {
+  color: var(--text-muted);
+  margin: 0;
+  max-width: calc(var(--space-2xl) * 12 + var(--space-lg));
+}
+
+/* Two-pane body */
+.insights-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Sidebar (categories) */
+.insights-sidebar {
+  width: calc(var(--space-2xl) * 7 + var(--space-lg));
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.insights-category-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.insights-category-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.insights-category-item:hover {
+  background: var(--surface-1);
+}
+
+.insights-category-item--active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+
+.insights-category-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.insights-category-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.insights-category-count {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+}
+
+.insights-category-item--active .insights-category-count {
+  background: var(--surface);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Detail pane */
+.insights-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+/*
+FNXC:Insights 2026-07-10-23:30:
+Modernization pass: the detail pane previously nested cards inside a card (an outer
+.insights-section card wrapping per-insight cards), which doubled the borders and
+padding around every insight. The outer section is now transparent chrome — a plain
+header row above the flat list of insight cards — so each insight reads as one card
+at a consistent depth with the rest of the dashboard.
+*/
+.insights-section {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.insights-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 var(--space-md);
+  background: transparent;
+  border-bottom: none;
+}
+
+.insights-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.insights-section-title h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.insights-section-icon {
+  color: var(--accent);
+}
+
+.insights-section-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+}
+
+.insights-section-content {
+  padding: 0;
+}
+
+/* Insights list */
+.insights-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Individual insight item */
+.insight-item {
+  padding: var(--space-md) var(--space-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.insight-item:hover {
+  background: var(--surface);
+  border-left-color: var(--accent);
+}
+
+.insight-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.insight-item-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.insight-item-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/*
+FNXC:Insights 2026-07-10-23:30:
+Action buttons were 32px boxes with 20px icons, which visually competed with the
+insight titles. They shrink to 28px boxes with 16px icons and stay muted until the
+insight row is hovered, keeping the title as the dominant element.
+*/
+.insight-item-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.65;
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.insight-item:hover .insight-item-action-btn,
+.insight-item:focus-within .insight-item-action-btn {
+  opacity: 1;
+}
+
+.insight-item-action-btn:hover:not(:disabled) {
+  background: var(--surface-1);
+  color: var(--accent);
+}
+
+.insight-item-action-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.insight-item-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.insight-item-content {
+  margin: var(--space-sm) 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.insight-item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.insight-item-status {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  text-transform: capitalize;
+  font-weight: 500;
+}
+
+.insight-item-status--generated {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.insight-item-status--confirmed {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+
+.insight-item-status--stale {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.insight-item-status--dismissed {
+  background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+  color: var(--text-dim);
+}
+
+.insight-item-status--archived {
+  background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+  color: var(--text-dim);
+}
+
+.insight-item--archived {
+  opacity: 0.6;
+  border-left-color: var(--text-dim);
+}
+
+.insight-item--archived .insight-item-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.insight-item--archived .insight-item-content {
+  text-decoration: line-through;
+}
+
+.insight-item-date {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* Mobile responsive: stack panes vertically; sidebar becomes a horizontal scroller */
+@media (max-width: 768px), (max-height: 480px) {
+  /*
+  FNXC:Insights 2026-07-11-20:27:
+  FN-7830: Insights has the widest ViewHeader actions cluster, so mobile must give the title its own full-width row and wrap actions below it instead of shrinking the title to an `I…` ellipsis or crowding touch targets.
+  */
+  .insights-view .view-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+  }
+
+  .insights-view .view-header__title {
+    flex: 1 0 100%;
+    min-width: 100%;
+  }
+
+  .insights-view .view-header__title span {
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .insights-view .view-header__actions {
+    justify-content: flex-start;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+  }
+
+  .insights-body {
+    flex-direction: column;
+  }
+
+  .insights-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: var(--chrome-divider-width, 1px) solid var(--insights-divider-color);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+  }
+
+  .insights-category-list {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    padding: var(--space-sm);
+    gap: var(--space-xs);
+  }
+
+  .insights-category-list > li {
+    flex-shrink: 0;
+  }
+
+  .insights-category-item {
+    white-space: nowrap;
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .insights-category-label {
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .insights-detail {
+    padding: var(--space-md);
+  }
+
+  .insights-section-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .insights-section-content {
+    padding: var(--space-sm);
+  }
+
+  .insight-item {
+    padding: var(--space-sm);
+  }
+
+  .insight-item-title {
+    word-break: break-word;
+  }
+
+  .insight-item-header {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .insight-item-meta {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .insight-item-actions {
+    align-self: flex-end;
+  }
+
+  .insight-item-action-btn {
+    width: calc(var(--space-2xl) + var(--space-sm));
+    height: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .view-header__actions .insights-view-actions-btn {
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+  }
+
+  .insights-show-archived-toggle {
+    max-width: calc(var(--space-2xl) * 5 + var(--space-md));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .insights-view-close {
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+    min-width: calc(var(--space-2xl) + var(--space-xs));
+  }
+
+  .insights-view-count {
+    font-size: 0.75rem;
+  }
+
+  .insights-model-config {
+    padding: var(--space-xs) var(--space-md);
+  }
+
+  .insights-model-config .model-combobox {
+    max-width: 200px;
+  }
+}
+
+/*
+FNXC:InsightsView 2026-06-20-00:34:
+Insights tablets at 769px–1024px were inheriting the desktop fixed category sidebar, which squeezed the detail pane inside the .project-content flex chain. Stack the category rail above the detail pane and keep both panes shrinkable so long insight content cannot force horizontal cut-off.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .insights-view {
+    flex: 1;
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .insights-body {
+    flex-direction: column;
+    inline-size: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .insights-sidebar {
+    width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    border-right: none;
+    border-bottom: var(--chrome-divider-width, 1px) solid var(--insights-divider-color);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .insights-category-list {
+    flex-direction: row;
+    flex-wrap: nowrap;
+  }
+
+  .insights-category-list > li {
+    flex-shrink: 0;
+  }
+
+  .insights-category-item {
+    white-space: nowrap;
+  }
+
+  .insights-detail {
+    flex: 1 1 0;
+    min-width: 0;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow-y: auto;
+  }
+}
+
+/*
+FNXC:TaskRecommendations 2026-08-13-04:41:
+The Insights recommendation pane keeps source identity and actions inside the established list layout,
+so desktop and horizontal mobile category rails expose the same reachable Load more control.
+*/
+.insights-recommendations__count,
+.insights-recommendations__source {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.insights-recommendations__item {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .insights-recommendations .btn {
+    inline-size: 100%;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .insights-recommendations__item {
+    min-inline-size: 0;
+  }
+}

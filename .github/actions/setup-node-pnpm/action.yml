@@ -1,0 +1,68 @@
+name: setup-node-pnpm
+description: "Install pnpm, setup Node.js, install dependencies"
+inputs:
+  node-version:
+    description: Node.js version
+    required: false
+    default: "24"
+  install-args:
+    description: Arguments passed to pnpm install
+    required: false
+    default: "--frozen-lockfile"
+  registry-url:
+    description: Optional npm registry URL passed to actions/setup-node
+    required: false
+    default: ""
+  skip-install:
+    description: Set to 'true' to skip the pnpm install step; caller runs install themselves
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+
+    # Do NOT cache the linked node_modules tree. pnpm builds node_modules from
+    # symlinks/junctions into the content-addressable store, and actions/cache does
+    # not preserve Windows junctions across its tar/restore — a restored tree has
+    # broken peer links (e.g. @vitejs/plugin-react can't resolve its `vite` peer →
+    # ERR_MODULE_NOT_FOUND), which silently broke the Windows release build. The
+    # pnpm *store* is already cached by actions/setup-node (`cache: pnpm`), so
+    # `pnpm install --frozen-lockfile` is fast with a warm store and relinks
+    # correctly per-OS/arch every time (also fixing the prior arch-key and per-job
+    # cache-race issues this node_modules cache was patched for).
+    #
+    # FNXC:CI 2026-07-26-23:05:
+    # skip-install callers (agent-browser pack fixture, version.yml) never create a
+    # pnpm store. setup-node's post-job cache save then fails hard with
+    # "Path Validation Error: Path(s) specified in the action for caching do(es)
+    # not exist" and marks an otherwise-successful pack job failed. Only enable
+    # the pnpm store cache when this composite will actually install.
+    #
+    # FNXC:CI 2026-08-03-06:26:
+    # Omitting `cache: pnpm` is NOT enough on actions/setup-node@v5+: the default
+    # `package-manager-cache: true` still auto-detects the workspace lockfile, registers
+    # the pnpm store path for post-job save, and red-X's skip-install jobs after a green
+    # pack (agent-browser-install pack-fixture on PR #3307). Explicitly disable it on the
+    # no-install path; keep the install path on the explicit `cache: pnpm` contract.
+    - name: Setup Node.js
+      if: ${{ inputs.skip-install != 'true' }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        registry-url: ${{ inputs.registry-url }}
+
+    - name: Setup Node.js (no pnpm store cache)
+      if: ${{ inputs.skip-install == 'true' }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+        registry-url: ${{ inputs.registry-url }}
+
+    - name: Install dependencies
+      if: ${{ inputs.skip-install != 'true' }}
+      shell: bash
+      run: pnpm install ${{ inputs.install-args }}

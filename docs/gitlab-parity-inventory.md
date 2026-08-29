@@ -1,0 +1,130 @@
+# GitLab Parity Inventory
+
+[← Docs index](./README.md)
+
+This inventory is the implementation map for first-class GitLab support. It documents the GitHub import, linked issue tracking, comment, close, auth/settings UI, CLI/extension, and Command Center surfaces that later GitLab tasks must either mirror or explicitly exclude. It does **not** add runtime GitLab support, settings, routes, CLI commands, dashboard controls, or agent tools.
+
+Required included surfaces: issue import, linked issue tracking, completion comments, auto-close, auth/settings UI, CLI/extension tools, Command Center GitLab analytics, and GitLab webhook/system-hook signals.
+
+## External Integration Evidence
+
+- Canonical upstream repo URL: https://gitlab.com/gitlab-org/gitlab
+- Docs / homepage URL: https://docs.gitlab.com/
+- API docs URL: https://docs.gitlab.com/api/rest/
+- Release / download URL: https://gitlab.com/gitlab-org/gitlab/-/releases
+- Binary / CLI name: `none` (HTTP API integration only; do not introduce a required `glab`/GitLab CLI dependency in this inventory)
+- Checksum: `upstream-pending-verification` (no downloadable binary is added by this task)
+
+## GitLab API assumptions for downstream work
+
+- Hosting must support both **GitLab.com** and **self-managed GitLab**. Operators need a configurable instance web/base URL such as `https://gitlab.com` or `https://gitlab.example.com`, and a configurable or derived base REST API URL ending in `/api/v4` such as `https://gitlab.example.com/api/v4`. Do not hardcode GitLab.com as the only host.
+- GitLab REST path parameters accept numeric IDs or URL-encoded paths for projects and groups. Project paths such as `group/subgroup/project` must be URL-encoded as `group%2Fsubgroup%2Fproject` before use in `/projects/:id` endpoints.
+- GitLab distinguishes global `id` from project-scoped or group-scoped `iid`. Issues and merge requests should persist both when available, but user-facing lookups and URLs should use the IID because it is the number displayed in GitLab UI (`/-/issues/:iid`, `/-/merge_requests/:iid`).
+- Authentication should use GitLab access tokens over HTTP headers (`PRIVATE-TOKEN` or an equivalent bearer-token pattern supported by GitLab), not the `glab` CLI. Personal, project, and group access tokens are all valid token kinds for this design. GitLab docs state `read_api` grants read API access and `api` grants complete read/write API access. Downstream tasks should verify the minimum scope per operation against the exact endpoint: read-only list/fetch/import flows should start from `read_api`; note creation, issue creation, issue close/reopen, and merge-request state changes should require `api` unless GitLab documents a narrower write scope for that token kind.
+- Project access tokens are scoped to one project. Group access tokens are scoped to a group and its projects. Personal access tokens inherit the user access model. GitLab.com availability for project/group access tokens can depend on tier; self-managed instances can differ by version and admin policy, so failures must surface actionable auth/permission copy rather than assuming a single token model.
+- Comments are GitLab **notes**. Project issue notes use `POST /projects/:id/issues/:issue_iid/notes`; merge request notes use `POST /projects/:id/merge_requests/:merge_request_iid/notes`. Group issue lists can discover issues across a group, but commenting and state changes still need the issue's project identity.
+- Project issues can be closed and reopened through the issue edit/update API with state transition parameters. Merge requests have close/reopen/merge operations, but an imported MR review task should not auto-merge anything merely because a Fusion task completes; close/merge behavior must be separately opted in and documented before implementation.
+
+## Close-on-delete semantics
+
+Ordinary deletion is deliberately separate from the `task:moved` done-close setting: `gitlabCloseSourceIssueOnDone` governs only the done-move close and does **not** gate deletion behavior.
+
+| Situation | Behavior |
+| --- | --- |
+| Ordinary delete, GitLab issue, `githubIssueAction` absent or `"auto"` | Close the issue once. Imported source issues represent incoming work, matching GitHub's default. No note is posted. |
+| Ordinary delete, `githubIssueAction === "leave"` | Leave the GitLab issue untouched and log `Left linked GitLab issue unchanged on task delete`. |
+| Ordinary delete, `githubIssueAction === "delete"` | GitLab issue deletion is not supported; close the issue instead and log `GitLab issue deletion is not supported; closed instead`. GitLab issue hard-delete is owner-only and irreversible, and Fusion does not expose it. |
+| Ordinary delete, GitLab merge request | No-op and log the skip. Merge requests are never auto-closed on delete. |
+| Already closed issue or merged merge request | No-op through the shared state-update guard. |
+| No resolvable GitLab target | No-op with no API call. |
+
+Ownership is exactly one mutation on the target resolved by `resolveGitLabTarget(task, { fallbackToSourceOnInvalidTracking: true })`: a valid tracking item wins; otherwise, only this delete path may fall back from malformed tracking metadata to a GitLab `sourceIssue`. This is intentionally opt-in. Keeping `resolveGitLabTarget(task)` unchanged prevents the existing done-close, progress-comment, and tracking-state consumers from newly mutating a source issue that was previously inert. Those consumers retain their no-op behavior for malformed tracking metadata.
+
+Explicit non-goals: GitLab issue hard-delete, merge-request auto-close, cross-process `task:deleted` delivery, changing the done-move close path, and adopting malformed-tracking fallback in any non-delete consumer.
+
+## Current GitHub surfaces and GitLab equivalents
+
+| Area | Existing GitHub surface | Current source | GitLab equivalent / implementation contract |
+|---|---|---|---|
+| Dashboard issue import list | Import Tasks modal issue tab fetches open issues for `owner/repo`, supports label filter, detected GitHub remotes, selection, full body preview, and per-selected issue comment preview. | `GitHubImportModal.tsx`; `POST /api/github/issues/fetch`; `POST /api/github/issues/detail` | Add a GitLab import tab or provider switch that fetches project issues from a configured GitLab project path/ID and optionally group issues from a group path/ID. Preserve full preview. Use project issue notes for selected issue comments; group issue rows must carry `project_id`/project path so detail fetches can call project endpoints. |
+| Dashboard single issue import | `POST /api/github/issues/import` creates one triage task from a GitHub issue, rejects PRs, and deduplicates sourceIssue-first (case-insensitive repository), then source metadata and legacy source URL; it writes `sourceIssue`, `sourceType: "github_import"`, and a log entry. | `register-git-github.ts` | Add a GitLab single project-issue import route that stores `sourceIssue.provider = "gitlab"`, canonical project path/ID in `repository`, stable global issue `id` in `externalIssueId`, displayed issue `iid` in `issueNumber`, and web URL. Group issue imports must resolve and persist the owning project identity. |
+| Dashboard batch issue import | `POST /api/github/issues/batch-import` imports selected issue numbers with throttling and skips already imported issues. | `register-git-github.ts` | Add GitLab batch import for project issue IIDs. Group issue batch import should use selected rows carrying project IDs, not only bare IIDs, because IID is project-scoped. |
+| Dashboard issue close from import preview | `POST /api/github/issues/close` powers the modal's Close issue button and reflects closed state locally. | `GitHubImportModal.tsx`; `register-git-github.ts` | Add a GitLab close issue action only for project issues with a known project ID/path and issue IID. Group issue views must route closure through the owning project. |
+| Dashboard PR import/review task import | Import Tasks PR tab fetches PRs, selected PR detail comments/checks, and `POST /api/github/pulls/import` creates a review task with `PR:` URL and branch metadata. | `GitHubImportModal.tsx`; `POST /api/github/pulls/fetch`; `POST /api/github/pulls/detail`; `POST /api/github/pulls/import` | Add merge request import as the GitLab equivalent. Persist source metadata with project ID/path, MR global `id`, MR `iid`, web URL, source/target branches, draft/state/check summary where available. This creates review tasks; it must not auto-merge MRs. |
+| CLI issue import | `fn task import <owner/repo> [--labels] [--limit] [--interactive]` uses `gh` auth, skips duplicate source issues, writes `github_import` source metadata, and can enable tracking adoption for imported issues. | `packages/cli/src/bin.ts`; `packages/cli/src/commands/task.ts` | Add a future CLI shape such as `fn task import-gitlab <project-path-or-id>` or provider flag without breaking existing GitHub syntax. It must use configured GitLab HTTP token/base URL, not `glab`, and must support project issues, group issue discovery, labels, limit, and interactive selection. |
+| Agent/extension issue import tools | `fn_task_import_github`, `fn_task_import_github_issue`, and browse support fetch GitHub issues and create tasks; tools are action-gated as task mutation. | `packages/cli/src/extension.ts`; tool IDs in `packages/core/src/types.ts` | Add explicit GitLab tool IDs only in a later implementation task, likely `fn_task_import_gitlab`, `fn_task_import_gitlab_issue`, and browse support. Parameters must include instance/base URL selection or project config reference, project path/ID, optional group path/ID, issue IID, labels, and limit. Keep permission classification aligned with GitHub import tools. |
+| Imported source issue metadata | GitHub issue imports retain `TaskSourceIssue` (`provider`, `repository`, `externalIssueId`, `issueNumber`, `url`, `closedAt`) and legacy `issueInfo`. Commit bodies can include `Ref: owner/repo#N`. | `packages/core/src/types.ts`; `docs/task-management.md` | Reuse `TaskSourceIssue` with `provider: "gitlab"`. Store repository as canonical GitLab project path or numeric project ID plus instance identity in metadata. Store `externalIssueId` as GitLab global issue `id` when available and `issueNumber` as issue IID. Downstream should add provider-aware reference formatting such as `Ref: group/project#IID` and avoid assuming GitHub `owner/repo`. |
+| GitHub tracking issues | Optional `task.githubTracking` creates/links a GitHub issue for a Fusion task, distinct from imported source issues. It supports enabled/repo override, manual create, unlink, delete close/delete/leave choice, comments, close/reopen on task state, and imported-source adoption via `githubLinkImportedIssuesToTracking`. | `TaskGithubTracking`; `github-tracking.ts`; `github-tracking-hook.ts`; `github-tracking-state.ts`; `TaskDetailModal.tsx`; `ListView.tsx` | Add a parallel provider-specific GitLab tracking contract rather than overloading GitHub fields. Equivalent state should include enabled, project override, linked project issue metadata (`instanceUrl`, `projectId` or encoded path, `projectPath`, issue `iid`, global issue `id`, URL, createdAt, lastSyncedAt), unlinkedAt, and source issue adoption for GitLab-imported issues. It must remain distinct from `sourceIssue`. |
+| Post-create tracking hook | `registerGithubTrackingHook()` registers a universal post-create hook for dashboard, CLI, extension, mission, automation, delegation, routine, and duplicate/refine paths. | `github-tracking-hook.ts`; `docs/task-management.md` | GitLab tracking must register an equivalent universal post-create hook at the same process entrypoints, or a provider-neutral hook dispatcher that calls GitHub/GitLab handlers. It must be best-effort and non-blocking. |
+| Tracking title/body format | GitHub tracking issues use title `[FN-XXXX] Task title` and body prefix `Fusion task: FN-XXXX` with bounded plain-text summary. | `github-tracking.ts`; docs contract test | GitLab tracking issues should use the same title/body invariant unless later UX explicitly changes it. Keep body bounded and do not include local dashboard links. |
+| Tracking lifecycle comments | GitHub posts lifecycle comments on tracked issues for in-progress/done, with bounded plain text and optional merge metadata. | `github-tracking-comments.ts` | GitLab should post issue notes for the same lifecycle moments to linked GitLab tracking issues. Merge-request notes are only relevant for imported MR review tasks and must be designed separately. |
+| Completion comments on source issues | `githubCommentOnDone` and optional `githubCommentTemplate` post a completion comment to imported GitHub source issues when tasks enter done. On GitHub, when the linked source issue's repository is the Fusion self-repo (`runfusion/fusion`, case-insensitive), the comment additionally appends `Current version:` and `Target release:` lines (next-minor bump of the resolved `@runfusion/fusion` CLI package version); this enrichment is GitHub/Fusion-specific and intentionally out of scope for this GitLab parity pass. | `github-issue-comment.ts`; settings | Add GitLab equivalents using project issue notes. The template placeholders should remain provider-neutral (`{taskId}`, `{taskTitle}`) or be explicitly duplicated with `gitlabCommentOnDone`/`gitlabCommentTemplate`. Group issue imports still comment through owning project issue notes. A GitLab release-version enrichment equivalent is not implemented here — file a follow-up if needed. |
+| Auto-close imported source issues | `githubCloseSourceIssueOnDone` closes/reopens source-imported GitHub issues on task state transitions and startup reconciliation closes missed done tasks. | `github-source-issue-close.ts`; `github-tracking-reconciler.ts` | `gitlabCloseSourceIssueOnDone` closes/reopens imported project issues on completion. Ordinary task deletion closes a linked GitLab issue by default under the distinct close-on-delete semantics below. Do not auto-close or merge merge requests. |
+| Source issue close timestamp backfill | Command Center GitHub fixed counts can be made exact by `POST /api/git/github/backfill-source-issue-closed-at` in manual batches. | `GithubArea.tsx`; `register-git-github.ts`; `TaskSourceIssue.closedAt` | Add a GitLab manual backfill for imported GitLab source issues/MRs if analytics need exact close/merged timestamps. It must be an explicit operator action and never run during render-time analytics. |
+| Webhooks for linked state | `POST /api/github/webhooks` verifies GitHub App signatures and updates issue/PR/task badges from pull_request/issues/issue_comment events. | `github-webhooks.ts`; `register-git-github.ts` | GitLab webhook support should use GitLab project/group/system hooks as provider-specific signed signal ingestion. Badge/state update hooks for GitLab-linked issues/MRs are separate from Command Center Signals but can reuse signature-validation patterns. Document exact GitLab headers/secrets in the implementation task. |
+| Batch status refresh and stale linked state | `POST /api/github/batch/status` refreshes issue/PR/tracking statuses. Cards render persisted state and stale badges without fetching on board load. | `register-git-github.ts`; `TaskDetailModal.tsx`; `ListView.tsx` | Add GitLab batch status refresh for linked GitLab issues/MRs/tracking issues. Board/list cards should render persisted provider-specific state and expose stale/unavailable status without blocking on network. |
+| Task detail/list affordances | Task Detail shows imported-source links, GitHub tracking summary, enable/create/unlink/delete controls, repo override, and list/board chips; ListView/cards show imported and tracking badges without duplicate chips when source equals tracking. | `TaskDetailModal.tsx`; `ListView.tsx`; dashboard CSS/tests | Add provider-aware linked issue/tracking UI. GitLab issue/MR chips must show instance/project context when needed to disambiguate self-managed hosts and group/subgroup paths. Avoid empty button shells on mobile. |
+| Settings/auth keys | GitHub uses project/global `githubTrackingDefaultRepo`, project `githubTrackingEnabledByDefault`, `githubLinkImportedIssuesToTracking`, `githubTrackingDedupEnabled`, `githubAuthMode` (`gh-cli` or `token`), `githubAuthToken`, `githubCommentOnDone`, `githubCommentTemplate`, and `githubCloseSourceIssueOnDone`. | `ProjectSettings`; `GlobalSettings`; `settings-reference.md`; `GeneralSection.tsx`; `SettingsModal.tsx` | GitLab now has dual-scoped instance/API URL settings (`gitlabInstanceUrl`, `gitlabApiBaseUrl`) and access-token settings (`gitlabAuthToken`, `gitlabAuthTokenType`) for personal/project/group tokens. Remaining later settings: tracking default project, tracking enabled default, imported issue adoption, comment-on-done/template, close-source-issue-on-done, dedup/search behavior, and runtime self-managed readiness copy. |
+| GitHub auth mode | GitHub tracking can use `gh-cli` or token; imports often require `gh` auth. Token fallback checks settings and `GITHUB_TOKEN`. | `github-auth.ts`; `github.ts`; CLI import code | GitLab parity must not introduce a required `glab` dependency. Use HTTP token auth only: configured project token → global fallback token → `GITLAB_TOKEN`, sent via GitLab REST `PRIVATE-TOKEN`. Supported token types are personal, project, and group; read-only API operations need `read_api` or `api`, while write actions such as notes/comments and close/reopen need `api` plus resource/role membership. |
+| Dashboard import navigation | Import Tasks is a lazy-loaded dashboard view/modal, reachable on desktop/tablet and mobile, with embedded main-content presentation and modal presentation. | `App.tsx`; `AppModals.tsx`; `GitHubImportModal.tsx`; `dashboard-guide.md` | GitLab import must be discoverable in the same Import Tasks surface on desktop and mobile, either as provider tabs or a provider selector. Do not add a separate top-level surface unless a later UX task revises navigation. |
+| Command Center GitHub analytics | `/api/command-center/github` and `GithubArea` aggregate local task-store data only: filed by Fusion from `githubTracking.issue`, fixed by Fusion from `sourceIssueProvider = "github"` done tasks, resolved rows, by-repo, daily, CSV export, and manual exact-close backfill. It never calls GitHub or `gh` during analytics rendering. | `github-issue-analytics.ts`; `register-command-center-routes.ts`; `GithubArea.tsx`; `dashboard-guide.md` | Add Command Center **GitLab** analytics as local-task-store-only. It should mirror filed/fixed/net/daily/by-project/resolved rows and CSV export for GitLab issues/MRs from persisted task metadata. Analytics must not call GitLab during rendering; exact timestamp backfill must be a manual operator action. |
+| Command Center Signals | `/api/command-center/signals`, `/api/command-center/signals/connectors`, and `POST /api/signals/:provider` ingest signed Sentry/Datadog/PagerDuty/generic webhook signals into local incidents. | `signals-connectors.md`; `SignalsArea.tsx`; signal routes | GitLab webhook/system-hook signals should map through the existing signed Signals connector model where applicable. Add a `gitlab` provider only after defining HMAC/token verification, event normalization, grouping keys, open/resolved mapping, and connector status without exposing secrets. |
+| CSV exports | Command Center analytics endpoints support `?format=csv`, including GitHub resolved rows. | `register-command-center-routes.ts`; `dashboard-guide.md` | GitLab Command Center analytics and Signals additions should preserve CSV export parity where the GitHub area has CSV. |
+| Research/search provider | GitHub has a research provider that searches repos/issues through `gh`. | `packages/engine/src/research/providers/github-provider.ts` | **Explicit exclusion:** no GitLab research/search provider parity in this plan. FN-7422 through FN-7428 must not add GitLab research provider support as part of GitLab import/tracking parity. |
+| GitHub star prompt | Fusion includes a GitHub-star prompt and persistence hook after task progress. | `GitHubStarPrompt.tsx`; `useGitHubStarPrompt.ts`; Dashboard banners | **Explicit exclusion:** no GitLab-star prompt or GitHub-star-equivalent prompt. Later GitLab parity tasks must not add a GitLab star prompt, self-managed star prompt, or equivalent promotional prompt. |
+
+## GitLab source metadata contract
+
+Later implementation tasks should add provider-aware metadata without breaking existing GitHub fields:
+
+```ts
+sourceIssue: {
+  provider: "gitlab",
+  repository: "group/subgroup/project", // or a normalized project identity string
+  externalIssueId: "123456", // GitLab global issue id when available
+  issueNumber: 42, // GitLab issue IID
+  url: "https://gitlab.example.com/group/subgroup/project/-/issues/42",
+  closedAt?: "2026-07-02T00:00:00.000Z"
+}
+source: {
+  sourceType: "gitlab_import",
+  sourceMetadata: {
+    instanceUrl: "https://gitlab.example.com",
+    apiBaseUrl: "https://gitlab.example.com/api/v4",
+    projectId: 123,
+    projectPath: "group/subgroup/project",
+    issueId: 456,
+    issueIid: 42,
+    groupPath?: "group/subgroup"
+  }
+}
+```
+
+Merge request review-task metadata should use `mergeRequestId` and `mergeRequestIid` rather than `issueId`/`issueIid`, and should persist source/target branch names plus state/draft fields. If reusing `TaskSourceIssue` is too issue-specific for MRs, downstream work should introduce a parallel `TaskSourceMergeRequest` instead of forcing MR data into issue fields.
+
+## Required exclusions and non-goals
+
+- Do not implement runtime GitLab API calls, routes, settings, dashboard controls, CLI commands, or extension tools in this inventory task.
+- Do not require or document a required `glab` CLI dependency. GitLab parity is HTTP API based.
+- Do not hardcode GitLab.com; self-managed instances and configurable API URLs are required.
+- Do not store, paste, or document real tokens or credentials.
+- Do not add GitLab research/search provider support. The existing GitHub research provider remains a separate research feature, not part of import/tracking parity.
+- Do not add a GitLab-star prompt or any GitHub-star-equivalent promotional prompt.
+- Do not auto-merge or auto-close merge requests as a side effect of task completion unless a later, explicit MR lifecycle task defines that policy.
+
+## FN-7424 implemented import slice
+
+FN-7424 implements the runtime import rows for dashboard/API, CLI, extension tools, source provenance, duplicate detection, and Import Tasks navigation for GitLab project issues, group issues, and project merge requests. Implemented surfaces are HTTP API only, use configured GitLab.com/self-managed URL and `PRIVATE-TOKEN` auth, require read-only `read_api`/`api` scope for list/import, persist `sourceType: "gitlab_import"` with `sourceMetadata.provider: "gitlab"`, and preserve originating project identity for group issue rows.
+
+Still deferred to later parity tasks: linked GitLab tracking issue creation/adoption and Task Detail/List chips, GitLab notes/comments on completion, source issue close/reopen and exact closed-at backfill, merge request lifecycle actions, Command Center GitLab analytics/signals, GitLab research/search provider support, and any GitLab-star or promotional prompt.
+
+## Downstream handoff: FN-7422 through FN-7428
+
+- **FN-7422 — GitLab core URL configuration:** implemented GitLab.com/self-managed instance and API URL settings/resolution. Preserve GitHub settings untouched.
+- **FN-7423 — GitLab access-token settings/auth contract:** implemented personal/project/group token settings, `GITLAB_TOKEN` fallback, `PRIVATE-TOKEN` auth metadata, and required scope documentation. Preserve GitHub settings untouched and do not add `glab`.
+- **FN-7424 — GitLab import runtime:** implemented dashboard/API fetch/import rows, Import Tasks provider controls, CLI `fn task import-gitlab`, and `fn_task_*_gitlab_*` browse/import extension tools for project issues, group issues, and merge requests. GitLab comments, close/reopen, linked tracking, Command Center, research/search, and star prompts remain deferred.
+- **FN-7453 — GitLab enable/disclosure:** added dual-scoped `gitlabEnabled` (unset effectively enabled) plus Settings disclosures. Disabled outbound GitLab API operations reject/skip without deleting saved URL/token settings; existing GitLab task metadata and inbound Signals webhook handling remain separate.
+- **FN-7425 — GitLab tracking lifecycle:** implement provider-specific tracking issue creation/adoption, post-create hooks, Task Detail/List chips and controls, lifecycle notes, close/reopen/delete/unlink behavior, stale state, and batch status refresh.
+- **FN-7426 — Completion comments and auto-close:** implement `gitlabCommentOnDone`, `gitlabCommentTemplate`, `gitlabCloseSourceIssueOnDone`, source issue reconciliation, and exact closed-at backfill for project issues. Keep MR close/merge behavior out unless explicitly scoped.
+- **FN-7427 — Command Center GitLab analytics and signals:** add local-task-store-only GitLab analytics with CSV export and optional manual exact-time backfill. Add GitLab webhook/system-hook Signals connector only after the signed verification and normalization contract is defined.
+- **FN-7428 — Documentation, migration, and parity QA:** update user docs, settings reference, dashboard guide, task-management docs, extension skill docs, and add contract tests covering included surfaces and the explicit research/star prompt exclusions.

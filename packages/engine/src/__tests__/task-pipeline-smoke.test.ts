@@ -1,0 +1,188 @@
+import { describe, expect, it } from "vitest";
+import type { Settings, TaskDetail, TaskStep } from "@fusion/core";
+
+import { WorkflowTaskRuntime } from "../workflows/workflow-task-runtime.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import {
+  WORKFLOW_ID_CONTEXT_KEY,
+  WORKFLOW_RUN_ID_CONTEXT_KEY,
+} from "../workflows/workflow-node-handlers.js";
+
+const promptWithOneStep = `# Task: FN-7228 Pipeline smoke
+
+## Steps
+
+### Step 1: Add the minimal pipeline smoke test
+- Prove the default task pipeline reaches merge.
+`;
+
+const task = {
+  id: "FN-7228-SMOKE",
+  title: "Pipeline smoke",
+  description: "Exercise the default task pipeline without external side effects.",
+  column: "todo",
+  dependencies: [],
+  steps: [],
+  currentStep: 0,
+  prompt: promptWithOneStep,
+  createdAt: "2026-06-29T00:00:00.000Z",
+  updatedAt: "2026-06-29T00:00:00.000Z",
+} as TaskDetail;
+
+const settings = { experimentalFeatures: {} } as Pick<Settings, "experimentalFeatures">;
+
+describe("task pipeline smoke", () => {
+  it("runs an unselected task through the default built-in coding pipeline", async () => {
+    const calls: string[] = [];
+    const mergeContexts: Array<{ workflowId: string; runId: string }> = [];
+    let selectionReads = 0;
+
+    /*
+     * FNXC:WorkflowSmoke 2026-06-29-00:00:
+     * This smoke intentionally drives WorkflowTaskRuntime with in-memory primitives only. The invariant is that an unselected task resolves to the default `builtin:coding` pipeline, parses the required PROMPT.md step source, executes one planned step, reaches review gates, and calls merge exactly once without git, network, subprocess, timer, or database dependencies.
+     */
+    const primitives: WorkflowRuntimePrimitives = {
+      prepareWorktree: async () => {
+        calls.push("prepare-worktree");
+        return { outcome: "success", data: { worktreePath: "/memory/worktree" } };
+      },
+      readArtifact: async (_ctx, _task, key) => key === "PROMPT.md" ? promptWithOneStep : undefined,
+      writeArtifact: async (_ctx, _task, key) => ({ outcome: "success", data: { key } }),
+      runPlanningSession: async () => {
+        calls.push("plan");
+        return { outcome: "success", data: { approved: true, artifactKeys: ["PROMPT.md"] } };
+      },
+      runCodingSession: async () => {
+        calls.push("coding-session");
+        return { outcome: "success", data: { taskDone: true, modifiedFiles: [] } };
+      },
+      runTaskStep: async (_ctx, _task, stepIndex) => {
+        calls.push(`step-execute:${stepIndex}`);
+        return { outcome: "success", baselineSha: "baseline", checkpointId: "checkpoint" };
+      },
+      resetTaskStep: async () => ({ ok: true }),
+      runReview: async (_ctx, _task, input) => {
+        calls.push(input.type === "plan" ? "plan-review" : "code-review");
+        return { outcome: "success", data: { verdict: "APPROVE" } };
+      },
+      runVerification: async () => ({ outcome: "success", data: { verdict: "skipped" } }),
+      updateSteps: async (_ctx, target, steps: TaskStep[]) => {
+        calls.push("parse");
+        target.steps = steps;
+        return { outcome: "success", data: { count: steps.length } };
+      },
+      transitionTask: async () => ({ outcome: "success" }),
+      requestMerge: async (ctx) => {
+        calls.push("merge");
+        mergeContexts.push({ workflowId: ctx.run.workflowId, runId: ctx.run.runId });
+        return { outcome: "success", value: "merged", data: { status: "merged" } };
+      },
+      abortRun: async () => ({ outcome: "success" }),
+      audit: () => undefined,
+    };
+
+    // R5 lock (U3/KTD-4): capture recorded WorkflowStepResults so we can assert the
+    // graph is the SOLE Plan Review author — exactly one plan-review gate, its lease
+    // owned by this run (leaseOwner === runId), settling to `passed`. A regression that
+    // re-breaks the gate-barrel classifyReviewLease export (see index.gate.ts) would
+    // fail to produce a passed plan-review result here in addition to the loud guard.
+    const recordedStepResults: Array<{ workflowStepId: string; status: string; leaseOwner?: string | null }> = [];
+
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTaskWorkflowSelection: () => {
+          selectionReads += 1;
+          return undefined;
+        },
+        getWorkflowDefinition: async () => undefined,
+        getTaskDocument: async (_taskId, key) => key === "PROMPT.md" ? { key, content: promptWithOneStep } : null,
+      },
+      recordWorkflowStepResult: (_taskId: string, r: { workflowStepId: string; status: string; leaseOwner?: string | null }) => {
+        recordedStepResults.push({ workflowStepId: r.workflowStepId, status: r.status, leaseOwner: r.leaseOwner });
+      },
+      primitives,
+      runCustomNode: async (node) => {
+        calls.push(`custom:${node.id}`);
+        return { outcome: "success" };
+      },
+      parseStepsDeps: {
+        readArtifact: async (_target, key) => key === "PROMPT.md" ? promptWithOneStep : undefined,
+        writeSteps: async (target, steps) => {
+          calls.push("parse");
+          target.steps = steps;
+        },
+      },
+    });
+
+    const result = await runtime.run({ ...task, steps: [] }, settings);
+
+    expect(result.disposition).toBe("completed");
+    expect(result.outcome).toBe("success");
+    expect(selectionReads).toBe(1);
+    expect(result.context[WORKFLOW_RUN_ID_CONTEXT_KEY]).toBe("FN-7228-SMOKE:builtin:coding");
+    expect(result.context[WORKFLOW_ID_CONTEXT_KEY]).toBe("builtin-stepwise-final-review-coding");
+    /*
+    FNXC:WorkflowGraphEntry 2026-07-26-17:10:
+    A run with no continuation resumes at the card's OWN column instead of replaying the pipeline
+    from the first column.
+
+    FNXC:MergedPlanningColumn 2026-07-28-18:45 (U11):
+    `start` IS now expected, and the sequence legitimately changed rather than regressing. This
+    previously read "No `start`" because `start` lived in `triage` — a column this `todo` card had
+    already left, so resuming there would have dragged it backward. U11 merges Todo into Planning,
+    so `start` and the specification node share the card's own column: resuming at `start` moves
+    the card nowhere and the trace simply begins one node earlier.
+
+    Entering at `start` is exactly what dragged cards backward in the three earlier, reverted
+    attempts at this merge, so the no-move property is PROVEN before this array was touched, not
+    assumed from it — see `merged-planning-start-node-no-move.test.ts`, which asserts against the
+    real boundary controller and the real default IR that entering `start` performs no move,
+    reaches no hold->wip capacity seam, and still moves on a genuine crossing (so the no-op is
+    same-column, not a disabled boundary). Removing the controller's same-column short-circuit
+    turns two of those tests red, so they bind to the mechanism rather than restating the outcome.
+    */
+    expect(result.visitedNodeIds).toEqual([
+      "start",
+      "plan",
+      "plan-review",
+      "plan-review::plan-review-step",
+      "parse",
+      "steps",
+      "steps#0:step-execute",
+      "steps#0:step-done",
+      "browser-verification",
+      /* FNXC:WorkspaceReviewSeal 2026-08-21-19:39: completion summary must finish before
+       * Code Review seals the task branch consumed by merge. */
+      "completion-summary",
+      "code-review",
+      "code-review::code-review-step",
+      "merge",
+      "post-merge-verification",
+    ]);
+    expect(calls).toEqual([
+      "plan",
+      "custom:plan-review-step",
+      "parse",
+      "step-execute:0",
+      "custom:completion-summary",
+      "custom:code-review-step",
+      "merge",
+    ]);
+    expect(mergeContexts).toEqual([
+      { workflowId: "builtin-stepwise-final-review-coding", runId: "FN-7228-SMOKE:builtin:coding" },
+    ]);
+
+    // R5: the graph is the sole Plan Review author — exactly one plan-review gate,
+    // leased by THIS run (leaseOwner === runId), settling to `passed`. The lease is
+    // stamped `pending` on start then upserted terminal, so we assert on the trail.
+    const planReviewRecords = recordedStepResults.filter((r) => r.workflowStepId === "plan-review");
+    expect(planReviewRecords.length).toBeGreaterThan(0);
+    // Graph-authored lease: the pending record carries this run's id as leaseOwner.
+    expect(planReviewRecords.some((r) => r.leaseOwner === "FN-7228-SMOKE:builtin:coding")).toBe(true);
+    // Exactly one terminal plan-review outcome, and it PASSED (no duplicate reviewer,
+    // no triage-authored result — the FN-1315 single-owner contract).
+    const terminalPlanReview = planReviewRecords.filter((r) => r.status !== "pending");
+    expect(terminalPlanReview).toHaveLength(1);
+    expect(terminalPlanReview[0].status).toBe("passed");
+  });
+});

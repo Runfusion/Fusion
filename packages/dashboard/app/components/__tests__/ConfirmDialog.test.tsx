@@ -1,0 +1,243 @@
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { ConfirmDialog } from "../ConfirmDialog";
+import { loadAllAppCss } from "../../test/cssFixture";
+
+describe("ConfirmDialog", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders title and message", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(screen.getByText("Delete FN-001?")).toBeInTheDocument();
+  });
+
+  it("calls onConfirm when confirm button clicked", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Merge Task", message: "Merge now?" }}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onCancel when cancel button clicked", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onCancel when the header close button is clicked", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Close confirmation dialog" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onCancel on Escape key", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onCancel when a deliberate post-settle backdrop press and click both originate on the overlay", () => {
+    vi.useFakeTimers();
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    // FNXC: ConfirmDialog portals to document.body, so query from document (not the render container).
+    const overlay = document.querySelector(".modal-overlay");
+    expect(overlay).toBeTruthy();
+    vi.advanceTimersByTime(500);
+    fireEvent.pointerDown(overlay as Element, { pointerType: "mouse", isPrimary: true });
+    fireEvent.click(overlay as Element);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the opening touch-to-mouse ghost burst even when it starts and ends on the overlay", () => {
+    vi.useFakeTimers();
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    const overlay = document.querySelector(".confirm-dialog-overlay");
+    expect(overlay).toBeTruthy();
+    fireEvent.mouseDown(overlay as Element);
+    fireEvent.mouseUp(overlay as Element);
+    fireEvent.click(overlay as Element);
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("renders and handles tertiary action when configured", () => {
+    const onTertiary = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Done", message: "Delete or archive?", tertiaryLabel: "Archive Instead" }}
+        onConfirm={vi.fn()}
+        onTertiary={onTertiary}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive Instead" }));
+    expect(onTertiary).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses cancel button on mount", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("claims a floating-stack z-index before the dialog is painted", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const overlay = document.querySelector<HTMLElement>(".confirm-dialog-overlay");
+    expect(overlay?.style.zIndex).not.toBe("");
+  });
+
+  it("uses compact mobile override classes on overlay and dialog surface", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    // FNXC: portaled to document.body — query from document.
+    expect(document.querySelector(".confirm-dialog-overlay")).toBeTruthy();
+    expect(document.querySelector(".confirm-dialog.modal")).toBeTruthy();
+  });
+
+  it("does not render checkbox when checkboxLabel is omitted", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("renders checkbox label and description when provided", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        checkboxLabel="Allow re-creation later"
+        checkboxDescription="Keeps this ID unlockable"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox")).toBeInTheDocument();
+    expect(screen.getByText("Allow re-creation later")).toBeInTheDocument();
+    expect(screen.getByText("Keeps this ID unlockable")).toBeInTheDocument();
+  });
+
+  it("calls onCheckboxChange when toggled", () => {
+    const onCheckboxChange = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        checkboxLabel="Allow re-creation later"
+        checkboxChecked={false}
+        onCheckboxChange={onCheckboxChange}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(onCheckboxChange).toHaveBeenCalledWith(true);
+  });
+
+  it("uses only token values in confirm-dialog checkbox css rule", () => {
+    const css = loadAllAppCss();
+    const match = css.match(/\.confirm-dialog__checkbox\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    const ruleBody = match?.[1] ?? "";
+    expect(ruleBody).toMatch(/var\(--/);
+    expect(ruleBody).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgb\(/);
+    expect(ruleBody).not.toMatch(/\b(?!0(?:\D|$))\d+(?:\.\d+)?px\b/);
+  });
+});

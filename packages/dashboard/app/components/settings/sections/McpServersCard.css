@@ -1,0 +1,209 @@
+.mcp-servers-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.mcp-servers-card__header,
+.mcp-server-row,
+.mcp-discovery__header,
+.mcp-discovery-row,
+.mcp-import-export,
+.mcp-sensitive-row,
+.mcp-inline-actions {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.mcp-servers-card__header,
+.mcp-server-row,
+.mcp-discovery__header,
+.mcp-discovery-row {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.mcp-servers-card__title,
+.mcp-server-row p,
+.mcp-discovery p,
+.mcp-discovery h6,
+.mcp-import-export h6 {
+  margin: 0;
+}
+
+.mcp-servers-card__description,
+.mcp-server-row p,
+.mcp-discovery p,
+.mcp-empty,
+.mcp-empty-inline,
+.mcp-effective-count {
+  color: var(--text-muted);
+}
+
+.mcp-server-list,
+.mcp-discovery,
+.mcp-discovery__group,
+.mcp-editor,
+.mcp-sensitive-list,
+.mcp-import-export__pane,
+.mcp-server-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.mcp-server-row,
+.mcp-discovery,
+.mcp-discovery-row,
+.mcp-editor,
+.mcp-import-export__pane {
+  padding: var(--space-md);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.mcp-discovery-row {
+  background: var(--surface-hover);
+}
+
+.mcp-discovery__notes,
+.mcp-discovery-row__note {
+  color: var(--color-warning);
+}
+
+.mcp-server-row__titleline,
+.mcp-validation-status,
+.mcp-server-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.mcp-state-badge,
+.mcp-transport-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: var(--space-xs) var(--space-xs);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  border: var(--border-width) solid var(--border);
+  color: var(--text-muted);
+}
+
+.mcp-state-badge--disabled,
+.mcp-state-badge--disabled-global {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+.mcp-state-badge--overridden,
+.mcp-state-badge--project-local {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.mcp-state-badge--inherited {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.mcp-state-badge--configured {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.mcp-state-badge--required {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.mcp-validation-status {
+  color: var(--text-muted);
+}
+
+.mcp-validation-status__badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: var(--space-xs) var(--space-xs);
+  border: var(--border-width) solid var(--border);
+  color: inherit;
+}
+
+.mcp-validation-status--pending {
+  color: var(--color-warning);
+}
+
+.mcp-validation-status--valid {
+  color: var(--color-success);
+}
+
+.mcp-validation-status--unreachable,
+.mcp-validation-status--error {
+  color: var(--color-error);
+}
+
+.mcp-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.mcp-editor-grid__wide,
+.mcp-import-export__pane,
+.mcp-server-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mcp-sensitive-row {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mcp-sensitive-row .input,
+.mcp-sensitive-row .select {
+  flex: 1 1 var(--settings-field-min-width, 12rem);
+  min-width: 0;
+}
+
+.mcp-subheading {
+  font-weight: var(--font-weight-semibold);
+}
+
+.mcp-json-textarea {
+  min-height: calc(var(--space-xl) * 4);
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+.mcp-enabled-toggle {
+  align-self: flex-start;
+}
+
+@media (max-width: 768px) {
+  .mcp-servers-card__header,
+  .mcp-server-row,
+  .mcp-discovery__header,
+  .mcp-discovery-row,
+  .mcp-import-export,
+  .mcp-server-row__actions,
+  .mcp-sensitive-row,
+  .mcp-inline-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mcp-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-server-row__actions .btn,
+  .mcp-inline-actions .btn,
+  .mcp-sensitive-row .btn {
+    justify-content: center;
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "fusion-plugin-reports",
+  "name": "Reports",
+  "version": "0.1.0",
+  "description": "Generates beautiful HTML system-activity reports with multi-agent review.",
+  "author": "Fusion Team",
+  "fusionVersion": ">=0.1.0",
+  "dashboardViews": [
+    {
+      "viewId": "reports",
+      "label": "Reports",
+      "componentPath": "./dashboard-view",
+      "icon": "FileText",
+      "placement": "primary",
+      "order": 35
+    }
+  ],
+  "settingsSchema": {
+    "dailyEnabled": { "type": "boolean", "label": "Enable Daily Reports", "description": "Generate daily reports on schedule.", "group": "Schedules", "defaultValue": true },
+    "dailyCron": { "type": "string", "label": "Daily Schedule (cron)", "description": "Cron expression for daily report generation.", "group": "Schedules", "required": true, "defaultValue": "0 8 * * *" },
+    "weeklyEnabled": { "type": "boolean", "label": "Enable Weekly Reports", "description": "Generate weekly reports on schedule.", "group": "Schedules", "defaultValue": true },
+    "weeklyCron": { "type": "string", "label": "Weekly Schedule (cron)", "description": "Cron expression for weekly report generation.", "group": "Schedules", "required": true, "defaultValue": "0 8 * * 1" },
+    "timezone": { "type": "string", "label": "Timezone", "description": "IANA timezone used for schedule evaluation.", "group": "Schedules", "required": true, "defaultValue": "UTC" },
+    "generationPromptDaily": { "type": "string", "multiline": true, "label": "Daily Generation Prompt", "description": "Prompt template used to generate daily reports.", "group": "Prompts", "required": true, "defaultValue": "Summarize today's system activity with clear wins, highlights, lowlights, and proposals." },
+    "generationPromptWeekly": { "type": "string", "multiline": true, "label": "Weekly Generation Prompt", "description": "Prompt template used to generate weekly reports.", "group": "Prompts", "required": true, "defaultValue": "Summarize this week's system activity trends, major outcomes, and actionable proposals." },
+    "reviewPrompt": { "type": "string", "multiline": true, "label": "Review Prompt", "description": "Prompt template used by reviewer agents.", "group": "Prompts", "required": true, "defaultValue": "Review this report for factual accuracy, clarity, and actionability. Provide concrete revision suggestions." },
+    "reviewPanelAgentIds": { "type": "array", "itemType": "string", "label": "Reviewer Agent IDs", "description": "Agent IDs allowed to review generated reports.", "group": "Review Panel", "defaultValue": [] },
+    "reviewMinApprovals": { "type": "number", "label": "Minimum Approvals", "description": "How many approvals are required from the review panel.", "group": "Review Panel", "defaultValue": 1 },
+    "reviewBlockingMode": { "type": "enum", "enumValues": ["block", "advisory"], "label": "Review Blocking Mode", "description": "Choose whether failed review blocks publication.", "group": "Review Panel", "defaultValue": "advisory" },
+    "sectionOrder": { "type": "array", "itemType": "string", "label": "Section Order", "description": "Ordered section IDs for report rendering.", "group": "Sections", "defaultValue": ["wins", "highlights", "lowlights", "proposals", "deep-dives", "per-agent"] },
+    "enabledSections": { "type": "array", "itemType": "string", "label": "Enabled Sections", "description": "Section IDs enabled for output.", "group": "Sections", "defaultValue": ["wins", "highlights", "lowlights", "proposals", "deep-dives", "per-agent"] },
+    "includeSystemSummary": { "type": "boolean", "label": "Include System Summary", "description": "Include top-level system summary in report output.", "group": "Sections", "defaultValue": true },
+    "includePerAgentSections": { "type": "boolean", "label": "Include Per-Agent Sections", "description": "Include per-agent detail sections.", "group": "Sections", "defaultValue": true },
+    "brandTitle": { "type": "string", "label": "Report Title", "description": "Primary report title for branding.", "group": "Branding", "required": true, "defaultValue": "Fusion Activity Report" },
+    "brandLogoUrl": { "type": "string", "label": "Logo URL", "description": "Optional URL to a brand logo image.", "group": "Branding" },
+    "themeMode": { "type": "enum", "enumValues": ["light", "dark", "auto"], "label": "Theme Mode", "description": "Theme style for generated reports.", "group": "Branding", "defaultValue": "auto" },
+    "accentColor": { "type": "string", "label": "Accent Color", "description": "Accent color used in report styling.", "group": "Branding", "defaultValue": "#5B8DEF" },
+    "approvalRequired": { "type": "boolean", "label": "Require Approval", "description": "Require explicit approval before publishing.", "group": "Approval Flow", "defaultValue": false },
+    "autoPublishOnApproval": { "type": "boolean", "label": "Auto Publish on Approval", "description": "Publish automatically after approval threshold is met.", "group": "Approval Flow", "defaultValue": true },
+    "approverAgentIds": { "type": "array", "itemType": "string", "label": "Approver Agent IDs", "description": "Agent IDs permitted to approve final publish.", "group": "Approval Flow", "defaultValue": [] },
+    "publishTargets": { "type": "array", "itemType": "string", "label": "Publish Targets", "description": "Destinations to publish reports to (for example dashboard, html-export).", "group": "Approval Flow", "defaultValue": [] }
+  }
+}

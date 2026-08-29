@@ -1,0 +1,327 @@
+/* SessionTerminal (CLI Agent Executor, U11) — canonical tokens only. */
+
+/*
+FNXC:Terminal 2026-06-20-18:04:
+FN-6811 recurrence #6 found the attach terminal imported its own CSS chunk but did not own the scoped symbols @font-face. Keep SessionTerminal self-contained: the DOM glyph fallback may resolve powerline/Nerd-Font codepoints here, while xterm's measured fontFamily remains symbols-free for ASCII cell metrics.
+*/
+@font-face {
+  font-family: "Fusion Terminal Nerd Font Symbols";
+  src: url("/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  font-display: swap;
+  unicode-range: U+23FB-23FE, U+2665, U+26A1, U+2B58, U+E000-E00A, U+E0A0-E0D7, U+E200-E2A9, U+E300-E3E3, U+E5FA-E6B7, U+E700-E8EF, U+EA60-EC1E, U+ED00-F2FF, U+F300-F533, U+F0001-F1AF0;
+}
+
+.cli-session-terminal {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--terminal-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.cli-session-terminal__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.cli-session-terminal__posture-wrap {
+  position: relative;
+}
+
+.cli-posture-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px var(--space-sm);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.12s) ease;
+}
+
+.cli-posture-chip:hover {
+  background: var(--card-hover);
+}
+
+.cli-posture-chip--elevated {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
+.cli-posture-chip__mode {
+  color: var(--text-muted);
+}
+
+.cli-posture-chip__flag {
+  font-weight: 600;
+}
+
+.cli-posture-tooltip {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  z-index: 10;
+  min-width: 220px;
+  padding: var(--space-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.cli-posture-tooltip__title {
+  margin: 0 0 var(--space-xs);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cli-posture-tooltip__list {
+  margin: 0;
+  padding-left: var(--space-md);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.cli-posture-tooltip__settings {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding: 2px var(--space-sm);
+  font-size: 0.75rem;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.cli-session-terminal__readonly-badge,
+.cli-session-terminal__replay-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px var(--space-sm);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cli-session-terminal__replay-badge[data-replay-mode="ended"] {
+  color: var(--text-muted);
+}
+
+/*
+FNXC:TerminalLayout 2026-08-01-01:00:
+FN-8634 keeps the embedded SessionTerminal's xterm viewport unpadded because its injected
+native scrollbar occupies the inline-end edge. The shell owns the symmetric token padding so
+xterm fit and reflow keep their existing viewport dimensions while painted and absent tracks
+have equal perceived empty inset.
+*/
+.cli-session-terminal__viewport-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-xs);
+  background: var(--terminal-bg, var(--bg));
+}
+
+.cli-session-terminal__viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+FNXC:Terminal 2026-06-18-07:34:
+SessionTerminal hosts the same xterm DOM/canvas measurement subtree as TerminalModal under a different wrapper. Apply the FN-6638 real-iOS text-size-adjust invariant here too so CLI-agent attach terminals do not inherit Safari-inflated ASCII cell metrics while still using the shared font-load remeasure path for every preset and desktop WebGL.
+
+FNXC:Terminal 2026-07-03-00:14:
+Mirror TerminalModal's post-FN-7456 iPhone fix on the embedded attach surface: iOS keyboard-open 10px/12px terminal cells must ignore browser text-size inflation while keeping the user's exact terminal font-size preference and DOM-only prompt glyph fallback.
+*/
+.cli-session-terminal__viewport,
+.cli-session-terminal__viewport * {
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+/*
+FNXC:Terminal 2026-06-18-15:45:
+Recurrence #5 requires the attach terminal to mirror TerminalModal: xterm receives a symbols-free measured family, and only DOM row spans receive the optional glyph fallback. This keeps the real-iOS WebKit measurement invariant shared across DOM/canvas fallback and desktop WebGL while avoiding a SessionTerminal-only recurrence.
+*/
+.cli-session-terminal__viewport .xterm-rows span {
+  font-family: var(--terminal-glyph-font-family, inherit) !important;
+}
+
+.cli-session-terminal__advance-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.cli-session-terminal__advance-copy {
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.cli-session-terminal__advance-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.cli-session-terminal__advance-btn {
+  padding: 4px var(--space-md);
+  font-size: 0.8125rem;
+  color: var(--accent-text);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.cli-session-terminal__advance-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cli-session-terminal__advance-btn--secondary {
+  color: var(--text);
+  background: var(--card);
+  border-color: var(--border);
+}
+
+/* ── Mobile input model (U13) ──────────────────────────────────────────────
+ * Visible input field + accessory key bar. xterm's hidden-textarea input is
+ * unreliable on mobile (KTD), so the bar is the primary input surface. The
+ * bar is a fixed footer that lifts above the virtual keyboard when it opens
+ * (driven by useMobileKeyboard's keyboardOverlap, applied inline).
+ */
+.cli-session-terminal__mobile-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm)
+    calc(var(--space-sm) + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.cli-session-terminal__mobile-bar--keyboard-open {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* `bottom` is set inline to keyboardOverlap so the bar clears the keyboard. */
+  padding-bottom: var(--space-sm);
+}
+
+.cli-session-terminal__key-row {
+  display: flex;
+  gap: var(--space-xs);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.cli-session-terminal__key-row::-webkit-scrollbar {
+  display: none;
+}
+
+.cli-terminal-key {
+  flex: 0 0 auto;
+  min-width: 40px;
+  min-height: 36px;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cli-terminal-key:active {
+  background: var(--card-hover);
+}
+
+.cli-terminal-key--ctrl.cli-terminal-key--active {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.cli-terminal-key--ctrlc {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
+.cli-terminal-key--custom {
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.cli-session-terminal__input-row {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.cli-session-terminal__mobile-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 16px; /* >=16px avoids iOS focus zoom */
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cli-session-terminal__mobile-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cli-session-terminal__mobile-send {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: var(--space-xs) var(--space-md);
+  font-size: 0.8125rem;
+  color: var(--accent-text);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* On mobile the terminal viewport is read-mostly; the bar drives input. */
+@media (max-width: 768px), (max-height: 480px) {
+  .cli-session-terminal__viewport {
+    -webkit-overflow-scrolling: touch;
+  }
+}

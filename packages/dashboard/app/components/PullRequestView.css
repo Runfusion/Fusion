@@ -1,0 +1,397 @@
+/*
+FNXC:PullRequests 2026-06-22-01:00:
+The view now renders the shared ViewHeader at the top, which supplies the --space-lg top/side padding. The view drops its own top padding so the gap under the header is just ViewHeader's --space-md bottom; side and bottom padding remain.
+*/
+.pr-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--space-lg) var(--space-lg);
+  color: var(--text);
+}
+
+.pr-view--loading,
+.pr-view--error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.pr-view--error {
+  color: var(--color-error);
+}
+
+/* list mode */
+.pr-list-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pr-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pr-list-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, var(--space-xs));
+  background: var(--surface, transparent);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pr-list-item:hover,
+.pr-list-item:focus-visible {
+  border-color: var(--accent, var(--border));
+  background: var(--surface-2, transparent);
+}
+
+.pr-list-item-main,
+.pr-list-item-meta,
+.pr-list-item-checks,
+.pr-list-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.pr-list-item-main {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.pr-list-item-meta {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pr-list-item-repo {
+  font-weight: 600;
+}
+
+.pr-list-item-number {
+  color: var(--accent, var(--text));
+}
+
+.pr-list-item-branch {
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.pr-list-item-checks {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.pr-list-state {
+  color: var(--text-muted);
+}
+
+.pr-list-state--error {
+  color: var(--color-error);
+}
+
+.pr-back-to-list {
+  align-self: flex-start;
+}
+
+@media (max-width: 768px) {
+  .pr-list-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pr-list-item-meta {
+    justify-content: flex-start;
+  }
+}
+
+/* identity header */
+.pr-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-identity-repo {
+  font-weight: 600;
+}
+
+.pr-identity-number {
+  color: var(--accent, var(--text));
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pr-identity-branch {
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+}
+
+.pr-identity-state {
+  margin-left: auto;
+  text-transform: uppercase;
+  font-size: 0.7em;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-2, color-mix(in srgb, #7f7f7f 15%, transparent));
+  color: var(--text-muted);
+}
+
+.pr-identity-state--failed {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.pr-identity-state--merged {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+/* placeholders / banners / notices */
+.pr-placeholder,
+.pr-notice,
+.pr-banner,
+.pr-error-reason {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 6px;
+  background: var(--surface-2, color-mix(in srgb, #7f7f7f 10%, transparent));
+}
+
+.pr-banner--responding {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.pr-notice--unverified {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.pr-error-reason {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+/* action bar */
+.pr-action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pr-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface, transparent);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.pr-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pr-action--merge,
+.pr-action--merge-confirm {
+  border-color: var(--accent, var(--border));
+}
+
+.pr-action--merge-confirm {
+  background: var(--accent, #2f81f7);
+  color: var(--cta-text);
+}
+
+.pr-action--close {
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+}
+
+.pr-automerge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 0.82em;
+  color: var(--text-muted);
+}
+
+.pr-automerge-gate {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2, color-mix(in srgb, #7f7f7f 15%, transparent));
+}
+
+.pr-conflict-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-error);
+  text-decoration: none;
+  font-size: 0.85em;
+}
+
+/* merge-readiness summary */
+.pr-summary {
+  display: flex;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.pr-icon-success {
+  color: var(--color-success);
+}
+
+.pr-icon-failure {
+  color: var(--color-error);
+}
+
+.pr-icon-pending {
+  color: var(--color-warning);
+}
+
+/* threads */
+.pr-threads {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pr-threads-empty {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.pr-thread {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm);
+}
+
+.pr-thread--agent-disagreement {
+  border-left: 3px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.pr-thread--pending {
+  border-left: 3px solid var(--text-muted);
+}
+
+.pr-thread-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.82em;
+}
+
+.pr-thread-pending,
+.pr-thread-disagreed,
+.pr-thread-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pr-thread-id {
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  margin-left: auto;
+}
+
+.pr-thread-reply {
+  margin-top: 6px;
+  margin-left: var(--space-md);
+  padding: var(--space-xs) var(--space-sm);
+  border-left: 2px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.82em;
+}
+
+.pr-inline-error {
+  color: var(--color-error);
+  font-size: 0.85em;
+}
+
+/*
+FNXC:RightDockEmbedded 2026-06-22-00:00:
+PullRequestView has no @media (max-width:768px) block, so there is nothing to mirror — but in the narrow right dock
+(~280-420px, desktop viewport) the `margin-left:auto` push-offs (identity state badge, auto-merge toggle, thread id)
+and inline action rows can overflow horizontally. Under the dock body's `right-dock-body` query container, drop the
+auto-margins so those items flow inline-and-wrap, let the identity/action/summary rows wrap, and keep the thread
+reply indent modest so the single scrollable column never overflows sideways. View behavior is unchanged.
+*/
+@container right-dock-body (max-width: 768px) {
+  .pr-view {
+    padding: 0 var(--space-md) var(--space-md);
+  }
+
+  .pr-identity-state {
+    margin-left: 0;
+  }
+
+  .pr-action-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pr-action {
+    justify-content: center;
+  }
+
+  .pr-automerge-toggle {
+    margin-left: 0;
+  }
+
+  .pr-thread-head {
+    flex-wrap: wrap;
+  }
+
+  .pr-thread-id {
+    margin-left: 0;
+  }
+
+  .pr-thread-reply {
+    margin-left: var(--space-sm);
+  }
+}

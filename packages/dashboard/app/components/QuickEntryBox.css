@@ -1,0 +1,1065 @@
+/* === Quick Entry Box === */
+.quick-entry-box {
+  position: relative;
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-sm);
+}
+
+.quick-entry-box:focus-within {
+  border-color: var(--todo);
+}
+
+/*
+FNXC:DashboardTokens 2026-07-08-00:00:
+--space-2xs is intentionally undefined (FN-5934 decision); the guard in
+app/__tests__/space-token-defined.test.ts asserts it stays undefined. Use the
+smallest defined token, --space-xs (4px), instead of reintroducing --space-2xs.
+*/
+.quick-entry-box--drag-over {
+  border-color: var(--triage);
+  box-shadow: 0 0 0 var(--space-xs) color-mix(in srgb, var(--triage) 35%, transparent);
+}
+
+.quick-entry-drop-target {
+  position: absolute;
+  inset: var(--space-xs);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: var(--space-xs) dashed var(--triage);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--card) 86%, var(--triage));
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.quick-entry-attach-button {
+  position: relative;
+  min-width: calc(var(--space-xl) + var(--space-xs));
+  gap: var(--space-xs);
+}
+
+.quick-entry-attach-count {
+  min-width: var(--space-md);
+  padding: 0 var(--space-xs);
+  border-radius: calc(var(--radius) * 4);
+  background: var(--triage);
+  color: var(--provider-icon-contrast);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .quick-entry-drop-target {
+    inset: var(--space-xs);
+    padding: var(--space-xs);
+    text-align: center;
+  }
+}
+
+.quick-entry-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  font-family: inherit;
+  outline: none;
+  resize: none;
+  min-height: 36px;
+  max-height: 200px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), min-height 0.2s ease;
+}
+
+.quick-entry-input--expanded {
+  min-height: 80px;
+}
+
+/*
+FNXC:QuickEntry 2026-06-22-19:25:
+List view renders quick-add as a COMPACT single-line input so the box isn't tall.
+Clamp the textarea to exactly one line (min-height == max-height == one line), forbid auto-grow/manual resize, and scroll overflow instead of growing.
+Tighten container vertical padding so the overall box is just the one-line input height.
+Board/columns omit `.quick-entry--single-line`, keeping the tall 80px + auto-grow behavior.
+*/
+.quick-entry--single-line {
+  padding-top: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
+.quick-entry-box.quick-entry--single-line .quick-entry-input,
+.quick-entry-box.quick-entry--single-line .quick-entry-input--expanded {
+  min-height: 36px;
+  max-height: 36px;
+  overflow-y: auto;
+  resize: none;
+}
+
+@media (max-width: 768px) {
+  .quick-entry-input--expanded {
+    min-height: 60px;
+  }
+}
+
+.quick-entry-input:focus {
+  border-bottom-color: var(--triage);
+  box-shadow: 0 1px 0 0 var(--triage);
+}
+
+.quick-entry-input::placeholder {
+  color: var(--text-dim);
+}
+
+.quick-entry-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Quick Entry Box textarea wrap for expand button positioning */
+.quick-entry-textarea-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+/*
+FNXC:QuickEntry 2026-06-24-12:00:
+The global `.description-with-refine textarea { padding-right: 70px }` (styles.css) reserves space for a refine button overlaid at the textarea's right edge. QuickEntryBox renders its refine action in the controls panel instead of overlaying the textarea, so inheriting that reserve creates dead right-side text space. Scope the reclaim to the quick-entry input and include the wrapper classes so this rule beats the global description rule by specificity, not source order, while TaskForm/NewTaskModal and fullscreen description textareas keep their overlay padding.
+*/
+.quick-entry-box .description-with-refine .quick-entry-textarea-wrap .quick-entry-input {
+  padding-right: var(--space-sm);
+}
+
+/* Quick Entry Box expand button - bottom-right of textarea */
+.quick-entry-expand-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 32px;
+  padding: 4px;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+  z-index: 1;
+}
+
+.quick-entry-expand-btn:hover {
+  opacity: 1;
+}
+
+/* Quick Entry Box fullscreen mode */
+.quick-entry-input--fullscreen {
+  flex: 1;
+  padding-right: 70px;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+/* Quick Entry Box expanded controls */
+/*
+FNXC:BoardComposer 2026-07-10-12:00:
+First-run review flagged TWO stacked divider lines under the composer textarea: the textarea's own
+border-bottom (which doubles as the focus indicator) plus this panel's border-top. Keep the textarea
+border as the SINGLE divider and drop the panel border-top/padding-top so the chip area reads as one
+section under one line.
+*/
+.quick-entry-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/*
+FNXC:QuickAddActionRow 2026-08-13-05:24:
+The operator asked for the Quick Add bottom row to read as one centered desktop cluster (>=1025px).
+Replace the split toolbar's greedy options group and auto-pushed primary group with base-scope
+centering while preserving DOM order, grouping, and the action row's existing flex width. The
+FN-7680/FN-7683/FN-8147 fixed-height and FN-7684/FN-8164 Save-never-clipped contracts remain
+owned by their existing rules. At <=1024px, the deliberate edge-to-edge `space-between` layout is
+owned by the mobile and tablet tiers; do not unify these breakpoint layouts.
+*/
+.quick-entry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+/*
+FNXC:BoardComposer 2026-07-10-12:00:
+The action row is organized as two logical clusters instead of one undifferentiated wrap of chips:
+- `.quick-entry-options-group` — task options (workflow, optional steps, subtask, deps,
+  models, node, agent), wrapping left-to-right with one consistent chip gap.
+- `.quick-entry-primary-group` — attach + GitHub tracking + Priority + Fast + Save; the primary
+  action stays last in DOM order. Priority and Fast are icon-only here; the priority glyph follows
+  the shared up/high, down/low, flag/normal, alert/urgent mapping.
+Chip HEIGHT consistency is already enforced by the FN-7680/FN-7683 fixed-box rule on
+`.quick-entry-actions .btn` above (descendant selector — still applies inside these wrappers); these
+rules only own grouping/spacing/alignment.
+*/
+.quick-entry-options-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+FNXC:QuickAddActionRow 2026-07-15-22:40:
+Save's label was cut off on mobile ("Sav|"). Measured cause, not a guess: at a 412px viewport the
+primary group needs ~275px inside a 260px column. All five icon controls carry an explicit
+`min-width: 36px` touch-target floor, so they cannot absorb the 15px deficit — and Save's own
+automatic minimum size (`min-width: auto`, which would normally floor a flex item at its
+min-content width) is ZEROED by the `overflow: hidden` on `.quick-entry-actions .btn` above.
+Per the flexbox spec, automatic minimum size only applies when overflow is `visible`. That
+`overflow: hidden` exists for a VERTICAL reason (FN-7680/FN-7683 height equalization), so a
+height fix silently made Save the only horizontally-shrinkable control in the row: it absorbed
+the entire deficit (40px actual vs 55px needed) and clipped its own label.
+
+Two rules restore the invariant "the primary action's label is never clipped, at any width":
+- Save is pinned to its content width (`flex-shrink: 0` + `min-width: max-content`) so it can
+  never be squeezed. `overflow: hidden` stays — it still owns the vertical clamp.
+- The group may WRAP so a genuine deficit resolves as a second line instead of clipped text or
+  an overflowing row. `justify-content: flex-end` keeps Save right-aligned when it wraps.
+
+Deliberately NOT breakpoint-scoped (FN-5751): the mechanism is width-driven, not media-driven —
+mobile only triggers it first because its 36px touch targets are larger than the desktop chips.
+Where the row already fits (desktop, ~249px of content) both rules are inert, verified in-browser
+at 412px and 1400px. The earlier "wraps as one unit, never splitting Save from its neighbors"
+intent is revised here: at widths where the row cannot fit, Save wrapping to its own right-aligned
+line is strictly better than a clipped label.
+*/
+.quick-entry-primary-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.quick-entry-primary-group [data-testid="quick-entry-save"] {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+/*
+FNXC:QuickAddActionRow 2026-07-08-00:00:
+FN-7680 — Save (`btn btn-task-create btn-sm`) rendered a different box height
+than its `.quick-entry-actions` siblings. Root cause is content-height drift
+across button variants, not one single property: text buttons (Save, Fast,
+Subtask, the workflow/priority/deps `.dep-trigger` triggers) get an 18px line
+box from the inherited body line-height at 12px font-size, while icon-only
+buttons (Attach, GitHub toggle) collapse to their bare ~14px icon because
+`.btn-icon` sets `line-height: 0`; separately, `.dep-trigger` buttons (Priority,
+Deps, and — pre-FN-7677 — the workflow trigger) inherit the shared
+`.dep-trigger, .inline-create-model-trigger` rule's shorter 3px/8px padding
+instead of `.btn-sm`'s 4px/10px. Rather than chase each contributor
+individually (padding, line-height, icon size) per button variant, assert one
+uniform `min-height` scoped to this row: with the project-wide
+`box-sizing: border-box` reset, min-height normalizes every `.btn` variant in
+`.quick-entry-actions` (plus the non-`.btn` optional-steps trigger) to the same
+total box height regardless of its individual content/padding, without editing
+the shared `.btn`, `.btn-sm`, `.btn-icon`, `.btn-task-create`, or `.dep-trigger`
+rules in styles.css (those still back InlineCreateCard/NewTaskModal/
+TaskDetailModal/TaskForm). This is the desktop-width counterpart to the
+existing mobile touch-target min-height block further down this file (the
+"max-width: 768px" rule) — that block already applies the same
+normalization pattern for mobile; this rule closes the gap for desktop widths
+so the invariant holds at both breakpoints (FN-5751 lesson: no mobile-only or
+desktop-only fix).
+
+FNXC:QuickAddActionRow 2026-07-08-10:15:
+FN-7683 — a bare `min-height` floor is not sufficient: it only guarantees a
+button is AT LEAST that tall, it never clamps a variant whose natural content
+box (line-height + padding + inline icon) already resolves TALLER than the
+floor. Save (`btn btn-task-create btn-sm`) renders text plus an inline
+`<Save size={12}>` icon as two separate inline boxes inside the button; that
+combination, together with the inherited (non-tokenized) body line-height at
+12px font-size, can resolve a content/line box taller than the
+`calc(--space-xl + --space-xs)` (28px) floor, so `min-height` alone left Save
+measurably taller than shorter siblings (Attach's `.btn-icon`, whose
+`line-height: 0` collapses it to its bare icon). A floor cannot shrink an
+over-tall variant back down — only a FIXED box height can. Upgrade the
+contract: pair `min-height` with an equal `max-height` (a true fixed box, not
+just a floor) and set an explicit tokenized `line-height` plus
+`align-items: center` so every control's content — text-only, icon-only, or
+text+icon — is vertically centered and clipped to the same resolved height
+regardless of its natural content box. This keeps `box-sizing: border-box`
+working as before (padding/border still absorbed into the declared height)
+while guaranteeing IDENTICAL resolved height across Save, workflow trigger,
+Attach, GitHub toggle, Fast, Priority, Deps, Subtask, and the optional-steps
+trigger — not merely all-at-least-28px. Applies at both this desktop rule and
+the mobile touch-target block below (FN-5751: never a breakpoint-only fix).
+
+FNXC:QuickAddActionRow 2026-07-16-14:00:
+FN-8147 replaces the spacing-derived fixed height with a pinned literal root
+token so every shadcn theme retains the default 28px desktop control height.
+
+FNXC:QuickAddActionRow 2026-07-18-11:22:
+FN-8299 requires Save and all five production icon controls, including Session
+Advisor, to fit within a 300px Board column without clipping or horizontal
+overflow. Use the compact token gap at desktop widths too; the mobile rule
+already has this value, while the previous desktop gap left the localized Save
+label short of the available content width.
+*/
+.quick-entry-actions .btn,
+.quick-entry-actions .wf-optional-steps-dropdown-trigger {
+  min-height: var(--quick-entry-action-row-height-desktop);
+  max-height: var(--quick-entry-action-row-height-desktop);
+  line-height: var(--line-height-tight);
+  align-items: center;
+  overflow: hidden;
+}
+
+/*
+FNXC:BoardComposer 2026-07-10-20:30:
+Operator design follow-up on the reorganized action row: even with grouping, a row of nine
+outlined chips reads noisy. Restyle the row as a QUIET TOOLBAR — every option control (and the
+secondary attach/Fast pair) renders as a borderless ghost button in muted text that gains a
+subtle fill + border only on hover/focus/open, so the only persistently emphasized control is
+the Save primary. Selection state still shows (aria-expanded/open menus keep the filled look).
+Scoped to the quick-entry action row only; the shared .btn/.dep-trigger rules that other
+surfaces use are untouched.
+*/
+.quick-entry-options-group .btn,
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger,
+.quick-entry-primary-group .btn:not(.btn-task-create) {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.quick-entry-options-group .btn:hover,
+.quick-entry-options-group .btn:focus-visible,
+.quick-entry-options-group .btn[aria-expanded="true"],
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger:hover,
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger:focus-visible,
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger[aria-expanded="true"],
+.quick-entry-primary-group .btn:not(.btn-task-create):hover,
+.quick-entry-primary-group .btn:not(.btn-task-create):focus-visible {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.quick-entry-primary-group .btn.btn-primary:not(.btn-task-create),
+.quick-entry-primary-group .btn.btn-primary:not(.btn-task-create):hover,
+.quick-entry-primary-group .btn.btn-primary:not(.btn-task-create):focus-visible {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+  color: var(--cta-text);
+}
+
+/*
+FNXC:QuickAddWorkflow 2026-06-30-00:00:
+Quick-add workflow targeting sits in the action row as a compact existing-button dropdown. Use tokenized sizing/colors so the selector wraps with Save/Plan controls on narrow Board and List surfaces without introducing a separate visual hierarchy.
+
+FNXC:QuickAddWorkflow 2026-06-30-12:38:
+Operators need workflow identity at quick-add time. Render shared WorkflowIcon output inline and let no-icon custom workflows collapse without blank icon shells.
+
+FNXC:QuickAddWorkflow 2026-06-30-14:10:
+The closed selector should be compact enough to leave room for Save/Fast/Subtask controls, while the opened menu stays wide and viewport-bounded so longer workflow names remain readable.
+
+FNXC:QuickAddWorkflow 2026-06-30-15:05:
+Long workflow labels must truncate only in the closed trigger. Menu option text wraps inside the viewport-bounded menu so operators can read the full workflow name and duplicate-id subtitle.
+
+FNXC:QuickAddWorkflow 2026-06-30-16:16:
+The wide menu is portaled and fixed-positioned by QuickEntryBox so right-side board columns and mobile wrapped action rows clamp to the viewport instead of overflowing from the compact trigger anchor.
+*/
+.quick-entry-workflow-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  width: fit-content;
+  max-width: min(calc(var(--space-xl) * 5), 100%);
+}
+
+/*
+FNXC:QuickAddWorkflow 2026-07-08-00:00:
+FN-7677 — the workflow trigger shares `.btn.btn-sm.dep-trigger` classes with other surfaces (InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm), but the shared `.dep-trigger, .inline-create-model-trigger` rule in styles.css sets `padding: 3px 8px`, overriding `.btn-sm`'s `padding: 4px 10px` and making this trigger ~2px shorter than its Save/Fast/Subtask `.btn.btn-sm` siblings in `.quick-entry-actions`. Re-assert `.btn-sm`'s own padding value scoped to this selector only (do not touch the shared global `.dep-trigger` rule — other surfaces still depend on its 3px/8px sizing) so the quick-add action row reads as one uniform height.
+
+FNXC:QuickAddWorkflow 2026-07-08-09:30:
+FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules, so the `4px 10px` literal is replaced with `var(--space-sm) var(--space-md)` (vertical then horizontal). Height parity is unaffected: box height for this trigger is governed by the FN-7680/FN-8147 `.quick-entry-actions .btn, .quick-entry-actions .wf-optional-steps-dropdown-trigger { min-height: var(--quick-entry-action-row-height-desktop); }` normalization (desktop and the matching mobile block), not by this element's own padding — the padding only controls internal content spacing and stays at or below that min-height.
+*/
+.quick-entry-workflow-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  width: auto;
+  min-width: 0;
+  max-width: min(calc(var(--space-xl) * 5), calc(100vw - var(--space-lg)));
+  padding: var(--space-sm) var(--space-md);
+}
+
+.quick-entry-workflow-icon {
+  flex: 0 0 auto;
+}
+
+.quick-entry-workflow-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-entry-workflow-menu {
+  position: fixed;
+  width: min(calc(var(--space-xl) * 16), calc(100vw - var(--space-lg)));
+  min-width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)));
+  max-width: calc(100vw - var(--space-lg));
+  max-height: min(calc(var(--space-xl) * 10), calc(100vh - var(--space-xl) * 2));
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.quick-entry-workflow-option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  align-items: flex-start;
+}
+
+.quick-entry-workflow-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.quick-entry-workflow-option-name,
+.quick-entry-workflow-option-id {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.quick-entry-workflow-option-id {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 768px) {
+  .quick-entry-workflow-wrap,
+  .quick-entry-workflow-trigger {
+    max-width: 100%;
+  }
+
+  .quick-entry-workflow-menu {
+    width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)));
+    min-width: min(calc(var(--space-xl) * 11), calc(100vw - var(--space-lg)));
+  }
+}
+
+.quick-entry-model-wrap {
+  position: relative;
+}
+
+.node-trigger-wrap,
+.priority-trigger-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.priority-picker-dropdown {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  z-index: 1000;
+}
+
+.priority-picker-dropdown--portal {
+  position: fixed;
+}
+
+.node-picker-dropdown {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  z-index: 1000;
+}
+
+.node-picker-dropdown--portal {
+  position: fixed;
+}
+
+.node-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.node-picker-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-picker-item-status {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.quick-entry-subtasks-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.quick-entry-subtasks-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--todo);
+  cursor: pointer;
+}
+
+
+.quick-entry-model-trigger {
+  font-size: 0.75rem;
+  padding: 3px 8px;
+}
+
+/* Nested model menu (replaces ModelSelectionModal in quick entry) */
+.model-nested-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--space-xs);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  min-width: calc(var(--space-xl) * 12);
+  max-width: calc(var(--space-xl) * 20);
+  overflow: hidden;
+}
+
+/* Portaled variant — rendered via createPortal to escape column overflow clipping */
+.model-nested-menu--portal {
+  position: fixed;
+  margin-top: 0;
+  z-index: 1000;
+  max-width: calc(var(--space-xl) * 20);
+}
+
+/* Mobile: portaled model menu uses wider viewport-clamped width set via inline styles */
+
+.model-menu-items {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.model-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.8125rem;
+  transition: background-color 0.15s;
+}
+
+.model-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.model-menu-item--active {
+  color: var(--accent);
+}
+
+.model-menu-item-label {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.model-menu-item-value {
+  flex: 1;
+  text-align: right;
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(28ch, 100%);
+}
+
+.model-submenu {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+}
+
+.model-submenu-back {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 4px 0;
+  width: fit-content;
+}
+
+.model-submenu-back:hover {
+  color: var(--text);
+}
+
+.model-submenu-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-submenu-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.6875rem;
+  color: var(--color-error);
+  padding-top: 4px;
+}
+
+/* Responsive: model menu on mobile */
+@media (max-width: 640px) {
+  .model-nested-menu {
+    left: 0;
+    right: 0;
+    min-width: unset;
+    max-width: unset;
+    width: calc(100vw - 32px);
+  }
+
+  /* Portaled variant on mobile: remove max-width constraint so JS-driven width takes full effect */
+  .model-nested-menu--portal {
+    max-width: none;
+  }
+}
+
+/* Responsive layout for quick entry controls */
+@media (max-width: 640px) {
+  .quick-entry-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+
+/* Quick Entry Box main row with toggle */
+.quick-entry-main-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.quick-entry-main-row .quick-entry-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-entry-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.quick-entry-toggle:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.quick-entry-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Expanded state - normal padding */
+.quick-entry-box--expanded {
+  padding: 8px 10px;
+}
+
+/* Only apply container-level min-height when input is NOT expanded.
+   This prevents container selectors from overriding the expanded min-height. */
+.quick-entry-box--expanded .quick-entry-input:not(.quick-entry-input--expanded) {
+  min-height: 36px;
+}
+
+/* Collapsed state - minimal padding */
+.quick-entry-box--collapsed {
+  padding: 6px 8px;
+}
+
+/* Only apply container-level min-height when input is NOT expanded.
+   When input is expanded (e.g., via focus), use the expanded min-height. */
+.quick-entry-box--collapsed .quick-entry-input:not(.quick-entry-input--expanded) {
+  min-height: 32px;
+  border-bottom-color: transparent;
+}
+
+.quick-entry-box--collapsed .quick-entry-input:focus {
+  border-bottom-color: var(--triage);
+}
+
+/* Responsive adjustments for quick entry */
+@media (max-width: 640px) {
+  .quick-entry-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .quick-entry-toggle {
+    height: 28px;
+    width: 28px;
+    padding: var(--space-xs);
+  }
+}
+
+/* === Quick Entry Mobile Touch + Overflow Fixes (FN-1140, FN-6153, FN-6160) === */
+@media (max-width: 768px) {
+  .quick-entry-actions,
+  .quick-entry-actions * {
+    touch-action: manipulation;
+  }
+
+  .quick-entry-actions .btn,
+  .quick-entry-actions .wf-optional-steps-dropdown-trigger {
+    /* FNXC:WorkflowOptionalSteps 2026-06-25-00:00: The optional-steps trigger is not a `.btn`, so opt it into the same mobile quick-entry touch-target contract as the surrounding action buttons without adding a wrapper that could leave an empty shell for zero-step workflows. */
+    /* FNXC:QuickAddActionRow 2026-07-16-14:00: FN-7683's fixed-height mobile contract remains intact; FN-8147 uses the pinned literal root token so shadcn's tighter spacing cannot shrink its 36px touch target. */
+    min-height: var(--quick-entry-action-row-height-mobile);
+    max-height: var(--quick-entry-action-row-height-mobile);
+    line-height: var(--line-height-tight);
+    align-items: center;
+    overflow: hidden;
+  }
+
+  /*
+  FNXC:QuickAddActionRow 2026-07-08-11:30:
+  FN-7683 follow-up (operator feedback) — desktop/tablet parity from the fix
+  above stays untouched, and so does the shared mobile touch-target contract
+  applied to every sibling control. On real mobile browsers, Save (`btn
+  btn-task-create btn-sm`) still renders visibly taller than its shorter
+  siblings (Fast, the workflow trigger) at this breakpoint: its inline
+  `<Save size={12}>` icon plus text naturally claims more vertical space than
+  the fixed box, so the excess was only being silently clipped by the shared
+  rule's `overflow: hidden` rather than the button shrinking cleanly. Scope a
+  Save-only correction (via its existing `quick-entry-save` test id, not a new
+  wrapper) that removes the extra vertical padding and tightens line-height so
+  Save's natural content fits the SAME fixed box as its siblings without
+  relying on clipping — mobile-only; desktop/tablet Save sizing is unaffected.
+  */
+  .quick-entry-actions [data-testid="quick-entry-save"] {
+    padding-top: 0;
+    padding-bottom: 0;
+    line-height: 1;
+  }
+
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-12:45:
+  Operator feedback on the FN-7684-era wrap behavior: Save must sit on the SAME line as the five
+  icon controls on mobile, not wrap to a second right-aligned line. The wrap fired because the
+  primary group needed ~275px in a ~260px column (measured 2026-07-15): five 36px icon floors +
+  five 8px gaps + an unshrinkable Save. Rather than re-allowing Save to clip (the FN-7684 bug),
+  recover the deficit from spacing and icon width inside this group only:
+  - group gap drops to --space-xs (saves 4px × 5 gaps = 20px),
+  - icon-only controls drop their min-width floor from the global 36px .btn-icon rule to
+    --space-2xl (32px; saves 4px × 5 = 20px).
+  Touch-target HEIGHT is untouched (the 36px fixed-box rule above still owns it), so the controls
+  remain tappable; only horizontal footprint shrinks. flex-wrap stays as the safety net for
+  columns even narrower than this recovers.
+
+  FNXC:QuickAddActionRow 2026-07-16-12:50:
+  Operator follow-up: on mobile, every control row below the quick-add textarea must share the
+  SAME left/right edges — the wrapped rows read lopsided when the option rows hug the left edge
+  while the icons+Save row hugs the right. The container's own horizontal padding is already
+  symmetric (8px 10px on .quick-entry-box), so the fix is row alignment, not padding. Desktop/
+  tablet keep the left-options / right-Save toolbar layout.
+
+  FNXC:QuickAddActionRow 2026-07-16-13:05:
+  Operator refinement of the centering pass above: centered rows still left the top two option
+  rows narrower than the icons+Save row. Spread every row edge-to-edge instead —
+  `justify-content: space-between` distributes each wrapped flex line so its first control sits
+  on the left inset and its last on the right inset, and the primary group is widened to the
+  full row (`width: 100%`, `margin-left: 0`) so all three rows land on identical edges. The
+  group `gap`s remain as minimum spacing between controls.
+  */
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-16:00:
+  FN-8186 broadened the mobile glyph-size override to both action-row groups.
+  It retained compact horizontal padding, Save's never-clipped content width,
+  and the FN-7683 fixed 36px touch-target height and 32px icon-button width
+  floor.
+
+  FNXC:QuickAddActionRow 2026-07-17-00:00:
+  FN-8211 reverts FN-8186's broad options-group and primary-group glyph
+  enlargement: operators reported the Deps, Models, and Agent options-group
+  icons read too large at 20px on mobile. Scope the mobile glyph-size override
+  back to the FN-8164 primary icon controls (Save, Attach, GitHub, Priority,
+  and Fast) at --space-lg so options-group controls fall back to their
+  intrinsic size={12}/size={14}. Desktop and the FN-7683 36px touch-target
+  floor are unchanged.
+  */
+  /*
+  FNXC:QuickAddActionRow 2026-08-13-05:24:
+  Mobile is the deliberate exception to the centered desktop/tablet action row. The 2026-07-16-13:05
+  operator decision rejected centering here because wrapped rows must share identical left and right
+  edges, so this later equal-specificity rule keeps `space-between` at <=768px.
+  */
+  .quick-entry-actions {
+    justify-content: space-between;
+    column-gap: var(--space-xs);
+  }
+
+  .quick-entry-options-group {
+    justify-content: space-between;
+    column-gap: var(--space-xs);
+  }
+
+  .quick-entry-primary-group {
+    gap: var(--space-xs);
+    justify-content: space-between;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .quick-entry-options-group .btn,
+  .quick-entry-options-group .wf-optional-steps-dropdown-trigger,
+  .quick-entry-primary-group .btn-icon {
+    padding-inline: var(--space-sm);
+  }
+
+  .quick-entry-primary-group .btn-icon {
+    min-width: var(--space-2xl);
+  }
+
+  .quick-entry-primary-group .btn-icon svg,
+  .quick-entry-primary-group [data-testid="quick-entry-priority-button"] svg,
+  .quick-entry-primary-group [data-testid="quick-entry-fast-toggle"] svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
+  }
+
+  .quick-entry-box .dep-dropdown {
+    max-width: calc(100vw - calc(var(--space-lg) * 2));
+  }
+}
+
+@media (max-width: 640px) {
+  .quick-entry-toggle {
+    min-height: 36px;
+    min-width: 36px;
+    padding: var(--space-xs);
+  }
+}
+
+/*
+FNXC:QuickAddActionRow 2026-08-13-07:38:
+The operator requires tablet Quick Add controls to position like mobile: edge-to-edge rows with
+shared left/right edges and compact gaps. Keep the centered cluster desktop-only, and keep mobile
+36px touch targets and enlarged glyphs out of this tablet tier.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .quick-entry-actions {
+    justify-content: space-between;
+    column-gap: var(--space-xs);
+  }
+
+  .quick-entry-options-group {
+    justify-content: space-between;
+    column-gap: var(--space-xs);
+  }
+
+  .quick-entry-primary-group {
+    gap: var(--space-xs);
+    justify-content: space-between;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .quick-entry-options-group .btn,
+  .quick-entry-options-group .wf-optional-steps-dropdown-trigger,
+  .quick-entry-primary-group .btn-icon {
+    padding-inline: var(--space-sm);
+  }
+
+  .quick-entry-primary-group .btn-icon {
+    min-width: var(--space-2xl);
+  }
+}
+
+@media (max-width: 768px) {
+  .agent-list-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .agent-list-modal .agent-modal-content {
+    padding: var(--space-lg);
+    padding-bottom: max(var(--space-lg), env(safe-area-inset-bottom, 0px));
+  }
+
+  .agent-list-modal .agent-state-filter-select {
+    font-size: 1rem;
+    min-height: 44px;
+  }
+
+  .agent-list-modal .agent-board-actions .btn,
+  .agent-list-modal .view-toggle-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .agent-list-modal .modal-header .modal-actions {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .agent-list-modal .agent-board {
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-xl) * 6 + var(--space-lg)), 1fr));
+    gap: var(--space-md);
+  }
+
+  .agent-list-modal .agent-card-header {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .agent-list-modal .agent-badges {
+    flex-shrink: initial;
+  }
+
+  .agent-list-modal .agent-empty {
+    padding: var(--space-xl) var(--space-lg);
+  }
+}
+
+@media (max-width: 640px) {
+  .agent-list-modal .agent-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-list-modal .agent-create-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-list-modal .agent-create-form .input,
+  .agent-list-modal .agent-create-form .select {
+    width: 100%;
+    font-size: 1rem;
+    min-height: 44px;
+  }
+
+  .agent-list-modal .agent-create-form .btn {
+    min-height: 44px;
+  }
+
+  .agent-list-modal .agent-board {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-list-modal .agent-card-actions .btn {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Quick entry toggle: touch target on mobile */
+  .quick-entry-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}
+
+
+
+/*
+FNXC:QuickAddStart 2026-07-24-11:20:
+Start replaced the hidden long-press/right-click Save menu (undiscoverable) with a visible chip in the options
+group. It must read as a secondary CTA — clearly actionable, but subordinate to Save's `btn-task-create` fill —
+so it uses a translucent `color-mix` wash of the shared CTA tokens rather than a new color. Box metrics come
+from the row-wide `.quick-entry-actions .btn` height contract above; do not restate them here.
+*/
+.quick-entry-start-button {
+  background: color-mix(in srgb, var(--cta-bg) 35%, transparent);
+  border-color: color-mix(in srgb, var(--cta-border) 55%, transparent);
+  color: var(--cta-text);
+}
+
+.quick-entry-start-button:hover:not(:disabled),
+.quick-entry-start-button:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--cta-bg-hover) 55%, transparent);
+  border-color: var(--cta-border-hover);
+}
+
+.quick-entry-start-button:disabled {
+  background: color-mix(in srgb, var(--cta-bg) 12%, transparent);
+  border-color: color-mix(in srgb, var(--cta-border) 25%, transparent);
+  color: var(--text-muted);
+}

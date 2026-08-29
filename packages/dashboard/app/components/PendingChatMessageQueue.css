@@ -1,0 +1,94 @@
+/*
+FNXC:ChatPendingQueue 2026-08-19-05:47:
+The shared queue keeps the existing above-composer hierarchy while using dashboard tokens so Direct
+and Planner hosts remain touch-safe at narrow widths without retaining two queue style systems.
+*/
+.pending-chat-message-queue {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  width: 100%;
+}
+
+.pending-chat-message-queue-divider {
+  width: 100%;
+  border-top: var(--btn-border-width) solid var(--border);
+}
+
+.pending-chat-message-queue-heading {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.pending-chat-message-queue-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: calc(var(--space-xl) * 6);
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+  overflow-y: auto;
+}
+
+.pending-chat-message-queue-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  color: var(--text);
+}
+
+.pending-chat-message-queue-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.pending-chat-message-queue-edit-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.pending-chat-message-queue-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.pending-chat-message-queue-actions .btn-icon {
+  flex: 0 0 auto;
+}
+
+.pending-chat-message-queue-force {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.pending-chat-message-queue-error {
+  flex-basis: 100%;
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
+@media (max-width: 768px) {
+  .pending-chat-message-queue-items {
+    max-height: calc(var(--space-xl) * 5);
+  }
+
+  .pending-chat-message-queue-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pending-chat-message-queue-actions {
+    width: 100%;
+  }
+}

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fusion</title>
+    <script>
+      // Theme initialization - runs before React to prevent flash
+      (function () {
+        try {
+          var mode = localStorage.getItem("kb-dashboard-theme-mode") || "system";
+          var validModes = ["dark", "light", "system"];
+          if (!validModes.includes(mode)) {
+            mode = "system";
+          }
+          var colorTheme = localStorage.getItem("kb-dashboard-color-theme") || "shadcn-ember";
+          var validThemes = [
+            "default",
+            "ocean",
+            "forest",
+            "sunset",
+            "zen",
+            "berry",
+            "high-contrast",
+            "industrial",
+            "monochrome",
+            "slate",
+            "ash",
+            "air",
+            "graphite",
+            "silver",
+            "solarized",
+            "factory",
+            "factory-mono",
+            "ayu",
+            "one-dark",
+            "nord",
+            "dracula",
+            "gruvbox",
+            "tokyo-night",
+            "catppuccin-mocha",
+            "github-dark",
+            "everforest",
+            "rose-pine",
+            "kanagawa",
+            "night-owl",
+            "palenight",
+            "monokai-pro",
+            "slime",
+            "brutalist",
+            "neon-city",
+            "parchment",
+            "medieval",
+            "terminal",
+            "glass",
+            "glass-silver",
+            "horizon",
+            "vitesse",
+            "outrun",
+            "snazzy",
+            "porple",
+            "espresso",
+            "mars",
+            "poimandres",
+            "ember",
+            "rust",
+            "copper",
+            "foundry",
+            "carbon",
+            "sandstone",
+            "lagoon",
+            "frost",
+            "lavender",
+            "neon-bloom",
+            "sepia",
+            "cobalt",
+            "clay",
+            "moss",
+            "aurora",
+            "calm",
+            "dawn",
+            "sage",
+            "midnight",
+            "velvet",
+            // FNXC:DashboardTheming 2026-08-23-01:51: Iceberg remains after Velvet in Electron first-paint validation and must stay synchronized with core, selector metadata, web validation, token blocks, and swatch CSS.
+            "iceberg",
+            "factory-dark",
+            "factory-light",
+            "shadcn",
+            "shadcn-ember",
+            "shadcn-custom",
+            "shadcn-blue",
+            "shadcn-green",
+            "shadcn-red",
+            "shadcn-purple",
+            "shadcn-pink",
+            "shadcn-orange",
+            "shadcn-yellow",
+            "shadcn-mono",
+            "shadcn-mono-red",
+            "shadcn-mono-blue",
+            "shadcn-mono-green",
+            "shadcn-mono-purple",
+            "shadcn-mono-pink",
+            "shadcn-mono-orange",
+            "shadcn-mono-yellow",
+            "shadcn-black",
+            "shadcn-gray",
+            "shadcn-gray-blue",
+          ];
+
+          // FNXC:DashboardTheming 2026-06-30-00:00: Desktop pre-hydration mirrors the full core theme union before falling back to Shadcn Ember, so every explicit legacy id stays valid on native startup.
+          // FNXC:DashboardTheming 2026-08-19-19:23: Electron first paint must accept persisted Medieval before React hydrates; invalid or unset values still fall back to Shadcn Ember.
+          if (!validThemes.includes(colorTheme)) {
+            colorTheme = "shadcn-ember";
+          }
+
+          // FNXC:DashboardTheming 2026-07-03-00:00: Desktop shell startup mirrors dashboard startup: default System mode resolves from prefers-color-scheme before React hydration.
+          var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var effectiveMode = mode === "system" ? (systemDark ? "dark" : "light") : mode;
+          document.documentElement.setAttribute("data-theme", effectiveMode);
+          document.documentElement.setAttribute("data-color-theme", colorTheme);
+        } catch (error) {
+          var fallbackSystemDark = false;
+          try {
+            fallbackSystemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          } catch (matchMediaError) {}
+          document.documentElement.setAttribute("data-theme", fallbackSystemDark ? "dark" : "light");
+          document.documentElement.setAttribute("data-color-theme", "shadcn-ember");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>

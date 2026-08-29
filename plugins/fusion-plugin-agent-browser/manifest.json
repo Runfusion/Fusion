@@ -1,0 +1,15 @@
+{
+  "id": "fusion-plugin-agent-browser",
+  "name": "Agent Browser Plugin",
+  "version": "0.1.0",
+  "description": "Adds agent-browser setup hooks plus skills, prompt contributions, and workflow steps",
+  "author": "Fusion Team",
+  "homepage": "https://github.com/gsxdsm/fusion",
+  "promptSurfaces": ["executor-system", "executor-task", "triage", "reviewer", "heartbeat"],
+  "setup": {
+    "binaryName": "agent-browser",
+    "description": "Headless browser runtime for web-enabled agents",
+    "channel": "stable",
+    "defaultTimeoutMs": 120000
+  }
+}

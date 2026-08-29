@@ -1,0 +1,1911 @@
+/* === GitHub Import Modal ===
+   Note: Some hardcoded colors below (e.g. #238636, #2ea043, #f0883e, #1f6feb)
+   are intentional GitHub brand colors and should NOT be replaced with design tokens. */
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+One control row instead of three stacked bands. The import screen previously spent its vertical
+budget on a provider row, a tab row, and a boxed origin+filter+Load stack — on a phone that left only
+a few issues visible. Provider, type tabs, origin, filter, and Load now share this row so the list
+gets the space back.
+
+`flex-wrap: wrap` is deliberate: at the narrowest widths the row reflows to a second line rather than
+clipping controls (the failure mode the composer Save button hit). The toolbar keeps its own box
+styling but is now an inline member of this row instead of a full-width band.
+*/
+.github-import-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+/*
+The toolbar is a row member now, not a band. Its own box chrome (border/background/padding) is
+dropped here: nested inside this row it drew a second frame around origin+filter+Load and forced
+them onto their own line, which is exactly the wasted vertical space this change removes. It keeps
+its internal flex layout and simply flows as more chips in the row.
+*/
+.github-import-controls .github-import-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--space-sm);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  flex-wrap: wrap;
+}
+
+/* Zones stop reserving their own width now that they are inline chips. */
+.github-import-controls .github-import-toolbar__zone--remote {
+  min-width: 0;
+}
+
+.github-import-controls .github-import-toolbar__zone--filter {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+Origin stays VISIBLE (operator decision) but flattens from a stacked ORIGIN/repo block into one
+inline chip — it is context for what you are importing, not a section header, so it should cost a
+few characters of a shared row rather than two rows of its own.
+*/
+.github-import-controls .github-import-remote-pill {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+/* The uppercase "ORIGIN" caption is redundant once the repo sits inline in the control row. */
+.github-import-controls .github-import-remote-pill__name {
+  display: none;
+}
+
+.github-import-controls .github-import-remote-pill__repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18ch;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/*
+Row members sit inline and never stretch. Written as a child selector rather than naming
+`.github-import-provider`/`.github-import-tabs` on purpose: GitHubImportModal.test.tsx extracts
+those base rules with a naive first-match regex (/\.github-import-tabs\s*\{[^}]*\}/), so a rule
+mentioning them ABOVE the originals would silently hijack that assertion. The toolbar opts back
+into growing via its own higher-specificity rule below.
+*/
+.github-import-controls > * {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+Filter popover. The trigger doubles as the filter's readout (it renders the active labels), so a
+collapsed filter never hides applied state; `is-active` gives it an accent cue. `position: relative`
+anchors the panel, which is width-clamped to the viewport so it cannot overflow on a phone.
+*/
+.github-import-filter-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.github-import-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 36px;
+  max-width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 13px;
+}
+
+/* The readout must ellipsize, never widen the row or wrap mid-label. */
+.github-import-filter-trigger__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12ch;
+}
+
+.github-import-filter-trigger.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.github-import-filter-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  width: max(220px, 100%);
+  max-width: calc(100vw - var(--space-xl));
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 18%));
+}
+
+.github-import-filter-panel__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.github-import-filter-panel input {
+  width: 100%;
+  min-height: 36px;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+Load is icon-only — its label lives in aria-label/title. Square so it reads as an icon affordance and
+holds a 36px touch target without claiming a row of its own.
+*/
+.github-import-controls .github-import-load-button {
+  flex: 0 0 auto;
+  gap: 0;
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+
+/* Compact Toolbar Layout */
+.github-import-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.github-import-toolbar__zone {
+  display: flex;
+  align-items: center;
+}
+
+.github-import-toolbar__zone--remote {
+  flex: 0 0 auto;
+  min-width: 140px;
+}
+
+.github-import-toolbar__zone--filter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.github-import-toolbar__zone--filter input {
+  width: 100%;
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+}
+
+.github-import-toolbar__zone--filter input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  outline: none;
+}
+
+.github-import-toolbar__zone--filter input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-import-toolbar__zone--filter input::placeholder {
+  color: var(--text-dim);
+}
+
+.github-import-toolbar__zone--action {
+  flex: 0 0 auto;
+}
+
+.github-import-toolbar__loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.github-import-toolbar__no-remote {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Remote pill for single remote */
+.github-import-remote-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.github-import-remote-pill__name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.github-import-remote-pill__repo {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Remote select dropdown */
+.github-import-remote-select select {
+  min-width: 180px;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.github-import-remote-select select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Load button */
+.github-import-load-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-height: 36px;
+  padding: var(--space-sm) var(--space-md);
+}
+
+.github-import-load-button span {
+  font-size: 13px;
+}
+
+.github-import-list-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.github-import-list-pane .issue-main,
+.github-import-list-pane .issue-heading-row {
+  min-width: 0;
+}
+.github-import-list-pane .issue-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.github-import-list-pane .issue-labels {
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+/*
+FNXC:GitHubImport 2026-08-17-23:47:
+The detail panel is the FloatingWindow's only child and owns its own inset — without one the Preview
+header rendered flush against the window's left edge, so the header read as mis-aligned on both the
+desktop window and the mobile sheet.
+This padding is now symmetric on all four sides. It previously set `padding-inline-end: 0` and
+borrowed its right inset from FN-8015's shared `.floating-window__body` gutter; that gutter is
+deleted, so the panel supplies both insets itself and no longer needs a tablet-specific restore.
+Padding lives on the panel rather than the pane content so header, toast, and scrolling body share
+one inset and the header divider is inset with them.
+*/
+.github-import-detail-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-lg);
+  overflow: hidden;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+Bottom action bar for the detail preview. Import/Close issue moved here from the pane header —
+commit actions belong below the content they act on and within thumb reach on a phone, and this
+mirrors the modal's own Cancel bar. `margin-top: auto` pins it to the bottom of the flex panel even
+when the preview is short; the top border separates it from scrolling content.
+*/
+.github-import-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: auto;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+/* Keep the composer and its action controls as independently sized flex rows. */
+.github-import-detail-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+/* Never let the primary action's label clip when the bar is narrow. */
+.github-import-detail-action-row .btn {
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-height: 36px;
+}
+
+
+/*
+FNXC:GitHubImport 2026-07-17-12:00:
+The upstream-comment composer shares the detail action bar but takes a full row, keeping its
+textarea and submit control reachable before Import on desktop and the mobile detail sheet.
+*/
+.github-import-issue-comment-composer {
+  display: flex;
+  flex: 1 0 100%;
+  gap: var(--space-sm);
+}
+
+.github-import-issue-comment-composer__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  resize: vertical;
+}
+
+.github-import-issue-comment-composer__submit {
+  align-self: flex-end;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-18:20 (superseded 2026-07-15-23:25):
+Supersedes #551a2a3c1's note here. That change dropped `justify-content: space-between` and gave the
+label `margin-inline-end: auto` so Close issue and Import stayed grouped as a pair at the END of this
+header rather than Close issue being flung to the middle. Those actions now live in
+`.github-import-detail-actions` below the content, so the header holds ONLY the label. The rules are
+kept as-is because they remain correct for a lone label (it simply takes the free space), and they
+are what a future action returning to this header would need — but the grouping rationale no longer
+applies here. Do not re-add actions to this header without revisiting the bottom-bar decision.
+*/
+.github-import-pane-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-18:20:
+"Preview" / "Issues" is a section label, not a peer of the issue title inside the card. The muted uppercase eyebrow matches .preview-meta so the two read as one type system, and it stops the label competing with the primary Import action for emphasis.
+*/
+.github-import-pane-header h4 {
+  margin-inline-end: auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-18:20:
+Both header actions size from one rule so the secondary Close issue and the primary Import share a baseline and an identical height — previously each inherited only .btn/.btn-primary defaults and rendered visibly mismatched. min-height keeps the pair a comfortable target without growing the header past the single-line label.
+*/
+.github-import-pane-header .btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 30px;
+  padding: 0 var(--space-md);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/*
+FNXC:GitHubImport 2026-06-23-03:15:
+Transient inline toast confirming issue close. Sits directly under the preview header; success/error use theme tokens only. Auto-dismisses via component timer.
+*/
+.github-import-close-toast {
+  margin-bottom: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.github-import-close-toast--success {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.github-import-close-toast--error {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+/*
+FNXC:GitHubImportTranslate 2026-07-14-12:00:
+Opt-in translation banner for import preview when content language differs from the dashboard locale.
+Compact row under metadata so title/body stay readable; error uses the same token language as the close toast.
+*/
+.github-import-translate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.github-import-translate__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.github-import-translate__icon {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.github-import-translate__message {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.github-import-translate__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.github-import-translate__action,
+.github-import-translate__dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.github-import-translate__error {
+  font-size: 12px;
+  color: var(--color-error);
+}
+
+/*
+FNXC:GitHubImportTranslate 2026-07-17-15:48:
+The issues list must disclose background auto-translation without blocking browsing. Reuse the global
+status-dot state colors and the existing spinner; the wrapper exists only for active or failed work so
+idle and auto-translate-off views retain their original layout.
+*/
+.github-import-autotranslate-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 13px);
+}
+
+.github-import-autotranslate-status__working,
+.github-import-autotranslate-status__error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.github-import-autotranslate-status__working {
+  color: var(--color-warning);
+}
+
+.github-import-autotranslate-status__error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .github-import-autotranslate-status {
+    align-items: flex-start;
+  }
+
+  .github-import-autotranslate-status__error {
+    flex-basis: 100%;
+  }
+}
+
+.github-import-pane-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Wider modal for two-pane layout */
+.modal.github-import-modal {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.github-import-modal__header {
+  align-items: flex-start;
+}
+
+.github-import-modal__subtitle {
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.github-import-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg) var(--space-xl);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.github-import-modal__actions {
+  align-items: center;
+}
+
+/*
+FNXC:ImportTasks 2026-06-22-12:45:
+The Import Tasks sub-header tab bar should match the Artifacts view's button bar: plain body row, tokenized border/surface buttons, todo-accent active state, and no card-like filled strip under the main header.
+*/
+.github-import-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0;
+  border-bottom: none;
+  background: transparent;
+}
+
+.github-import-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.github-import-tab:hover:not(:disabled) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.github-import-tab.active {
+  color: var(--todo);
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.github-import-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-import-filter-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.pull-branch-info {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
+.preview-branch {
+  margin-bottom: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
+.preview-branch strong {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Legacy section styles - kept for compatibility */
+.github-import-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.github-import-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.github-import-section__header h4 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.github-import-section__helper {
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.github-import-repository-pill {
+  min-width: 180px;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-align: right;
+}
+
+.github-import-repository-pill__label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.github-import-repository-pill__value {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.github-import-controls-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+  gap: var(--space-md);
+}
+
+.github-import-form-group {
+  margin-top: 0;
+  padding: 0;
+}
+
+.github-import-form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.github-import-form-group--remote {
+  grid-column: 1 / -1;
+}
+
+.github-import-form-group--action {
+  display: flex;
+  flex-direction: column;
+}
+
+.github-import-remote-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.github-import-remote-card__eyebrow {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.github-import-remote-card__title {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.github-import-remote-card__title span {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.github-import-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-lg);
+  color: var(--color-success);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.github-import-command {
+  display: block;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.form-error {
+  margin: var(--space-md) 0;
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  color: var(--color-error);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.github-import-banner {
+  margin: 0;
+}
+
+.github-import-section--results,
+.github-import-section--preview {
+  min-height: 100%;
+}
+
+.github-import-results-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.github-import-results-meta span {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-16:30:
+Hide imported must remain a compact, reachable control beside loaded-result metadata and within the GitLab toolbar, including
+when either layout wraps on mobile. Token-based spacing keeps it consistent with the surrounding import controls.
+*/
+.github-import-hide-imported {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.github-import-hide-imported input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.github-import-state {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.github-import-state strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.github-import-state span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.github-import-state--loading {
+  border-style: solid;
+}
+
+.github-import-state--warning {
+  border-style: solid;
+}
+
+.github-import-state--error {
+  border-style: solid;
+  border-color: var(--color-error);
+}
+
+.github-import-state--error strong {
+  color: var(--color-error);
+}
+
+.github-import-state--empty,
+.github-import-state--idle {
+  border-color: var(--border);
+}
+
+.issues-list {
+  display: flex;
+  flex-direction: column;
+  max-height: none;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-10:32:
+Issue/PR/GitLab rows are <button>s without a left radio control. Reset native button chrome so the
+row still reads as a list item (full width, left-aligned text, bottom border only).
+*/
+.issue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  width: 100%;
+  margin: 0;
+  padding: var(--space-md);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.issue-item:last-child {
+  border-bottom: none;
+}
+
+.issue-item:hover:not(.imported):not(:disabled) {
+  background: var(--card-hover);
+}
+
+.issue-item.selected {
+  background: color-mix(in srgb, var(--in-progress) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--in-progress) 35%, transparent);
+}
+
+.issue-item.imported,
+.issue-item:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.issue-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.issue-heading-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.issue-number {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.issue-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.issue-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-sm);
+}
+
+.label-chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+}
+
+.imported-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-lg);
+  color: var(--color-success);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.issue-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.preview-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.preview-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.preview-body {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/*
+FNXC:GitHubImport 2026-06-22-18:30:
+Full-body preview metadata row (state badge, author, GitHub link) plus the markdown body wrapper.
+The markdown variant must NOT pre-wrap/clamp — MailboxMessageContent emits real block elements (p, ul, pre, table), so reset the plain-text white-space and let the body take full height; the preview pane already owns the vertical scroll.
+*/
+.preview-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.preview-state-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.preview-state-badge--open {
+  color: var(--color-success, var(--accent));
+  border-color: color-mix(in srgb, var(--color-success, var(--accent)) 40%, transparent);
+}
+
+.preview-state-badge--closed {
+  color: var(--color-error, var(--text-muted));
+  border-color: color-mix(in srgb, var(--color-error, var(--text-muted)) 40%, transparent);
+}
+
+.preview-state-badge--merged {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.preview-author {
+  color: var(--text-muted);
+}
+
+.preview-url {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.preview-url:hover {
+  text-decoration: underline;
+}
+
+.preview-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.preview-body--markdown {
+  white-space: normal;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.preview-body--markdown :where(p, ul, ol, pre, table, blockquote, h1, h2, h3, h4) {
+  margin: 0 0 var(--space-sm);
+}
+
+.preview-body--markdown :where(p, ul, ol, pre, table, blockquote, h1, h2, h3, h4):last-child {
+  margin-bottom: 0;
+}
+
+/*
+FNXC:GitHubImport 2026-06-23-01:00:
+Checks + Comments sections live below the PR body in the scrollable preview pane. Theme tokens only — check pills color via --success/--danger/--warning/--text-muted, mirroring the preview-state-badge token fallbacks.
+*/
+.github-import-pr-checks,
+.github-import-pr-comments {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+.preview-section-heading {
+  margin: 0 0 var(--space-sm);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-19:00:
+FN-8137 keeps the PR checks refresh control in the section heading so changing CI state is discoverable without competing with individual check actions.
+*/
+.github-import-pr-checks__heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.github-import-pr-checks__heading-row .preview-section-heading {
+  margin-bottom: 0;
+}
+
+.github-import-pr-checks-refresh {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.preview-detail-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.preview-detail-error {
+  color: var(--color-error, var(--text-muted));
+  font-size: 12px;
+}
+
+.preview-detail-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.github-import-pr-checks__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.github-import-pr-check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.github-import-pr-check-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 64px;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.github-import-pr-check-pill--success {
+  color: var(--color-success, var(--accent));
+  border-color: color-mix(in srgb, var(--color-success, var(--accent)) 40%, transparent);
+}
+
+.github-import-pr-check-pill--failure {
+  color: var(--color-error, var(--text-muted));
+  border-color: color-mix(in srgb, var(--color-error, var(--text-muted)) 40%, transparent);
+}
+
+.github-import-pr-check-pill--pending {
+  color: var(--color-warning, var(--accent));
+  border-color: color-mix(in srgb, var(--color-warning, var(--accent)) 40%, transparent);
+}
+
+.github-import-pr-check-pill--neutral {
+  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
+.github-import-pr-check-name {
+  color: var(--text);
+  text-decoration: none;
+  word-break: break-word;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-17:00:
+FN-8110 keeps a failed check's repair action attached to its own row without introducing a new button visual system.
+The shared btn primitives own colors and control treatment; this rule only reserves row layout and mobile-safe wrapping.
+*/
+.github-import-pr-check-fix-task {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+
+a.github-import-pr-check-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.github-import-pr-comments__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.github-import-pr-comment {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+}
+
+.github-import-pr-comment__author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.github-import-pr-comment__body {
+  color: var(--text);
+}
+
+/*
+FNXC:GitHubImport 2026-06-23-03:30:
+Per-comment meta row: avatar, author, human/bot badge, and a readable timestamp. The active comment briefly highlights when reached via prev/next nav.
+Across the thread: a top filter (All/Human/Bot) and prev/next chevrons live in the comments header. Theme tokens only.
+*/
+.github-import-pr-comment__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.github-import-comment__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.github-import-comment__avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.github-import-comment__type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.github-import-comment__type-badge--human {
+  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
+.github-import-comment__type-badge--bot {
+  color: var(--color-warning, var(--accent));
+  border-color: color-mix(in srgb, var(--color-warning, var(--accent)) 40%, transparent);
+}
+
+.github-import-comment__time {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-18:15:
+Per-comment task import stays in the metadata flow so every human and bot comment has a reachable action without displacing author or timestamp context. Result feedback is inline because the detail window remains open for additional feedback imports.
+*/
+.github-import-comment__import {
+  margin-left: var(--space-xs);
+  white-space: nowrap;
+}
+
+.github-import-comment__import svg {
+  flex: 0 0 auto;
+}
+
+.github-import-comment__result {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.github-import-comment__result--success {
+  color: var(--color-success);
+}
+
+.github-import-comment__result--error {
+  color: var(--color-error);
+}
+
+.github-import-pr-comment--active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transition: outline-color 0.3s ease;
+}
+
+.github-import-pr-comments__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.github-import-comments-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.github-import-comments-nav__pos {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: center;
+}
+
+.github-import-comments-nav__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.github-import-comments-nav__btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.github-import-comments-nav__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.github-import-comments-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 var(--space-sm);
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.github-import-comments-filter__chip {
+  padding: 2px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.github-import-comments-filter__chip:hover {
+  color: var(--text);
+}
+
+.github-import-comments-filter__chip.active {
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+}
+
+/* Light theme overrides for GitHub import components */
+[data-theme="light"] .github-import-tabs {
+  background: var(--bg-secondary);
+}
+
+[data-theme="light"] .github-import-tab.active {
+  background: var(--card);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+[data-theme="light"] .github-import-toolbar {
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border);
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-23:35:
+Theme-scoped companion to the de-boxing above. The base rule dropped the toolbar's band chrome, but
+this light-theme rule re-applied a background later in the cascade at equal specificity, so the band
+survived in light mode only. Nested in the control row the toolbar is a group of inline chips, not a
+surface — it must carry no fill in EITHER theme. Both selectors are listed so a dark-theme
+counterpart added later cannot silently reintroduce the band.
+*/
+[data-theme="light"] .github-import-controls .github-import-toolbar,
+[data-theme="dark"] .github-import-controls .github-import-toolbar {
+  background: none;
+  border: 0;
+}
+
+[data-theme="light"] .github-import-toolbar__zone--filter input {
+  background: var(--card);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .github-import-toolbar__zone--filter input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--in-progress) 15%, transparent);
+}
+
+[data-theme="light"] .issues-list {
+  background: var(--card);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .issue-item:hover:not(.imported):not(:disabled) {
+  background: var(--card-hover);
+}
+
+[data-theme="light"] .issue-item.selected {
+  background: color-mix(in srgb, var(--in-progress) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--in-progress) 30%, transparent);
+}
+
+[data-theme="light"] .github-import-state {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .issue-preview {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .label-chip {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+
+/* Responsive breakpoints */
+@media (max-width: 640px) {
+  /* Full-screen sheet on mobile — drop overlay padding so the modal
+     actually fills the viewport instead of being pushed below it.
+     FNXC:GitHubImport 2026-06-22-16:00: scope the viewport-takeover to the
+     NON-embedded (dialog) presentation via :not(.github-import-modal--embedded).
+     The embedded view lives inside the main-content pane (between the mobile
+     Header and MobileNavBar); without the guard its base .github-import-modal
+     class matched these 100vw/100dvh rules and covered the whole screen. The
+     embedded panel keeps its own 100%-of-pane sizing from the embedded block
+     below. */
+  .modal-overlay:has(.github-import-modal:not(.github-import-modal--embedded)) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .modal.github-import-modal:not(.github-import-modal--embedded) {
+    width: 100vw;
+    min-width: 0;
+    max-width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    resize: none;
+  }
+
+  .github-import-modal__body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: var(--space-md);
+    gap: var(--space-md);
+  }
+
+  .github-import-toolbar {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+  }
+
+  /*
+  FNXC:GitHubImport 2026-07-15-23:40:
+  These stacked the toolbar one-zone-per-row back when it was a full-width band. Inside the control
+  row that is now actively wrong: `flex: 1 1 100%` forced origin to claim an entire line, pushing
+  Filter and Load onto yet another — the exact vertical waste this change removes. Origin now shares
+  the row and simply ellipsizes; `min-width: 140px` on the filter is dropped for the same reason (it
+  reserved a full input's width for what is now a compact trigger). Order is preserved so the reading
+  order stays origin → filter → load.
+  */
+  .github-import-toolbar__zone--remote {
+    flex: 0 1 auto;
+    order: 1;
+    min-width: 0;
+  }
+
+  .github-import-toolbar__zone--filter {
+    flex: 0 1 auto;
+    order: 2;
+    min-width: 0;
+  }
+
+  .github-import-toolbar__zone--action {
+    flex: 0 0 auto;
+    order: 3;
+  }
+
+  .github-import-remote-select select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .github-import-section {
+    padding: var(--space-md);
+  }
+
+  .github-import-section__header {
+    flex-direction: column;
+  }
+
+  .github-import-repository-pill {
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .github-import-controls-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .github-import-results-meta {
+    justify-content: flex-start;
+  }
+
+
+  /*
+  FNXC:GitHubImport 2026-08-16-00:33:
+  Pull-request rows can contain a wrapped title, a branch line, and an Imported badge. They must use
+  their intrinsic height on phones: the former fixed minimum height constrained wrapped content and
+  made consecutive rows paint over one another.
+  */
+  .issue-item {
+    flex-wrap: wrap;
+  }
+
+  /*
+  FNXC:GitHubImport 2026-08-16-00:33:
+  Pull head/base names can be unbroken generated identifiers. Let the branch line shrink and break
+  them inside the shared list row so both dialog and embedded phone presentations stay contained.
+  */
+  .pull-branch-info {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .imported-badge {
+    align-self: flex-start;
+  }
+
+  /*
+  FNXC:GitHubImport 2026-07-16-19:00:
+  FN-8150 requires populated GitHub, pull request, and GitLab lists to use the remaining height of
+  the mobile full-screen sheet rather than stopping at a 50vh cap. The GitHub list pane becomes a
+  constrained flex column so the list owns internal scrolling while pagination and the Cancel bar
+  remain reachable; the shared list rule also lets the stretched GitLab workspace list fill its row.
+  */
+  .github-import-list-pane .github-import-pane-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .issues-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+
+
+}
+
+/*
+FNXC:GitHubImport 2026-07-23-12:18:
+The selected-issue mobile action row must keep Import as task alongside optional Close issue,
+Plan, and Chat controls. The comment composer remains on its own full-width row, while equal
+shrinkable action tracks preserve every full label by wrapping it inside its own button and the
+shared touch-target token preserves every required target without clipping or scrolling.
+*/
+@media (max-width: 768px) {
+  /*
+  FNXC:GitHubImport 2026-08-16-00:33:
+  The selected pull-request sheet shares this preview branch block with desktop. On narrow and
+  landscape sheets, break unbroken branch names so its scrollable detail content cannot overflow.
+  */
+  .preview-branch {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .github-import-detail-actions {
+    gap: var(--space-xs);
+  }
+
+  .github-import-detail-action-row {
+    flex: 1 1 100%;
+    min-width: 0;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: var(--space-xs);
+  }
+
+  .github-import-detail-action-row .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: var(--touch-target-min-size) !important;
+    padding: var(--space-xs);
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+@keyframes github-import-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+FNXC:RightDockEmbedding 2026-06-22-00:00:
+Right-dock redesign renders the GitHub import surface inline in the main content area instead of as a fixed popup overlay.
+The embedded root is a plain flow box that fills the host; the inner shell sheds overlay-only chrome (fixed sizing, box-shadow, rounded corners, resize) and fills 100% so the main panel owns the frame. No close button is rendered in embedded mode.
+*/
+.github-import-embedded.right-dock-embedded-view {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  /*
+  FNXC:ImportTasks 2026-06-22-16:05:
+  Import Tasks is a full main-content view, not a modal card. Match Skills/other view bodies by letting the host read as the dashboard background while the shared header owns the surface band.
+  */
+  background: var(--bg);
+}
+
+/*
+FNXC:ViewHeader 2026-06-23-04:15:
+Embedded root drops its uniform --space-lg padding so the header can span edge-to-edge like the canonical ViewHeader; the body re-applies a horizontal inset below. This keeps the resizable list/preview/comments work intact (only the outer padding moves to the body).
+*/
+.github-import-modal.github-import-modal--embedded {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  min-width: 0;
+  max-height: none;
+  min-height: 0;
+  position: static;
+  box-shadow: none;
+  border-radius: 0;
+  resize: none;
+  padding: 0;
+  background: var(--bg);
+  border: none;
+}
+
+/*
+FNXC:ViewHeader 2026-06-23-04:15:
+Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge-to-edge --surface bg, no bottom divider, --space-lg/--space-xl padding, and the shared --view-header-min-height (≈61px border-box) — so it matches Agents/Mailbox/Missions/Automations height + padding exactly. (Previously a plain padding-bottom title row with no surface/min-height.)
+*/
+.github-import-modal__embedded-header {
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  min-height: var(--view-header-min-height);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+  border-bottom: none;
+}
+
+.github-import-modal__embedded-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* FNXC:ViewHeader 2026-06-23-04:15: Canonical --todo leading-icon tint at size 20, matching every other view header. */
+.github-import-modal__embedded-title svg {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+/* Body re-applies the horizontal + bottom inset the now-edge-to-edge header no longer provides. */
+.github-import-modal--embedded .github-import-modal__body {
+  padding: var(--space-lg) var(--space-xl) var(--space-lg);
+  background: var(--bg);
+}
+
+.github-import-gitlab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  min-height: 0;
+  flex: 1;
+}
+
+.github-import-gitlab__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-3);
+  min-height: 0;
+  flex: 1;
+}
+
+
+
+@media (max-width: 768px) {
+  /* FNXC:GitHubImport 2026-07-16-18:15: Mobile detail sheets keep each comment import action on its own reachable row when metadata wraps. */
+  .github-import-comment__import {
+    margin-left: 0;
+  }
+
+  .github-import-comment__time + .github-import-comment__import {
+    flex-basis: 100%;
+  }
+
+  .github-import-provider,
+  .github-import-gitlab .github-import-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .github-import-gitlab__workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .github-import-pr-checks__heading-row {
+    flex-wrap: wrap;
+  }
+
+  .github-import-pr-checks__heading-row .preview-section-heading {
+    flex: 1 1 auto;
+  }
+
+  .github-import-pr-check-row {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .github-import-pr-check-fix-task {
+    width: 100%;
+    justify-content: center;
+    margin-inline-start: 0;
+  }
+
+  /*
+  FNXC:GitHubImport 2026-07-15-18:20:
+  This is the breakpoint where the detail FloatingWindow becomes a full-screen sheet. The panel's var(--space-lg) inset already reads as a conventional mobile gutter, so only the actions change: they grow to a 40px touch target because the desktop 30px pair is a mouse-sized hit area and Import is the sheet's primary action.
+  */
+  .github-import-pane-header .btn {
+    min-height: 40px;
+    padding: 0 var(--space-md);
+    font-size: 13px;
+  }
+
+
+  .github-import-issue-comment-composer {
+    flex-direction: column;
+  }
+
+  .github-import-issue-comment-composer__input,
+  .github-import-issue-comment-composer__submit {
+    width: 100%;
+    min-height: 40px;
+  }
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-16:20:
+Page controls for the issues list. Reuses the shared `.btn`/`.btn-secondary`/`.btn-sm` primitives (only layout
+lives here) and design tokens for spacing/color so the bar matches the modal's other footers in light and dark.
+*/
+.github-import-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-xs) 0;
+}
+
+.github-import-pagination__status {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 13px);
+  text-align: center;
+  flex: 1 1 auto;
+}
+
+.github-import-pagination__truncation {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 13px);
+  padding: var(--space-xs) var(--space-xs) 0;
+  text-align: center;
+}

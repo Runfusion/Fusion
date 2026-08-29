@@ -1,0 +1,3830 @@
+import "./ModelOnboardingModal.css";
+import "./SetupWizardModal.css";
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent, type ReactNode } from "react";
+import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, Sparkles, UserRound } from "lucide-react";
+import { getErrorMessage, type Task } from "@fusion/core";
+import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, CustomProvider, CustomProviderConfig, OAuthDeviceCodeInfo } from "../api";
+import {
+  fetchAuthStatus,
+  fetchGlobalSettings,
+  loginProvider,
+  logoutProvider,
+  cancelProviderLogin,
+  submitProviderManualCode,
+  saveApiKey,
+  clearApiKey,
+  fetchModels,
+  updateGlobalSettings,
+  createTask,
+  createAgent,
+  fetchCustomProviders,
+  createCustomProvider,
+  type AgentOnboardingSummary,
+  type GitCliStatus,
+} from "../api";
+import type { ToastType } from "../hooks/useToast";
+import { FloatingWindow } from "./FloatingWindow";
+import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ProviderIcon } from "./ProviderIcon";
+import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
+import { CursorCliProviderCard } from "./CursorCliProviderCard";
+import { LlamaCppProviderCard } from "./LlamaCppProviderCard";
+import { LoginInstructions } from "./LoginInstructions";
+import { ProviderLoginDialog, type ProviderLoginPhase } from "./ProviderLoginDialog";
+import { describeLoginFailure } from "../utils/loginFailure";
+import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
+import { OnboardingDisclosure } from "./OnboardingDisclosure";
+import { CustomProviderForm } from "./CustomProviderForm";
+import { PluginSlot } from "./PluginSlot";
+import { appendTokenQuery, OAUTH_RELOGIN_SUCCESS_EVENT } from "../auth";
+import { openExternalUrl } from "../utils/open-external";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
+import { filterVisibleOnboardingAndSettingsProviders } from "./providerVisibility";
+import { useShellConnection } from "../hooks/useShellConnection";
+import { useConfirm } from "../hooks/useConfirm";
+import { useTranslation } from "react-i18next";
+import { AgentAvatar } from "./AgentAvatar";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { AGENT_PRESETS, getPresetById } from "./agent-presets";
+import {
+  buildAgentCreatePayload,
+  mapOnboardingSummaryToAgentDraft,
+  mapPresetToAgentDraft,
+  type AgentDraftValues,
+} from "./agent-presets/agentCreatePayload";
+
+const ExperimentalAgentOnboardingModal = lazy(() =>
+  import("./ExperimentalAgentOnboardingModal").then((m) => ({ default: m.ExperimentalAgentOnboardingModal })),
+);
+
+const mapLegacyCustomProviderToConfig = (
+  provider: CustomProvider | CustomProviderConfig,
+): CustomProviderConfig => ({
+  id: provider.id,
+  name: provider.name,
+  baseUrl: provider.baseUrl,
+  api:
+    "api" in provider
+      ? provider.api
+      : provider.apiType === "anthropic-compatible"
+        ? "anthropic-messages"
+        : "openai-responses",
+  apiKey: provider.apiKey,
+  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+});
+
+/** Provider-specific API key setup metadata for onboarding form rendering */
+interface ApiKeyInfo {
+  /** Label shown above the input field, e.g. "OpenAI API Key" */
+  fieldLabel: string;
+  /** Brief setup instructions: where to find/create the key */
+  setupInstructions: string;
+  /** URL to the provider's API key dashboard (optional) */
+  dashboardUrl?: string;
+  /** Hint text shown inside the input via placeholder */
+  inputPlaceholder?: string;
+  /** Brief text explaining where Fusion uses this key */
+  usageDescription: string;
+}
+
+interface ProviderInfo {
+  description: string;
+  apiKeyInfo?: ApiKeyInfo;
+}
+
+/** Provider metadata with plain-language descriptions for the onboarding UI */
+function getProviderInfoMap(t: (key: string, defaultValue: string) => string): Record<string, ProviderInfo> {
+  return {
+    anthropic: {
+      description: t("setup.providerDesc.anthropic", "Claude models — strong at reasoning, analysis, and code"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.anthropic", "Anthropic API Key"),
+        setupInstructions: t("setup.apiKeySetup.anthropic", "Create an API key from your Anthropic Console under API keys."),
+        dashboardUrl: "https://console.anthropic.com/settings/keys",
+        inputPlaceholder: "sk-ant-...",
+        usageDescription: t("setup.apiKeyUsage.anthropic", "Used for Claude models in task execution and planning"),
+      },
+    },
+    "anthropic-api-key": {
+      description: t("setup.providerDesc.anthropicApiKey", "Claude models via raw Anthropic API key"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.anthropic", "Anthropic API Key"),
+        setupInstructions: t("setup.apiKeySetup.anthropic", "Create an API key from your Anthropic Console under API keys."),
+        dashboardUrl: "https://console.anthropic.com/settings/keys",
+        inputPlaceholder: "sk-ant-...",
+        usageDescription: t("setup.apiKeyUsage.anthropic", "Used for Claude models in task execution and planning"),
+      },
+    },
+    "anthropic-subscription": {
+      description: t("setup.providerDesc.anthropicSubscription", "Claude subscription OAuth — sign in with your Anthropic account"),
+    },
+    openai: {
+      description: t("setup.providerDesc.openai", "GPT models — versatile for a wide range of tasks"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.openai", "OpenAI API Key"),
+        setupInstructions: t("setup.apiKeySetup.openai", "Create an API key from your OpenAI dashboard under API keys."),
+        dashboardUrl: "https://platform.openai.com/api-keys",
+        inputPlaceholder: "sk-...",
+        usageDescription: t("setup.apiKeyUsage.openai", "Used for GPT models in task execution and planning"),
+      },
+    },
+    "openai-codex": { description: t("setup.providerDesc.openaiCodex", "Codex models by OpenAI — optimized for coding tasks") },
+    google: { description: t("setup.providerDesc.google", "Gemini models — multimodal with strong reasoning") },
+    gemini: { description: t("setup.providerDesc.gemini", "Gemini models — multimodal with strong reasoning") },
+    ollama: {
+      description: t("setup.providerDesc.ollama", "Run open-source models locally on your machine"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.ollama", "Ollama Endpoint"),
+        setupInstructions: t("setup.apiKeySetup.ollama", "Enter your Ollama endpoint URL (for example http://localhost:11434)."),
+        inputPlaceholder: "http://localhost:11434",
+        usageDescription: t("setup.apiKeyUsage.ollama", "Connects to your local Ollama instance"),
+      },
+    },
+    minimax: {
+      description: t("setup.providerDesc.minimax", "MiniMax models — cost-effective for high-volume usage"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.minimax", "MiniMax API Key"),
+        setupInstructions: t("setup.apiKeySetup.minimax", "Generate an API key from the MiniMax platform developer console."),
+        dashboardUrl: "https://platform.minimaxi.com/",
+        inputPlaceholder: t("setup.apiKeyPlaceholder.minimax", "Enter your MiniMax API key"),
+        usageDescription: t("setup.apiKeyUsage.minimax", "Used for MiniMax models in task execution"),
+      },
+    },
+    zai: {
+      description: t("setup.providerDesc.zai", "GLM models by Zhipu AI — strong multilingual support"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.zai", "Zhipu AI API Key"),
+        setupInstructions: t("setup.apiKeySetup.zai", "Create an API key in the Zhipu AI open platform account settings."),
+        dashboardUrl: "https://open.bigmodel.cn/",
+        inputPlaceholder: t("setup.apiKeyPlaceholder.zai", "Enter your Zhipu AI API key"),
+        usageDescription: t("setup.apiKeyUsage.zai", "Used for GLM models in task execution"),
+      },
+    },
+    kimi: { description: t("setup.providerDesc.kimi", "Kimi by Moonshot AI — long-context capabilities") },
+    moonshot: { description: t("setup.providerDesc.moonshot", "Kimi by Moonshot AI — long-context capabilities") },
+    "kimi-coding": {
+      description: t("setup.providerDesc.kimiCoding", "Kimi by Moonshot AI — long-context capabilities"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.kimiCoding", "Kimi API Key"),
+        setupInstructions: t("setup.apiKeySetup.kimiCoding", "Create your API key in the Moonshot platform account settings."),
+        dashboardUrl: "https://platform.moonshot.cn/",
+        inputPlaceholder: t("setup.apiKeyPlaceholder.kimiCoding", "Enter your Kimi API key"),
+        usageDescription: t("setup.apiKeyUsage.kimiCoding", "Used for Kimi/Moonshot AI models in task execution and planning"),
+      },
+    },
+    openrouter: {
+      description: t("setup.providerDesc.openrouter", "OpenRouter — route requests across multiple AI providers"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.openrouter", "OpenRouter API Key"),
+        setupInstructions: t("setup.apiKeySetup.openrouter", "Create an API key from your OpenRouter account key management page."),
+        dashboardUrl: "https://openrouter.ai/keys",
+        inputPlaceholder: "sk-or-v1-...",
+        usageDescription: t("setup.apiKeyUsage.openrouter", "Routes to multiple AI model providers through a single key"),
+      },
+    },
+    orcarouter: {
+      description: t("setup.providerDesc.orcarouter", "OrcaRouter — one gateway for multiple AI providers with gateway-level agent security"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.orcarouter", "OrcaRouter API Key"),
+        setupInstructions: t("setup.apiKeySetup.orcarouter", "Create an API key from your OrcaRouter dashboard."),
+        dashboardUrl: "https://www.orcarouter.ai",
+        inputPlaceholder: "sk-orca-...",
+        usageDescription: t("setup.apiKeyUsage.orcarouter", "Routes to multiple AI model providers through a single key"),
+      },
+    },
+  };
+}
+
+const PROVIDER_KEY_HINTS: Record<string, {
+  pattern: RegExp;
+  hint: string;
+  example: string;
+}> = {
+  anthropic: { pattern: /^sk-ant-/, hint: "Starts with sk-ant-", example: "sk-ant-api03-..." },
+  "anthropic-api-key": { pattern: /^sk-ant-/, hint: "Starts with sk-ant-", example: "sk-ant-api03-..." },
+  openai: { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
+  "openai-codex": { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
+  openrouter: { pattern: /^sk-or-/, hint: "Starts with sk-or-", example: "sk-or-v1-..." },
+  orcarouter: { pattern: /^sk-orca-/, hint: "Starts with sk-orca-", example: "sk-orca-..." },
+  google: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
+  gemini: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
+  minimax: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
+  ollama: { pattern: /^.+$/, hint: "Any non-empty value", example: "ollama" },
+  zai: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
+  kimi: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
+  "kimi-coding": { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
+  moonshot: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
+};
+
+const PROVIDER_KEY_HINTS_FALLBACK = {
+  pattern: /^.{8,}$/,
+  hint: "At least 8 characters",
+  example: "...",
+};
+
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  "anthropic-api-key": "Anthropic API Key",
+  "anthropic-subscription": "Anthropic Subscription",
+  openai: "OpenAI",
+  "openai-codex": "OpenAI Codex",
+  openrouter: "OpenRouter",
+  orcarouter: "OrcaRouter",
+  google: "Google",
+  gemini: "Gemini",
+  minimax: "MiniMax",
+  ollama: "Ollama",
+  zai: "Zhipu AI",
+  kimi: "Kimi",
+  "kimi-coding": "Kimi Coding",
+  moonshot: "Moonshot",
+};
+
+const getManualCodeLoginWarningMessage = (providerName: string) =>
+  `After you sign in with ${providerName}, the browser will try to redirect to a localhost address that this dashboard can't reach. The redirect tab will look like it failed. Before that happens, copy the full URL from the browser address bar — you'll paste it back here to finish login. Continue?`;
+
+/*
+FNXC:Onboarding 2026-07-10-10:05:
+Install-guidance i18n strings (git/gh CLI) contain backtick-quoted commands like `gh` and `brew install gh`.
+Previously those backticks rendered as literal characters in plain text (first-run review called this out as slop).
+Render backtick spans as real <code> elements so commands are visually distinct, without splitting every
+translated string into prefix/suffix keys (all existing locale catalogs keep working unchanged).
+*/
+function renderWithInlineCode(text: string): ReactNode {
+  const parts = text.split("`");
+  if (parts.length < 3) {
+    return text;
+  }
+  return parts.map((part, index) =>
+    index % 2 === 1 ? <code key={index}>{part}</code> : <span key={index}>{part}</span>,
+  );
+}
+
+function getProviderDisplayName(providerId: string): string {
+  if (PROVIDER_DISPLAY_NAMES[providerId]) {
+    return PROVIDER_DISPLAY_NAMES[providerId];
+  }
+
+  const normalized = providerId.trim();
+  if (!normalized) {
+    return "This provider";
+  }
+
+  return normalized
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+/*
+FNXC:Onboarding 2026-07-03-00:00:
+Onboarding quick start must show practical first-run choices beyond Anthropic, including OpenAI/ChatGPT, Google/Gemini, OpenRouter, and Ollama when those visible providers are configured.
+Keep Anthropic subscription OAuth and raw Anthropic API-key auth as separate first-class cards; use the legacy `anthropic` id only as a fallback for older status payloads.
+
+FNXC:Onboarding 2026-07-18-03:40:
+The OpenAI Codex subscription card belongs in quick start (it was buried in Advanced), placed directly AFTER the Anthropic subscription and BEFORE the API-key options — subscription sign-ins are the primary first-run path, keys are the fallback.
+*/
+const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "ollama"] as const;
+
+const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
+  "anthropic",
+  "claude-cli",
+  "droid-cli",
+  "cursor-cli",
+  "llama-cpp",
+  "openai-codex",
+  "openrouter",
+  "orcarouter",
+  "gemini",
+  "minimax",
+  "kimi",
+  "zai",
+] as const;
+
+const ONBOARDING_PROVIDER_FAMILY_ALIASES: Record<string, (typeof ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER)[number]> = {
+  "anthropic-subscription": "anthropic",
+  "anthropic-api-key": "anthropic",
+  anthropic: "anthropic",
+  "claude-cli": "claude-cli",
+  "droid-cli": "droid-cli",
+  "llama-cpp": "llama-cpp",
+  "openai-codex": "openai-codex",
+  google: "gemini",
+  gemini: "gemini",
+  minimax: "minimax",
+  kimi: "kimi",
+  moonshot: "kimi",
+  "kimi-coding": "kimi",
+  zai: "zai",
+};
+
+const ONBOARDING_PROVIDER_ALIAS_ORDER: Record<string, string[]> = {
+  gemini: ["google", "gemini"],
+  kimi: ["kimi", "moonshot", "kimi-coding"],
+};
+
+function getOnboardingProviderFamilyId(providerId: string): string {
+  return ONBOARDING_PROVIDER_FAMILY_ALIASES[providerId] ?? providerId;
+}
+
+function getOnboardingProviderCuratedRank(providerId: string): number {
+  const familyId = getOnboardingProviderFamilyId(providerId);
+  const rank = ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER.indexOf(
+    familyId as (typeof ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER)[number],
+  );
+  return rank === -1 ? Number.POSITIVE_INFINITY : rank;
+}
+
+function compareOnboardingProviders(a: AuthProvider, b: AuthProvider): number {
+  if (a.authenticated !== b.authenticated) {
+    return a.authenticated ? -1 : 1;
+  }
+
+  const curatedRankA = getOnboardingProviderCuratedRank(a.id);
+  const curatedRankB = getOnboardingProviderCuratedRank(b.id);
+
+  if (curatedRankA !== curatedRankB) {
+    return curatedRankA - curatedRankB;
+  }
+
+  const familyA = getOnboardingProviderFamilyId(a.id);
+  const familyB = getOnboardingProviderFamilyId(b.id);
+  if (familyA !== familyB) {
+    return familyA.localeCompare(familyB);
+  }
+
+  const aliasOrder = ONBOARDING_PROVIDER_ALIAS_ORDER[familyA];
+  if (aliasOrder) {
+    const aliasRankA = aliasOrder.indexOf(a.id);
+    const aliasRankB = aliasOrder.indexOf(b.id);
+    if (aliasRankA !== aliasRankB) {
+      return (aliasRankA === -1 ? Number.POSITIVE_INFINITY : aliasRankA)
+        - (aliasRankB === -1 ? Number.POSITIVE_INFINITY : aliasRankB);
+    }
+  }
+
+  const nameCompare = a.name.localeCompare(b.name);
+  if (nameCompare !== 0) {
+    return nameCompare;
+  }
+
+  return a.id.localeCompare(b.id);
+}
+
+function validateApiKeyFormat(providerId: string, key: string, t: (key: string, defaultValue: string, options?: Record<string, unknown>) => string): string | null {
+  const trimmedKey = key.trim();
+  if (!trimmedKey) {
+    return t("setup.apiKeyRequired", "API key is required");
+  }
+
+  const providerHint = PROVIDER_KEY_HINTS[providerId] ?? PROVIDER_KEY_HINTS_FALLBACK;
+  if (providerHint.pattern.test(trimmedKey)) {
+    return null;
+  }
+
+  const providerName = getProviderDisplayName(providerId);
+  return t("setup.apiKeyFormatError", "{{providerName}} keys should follow this format: {{hint}} (e.g. {{example}})", { providerName, hint: providerHint.hint, example: providerHint.example });
+}
+
+function getApiKeyInfoFallback(t: (key: string, defaultValue: string) => string): ApiKeyInfo {
+  return {
+    fieldLabel: t("setup.apiKeyLabel.fallback", "API Key"),
+    setupInstructions: t("setup.apiKeySetup.fallback", "Enter your API key for this provider."),
+    inputPlaceholder: t("setup.apiKeyPlaceholder.fallback", "Enter API key"),
+    usageDescription: t("setup.apiKeyUsage.fallback", "Used by Fusion to authenticate requests to this provider"),
+  };
+}
+
+function getProviderInfo(providerId: string, t: (key: string, defaultValue: string) => string): ProviderInfo {
+  const fallback: ProviderInfo = {
+    description: t("setup.providerDesc.fallback", "AI provider — connect to start using AI models"),
+    apiKeyInfo: getApiKeyInfoFallback(t),
+  };
+  return getProviderInfoMap(t)[providerId] ?? fallback;
+}
+
+function getApiKeyInfo(provider: AuthProvider, t: (key: string, defaultValue: string) => string): ApiKeyInfo {
+  const info = getProviderInfo(provider.id, t);
+  return info.apiKeyInfo ?? getApiKeyInfoFallback(t);
+}
+
+interface ReadinessItem {
+  label: string;
+  status: "connected" | "missing" | "skipped";
+  detail?: string;
+}
+
+interface ReadinessSummaryProps {
+  items: ReadinessItem[];
+}
+
+function ReadinessSummary({ items }: ReadinessSummaryProps) {
+  const { t } = useTranslation("app");
+  const hasAttentionItems = items.some((item) => item.status !== "connected");
+
+  if (!hasAttentionItems) {
+    return (
+      <div className="onboarding-readiness-summary" data-testid="readiness-summary" role="status">
+        <p className="onboarding-readiness-all-connected">{t("setup.readinessAllConnected", "✓ All integrations connected")}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="onboarding-readiness-summary" data-testid="readiness-summary" role="status">
+      <p className="onboarding-readiness-header">{t("setup.readinessSummaryHeader", "Setup Summary")}</p>
+      {items.map((item) => {
+        const statusIcon =
+          item.status === "connected"
+            ? "✓"
+            : item.status === "missing"
+              ? "⚠"
+              : "○";
+
+        return (
+          <div
+            key={item.label}
+            className={`onboarding-readiness-item onboarding-readiness-item--${item.status}`}
+            data-status={item.status}
+          >
+            <span className="onboarding-readiness-icon" aria-hidden="true">
+              {statusIcon}
+            </span>
+            <span className="onboarding-readiness-content">
+              <span className="onboarding-readiness-label">{item.label}</span>
+              {item.detail && <span className="onboarding-readiness-detail">{item.detail}</span>}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+interface ApiKeyEntryFormProps {
+  provider: AuthProvider;
+  apiKeyInfo: ApiKeyInfo;
+  inputValue: string;
+  isSaving: boolean;
+  error?: string;
+  success?: string | null;
+  isConnected: boolean;
+  onInputChange: (providerId: string, key: string) => void;
+  onSave: (providerId: string, key: string) => void | Promise<void>;
+  onClear: (providerId: string) => void | Promise<void>;
+}
+
+function ApiKeyEntryForm({
+  provider,
+  apiKeyInfo,
+  inputValue,
+  isSaving,
+  error,
+  success,
+  isConnected,
+  onInputChange,
+  onSave,
+  onClear,
+}: ApiKeyEntryFormProps) {
+  const { t } = useTranslation("app");
+  const inputId = `onboarding-apikey-input-${provider.id}`;
+  const saveDisabled = isSaving || !inputValue.trim();
+  const providerKeyHint = PROVIDER_KEY_HINTS[provider.id];
+  const inputClassName = `input onboarding-apikey-input${
+    error ? " onboarding-apikey-input--error" : ""
+  }${success ? " onboarding-apikey-input--success" : ""}`;
+
+  const advancedSetupDetails = (
+    <>
+      {providerKeyHint && (
+        <small className="onboarding-apikey-hint">
+          {t("setup.apiKeyFormatHint", "Format: {{hint}}", { hint: providerKeyHint.hint })}
+        </small>
+      )}
+      <p className="onboarding-apikey-instructions">{apiKeyInfo.setupInstructions}</p>
+      {apiKeyInfo.dashboardUrl && (
+        <a
+          href={apiKeyInfo.dashboardUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="onboarding-apikey-dashboard-link"
+        >
+          {t("setup.getApiKeyLink", "Get your API key →")}
+        </a>
+      )}
+      <p className="onboarding-apikey-usage">{apiKeyInfo.usageDescription}</p>
+    </>
+  );
+
+  if (isConnected) {
+    return (
+      <div className="onboarding-apikey-form" data-testid={`onboarding-apikey-form-${provider.id}`}>
+        <div className="onboarding-apikey-connected-header">
+          <strong className="onboarding-provider-card__name">{apiKeyInfo.fieldLabel}</strong>
+          <span className="auth-status-badge connected">{t("setup.apiKeySaved", "✓ API key saved")}</span>
+        </div>
+        <button
+          className="btn btn-sm"
+          onClick={() => onClear(provider.id)}
+          disabled={isSaving}
+        >
+          {isSaving ? t("setup.removingKey", "Removing…") : t("setup.removeKey", "Remove Key")}
+        </button>
+        <OnboardingDisclosure summary={t("setup.advancedSetupDetails", "Advanced setup details")}>
+          {advancedSetupDetails}
+        </OnboardingDisclosure>
+        {error && <small className="field-error">{error}</small>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="onboarding-apikey-form" data-testid={`onboarding-apikey-form-${provider.id}`}>
+      <label htmlFor={inputId} className="onboarding-apikey-field-label">
+        {apiKeyInfo.fieldLabel}
+      </label>
+      <div className="onboarding-apikey-input-row">
+        <input
+          id={inputId}
+          type="password"
+          className={inputClassName}
+          placeholder={apiKeyInfo.inputPlaceholder ?? t("setup.enterApiKey", "Enter API key")}
+          value={inputValue}
+          onChange={(e) => onInputChange(provider.id, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              onSave(provider.id, inputValue);
+            }
+          }}
+          data-testid={inputId}
+        />
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => onSave(provider.id, inputValue)}
+          disabled={saveDisabled}
+          data-testid={`onboarding-apikey-save-${provider.id}`}
+        >
+          {isSaving ? t("setup.savingKey", "Saving…") : t("setup.saveKey", "Save")}
+        </button>
+      </div>
+      {error && <small className="field-error">{error}</small>}
+      {success && !error && (
+        <small
+          className="onboarding-apikey-success"
+          data-testid={`onboarding-apikey-success-${provider.id}`}
+        >
+          {success}
+        </small>
+      )}
+      <OnboardingDisclosure summary={t("setup.advancedSetupDetails", "Advanced setup details")}>
+        {advancedSetupDetails}
+      </OnboardingDisclosure>
+    </div>
+  );
+}
+
+import {
+  getOnboardingState,
+  saveOnboardingState,
+  markOnboardingCompleted,
+  markStepSkipped,
+  getSkippedSteps,
+  getStepData,
+  ONBOARDING_FLOW_STEPS,
+  type OnboardingStep,
+} from "./model-onboarding-state";
+import { trackOnboardingEvent } from "./onboarding-events";
+
+/** FNXC:GithubStarAsk 2026-08-19-03:59: "dismissed" means the operator closed onboarding rather than finishing it. */
+export type OnboardingCompletionOutcome = "completed" | "dismissed";
+
+export interface ModelOnboardingModalProps {
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  The outcome distinguishes finishing onboarding from walking out of it, because the post-onboarding
+  "star us on GitHub" ask is only earned by the former. Someone who dismissed the setup flow has
+  already said they want to be left alone; asking them for a favour on the way out is the nag.
+  Optional so existing callers that do not care about the distinction keep compiling.
+  */
+  onComplete: (outcome?: OnboardingCompletionOutcome) => void;
+  /** Toast helper */
+  addToast: (message: string, type?: ToastType) => void;
+  /** Currently selected project ID (required for first-task actions) */
+  projectId?: string;
+  /** Optional callback to open project setup wizard when no project is selected */
+  onOpenSetupWizard?: () => void;
+  /** Optional callback when user wants to open new task creation */
+  onOpenNewTask?: () => void;
+  /** Optional callback when user wants to open GitHub import */
+  onOpenGitHubImport?: () => void;
+  /** First task created from the onboarding flow, if available */
+  firstCreatedTask?: Task | null;
+  /** Optional callback when user wants to open the created task detail */
+  onViewTask?: (task: Task) => void;
+  /** Enables the AI interview entry point while template creation and skip remain available. */
+  agentOnboardingEnabled?: boolean;
+}
+
+/** Outcome states for OAuth login attempts */
+export type LoginOutcome = "pending" | "success" | "timeout" | "failed" | "cancelled";
+
+/** Provider connection status for UI display */
+export type ProviderConnectionStatus = "connected" | "not-connected" | "skipped" | "retry";
+
+/** GitHub-specific status variants for richer connection feedback */
+type GitHubConnectionStatus = "connected" | "failed" | "pending" | "skipped" | "not-connected";
+
+type GitHubOAuthActionState = "unavailable" | "not-connected" | "connected" | "pending" | "failed" | "skipped";
+type GitHubCliActionState = "unknown" | "missing" | "unauthenticated" | "authenticated";
+
+interface GhCliStatus {
+  available: boolean;
+  authenticated: boolean;
+}
+
+interface GitHubActionViewModel {
+  oauth: {
+    provider?: AuthProvider;
+    providerAvailable: boolean;
+    authenticated: boolean;
+    loginInProgress: boolean;
+    state: GitHubOAuthActionState;
+  };
+  ghCli: {
+    status?: GhCliStatus;
+    state: GitHubCliActionState;
+    authenticated: boolean;
+  };
+  ready: boolean;
+  readyVia: "oauth" | "gh-cli" | null;
+}
+
+/*
+FNXC:ModelOnboarding 2026-07-26-21:05:
+Status badges stay at module scope like the other onboarding subcomponents. Declared inside
+ModelOnboardingModal's render they were a new element type per render, remounting each badge on every
+onboarding state change; `fusion-react/no-nested-component-definitions` now enforces this.
+Both read their copy from useTranslation directly, so they need no props beyond `status`.
+*/
+function ProviderStatusBadge({ status }: { status: ProviderConnectionStatus }) {
+  const { t } = useTranslation("app");
+  const config: Record<ProviderConnectionStatus, { text: string; className: string }> = {
+    connected: { text: t("setup.statusConnected", "✓ Connected"), className: "auth-status-badge connected" },
+    "not-connected": { text: t("setup.statusNotConnected", "Not connected"), className: "auth-status-badge not-connected" },
+    skipped: { text: t("setup.statusSkipped", "Skipped"), className: "auth-status-badge skipped" },
+    retry: { text: t("setup.statusRetry", "Retry"), className: "auth-status-badge retry" },
+  };
+  const { text, className: badgeClassName } = config[status];
+  return (
+    <span
+      data-testid="provider-status-badge"
+      className={badgeClassName}
+      data-status={status}
+    >
+      {text}
+    </span>
+  );
+}
+
+function GitHubStatusBadge({ status }: { status: GitHubConnectionStatus }) {
+  const { t } = useTranslation("app");
+  const config: Record<GitHubConnectionStatus, { text: string; className: string }> = {
+    connected: { text: t("setup.statusConnected", "✓ Connected"), className: "auth-status-badge connected" },
+    pending: { text: t("setup.statusConnecting", "⏳ Connecting…"), className: "auth-status-badge pending" },
+    failed: { text: t("setup.statusConnectionFailed", "✗ Connection failed"), className: "auth-status-badge retry" },
+    skipped: { text: t("setup.statusSkipped", "Skipped"), className: "auth-status-badge skipped" },
+    "not-connected": { text: t("setup.statusNotConnected", "Not connected"), className: "auth-status-badge not-connected" },
+  };
+
+  const { text, className: badgeClassName } = config[status];
+  return (
+    <span
+      data-testid="github-status-badge"
+      className={badgeClassName}
+      data-status={status}
+    >
+      {text}
+    </span>
+  );
+}
+
+const GIT_INSTALL_URL = "https://git-scm.com/downloads";
+const GH_CLI_INSTALL_URL = "https://github.com/cli/cli/releases/latest";
+
+function buildGitHubActionViewModel(params: {
+  providers: AuthProvider[];
+  ghCliStatus?: GhCliStatus;
+  loginOutcomes: Record<string, LoginOutcome>;
+  skipped: boolean;
+}): GitHubActionViewModel {
+  const githubProvider = params.providers.find((provider) => provider.id === "github");
+  const oauthAuthenticated = githubProvider?.authenticated ?? false;
+  const oauthLoginInProgress = githubProvider?.loginInProgress ?? false;
+  const ghCliState: GitHubCliActionState = !params.ghCliStatus
+    ? "unknown"
+    : params.ghCliStatus.authenticated
+      ? "authenticated"
+      : params.ghCliStatus.available
+        ? "unauthenticated"
+        : "missing";
+  const ghCliAuthenticated = ghCliState === "authenticated";
+  let oauthState: GitHubOAuthActionState = "unavailable";
+
+  if (githubProvider) {
+    const outcome = params.loginOutcomes.github;
+    if (oauthAuthenticated) {
+      oauthState = "connected";
+    } else if (outcome === "pending" || oauthLoginInProgress) {
+      oauthState = "pending";
+    } else if (outcome === "failed" || outcome === "timeout") {
+      oauthState = "failed";
+    } else if (params.skipped) {
+      oauthState = "skipped";
+    } else {
+      oauthState = "not-connected";
+    }
+  }
+
+  return {
+    oauth: {
+      provider: githubProvider,
+      providerAvailable: !!githubProvider,
+      authenticated: oauthAuthenticated,
+      loginInProgress: oauthLoginInProgress,
+      state: oauthState,
+    },
+    ghCli: {
+      status: params.ghCliStatus,
+      state: ghCliState,
+      authenticated: ghCliAuthenticated,
+    },
+    ready: oauthAuthenticated || ghCliAuthenticated,
+    readyVia: oauthAuthenticated ? "oauth" : ghCliAuthenticated ? "gh-cli" : null,
+  };
+}
+
+/** Maximum number of poll cycles before timing out (150 × 2s = 5 minutes) */
+const MAX_POLL_CYCLES = 150;
+
+/**
+ * Multi-step onboarding modal that guides users through:
+ * 1. AI Setup - Provider credential setup (OAuth login or API key entry) and default model selection
+ * 2. GitHub (Optional) - GitHub connection status and login
+ * 3. Project Setup - Register a project directory (or clone a repository URL via setup wizard)
+ * 4. Agent - Optional persistent coordinating agent from a template or AI-generated draft
+ * 5. First Task - CTA to create first task or import from GitHub
+ *
+ * Dismissing the modal marks onboarding as complete to prevent repeated popups.
+ */
+export function ModelOnboardingModal({
+  onComplete,
+  addToast,
+  projectId,
+  onOpenSetupWizard,
+  onOpenNewTask,
+  onOpenGitHubImport,
+  firstCreatedTask,
+  onViewTask,
+  agentOnboardingEnabled = false,
+}: ModelOnboardingModalProps) {
+  const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
+  /*
+  FNXC:Onboarding 2026-06-22-04:16:
+  First-time provider/GitHub setup must pass through the same optional first-agent flow before first-task creation.
+  Users can create or skip a coordinating agent because Fusion can still start temporary agents to plan, code, review, and merge tasks.
+  */
+  const ceoPreset = useMemo(
+    () => getPresetById("ceo") ?? AGENT_PRESETS[0]!,
+    [],
+  );
+  // Initialize from persisted state if available (allows resume from last step)
+  const persistedState = getOnboardingState();
+  const persistedStep = persistedState?.currentStep;
+  const initialStep: OnboardingStep =
+    persistedStep === "complete"
+      ? "ai-setup"
+      : ONBOARDING_FLOW_STEPS.includes(persistedStep as (typeof ONBOARDING_FLOW_STEPS)[number])
+        ? (persistedStep as OnboardingStep)
+        : "ai-setup";
+  // Restore completed/skipped steps from persisted state
+  const persistedCompletedSteps = persistedState?.completedSteps ?? [];
+  const persistedSkippedSteps = persistedState?.skippedSteps ?? getSkippedSteps();
+
+  const [isOpen, setIsOpen] = useState(true);
+  const [step, setStep] = useState<OnboardingStep>(initialStep);
+  const [completedSteps, setCompletedSteps] = useState<OnboardingStep[]>(persistedCompletedSteps);
+  const [skippedSteps, setSkippedSteps] = useState<OnboardingStep[]>(persistedSkippedSteps);
+  const [showTaskCreated, setShowTaskCreated] = useState(false);
+  const [firstTaskDescription, setFirstTaskDescription] = useState("");
+  const [isCreatingFirstTask, setIsCreatingFirstTask] = useState(false);
+  const [taskCreationError, setTaskCreationError] = useState<string | null>(null);
+  const [inlineCreatedTask, setInlineCreatedTask] = useState<Task | null>(null);
+  const [selectedAgentPresetId, setSelectedAgentPresetId] = useState(ceoPreset.id);
+  const [agentDraft, setAgentDraft] = useState<AgentDraftValues>(() => mapPresetToAgentDraft(ceoPreset));
+  const [isCreatingAgent, setIsCreatingAgent] = useState(false);
+  const [agentCreationError, setAgentCreationError] = useState<string | null>(null);
+  const [isAgentInterviewOpen, setIsAgentInterviewOpen] = useState(false);
+  const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
+  const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | undefined>(undefined);
+  const [gitCliStatus, setGitCliStatus] = useState<GitCliStatus | undefined>(undefined);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
+  const [loginInstructions, setLoginInstructions] = useState<Record<string, string>>({});
+  const [manualCodeConfigs, setManualCodeConfigs] = useState<Record<string, ManualOAuthCodeInfo>>({});
+  const [deviceCodes, setDeviceCodes] = useState<Record<string, OAuthDeviceCodeInfo>>({});
+  const [manualCodeInputs, setManualCodeInputs] = useState<Record<string, string>>({});
+  const [manualCodeSubmitInProgress, setManualCodeSubmitInProgress] = useState<string | null>(null);
+  /* FNXC:ProviderAuth 2026-08-18-03:05: auth URL per in-flight login, so the dialog can re-open a lost sign-in tab. */
+  const [loginAuthUrls, setLoginAuthUrls] = useState<Record<string, string>>({});
+  /*
+  FNXC:ProviderAuth 2026-08-18-03:05:
+  Which provider's paste-back login dialog is open, and its terminal error if it failed. Visibility
+  is explicit state rather than derived from the in-flight flags, because the dialog must OUTLIVE the
+  flow on failure: the operator needs to read why it failed, and a toast is gone before they are back
+  from the browser tab they were signing in on.
+  */
+  const [loginDialogProvider, setLoginDialogProvider] = useState<string | null>(null);
+  const [loginErrors, setLoginErrors] = useState<Record<string, string>>({});
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  /*
+  FNXC:Onboarding 2026-08-18-06:20:
+  Picking a default model is the step operators walked past: the section sits below every provider
+  card, reads "(Optional)", and on a fresh install renders as an empty-state until a provider
+  connects — so the moment it becomes actionable is exactly the moment it is off screen. Once a
+  provider is connected and no model is chosen yet, bring the section into view ONCE and mark it as
+  awaiting a choice. It stays skippable; `nudged` makes sure a later re-render never yanks the
+  operator's scroll position back again.
+  */
+  const modelSectionRef = useRef<HTMLDivElement | null>(null);
+  const modelPromptNudgedRef = useRef(false);
+  const [modelChoicePending, setModelChoicePending] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
+  const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
+  const [apiKeySuccess, setApiKeySuccess] = useState<Record<string, string | null>>({});
+  const [customProviders, setCustomProviders] = useState<CustomProviderConfig[]>([]);
+  const [showCustomProviderForm, setShowCustomProviderForm] = useState(false);
+  const [customProviderSaving, setCustomProviderSaving] = useState(false);
+  const [customProviderError, setCustomProviderError] = useState<string | undefined>();
+  const [shellProfileName, setShellProfileName] = useState("Remote Server");
+  const [shellServerUrl, setShellServerUrl] = useState("");
+  const [shellAuthToken, setShellAuthToken] = useState("");
+  const [shellConnectionSaving, setShellConnectionSaving] = useState(false);
+  const [shellConnectionError, setShellConnectionError] = useState<string | null>(null);
+  const apiKeySuccessTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const onboardingContentRef = useRef<HTMLDivElement | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const agentErrorRef = useRef<HTMLDivElement | null>(null);
+  const [loginOutcomes, setLoginOutcomes] = useState<Record<string, LoginOutcome>>({});
+  const lastAutoCopiedDeviceCodesRef = useRef<Record<string, string>>({});
+  const [isGithubSkipped, setIsGithubSkipped] = useState<boolean>(() => {
+    const state = getOnboardingState();
+    return state?.stepData?.github?.skipped === true;
+  });
+  const pollCountRef = useRef<number>(0);
+  const previousCreatedTaskRef = useRef<Task | null | undefined>(firstCreatedTask);
+  const { shellApi, state: shellState } = useShellConnection();
+  const hasTrackedWizardOpenRef = useRef(false);
+  const resumedFromStep = persistedState?.currentStep;
+  const isResumedFlow = !!persistedState && persistedState.currentStep !== "complete";
+
+  // FNXC:ModalTouchGeometry 2026-07-26-13:30: Shared FloatingWindow replaces the legacy resize-only persistence path with clamped movable geometry.
+
+  // Scroll the content area to the top whenever the step changes so the user
+  // always lands at the start of the next page instead of mid-scroll from the
+  // previous one.
+  useEffect(() => {
+    const content = onboardingContentRef.current;
+    if (!content) return;
+    content.scrollTop = 0;
+  }, [step]);
+
+  useEffect(() => {
+    const copilotDeviceCode = deviceCodes["github-copilot"];
+    if (!copilotDeviceCode?.userCode) {
+      return;
+    }
+
+    if (lastAutoCopiedDeviceCodesRef.current["github-copilot"] === copilotDeviceCode.userCode) {
+      return;
+    }
+
+    lastAutoCopiedDeviceCodesRef.current["github-copilot"] = copilotDeviceCode.userCode;
+    void copyTextToClipboard(copilotDeviceCode.userCode);
+  }, [deviceCodes]);
+
+  // Initialize skippedProviders from persisted state
+  const [skippedProviders, setSkippedProviders] = useState<Record<string, boolean>>(
+    () => {
+      const state = getOnboardingState();
+      const data = state?.stepData?.["ai-setup"];
+      return (data?.skippedProviders as Record<string, boolean>) ?? {};
+    }
+  );
+
+  // Step definitions for progress indicator.
+  // Keep labels aligned with the ordered ONBOARDING_FLOW_STEPS state contract.
+  const steps = [
+    { key: "ai-setup" as const, label: t("setup.stepAiSetup", "AI Setup") },
+    { key: "github" as const, label: t("setup.stepGithub", "GitHub") },
+    { key: "project-setup" as const, label: t("setup.stepProject", "Project") },
+    { key: "agent" as const, label: t("setup.stepAgent", "Agent") },
+    { key: "first-task" as const, label: t("setup.stepFirstTask", "First Task") },
+  ];
+
+  // Get current step index for progress indicator.
+  // Keep the stepper in a fully-complete visual state when the completion screen is shown.
+  const currentStepIndex = steps.findIndex((s) => s.key === step);
+  const effectiveStepIndex = step === "complete" ? steps.length : currentStepIndex;
+
+  // Persist step state whenever it changes (for resume functionality)
+  useEffect(() => {
+    if (step !== "complete") {
+      saveOnboardingState(step, { completedSteps, skippedSteps });
+    }
+  }, [step, completedSteps, skippedSteps]);
+
+  useEffect(() => {
+    if (hasTrackedWizardOpenRef.current) {
+      return;
+    }
+
+    hasTrackedWizardOpenRef.current = true;
+    trackOnboardingEvent("onboarding:wizard-opened", {
+      source: isResumedFlow ? "resume" : "initial",
+      resumedFromStep,
+    });
+  }, [isResumedFlow, resumedFromStep]);
+
+  useEffect(() => {
+    const hadCreatedTask = previousCreatedTaskRef.current != null;
+    const hasCreatedTask = firstCreatedTask != null;
+
+    if (!hadCreatedTask && hasCreatedTask) {
+      setShowTaskCreated(true);
+    }
+
+    if (!hasCreatedTask) {
+      setShowTaskCreated(false);
+    }
+
+    previousCreatedTaskRef.current = firstCreatedTask;
+  }, [firstCreatedTask]);
+
+  useEffect(() => {
+    if (agentCreationError) {
+      agentErrorRef.current?.focus();
+    }
+  }, [agentCreationError]);
+
+  // Auto-mark unconnected providers as skipped when leaving ai-setup step
+  // Only skip if NO providers are connected (if at least one is connected, others remain "Not connected")
+  const prevStepRef = useRef<OnboardingStep>(initialStep);
+  useEffect(() => {
+    if (prevStepRef.current === "ai-setup" && step !== "ai-setup") {
+      // Check if any AI provider is connected
+      const hasConnectedProvider = authProviders.some(
+        (p) => p.id !== "github" && p.authenticated
+      );
+      // Only mark as skipped if no providers are connected
+      if (!hasConnectedProvider) {
+        const newlySkipped: Record<string, boolean> = {};
+        for (const p of authProviders) {
+          if (p.id !== "github" && !p.authenticated && !skippedProviders[p.id]) {
+            newlySkipped[p.id] = true;
+          }
+        }
+        if (Object.keys(newlySkipped).length > 0) {
+          const updated = { ...skippedProviders, ...newlySkipped };
+          setSkippedProviders(updated);
+          saveOnboardingState(step, {
+            stepData: { "ai-setup": { skippedProviders: updated } },
+          });
+        }
+      }
+    }
+    prevStepRef.current = step;
+  }, [step, authProviders, skippedProviders]);
+
+  // Load auth providers
+  const loadAuthStatus = useCallback(async () => {
+    try {
+      const { providers, ghCli, gitCli } = await fetchAuthStatus();
+      const visibleProviders = filterVisibleOnboardingAndSettingsProviders(providers);
+      setAuthProviders(visibleProviders);
+      setGhCliStatus(ghCli);
+      setGitCliStatus(gitCli);
+      setLoginInstructions((prev) => {
+        const next: Record<string, string> = {};
+        for (const [providerId, instructions] of Object.entries(prev)) {
+          const provider = visibleProviders.find((candidate) => candidate.id === providerId);
+          if (provider && !provider.authenticated && provider.loginInProgress) {
+            next[providerId] = instructions;
+          }
+        }
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
+      setLoginOutcomes((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [providerId, outcome] of Object.entries(prev)) {
+          if (outcome !== "pending") {
+            continue;
+          }
+          const provider = visibleProviders.find((candidate) => candidate.id === providerId);
+          if (!provider?.loginInProgress) {
+            delete next[providerId];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      // Remove from skippedProviders when a provider becomes authenticated
+      setSkippedProviders((prev) => {
+        const updated = { ...prev };
+        for (const p of visibleProviders) {
+          if (p.authenticated && updated[p.id]) {
+            delete updated[p.id];
+          }
+        }
+        return Object.keys(updated).length === Object.keys(prev).length ? prev : updated;
+      });
+    } catch {
+      // Silently fail
+    }
+  }, []);
+
+  const loadCustomProviders = useCallback(async () => {
+    try {
+      const data = await fetchCustomProviders();
+      setCustomProviders((data.providers ?? []).map(mapLegacyCustomProviderToConfig));
+    } catch {
+      // best effort
+    }
+  }, []);
+
+  const handleSaveCustomProvider = useCallback(async (config: CustomProviderConfig) => {
+    setCustomProviderSaving(true);
+    setCustomProviderError(undefined);
+    try {
+      await createCustomProvider(config);
+      await loadCustomProviders();
+      await fetchModels().then((response) => setAvailableModels(response.models ?? []));
+      setShowCustomProviderForm(false);
+    } catch (err) {
+      setCustomProviderError(getErrorMessage(err) || t("setup.failedToCreateCustomProvider", "Failed to create custom provider"));
+    } finally {
+      setCustomProviderSaving(false);
+    }
+  }, [loadCustomProviders]);
+
+  // Reload auth status when returning to AI Setup step from another step (not on initial mount)
+  const aiSetupReturnRef = useRef(false);
+  useEffect(() => {
+    if (step === "ai-setup") {
+      void loadCustomProviders();
+    }
+    if (aiSetupReturnRef.current) {
+      loadAuthStatus();
+    }
+    aiSetupReturnRef.current = step !== "ai-setup";
+  }, [step, loadAuthStatus, loadCustomProviders]);
+
+  useEffect(() => {
+    const hasPendingLogin = authProviders.some((provider) => provider.loginInProgress);
+    if (!hasPendingLogin) {
+      return;
+    }
+    const interval = setInterval(() => {
+      void loadAuthStatus();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [authProviders, loadAuthStatus]);
+
+  /*
+  FNXC:Onboarding 2026-07-03-17:04:
+  The GitHub onboarding step needs an explicit action model so OAuth login, GitHub CLI install/auth, and optional skip states stay independent.
+  GitHub readiness remains OAuth-authenticated OR `gh`-authenticated; GitHub-named AI providers such as `github-copilot` must never satisfy the GitHub integration provider check.
+  */
+  const githubActionState = useMemo(
+    () => buildGitHubActionViewModel({
+      providers: authProviders,
+      ghCliStatus,
+      loginOutcomes,
+      skipped: isGithubSkipped,
+    }),
+    [authProviders, ghCliStatus, loginOutcomes, isGithubSkipped],
+  );
+  // OAuth status for the GitHub provider (used for OAuth-specific controls like Connect/Disconnect).
+  const hasGithubProvider = githubActionState.oauth.providerAvailable;
+  const isGithubAuthenticated = githubActionState.oauth.authenticated;
+  const isGithubLoginInProgress = githubActionState.oauth.loginInProgress;
+  const gitInstallUrl = gitCliStatus?.installUrl ?? GIT_INSTALL_URL;
+  const gitVersionLabel = gitCliStatus?.version
+    ? t("setup.gitPrerequisiteInstalledVersion", "Git is installed on the Fusion host ({{version}}).", { version: gitCliStatus.version })
+    : t("setup.gitPrerequisiteInstalled", "Git is installed on the Fusion host.");
+  // Effective GitHub readiness (matches useSetupReadiness): OAuth OR authenticated gh CLI session.
+  const isGitHubReady = githubActionState.ready;
+  const isGitHubReadyViaCli = githubActionState.readyVia === "gh-cli";
+
+  // Get provider connection status for UI display
+  const getProviderStatus = useCallback((provider: AuthProvider): ProviderConnectionStatus => {
+    if (provider.authenticated) {
+      return "connected";
+    }
+    // Check for retry-able failure states (from login outcomes)
+    const loginOutcome = (loginOutcomes as Record<string, string> | undefined)?.[provider.id];
+    if (loginOutcome === "timeout" || loginOutcome === "failed") {
+      return "retry";
+    }
+    if (skippedProviders[provider.id]) {
+      return "skipped";
+    }
+    return "not-connected";
+  }, [loginOutcomes, skippedProviders]);
+
+  const getGitHubStatus = useCallback((): GitHubConnectionStatus => {
+    if (githubActionState.ready) {
+      return "connected";
+    }
+
+    if (githubActionState.oauth.state === "pending") {
+      return "pending";
+    }
+    if (githubActionState.oauth.state === "failed") {
+      return "failed";
+    }
+    if (githubActionState.oauth.state === "skipped") {
+      return "skipped";
+    }
+
+    return "not-connected";
+  }, [githubActionState]);
+
+  // Load models
+  const loadModels = useCallback(async () => {
+    try {
+      const response = await fetchModels();
+      setAvailableModels(response.models);
+    } catch {
+      // Silently fail
+    }
+  }, []);
+
+  // Load global settings to hydrate saved default model (for reopen flow)
+  const loadGlobalSettings = useCallback(async () => {
+    try {
+      const globalSettings = await fetchGlobalSettings();
+      // If a default model is configured, pre-select it
+      if (globalSettings.defaultProvider && globalSettings.defaultModelId) {
+        const defaultModelValue = `${globalSettings.defaultProvider}/${globalSettings.defaultModelId}`;
+        setSelectedModel(defaultModelValue);
+      }
+    } catch {
+      // Silently fail - onboarding still works without hydration
+    }
+  }, []);
+
+  // Initial data load
+  useEffect(() => {
+    Promise.all([loadAuthStatus(), loadModels(), loadGlobalSettings()]).finally(() =>
+      setAuthLoading(false),
+    );
+  }, [loadAuthStatus, loadModels, loadGlobalSettings]);
+
+  /*
+  FNXC:Onboarding 2026-07-10-10:10:
+  Bug from first-run review: connecting GitHub mid-session (e.g. running `gh auth login` in a terminal,
+  or completing an OAuth login from another surface) left later wizard steps (Agent / First Task readiness
+  summary) showing GitHub as "not connected" because provider/gh-CLI status was only fetched once and only
+  re-fetched when returning to the AI Setup step. Revalidate the cached auth/gh/git status whenever the
+  window regains focus (the user just came back from a terminal or an OAuth tab) and whenever any surface
+  broadcasts a successful OAuth re-login, so every step reflects the current connection state.
+  */
+  useEffect(() => {
+    const refreshAuthStatus = () => {
+      void loadAuthStatus();
+    };
+    window.addEventListener("focus", refreshAuthStatus);
+    window.addEventListener(OAUTH_RELOGIN_SUCCESS_EVENT, refreshAuthStatus);
+    return () => {
+      window.removeEventListener("focus", refreshAuthStatus);
+      window.removeEventListener(OAUTH_RELOGIN_SUCCESS_EVENT, refreshAuthStatus);
+    };
+  }, [loadAuthStatus]);
+
+  // Restore login outcomes from persisted state on mount
+  useEffect(() => {
+    const persistedStepData = getStepData("ai-setup");
+    if (persistedStepData?.loginOutcomes) {
+      const persistedOutcomes = persistedStepData.loginOutcomes as Record<string, LoginOutcome>;
+      // Filter out stale "pending" entries from previous sessions
+      const filteredOutcomes: Record<string, LoginOutcome> = {};
+      for (const [providerId, outcome] of Object.entries(persistedOutcomes)) {
+        if (outcome !== "pending") {
+          filteredOutcomes[providerId] = outcome;
+        }
+      }
+      if (Object.keys(filteredOutcomes).length > 0) {
+        setLoginOutcomes(filteredOutcomes);
+      }
+    }
+  }, []);
+
+  // Helper to persist login outcome to onboarding state
+  const persistLoginOutcome = useCallback((providerId: string, outcome: LoginOutcome) => {
+    saveOnboardingState(step, {
+      completedSteps,
+      stepData: {
+        "ai-setup": {
+          loginOutcomes: {
+            [providerId]: outcome,
+          },
+        },
+      },
+    });
+  }, [step, completedSteps]);
+
+  // Persist terminal login outcomes whenever they transition
+  useEffect(() => {
+    const terminalOutcomes = Object.entries(loginOutcomes).filter(
+      ([_, outcome]) => outcome !== "pending"
+    );
+    for (const [providerId, outcome] of terminalOutcomes) {
+      persistLoginOutcome(providerId, outcome);
+    }
+  }, [loginOutcomes, persistLoginOutcome]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+      Object.values(apiKeySuccessTimers.current).forEach(clearTimeout);
+      apiKeySuccessTimers.current = {};
+    };
+  }, []);
+
+  const setGitHubSkippedState = useCallback((skipped: boolean) => {
+    setIsGithubSkipped(skipped);
+    saveOnboardingState(step, {
+      completedSteps,
+      stepData: {
+        github: {
+          skipped,
+        },
+      },
+    });
+  }, [step, completedSteps]);
+
+  const getFlowIndex = useCallback((value: OnboardingStep) => {
+    if (value === "complete") {
+      return -1;
+    }
+    return ONBOARDING_FLOW_STEPS.indexOf(value);
+  }, []);
+
+  // Navigate to next step
+  const handleNext = useCallback(() => {
+    // Mark current step as completed before moving forward
+    setCompletedSteps((prev) => [...new Set([...prev, step])]);
+    // Completing a step clears any prior skipped status
+    setSkippedSteps((prev) => prev.filter((s) => s !== step));
+    trackOnboardingEvent("onboarding:step-completed", { step });
+
+    if (step === "github" && !isGithubAuthenticated) {
+      setGitHubSkippedState(false);
+    }
+
+    const currentIndex = getFlowIndex(step);
+    if (currentIndex >= 0 && currentIndex < ONBOARDING_FLOW_STEPS.length - 1) {
+      setStep(ONBOARDING_FLOW_STEPS[currentIndex + 1]);
+    }
+  }, [step, isGithubAuthenticated, setGitHubSkippedState, getFlowIndex]);
+
+  // Navigate forward without marking completion
+  const handleSkip = useCallback(() => {
+    setSkippedSteps((prev) => [...new Set([...prev, step])]);
+    markStepSkipped(step);
+    trackOnboardingEvent("onboarding:step-skipped", { step });
+
+    if (step === "github" && !isGithubAuthenticated) {
+      setGitHubSkippedState(true);
+    }
+
+    const currentIndex = getFlowIndex(step);
+    if (currentIndex >= 0 && currentIndex < ONBOARDING_FLOW_STEPS.length - 1) {
+      setStep(ONBOARDING_FLOW_STEPS[currentIndex + 1]);
+    }
+  }, [step, isGithubAuthenticated, setGitHubSkippedState, getFlowIndex]);
+
+  // Navigate to previous step
+  const handleBack = useCallback(() => {
+    // Remove current step from completed/skipped when going back (undoing progress)
+    const currentStepKey = step;
+    setCompletedSteps((prev) => prev.filter((s) => s !== currentStepKey));
+    setSkippedSteps((prev) => prev.filter((s) => s !== currentStepKey));
+
+    if (currentStepKey === "github" && !isGithubAuthenticated) {
+      setGitHubSkippedState(false);
+    }
+
+    const currentIndex = getFlowIndex(step);
+    if (currentIndex > 0) {
+      setStep(ONBOARDING_FLOW_STEPS[currentIndex - 1]);
+    }
+  }, [step, isGithubAuthenticated, setGitHubSkippedState, getFlowIndex]);
+
+  const handleSkipGitHubStep = useCallback(() => {
+    handleSkip();
+  }, [handleSkip]);
+
+  const handleAgentPresetSelect = useCallback((presetId: string) => {
+    const preset = getPresetById(presetId);
+    if (!preset) return;
+    setSelectedAgentPresetId(preset.id);
+    setAgentDraft(mapPresetToAgentDraft(preset));
+    setAgentCreationError(null);
+  }, []);
+
+  const handleAgentPresetKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>, presetId: string) => {
+    const currentIndex = AGENT_PRESETS.findIndex((preset) => preset.id === presetId);
+    if (currentIndex < 0) return;
+
+    const lastIndex = AGENT_PRESETS.length - 1;
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+      nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1;
+    } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+      nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = lastIndex;
+    }
+
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextPreset = AGENT_PRESETS[nextIndex];
+    handleAgentPresetSelect(nextPreset.id);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(`[data-model-onboarding-agent-preset-id="${nextPreset.id}"]`)?.focus();
+    });
+  }, [handleAgentPresetSelect]);
+
+  const handleApplyAgentDraft = useCallback((draft: AgentOnboardingSummary) => {
+    setSelectedAgentPresetId("");
+    setAgentDraft(mapOnboardingSummaryToAgentDraft(draft));
+    setAgentCreationError(null);
+  }, []);
+
+  const handleCreateFirstAgent = useCallback(async () => {
+    const targetProjectId = projectId?.trim();
+    if (!targetProjectId || !agentDraft.name.trim()) return;
+
+    setIsCreatingAgent(true);
+    setAgentCreationError(null);
+    try {
+      await createAgent(buildAgentCreatePayload(agentDraft), targetProjectId);
+      handleNext();
+    } catch (err) {
+      /*
+       * FNXC:Onboarding 2026-07-03-12:10:
+       * The default first agent ("CEO") can already exist by the time this step runs — the operator can
+       * reach agent creation from more than one first-run surface (the project-setup SetupWizard sub-flow
+       * also offers to create the first agent), and agent names are unique per store, so a redundant
+       * create returns 409 "Agent with this name already exists". The step's goal — a first agent exists —
+       * is already satisfied, so treat a name collision as success and advance instead of blocking first
+       * run. The user still creates the agent; they just aren't punished for the flow offering it twice.
+       */
+      if (err instanceof Error && /already exists/i.test(err.message)) {
+        handleNext();
+        return;
+      }
+      setAgentCreationError(err instanceof Error ? err.message : t("setup.firstAgentCreateError", "Failed to create agent"));
+    } finally {
+      setIsCreatingAgent(false);
+    }
+  }, [agentDraft, handleNext, projectId, t]);
+
+  // OAuth login handler
+  /*
+  FNXC:Onboarding 2026-08-18-06:20:
+  The nudge fires only when the choice is actually possible — a provider connected AND its models
+  loaded AND nothing selected — because before that the section is an empty state and scrolling to
+  it would just show the operator "No models available yet".
+  */
+  useEffect(() => {
+    const connected = authProviders.some((provider) => provider.authenticated && provider.id !== "github");
+    const canChoose = connected && availableModels.length > 0 && !selectedModel;
+    setModelChoicePending(canChoose);
+    if (!canChoose || modelPromptNudgedRef.current) {
+      return;
+    }
+    modelPromptNudgedRef.current = true;
+    // Guarded: scrollIntoView is absent in JSDOM and in any non-DOM host, and a nudge is never
+    // important enough to throw out of an effect and take the modal down with it.
+    const section = modelSectionRef.current;
+    if (typeof section?.scrollIntoView === "function") {
+      section.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [authProviders, availableModels, selectedModel]);
+
+  const handleLogin = useCallback(
+    async (providerId: string) => {
+      const provider = authProviders.find((entry) => entry.id === providerId);
+      if (provider?.requiresManualCode === true) {
+        const shouldContinue = await confirm({
+          title: t("setup.manualPastebackTitle", "Heads up — manual paste-back required"),
+          message: getManualCodeLoginWarningMessage(provider.name),
+          confirmLabel: t("setup.continueToLogin", "Continue to login"),
+          cancelLabel: t("setup.cancelLogin", "Cancel"),
+        });
+        if (!shouldContinue) {
+          return;
+        }
+        /*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        Hand the operator straight from the warning into the persistent dialog, so the paste field and
+        the flow's current step are on screen from the moment the browser tab opens — not buried in the
+        provider card below the fold of a scrolling modal.
+        */
+        setLoginErrors((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setLoginDialogProvider(providerId);
+      }
+
+      // Clear any previous terminal outcome before starting a new login attempt
+      setLoginOutcomes((prev) => {
+        const outcome = prev[providerId];
+        if (outcome && outcome !== "pending") {
+          const { [providerId]: _, ...rest } = prev;
+          return rest;
+        }
+        return prev;
+      });
+
+      const clearAuthLoginUiState = () => {
+        if (providerId in lastAutoCopiedDeviceCodesRef.current) {
+          const next = { ...lastAutoCopiedDeviceCodesRef.current };
+          delete next[providerId];
+          lastAutoCopiedDeviceCodesRef.current = next;
+        }
+        /*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        The dialog's own state dies with the flow it belongs to. Clearing the auth URL is what
+        dismisses the dialog, so it must be cleared everywhere this teardown runs (success, cancel,
+        timeout, failure) or a finished login would leave a stuck modal over the dashboard.
+        */
+        setLoginAuthUrls((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setLoginInstructions((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setManualCodeConfigs((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setManualCodeInputs((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setDeviceCodes((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+      };
+
+      clearAuthLoginUiState();
+
+      // Set outcome to pending
+      setLoginOutcomes((prev) => ({ ...prev, [providerId]: "pending" }));
+      setAuthActionInProgress(providerId);
+      pollCountRef.current = 0;
+
+      try {
+        const { url, instructions, manualCode, deviceCode } = await loginProvider(providerId);
+        if (instructions?.trim() && !(providerId === "github-copilot" && deviceCode)) {
+          setLoginInstructions((prev) => ({ ...prev, [providerId]: instructions }));
+        }
+        if (manualCode) {
+          setManualCodeConfigs((prev) => ({ ...prev, [providerId]: manualCode }));
+        }
+        if (deviceCode && providerId === "github-copilot") {
+          setDeviceCodes((prev) => ({ ...prev, [providerId]: deviceCode }));
+        }
+        /*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        Retain the auth URL so ProviderLoginDialog can re-open it. The sign-in tab is easy to lose
+        behind the dashboard or dismiss by accident, and without the URL the only recovery was to
+        cancel and restart the whole flow.
+        */
+        setLoginAuthUrls((prev) => ({ ...prev, [providerId]: appendTokenQuery(deviceCode?.verificationUri ?? url) }));
+        if (providerId !== "github-copilot" || !deviceCode) {
+          openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
+        }
+
+        // Poll for auth completion
+        pollIntervalRef.current = setInterval(async () => {
+          pollCountRef.current++;
+
+          // Check for timeout
+          if (pollCountRef.current >= MAX_POLL_CYCLES) {
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            setAuthActionInProgress(null);
+            setAuthProviders((prev) => prev.map((provider) =>
+              provider.id === providerId ? { ...provider, loginInProgress: false } : provider,
+            ));
+            setLoginOutcomes((prev) => ({ ...prev, [providerId]: "timeout" }));
+            setLoginErrors((prev) => ({ ...prev, [providerId]: t("setup.loginTimedOut", "Login timed out. Please try again.") }));
+            clearAuthLoginUiState();
+            addToast(t("setup.loginTimedOut", "Login timed out. Please try again."), "warning");
+            return;
+          }
+
+          try {
+            const { providers, ghCli, gitCli } = await fetchAuthStatus();
+            const visibleProviders = filterVisibleOnboardingAndSettingsProviders(providers);
+            setAuthProviders(visibleProviders);
+            setGhCliStatus(ghCli);
+            setGitCliStatus(gitCli);
+            const provider = visibleProviders.find((p) => p.id === providerId);
+            if (provider?.authenticated) {
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setAuthActionInProgress(null);
+              setLoginOutcomes((prev) => ({ ...prev, [providerId]: "success" }));
+              /*
+              FNXC:Onboarding 2026-08-18-06:20:
+              A NEWLY CONNECTED PROVIDER MUST REFRESH THE MODEL CATALOGUE. `availableModels` was
+              loaded once at mount and only ever re-fetched for custom providers, so on a fresh
+              install — where nothing is connected at mount and the list starts empty — the Default
+              Model section stayed stuck on "No models available yet. Connect a provider above to see
+              model options." even after the provider connected. The operator was never offered a
+              default model at all (report), and onboarding completed with none set.
+              */
+              void loadModels();
+              setLoginDialogProvider((current) => (current === providerId ? null : current));
+              clearAuthLoginUiState();
+              if (providerId === "github") {
+                setGitHubSkippedState(false);
+              }
+              addToast(t("setup.loginSuccessful", "Login successful"), "success");
+              window.dispatchEvent(new CustomEvent(OAUTH_RELOGIN_SUCCESS_EVENT, { detail: { providerId } }));
+              return;
+            }
+
+            if (!provider?.loginInProgress) {
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setAuthActionInProgress(null);
+              setLoginOutcomes((prev) => ({ ...prev, [providerId]: "failed" }));
+              /*
+              FNXC:ProviderAuth 2026-08-18-07:10:
+              PREFER THE SERVER'S REASON. The status row carries why the flow died (`loginError`), and
+              throwing it away for "Login did not complete. Please try again." is how a real, fixable
+              cause reached the operator as a shrug: an `OAuth state mismatch` — the pasted URL
+              belonging to an OLDER sign-in attempt than the one waiting, i.e. a stale provider tab —
+              is indistinguishable from a network failure under the generic text, and "try again"
+              reproduces it exactly if they paste from the same stale tab.
+              */
+              setLoginErrors((prev) => ({ ...prev, [providerId]: describeLoginFailure(provider?.loginError) }));
+              clearAuthLoginUiState();
+              addToast(t("setup.loginDidNotComplete", "Login did not complete. Please try again."), "error");
+            }
+          } catch {
+            // Continue polling
+          }
+        }, 2000);
+      } catch (err: unknown) {
+        // Check for concurrent login (409) conflict
+        const isConcurrentLogin =
+          (err instanceof Error && err.message.includes("already in progress")) ||
+          (err && typeof err === "object" && "status" in err && (err as { status: number }).status === 409);
+
+        if (isConcurrentLogin) {
+          addToast(t("setup.loginAlreadyInProgress", "Login already in progress. Cancel it to retry."), "warning");
+          setLoginOutcomes((prev) => ({ ...prev, [providerId]: "pending" }));
+          void loadAuthStatus();
+        } else {
+          const failureText = err instanceof Error ? err.message : t("setup.loginFailed", "Login failed");
+          addToast(failureText, "error");
+          setLoginErrors((prev) => ({ ...prev, [providerId]: failureText }));
+          setLoginOutcomes((prev) => ({ ...prev, [providerId]: "failed" }));
+        }
+        setAuthActionInProgress(null);
+        clearAuthLoginUiState();
+      }
+    },
+    [addToast, authProviders, confirm, loadAuthStatus, setGitHubSkippedState],
+  );
+
+  const handleSubmitManualCode = useCallback(async (providerId: string) => {
+    const code = manualCodeInputs[providerId]?.trim();
+    if (!code) {
+      addToast(t("setup.pasteRedirectUrlFirst", "Paste the full redirect URL or authorization code first."), "warning");
+      return;
+    }
+
+    setManualCodeSubmitInProgress(providerId);
+    try {
+      const result = await submitProviderManualCode(providerId, code);
+      if (result.submitted) {
+        setManualCodeInputs((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        addToast(t("setup.authCodeReceived", "Authorization code received. Finishing login…"), "success");
+      } else {
+        addToast(t("setup.authCodeAlreadySubmitted", "That authorization code was already submitted. Waiting for login…"), "warning");
+      }
+    } catch (err) {
+      addToast(getErrorMessage(err) || t("setup.failedToSubmitAuthCode", "Failed to submit authorization code"), "error");
+    } finally {
+      setManualCodeSubmitInProgress(null);
+    }
+  }, [addToast, manualCodeInputs]);
+
+  // Cancellation handler for in-progress logins
+  const handleCancelLogin = useCallback(async (providerId: string) => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    setAuthActionInProgress(providerId);
+    pollCountRef.current = 0;
+    setAuthProviders((prev) => prev.map((provider) =>
+      provider.id === providerId ? { ...provider, loginInProgress: false } : provider,
+    ));
+    setLoginOutcomes((prev) => ({ ...prev, [providerId]: "cancelled" }));
+
+    try {
+      await cancelProviderLogin(providerId);
+      await loadAuthStatus().catch(() => {});
+      addToast(t("setup.loginCancelled", "Login cancelled"), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err) || t("setup.failedToCancelLogin", "Failed to cancel login"), "error");
+    } finally {
+      setAuthActionInProgress(null);
+      setLoginInstructions((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setManualCodeConfigs((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setManualCodeInputs((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setManualCodeSubmitInProgress((prev) => prev === providerId ? null : prev);
+      setDeviceCodes((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+    }
+  }, [addToast, loadAuthStatus]);
+
+  // API key input update handler
+  const handleApiKeyInputChange = useCallback((providerId: string, value: string) => {
+    setApiKeyInputs((prev) => ({
+      ...prev,
+      [providerId]: value,
+    }));
+
+    const successTimer = apiKeySuccessTimers.current[providerId];
+    if (successTimer) {
+      clearTimeout(successTimer);
+      delete apiKeySuccessTimers.current[providerId];
+    }
+
+    setApiKeyErrors((prev) => {
+      if (!prev[providerId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
+
+    setApiKeySuccess((prev) => {
+      if (!prev[providerId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
+  }, []);
+
+  const scrollOnboardingContentToTop = useCallback(() => {
+    const content = onboardingContentRef.current;
+    if (!content) {
+      return;
+    }
+
+    const prefersReducedMotion =
+      typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    try {
+      if (typeof content.scrollTo === "function") {
+        content.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" });
+        return;
+      }
+    } catch {
+      // Fall through to direct scrollTop assignment for environments
+      // without ScrollToOptions support.
+    }
+
+    content.scrollTop = 0;
+  }, []);
+
+  // API key save handler
+  const handleSaveApiKey = useCallback(
+    async (providerId: string, keyValue?: string) => {
+      const key = (keyValue ?? apiKeyInputs[providerId] ?? "").trim();
+      const validationError = validateApiKeyFormat(providerId, key, t);
+      if (validationError) {
+        setApiKeyErrors((prev) => ({
+          ...prev,
+          [providerId]: validationError,
+        }));
+        return;
+      }
+
+      const existingTimer = apiKeySuccessTimers.current[providerId];
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        delete apiKeySuccessTimers.current[providerId];
+      }
+
+      setAuthActionInProgress(providerId);
+      setApiKeyErrors((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setApiKeySuccess((prev) => {
+        if (!prev[providerId]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+
+      try {
+        await saveApiKey(providerId, key);
+        await loadAuthStatus();
+        // Same reason as the OAuth path: a key that just unlocked a provider must populate its models.
+        void loadModels();
+        scrollOnboardingContentToTop();
+
+        setApiKeyInputs((prev) => {
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setApiKeyErrors((prev) => {
+          if (!prev[providerId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setApiKeySuccess((prev) => ({
+          ...prev,
+          [providerId]: t("setup.keySavedInline", "✓ Key saved"),
+        }));
+
+        apiKeySuccessTimers.current[providerId] = setTimeout(() => {
+          setApiKeySuccess((prev) => {
+            if (!prev[providerId]) {
+              return prev;
+            }
+            const next = { ...prev };
+            delete next[providerId];
+            return next;
+          });
+          delete apiKeySuccessTimers.current[providerId];
+        }, 3000);
+
+        addToast(t("setup.apiKeySavedToast", "API key saved"), "success");
+      } catch (err: unknown) {
+        const errorMessage =
+          err instanceof TypeError && err.message.includes("Failed to fetch")
+            ? t("setup.couldNotReachServer", "Could not reach the server. Check your connection and try again.")
+            : err instanceof Error
+              ? err.message
+              : t("setup.failedToSaveApiKey", "Failed to save API key");
+
+        setApiKeyErrors((prev) => ({
+          ...prev,
+          [providerId]: errorMessage,
+        }));
+        setApiKeySuccess((prev) => {
+          if (!prev[providerId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+
+        addToast(errorMessage, "error");
+      } finally {
+        setAuthActionInProgress(null);
+      }
+    },
+    [apiKeyInputs, addToast, loadAuthStatus, scrollOnboardingContentToTop],
+  );
+
+  // API key clear handler
+  const handleClearApiKey = useCallback(
+    async (providerId: string) => {
+      setAuthActionInProgress(providerId);
+      try {
+        await clearApiKey(providerId);
+        await loadAuthStatus();
+        addToast(t("setup.apiKeyRemoved", "API key removed"), "success");
+      } catch (err: unknown) {
+        addToast(
+          err instanceof Error ? err.message : t("setup.failedToClearApiKey", "Failed to clear API key"),
+          "error",
+        );
+      } finally {
+        setAuthActionInProgress(null);
+      }
+    },
+    [addToast, loadAuthStatus],
+  );
+
+  // Logout handler (for OAuth providers that are authenticated)
+  const handleLogout = useCallback(
+    async (providerId: string) => {
+      setAuthActionInProgress(providerId);
+      try {
+        await logoutProvider(providerId);
+        await loadAuthStatus();
+        addToast(t("setup.loggedOut", "Logged out"), "success");
+      } catch (err: unknown) {
+        addToast(
+          err instanceof Error ? err.message : t("setup.logoutFailed", "Logout failed"),
+          "error",
+        );
+      } finally {
+        setAuthActionInProgress(null);
+      }
+    },
+    [addToast, loadAuthStatus],
+  );
+
+  // Handle model selection from CustomModelDropdown
+  const handleModelSelect = useCallback(
+    (value: string) => {
+      setSelectedModel(value);
+
+      /*
+       * FNXC:Onboarding 2026-07-03-09:15:
+       * Persist the picked model as the global default IMMEDIATELY on selection. Previously the choice
+       * lived only in local state until completeOnboarding ran on the final step, so a user who selected
+       * a model but exited or skipped before finishing lost the selection and then saw the post-onboarding
+       * "Select Default Model" banner despite having explicitly chosen one. Saving on pick makes the
+       * selection durable regardless of how onboarding is exited.
+       */
+      const slashIdx = value.indexOf("/");
+      const provider = slashIdx !== -1 ? value.slice(0, slashIdx) : undefined;
+      const modelId = slashIdx !== -1 ? value.slice(slashIdx + 1) : value;
+      const model = availableModels.find((m) => m.id === modelId);
+      const updates: Record<string, unknown> = {};
+      if (model) {
+        updates.defaultProvider = model.provider;
+        updates.defaultModelId = model.id;
+      } else if (provider && modelId) {
+        updates.defaultProvider = provider;
+        updates.defaultModelId = modelId;
+      }
+      if (updates.defaultModelId) {
+        void updateGlobalSettings(updates).catch(() => undefined);
+      }
+    },
+    [availableModels, updateGlobalSettings],
+  );
+
+  const completeOnboarding = useCallback(async () => {
+    try {
+      const updates: Record<string, unknown> = {
+        modelOnboardingComplete: true,
+      };
+
+      /*
+       * FNXC:Onboarding 2026-07-03-09:10:
+       * Persist a default model on completion so the post-onboarding "Select Default Model"
+       * recommendation does not fire for operators who connected a provider but never opened the model
+       * dropdown. selectedModel is only populated by an explicit dropdown pick (or a previously-saved
+       * default), so a fresh first-run where the user just connects Anthropic and clicks Continue would
+       * otherwise leave defaultProvider/defaultModelId unset and trip the false-positive banner. Prefer
+       * the explicit pick; otherwise fall back to the first available model from the connected provider.
+       * Only when no models are available at all do we leave the default unset.
+       */
+      const effectiveSelection =
+        selectedModel ||
+        (availableModels[0] ? `${availableModels[0].provider}/${availableModels[0].id}` : "");
+
+      if (effectiveSelection) {
+        const slashIdx = effectiveSelection.indexOf("/");
+        const provider =
+          slashIdx !== -1 ? effectiveSelection.slice(0, slashIdx) : undefined;
+        const modelId =
+          slashIdx !== -1 ? effectiveSelection.slice(slashIdx + 1) : effectiveSelection;
+
+        const model = availableModels.find((m) => m.id === modelId);
+        if (model) {
+          updates.defaultProvider = model.provider;
+          updates.defaultModelId = model.id;
+        } else if (provider && modelId) {
+          // Fallback: use parsed values even if not in the model list
+          updates.defaultProvider = provider;
+          updates.defaultModelId = modelId;
+        }
+      }
+
+      await updateGlobalSettings(updates);
+    } catch {
+      /*
+      FNXC:Onboarding 2026-08-18-07:30:
+      A FAILED SETTINGS WRITE MUST NOT STRAND ONBOARDING AS UNFINISHED. Marking completion used to sit
+      after this await inside the same try, so any failure persisting the default model — a transient
+      request, a restarting backend — skipped it silently, and the dashboard went on advertising
+      "Continue Setup" at the first step to an operator who had finished the whole flow (report:
+      "my dashboard showed I was last on ai setup step but I actually finished it"). Completion is a
+      local fact about what the operator did; it does not depend on the default-model write landing.
+      */
+    } finally {
+      // Mark onboarding as completed (preserves state for completion timestamp)
+      markOnboardingCompleted();
+    }
+  }, [selectedModel, availableModels, updateGlobalSettings, markOnboardingCompleted]);
+
+  // Complete onboarding
+  const handleComplete = useCallback(async () => {
+    const nextCompletedSteps = [...new Set([...completedSteps, "first-task"])] as OnboardingStep[];
+
+    setSaving(true);
+    try {
+      await completeOnboarding();
+      trackOnboardingEvent("onboarding:completed", { completedSteps: nextCompletedSteps, skippedSteps });
+      setCompletedSteps(nextCompletedSteps);
+      setSkippedSteps((prev) => prev.filter((s) => s !== "first-task"));
+      setStep("complete");
+    } finally {
+      setSaving(false);
+    }
+  }, [completeOnboarding, completedSteps, skippedSteps]);
+
+  const handleCreateFirstTask = useCallback(async () => {
+    if (!projectId) {
+      return;
+    }
+
+    const trimmedDescription = firstTaskDescription.trim();
+    if (!trimmedDescription) {
+      setTaskCreationError(t("setup.pleaseEnterTaskDescription", "Please enter a task description."));
+      return;
+    }
+
+    setTaskCreationError(null);
+    setIsCreatingFirstTask(true);
+
+    let success = false;
+
+    try {
+      const createdTask = await createTask({
+        description: trimmedDescription,
+        source: { sourceType: "dashboard_ui" },
+      }, projectId);
+      setInlineCreatedTask(createdTask);
+      setShowTaskCreated(true);
+      trackOnboardingEvent("onboarding:first-task-created", { taskId: createdTask?.id });
+      addToast(t("setup.taskCreated", "Task created"), "success");
+      success = true;
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : t("setup.taskCreationFailed", "Something went wrong creating your task. Please try again.");
+      setTaskCreationError(message);
+      addToast(message, "error");
+    } finally {
+      setIsCreatingFirstTask(false);
+    }
+
+    if (success) {
+      void completeOnboarding();
+    }
+  }, [projectId, firstTaskDescription, addToast, completeOnboarding]);
+
+  // Handle first task CTA - mark complete, close modal, then open new task
+  const handleOpenNewTask = useCallback(async () => {
+    // First complete the onboarding
+    setSaving(true);
+    try {
+      await completeOnboarding();
+    } finally {
+      setSaving(false);
+    }
+
+    // Keep onboarding open so task creation can hand back to a success state
+    trackOnboardingEvent("onboarding:open-new-task", {});
+    onOpenNewTask?.();
+  }, [completeOnboarding, onOpenNewTask]);
+
+  // Handle GitHub import CTA - mark complete, close modal, then open GitHub import
+  const handleOpenGitHubImport = useCallback(async () => {
+    if (!isGitHubReady) {
+      return;
+    }
+
+    // First complete the onboarding
+    setSaving(true);
+    try {
+      await completeOnboarding();
+    } finally {
+      setSaving(false);
+    }
+
+    // Close modal and trigger callback
+    setIsOpen(false);
+    onComplete();
+    trackOnboardingEvent("onboarding:open-github-import", {});
+    onOpenGitHubImport?.();
+  }, [completeOnboarding, isGitHubReady, onComplete, onOpenGitHubImport]);
+
+  // Dismiss without completing (still marks onboarding complete)
+  const handleDismiss = useCallback(async () => {
+    trackOnboardingEvent("onboarding:dismissed", {
+      currentStep: step,
+      completedSteps,
+      skippedSteps,
+    });
+
+    setSaving(true);
+    try {
+      await updateGlobalSettings({ modelOnboardingComplete: true });
+    } catch {
+      // Best-effort: still close even if save fails
+    }
+    setIsOpen(false);
+    onComplete("dismissed");
+  }, [step, completedSteps, skippedSteps, onComplete]);
+
+  // Close from the completion step
+  const handleFinish = useCallback(() => {
+    trackOnboardingEvent("onboarding:finished", {});
+    setIsOpen(false);
+    onComplete();
+  }, [onComplete]);
+
+  const handleViewCreatedTask = useCallback(() => {
+    const createdTask = firstCreatedTask ?? inlineCreatedTask;
+    if (!createdTask) {
+      return;
+    }
+
+    void completeOnboarding();
+    onViewTask?.(createdTask);
+    onComplete();
+  }, [firstCreatedTask, inlineCreatedTask, completeOnboarding, onViewTask, onComplete]);
+
+  const handleGoToDashboard = useCallback(() => {
+    void completeOnboarding();
+    onComplete();
+  }, [completeOnboarding, onComplete]);
+
+  const githubStatus = getGitHubStatus();
+
+  const aiProviders = authProviders.filter((provider) => provider.id !== "github");
+  /*
+   * FNXC:Onboarding 2026-08-17-23:47:
+   * Show the "Connect remote Fusion server" card ONLY inside a NATIVE SHELL (desktop or mobile app)
+   * that has no active remote profile yet. Two hosts must never see it:
+   *   - LOCAL desktop mode: a local runtime is already the connected backend, so asking for a remote
+   *     server URL just confuses first-run setup (the original 2026-07-03 report).
+   *   - A PLAIN BROWSER (`host === "web"`): there is no native shell to connect at all. The browser
+   *     IS already talking to the server it loaded from, and the card's own copy ("Your native shell
+   *     needs an active remote profile before dashboard handoff can complete") describes machinery
+   *     the visitor does not have. The previous rule keyed only on `desktopMode !== "local"`, and
+   *     `desktopMode` is undefined on web, so every browser first-run opened Set Up AI with a remote
+   *     server form above the AI providers it was supposed to lead with (operator report).
+   */
+  const showShellConnectionSetup =
+    !shellState.activeProfileId && shellState.host !== "web" && shellState.desktopMode !== "local";
+  const orderedAiProviders = [...aiProviders].sort(compareOnboardingProviders);
+  const hasOauthProviders = orderedAiProviders.some((provider) => !provider.type || provider.type === "oauth");
+  const providerSupportsApiKey = (provider: AuthProvider) => provider.type === "api_key";
+  const hasApiKeyProviders = orderedAiProviders.some((provider) => providerSupportsApiKey(provider));
+  const connectedAiProviders = aiProviders.filter((provider) => provider.authenticated);
+  const hasAiProvider = connectedAiProviders.length > 0;
+  const hasProjectSelected = Boolean(projectId);
+  const selectedAgentPreset = selectedAgentPresetId ? getPresetById(selectedAgentPresetId) : undefined;
+  /*
+  FNXC:Onboarding 2026-06-22-06:03:
+  AI-generated agent drafts are custom and should not appear selected as a template, but the template radiogroup still needs one tabbable item for keyboard users.
+  */
+  const agentPresetTabStopId = selectedAgentPresetId || ceoPreset.id;
+  const isAgentActionDisabled = isCreatingAgent || !hasProjectSelected;
+  // True when on GitHub step but skipped AI setup (no AI provider connected)
+  const aiSetupSkipped = step === "github" && !hasAiProvider;
+
+  const saveShellConnectionProfile = useCallback(async () => {
+    if (!shellApi) {
+      return;
+    }
+    setShellConnectionError(null);
+    setShellConnectionSaving(true);
+    try {
+      const saved = await shellApi.saveProfile({
+        name: shellProfileName,
+        serverUrl: shellServerUrl,
+        authToken: shellAuthToken.trim() ? shellAuthToken : null,
+      });
+      try {
+        await shellApi.setActiveProfile(saved.id);
+      } catch (error) {
+        setShellConnectionError(getErrorMessage(error) || t("setup.savedProfileButFailedToActivate", "Saved profile but failed to activate it"));
+        return;
+      }
+      setShellServerUrl("");
+      setShellAuthToken("");
+      addToast(t("setup.remoteServerProfileSaved", "Remote server profile saved"), "success");
+    } catch (error) {
+      setShellConnectionError(getErrorMessage(error) || t("setup.failedToSaveShellConnection", "Failed to save shell connection"));
+    } finally {
+      setShellConnectionSaving(false);
+    }
+  }, [shellApi, shellProfileName, shellServerUrl, shellAuthToken, addToast]);
+
+  if (!isOpen) return null;
+
+  const selectedModelDisplayName = (() => {
+    if (!selectedModel) {
+      return "";
+    }
+
+    const slashIdx = selectedModel.indexOf("/");
+    const providerId = slashIdx === -1 ? undefined : selectedModel.slice(0, slashIdx);
+    const modelId = slashIdx === -1 ? selectedModel : selectedModel.slice(slashIdx + 1);
+    const matchingModel = availableModels.find(
+      (model) => model.id === modelId && (!providerId || model.provider === providerId),
+    );
+
+    if (matchingModel?.name) {
+      return matchingModel.name;
+    }
+
+    if (providerId) {
+      return `${getProviderDisplayName(providerId)} ${modelId}`;
+    }
+
+    return selectedModel;
+  })();
+
+  const readinessItems: ReadinessItem[] = [];
+
+  if (hasProjectSelected) {
+    readinessItems.push({
+      label: t("setup.readinessProjectLabel", "Project"),
+      status: "connected",
+      detail: t("setup.readinessProjectConnected", "Project selected — task creation and imports are available"),
+    });
+  } else {
+    readinessItems.push({
+      label: t("setup.readinessProjectLabel", "Project"),
+      status: "missing",
+      detail: t("setup.readinessProjectMissing", "Register a project to enable task creation and imports"),
+    });
+  }
+
+  if (hasAiProvider) {
+    const firstConnectedProviderName = getProviderDisplayName(connectedAiProviders[0]?.id ?? "");
+    readinessItems.push({
+      label: t("setup.readinessAiProviderLabel", "AI Provider"),
+      status: "connected",
+      detail: t("setup.readinessAiProviderConnected", "{{name}} connected — AI agents can work on tasks", { name: firstConnectedProviderName }),
+    });
+  } else if (
+    aiProviders.length > 0
+    && aiProviders.some((provider) => skippedProviders[provider.id])
+  ) {
+    readinessItems.push({
+      label: t("setup.readinessAiProviderLabel", "AI Provider"),
+      status: "skipped",
+      detail: t("setup.readinessAiProviderSkipped", "AI agents won't be available until you connect a provider"),
+    });
+  } else {
+    readinessItems.push({
+      label: t("setup.readinessAiProviderLabel", "AI Provider"),
+      status: "missing",
+      detail: t("setup.readinessAiProviderMissing", "Connect a provider in Settings → AI Setup"),
+    });
+  }
+
+  if (isGitHubReady) {
+    readinessItems.push({
+      label: t("setup.readinessGitHubLabel", "GitHub"),
+      status: "connected",
+      detail: isGitHubReadyViaCli
+        ? t("setup.readinessGitHubViaCli", "Connected via GitHub CLI — imports and PR tracking are available")
+        : t("setup.readinessGitHubConnected", "Issues and PRs can be imported"),
+    });
+  } else if (!hasGithubProvider || isGithubSkipped) {
+    readinessItems.push({
+      label: t("setup.readinessGitHubLabel", "GitHub"),
+      status: "skipped",
+      detail: t("setup.readinessGitHubSkipped", "You can connect anytime from Settings"),
+    });
+  } else {
+    readinessItems.push({
+      label: t("setup.readinessGitHubLabel", "GitHub"),
+      status: "missing",
+      detail: t("setup.readinessGitHubMissing", "Connect to import issues as tasks"),
+    });
+  }
+
+  if (selectedModelDisplayName) {
+    readinessItems.push({
+      label: t("setup.readinessDefaultModelLabel", "Default Model"),
+      status: "connected",
+      detail: selectedModelDisplayName,
+    });
+  }
+
+  const createdTaskForDisplay = firstCreatedTask ?? inlineCreatedTask;
+  const firstCreatedTaskPreview =
+    createdTaskForDisplay?.description?.split("\n")[0]?.trim() ||
+    createdTaskForDisplay?.title ||
+    "";
+
+  const quickStartSet = new Set<string>(QUICK_START_PROVIDER_IDS);
+  const hasSeparatedAnthropicProvider = orderedAiProviders.some(
+    (provider) => provider.id === "anthropic-subscription" || provider.id === "anthropic-api-key",
+  );
+  /*
+  FNXC:ProviderAuth 2026-06-29-23:59:
+  Onboarding may receive a stale legacy `anthropic` status row during rollout, but the separated `anthropic-subscription` and `anthropic-api-key` cards are now the source of truth.
+  Suppress the legacy row whenever either separated card is present so users never see duplicate Anthropic auth choices or a dual-purpose card.
+  */
+  const visibleOrderedAiProviders = orderedAiProviders.filter(
+    (provider) => !(provider.id === "anthropic" && hasSeparatedAnthropicProvider),
+  );
+  /*
+  FNXC:Onboarding 2026-07-10-10:15:
+  First-run review: after connecting a provider the "Connected providers" section rendered BELOW the
+  quick-start cards and the long provider list, so users could not see what was already connected without
+  scrolling. ALL connected providers (quick-start and advanced alike) now render in a single "Connected
+  providers" section at the TOP of the AI Setup step, and the quick-start list only offers providers that
+  still need connecting. The "N of M providers connected" summary above is unchanged.
+  */
+  const connectedVisibleProviders = visibleOrderedAiProviders.filter(
+    (provider) => provider.authenticated,
+  );
+  const quickStartProviders = visibleOrderedAiProviders
+    .filter((provider) => quickStartSet.has(provider.id) && !provider.authenticated)
+    .sort((a, b) => {
+      const rankA = QUICK_START_PROVIDER_IDS.indexOf(a.id as (typeof QUICK_START_PROVIDER_IDS)[number]);
+      const rankB = QUICK_START_PROVIDER_IDS.indexOf(b.id as (typeof QUICK_START_PROVIDER_IDS)[number]);
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+      return compareOnboardingProviders(a, b);
+    });
+  const advancedProviders = visibleOrderedAiProviders.filter(
+    (provider) => !provider.authenticated && !quickStartSet.has(provider.id),
+  );
+
+  const renderAiProviderCard = (provider: AuthProvider) => {
+    const hasTerminalLoginOutcome = loginOutcomes[provider.id] === "timeout" ||
+      loginOutcomes[provider.id] === "failed" ||
+      loginOutcomes[provider.id] === "cancelled";
+    const showRemoteLoginInProgress = provider.loginInProgress && !hasTerminalLoginOutcome;
+
+    if (provider.id === "llama-cpp" && provider.type === "cli") {
+      return (
+        <LlamaCppProviderCard
+          key={provider.id}
+          authenticated={provider.authenticated}
+          onToggled={() => {
+            void loadAuthStatus();
+          }}
+        />
+      );
+    }
+
+    if (provider.id === "claude-cli" && provider.type === "cli") {
+      return (
+        <ClaudeCliProviderCard
+          key={provider.id}
+          authenticated={provider.authenticated}
+          onToggled={() => {
+            void loadAuthStatus();
+          }}
+        />
+      );
+    }
+
+    if (provider.id === "cursor-cli" && provider.type === "cli") {
+      return (
+        <CursorCliProviderCard
+          key={provider.id}
+          authenticated={provider.authenticated}
+          onToggled={() => {
+            void loadAuthStatus();
+          }}
+        />
+      );
+    }
+
+    if (providerSupportsApiKey(provider)) {
+      const providerInfo = getProviderInfo(provider.id, t);
+      const apiKeyInfo = getApiKeyInfo(provider, t);
+      const hasStoredApiKey = Boolean(provider.keyHint);
+
+      /*
+      FNXC:ProviderAuth 2026-06-29-22:20:
+      Onboarding must offer Anthropic subscription OAuth as its own login card and raw Anthropic API-key auth as a separate key card, matching OpenAI Codex versus OpenAI API-key behavior.
+      Treat only `type: "api_key"` providers as key-entry cards so the separated invariant cannot regress through `supportsApiKey`.
+      */
+      return (
+        <div
+          key={provider.id}
+          data-testid={`onboarding-provider-card-${provider.id}`}
+          className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+        >
+          <div
+            className="onboarding-provider-card__icon"
+            data-testid={`onboarding-provider-icon-${provider.id}`}
+            aria-hidden="true"
+          >
+            <ProviderIcon provider={provider.id} size="md" />
+          </div>
+          <div className="onboarding-provider-card__body">
+            <strong className="onboarding-provider-card__name">
+              <Key size={14} className="onboarding-provider-key-icon" />
+              {provider.name}
+            </strong>
+            <span className="onboarding-provider-card__description">
+              {providerInfo.description}
+            </span>
+            <ProviderStatusBadge status={getProviderStatus(provider)} />
+            {provider.authenticated && provider.keyHint && (
+              <span className="auth-key-hint">{t("setup.apiKeyHint", "Key: {{keyHint}}", { keyHint: provider.keyHint })}</span>
+            )}
+          </div>
+          <div className="onboarding-provider-card__actions onboarding-provider-card__actions--api-key">
+            <ApiKeyEntryForm
+              provider={provider}
+              apiKeyInfo={apiKeyInfo}
+              inputValue={apiKeyInputs[provider.id] ?? ""}
+              isSaving={authActionInProgress === provider.id}
+              error={apiKeyErrors[provider.id]}
+              success={apiKeySuccess[provider.id]}
+              isConnected={provider.authenticated || hasStoredApiKey}
+              onInputChange={handleApiKeyInputChange}
+              onSave={handleSaveApiKey}
+              onClear={handleClearApiKey}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={provider.id}
+        data-testid={`onboarding-provider-card-${provider.id}`}
+        className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+      >
+        <div
+          className="onboarding-provider-card__icon"
+          data-testid={`onboarding-provider-icon-${provider.id}`}
+          aria-hidden="true"
+        >
+          <ProviderIcon provider={provider.id} size="md" />
+        </div>
+        <div className="onboarding-provider-card__body">
+          <strong className="onboarding-provider-card__name">{provider.name}</strong>
+          <span className="onboarding-provider-card__description">
+            {getProviderInfo(provider.id, t).description}
+          </span>
+          <ProviderStatusBadge status={getProviderStatus(provider)} />
+        </div>
+        <div className="onboarding-provider-card__actions">
+          {authActionInProgress === provider.id ? (
+            provider.authenticated ? (
+              <button className="btn btn-sm" disabled>
+                {t("setup.loggingOut", "Logging out…")}
+              </button>
+            ) : (
+              <>
+                <button className="btn btn-sm" disabled>
+                  {t("setup.waitingForLogin", "Waiting for login…")}
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => void handleCancelLogin(provider.id)}
+                >
+                  {t("setup.cancelLogin", "Cancel")}
+                </button>
+              </>
+            )
+          ) : showRemoteLoginInProgress ? (
+            <>
+              <button className="btn btn-sm" disabled>
+                {t("setup.waitingForLogin", "Waiting for login…")}
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => void handleCancelLogin(provider.id)}
+              >
+                {t("setup.cancelLogin", "Cancel")}
+              </button>
+            </>
+          ) : provider.authenticated ? (
+            <button
+              className="btn btn-sm"
+              onClick={() => handleLogout(provider.id)}
+            >
+              {t("setup.logout", "Logout")}
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => handleLogin(provider.id)}
+            >
+              {t("setup.login", "Login")}
+            </button>
+          )}
+        </div>
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && provider.id === "github-copilot" && deviceCodes[provider.id] && (
+          <div className="auth-device-code-panel" data-testid={`onboarding-device-code-${provider.id}`}>
+            <strong>{t("setup.enterCodeOnGitHub", "Enter this code on GitHub")}</strong>
+            <div className="auth-device-code-pill">{deviceCodes[provider.id].userCode}</div>
+            <div className="auth-provider-actions-row">
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  void (async () => {
+                    const copied = await copyTextToClipboard(deviceCodes[provider.id].userCode);
+                    if (copied) {
+                      addToast(t("setup.copiedCodeToClipboard", "Copied code to clipboard"), "success");
+                      return;
+                    }
+                    addToast(t("setup.failedToCopyCode", "Failed to copy code — copy it manually from the box above"), "error");
+                  })();
+                }}
+              >
+                {t("setup.copyCode", "Copy code")}
+              </button>
+              <button className="btn btn-sm" onClick={() => openExternalUrl(appendTokenQuery(deviceCodes[provider.id].verificationUri))}>
+                {t("setup.openGitHub", "Open GitHub")}
+              </button>
+            </div>
+          </div>
+        )}
+        {/*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        Same rule as the paste field below: the dialog already shows these instructions, and rendering
+        them here too printed the same paragraph twice — once in the dialog and once in the card
+        visible around its edges.
+        */}
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && loginInstructions[provider.id] && loginDialogProvider !== provider.id && (
+          <LoginInstructions
+            instructions={loginInstructions[provider.id]}
+            data-testid={`onboarding-login-instructions-${provider.id}`}
+          />
+        )}
+        {/*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        The card keeps its own paste field only for flows the dialog is NOT showing (e.g. a remote
+        login adopted from another surface). Rendering both would put two inputs for the same code on
+        screen, one of them hidden behind the dialog.
+        */}
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && manualCodeConfigs[provider.id] && loginDialogProvider !== provider.id && (
+          <OAuthManualCodeForm
+            value={manualCodeInputs[provider.id] ?? ""}
+            onChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [provider.id]: value }))}
+            onSubmit={() => void handleSubmitManualCode(provider.id)}
+            prompt={manualCodeConfigs[provider.id].prompt}
+            placeholder={manualCodeConfigs[provider.id].placeholder}
+            helpText={manualCodeConfigs[provider.id].helpText}
+            disabled={manualCodeSubmitInProgress === provider.id}
+            submitLabel={manualCodeSubmitInProgress === provider.id ? t("setup.submittingCode", "Submitting…") : t("setup.submitCode", "Submit code")}
+            data-testid={`onboarding-manual-code-${provider.id}`}
+          />
+        )}
+        {loginOutcomes[provider.id] === "timeout" && authActionInProgress !== provider.id && (
+          <p className="onboarding-helper-text onboarding-inline-feedback">
+            {t("setup.loginTimedOutInline", "Login timed out. Please try again.")}
+          </p>
+        )}
+        {loginOutcomes[provider.id] === "failed" && authActionInProgress !== provider.id && (
+          <p className="field-error onboarding-inline-feedback">
+            {t("setup.loginFailedInline", "Login failed. Please try again.")}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+    <FloatingWindow
+      windowKey="model-onboarding"
+      title={t("setup.titleAiSetup", "Set Up AI")}
+      onClose={handleDismiss}
+      hideHeader
+      dragHandleSelector=".model-onboarding-header"
+      className="floating-window--model-onboarding"
+      defaultSize={{ width: 720, height: 640 }}
+      minSize={{ width: 360, height: 280 }}
+      persistGeometryKey="floating-window:model-onboarding"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      ariaLabel={t("setup.titleAiSetup", "Set Up AI")}
+      ariaLabelledBy="onboarding-title"
+    >
+      <div className="modal model-onboarding-modal">
+        {/* Header */}
+        <div className="model-onboarding-header">
+          <h2 id="onboarding-title" className="model-onboarding-title">
+            {step === "ai-setup" && (
+              <>
+                <Zap size={24} /> {t("setup.titleAiSetup", "Set Up AI")} <span className="onboarding-optional-badge">{t("setup.optionalBadge", "Optional")}</span>
+              </>
+            )}
+            {step === "github" && (
+              <>
+                <GitPullRequest size={24} /> {t("setup.titleConnectGitHub", "Connect GitHub")} <span className="onboarding-optional-badge">{t("setup.optionalBadge", "Optional")}</span>
+              </>
+            )}
+            {step === "project-setup" && (
+              <>
+                <Rocket size={24} /> {t("setup.titleSetUpProject", "Set Up Your Project")}
+              </>
+            )}
+            {step === "agent" && (
+              <>
+                <UserRound size={24} /> {t("setup.titleCreateFirstAgent", "Create Your First Agent")} <span className="onboarding-optional-badge">{t("setup.optionalBadge", "Optional")}</span>
+              </>
+            )}
+            {step === "first-task" && (
+              <>
+                <Rocket size={24} /> {t("setup.titleCreateFirstTask", "Create Your First Task")}
+              </>
+            )}
+            {step === "complete" && (
+              <>
+                <CheckCircle size={24} /> {t("setup.titleAllSet", "All Set!")}
+              </>
+            )}
+          </h2>
+          {step !== "complete" && (
+            <button
+              className="modal-close"
+              onClick={handleDismiss}
+              aria-label={t("setup.skipOnboardingAriaLabel", "Skip onboarding")}
+              title={t("setup.skipForNow", "Skip for now")}
+            >
+              <X size={20} />
+            </button>
+          )}
+        </div>
+
+        {/* Step indicator - progress steps + complete */}
+        <div className="model-onboarding-steps">
+          {steps.map((s, index) => {
+            // A step is done/skipped only once we have progressed beyond it.
+            const hasProgressedPastStep = effectiveStepIndex > index;
+            const isDone = completedSteps.includes(s.key) && hasProgressedPastStep;
+            const isSkipped = skippedSteps.includes(s.key) && !completedSteps.includes(s.key) && hasProgressedPastStep;
+            // Clickable if it's a completed/skipped step (can review)
+            const isClickable = isDone || isSkipped;
+            return (
+              <div key={s.key} className="onboarding-step-wrapper">
+                {index > 0 && (
+                  <div
+                    className={`model-onboarding-step-connector ${
+                      index <= effectiveStepIndex ? "done" : ""
+                    }`}
+                  />
+                )}
+                {isClickable ? (
+                  <button
+                    className={`model-onboarding-step-indicator ${
+                      step === s.key ? "active" : ""
+                    } ${isDone ? "done" : ""} ${isSkipped ? "skipped" : ""}`}
+                    onClick={() => setStep(s.key)}
+                    aria-label={t("setup.goBackToStep", "Go back to {{label}}", { label: s.label })}
+                    title={t("setup.reviewStep", "Review {{label}}", { label: s.label })}
+                  >
+                    <span className="step-number">
+                      {isDone ? (
+                        <CheckCircle size={14} />
+                      ) : isSkipped ? (
+                        <span className="onboarding-step-skip-mark">–</span>
+                      ) : (
+                        index + 1
+                      )}
+                    </span>
+                    <span className="step-label">{s.label}</span>
+                  </button>
+                ) : (
+                  <div
+                    className={`model-onboarding-step-indicator ${
+                      step === s.key ? "active" : ""
+                    } ${isDone ? "done" : ""} ${isSkipped ? "skipped" : ""}`}
+                  >
+                    <span className="step-number">
+                      {isDone ? (
+                        <CheckCircle size={14} />
+                      ) : isSkipped ? (
+                        <span className="onboarding-step-skip-mark">–</span>
+                      ) : (
+                        index + 1
+                      )}
+                    </span>
+                    <span className="step-label">{s.label}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Content */}
+        <div className="model-onboarding-content" ref={onboardingContentRef}>
+          {step === "ai-setup" && (
+            <div className="model-onboarding-ai-setup">
+              <p className="model-onboarding-description">
+                {t("setup.aiSetupDescription", "Fusion uses AI models to plan, write, and review code for you. Connect an AI provider below to get started — you can use a hosted service or enter an API key.")}
+              </p>
+              <p className="onboarding-helper-text model-onboarding-primary-helper">
+                {t("setup.onlyNeedOneProvider", "You only need one provider to get started.")}
+              </p>
+
+              {showShellConnectionSetup && (
+                <div className="card">
+                  <h3 className="onboarding-section-title">{t("setup.connectRemoteServer", "Connect remote Fusion server")}</h3>
+                  <p className="onboarding-helper-text">
+                    {t("setup.remoteServerNote", "Your native shell needs an active remote profile before dashboard handoff can complete.")}
+                  </p>
+                  <label htmlFor="onboarding-shell-profile-name" className="onboarding-apikey-field-label">{t("setup.profileName", "Profile name")}</label>
+                  <input
+                    id="onboarding-shell-profile-name"
+                    className="input"
+                    value={shellProfileName}
+                    onChange={(event) => setShellProfileName(event.target.value)}
+                  />
+                  <label htmlFor="onboarding-shell-server-url" className="onboarding-apikey-field-label">{t("setup.serverUrl", "Server URL")}</label>
+                  <input
+                    id="onboarding-shell-server-url"
+                    className="input"
+                    placeholder={t("setup.serverUrlPlaceholder", "https://your-fusion-host")}
+                    value={shellServerUrl}
+                    onChange={(event) => setShellServerUrl(event.target.value)}
+                  />
+                  <label htmlFor="onboarding-shell-token" className="onboarding-apikey-field-label">{t("setup.authTokenOptional", "Auth token (optional)")}</label>
+                  <input
+                    id="onboarding-shell-token"
+                    className="input"
+                    type="password"
+                    value={shellAuthToken}
+                    onChange={(event) => setShellAuthToken(event.target.value)}
+                  />
+                  {shellConnectionError && <small className="field-error">{shellConnectionError}</small>}
+                  <div className="onboarding-apikey-input-row">
+                    <button type="button" className="btn btn-sm" onClick={() => void shellApi?.openConnectionManager()}>
+                      {t("setup.openManager", "Open manager")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => void saveShellConnectionProfile()}
+                      disabled={!shellServerUrl.trim() || shellConnectionSaving}
+                    >
+                      {shellConnectionSaving ? t("setup.savingRemoteServer", "Saving…") : t("setup.saveRemoteServer", "Save remote server")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Provider connection status summary */}
+              {!authLoading && authProviders.length > 0 && (
+                (() => {
+                  const connectedCount = authProviders.filter(p => p.id !== "github" && p.authenticated).length;
+                  const totalAiProviders = authProviders.filter(p => p.id !== "github").length;
+                  const skippedCount = Object.keys(skippedProviders).filter(id => !authProviders.find(p => p.id === id)?.authenticated).length;
+
+                  if (totalAiProviders === 0) return null;
+
+                  let summaryClass = "onboarding-provider-summary";
+                  let summaryText = "";
+
+                  if (connectedCount > 0) {
+                    summaryClass += " onboarding-provider-summary--connected";
+                    summaryText = t("setup.providersConnectedSummary", "✓ {{connected}} of {{total}} providers connected", { connected: connectedCount, total: totalAiProviders });
+                  } else if (skippedCount > 0) {
+                    summaryClass += " onboarding-provider-summary--skipped";
+                    summaryText = skippedCount === 1
+                      ? t("setup.providersSkippedSummary_one", "{{count}} provider skipped", { count: skippedCount })
+                      : t("setup.providersSkippedSummary_other", "{{count}} providers skipped", { count: skippedCount });
+                  } else {
+                    summaryClass += " onboarding-provider-summary--none";
+                    summaryText = t("setup.noProvidersConnectedYet", "No providers connected yet");
+                  }
+
+                  return (
+                    <div className={summaryClass} data-testid="provider-summary">
+                      {summaryText}
+                    </div>
+                  );
+                })()
+              )}
+
+              <PluginSlot slotId="onboarding-recommendation-card" projectId={projectId} />
+
+              {/* Provider explanation disclosure */}
+              <OnboardingDisclosure summary={t("setup.whatAreAiProviders", "What are AI providers?")}>
+                <p className="onboarding-helper-text">
+                  {t("setup.whatAreAiProvidersBody", "AI providers like OpenAI and Anthropic power the AI capabilities in Fusion. Connecting a provider lets Fusion's agents use AI models to help with your tasks.")}
+                </p>
+              </OnboardingDisclosure>
+
+              {/* Show helper text when providers exist but none are authenticated */}
+              {authProviders.length > 0 && !authProviders.some((p) => p.authenticated) && (
+                <p className="onboarding-helper-text">
+                  {t("setup.skipProviderHint", "Skip this step if you'd like — you can always add providers later from Settings.")}
+                </p>
+              )}
+
+              {authLoading ? (
+                <div className="model-onboarding-loading">
+                  <Loader2 size={24} className="animate-spin" />
+                  <span>{t("setup.loadingProviders", "Loading providers…")}</span>
+                </div>
+              ) : authProviders.length === 0 ? (
+                <div className="model-onboarding-empty">
+                  {t("setup.noProvidersConfigured", "No AI providers are configured. Please check your Fusion configuration.")}
+                </div>
+              ) : (
+                <>
+                  <PluginSlot
+                    slotId="onboarding-provider-card"
+                    projectId={projectId}
+                    renderPlaceholder={false}
+                    actions={{ refreshAuthProviders: () => { void loadAuthStatus(); } }}
+                  />
+
+                  {/*
+                  FNXC:Onboarding 2026-07-10-10:15:
+                  Connected providers render FIRST so that reopening the step (or returning after an
+                  OAuth login) immediately shows what is already connected without scrolling.
+                  */}
+                  {connectedVisibleProviders.length > 0 && (
+                    <section className="onboarding-provider-section" data-testid="onboarding-connected-providers">
+                      <h3 className="onboarding-section-title">{t("setup.connectedProviders", "Connected providers")}</h3>
+                      <div className="model-onboarding-providers">
+                        {connectedVisibleProviders.map((provider) => renderAiProviderCard(provider))}
+                      </div>
+                    </section>
+                  )}
+
+                  <section className="onboarding-provider-section" data-testid="onboarding-quick-start-providers">
+                    <h3 className="onboarding-section-title">{t("setup.quickStartProviders", "Quick start providers")}</h3>
+                    {quickStartProviders.length > 0 ? (
+                      <div className="model-onboarding-providers">
+                        {quickStartProviders.map((provider) => renderAiProviderCard(provider))}
+                      </div>
+                    ) : connectedVisibleProviders.length > 0 ? (
+                      <p className="onboarding-helper-text">
+                        {t("setup.quickStartAllConnected", "All quick-start providers are already connected.")}
+                      </p>
+                    ) : (
+                      <p className="onboarding-helper-text">
+                        {t("setup.noQuickStartProviders", "No quick-start providers are available in this environment.")}
+                      </p>
+                    )}
+
+                    {/*
+                    FNXC:Onboarding 2026-07-03-00:00:
+                    Expanded/all-provider controls belong directly under quick-start providers so the advanced provider list, custom-provider list, and add-custom-provider form stay visually tied to the first provider decision.
+                    */}
+                    <OnboardingDisclosure summary={t("setup.advancedProviderSettings", "Advanced provider settings")} className="onboarding-provider-advanced">
+                      <div data-testid="onboarding-advanced-provider-settings">
+                        {advancedProviders.length > 0 ? (
+                          <div className="model-onboarding-providers">
+                            {advancedProviders.map((provider) => renderAiProviderCard(provider))}
+                          </div>
+                        ) : (
+                          <p className="onboarding-helper-text">
+                            {t("setup.allProvidersShown", "All currently available providers are already shown above.")}
+                          </p>
+                        )}
+
+                        {customProviders.length > 0 ? (
+                          <div className="onboarding-custom-provider-list">
+                            {customProviders.map((provider) => (
+                              <div key={provider.id} className="onboarding-custom-provider-item">
+                                <ProviderIcon provider={provider.id} size="sm" />
+                                <span>{provider.name || provider.id}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {!showCustomProviderForm ? (
+                          <button type="button" className="btn btn-sm" onClick={() => setShowCustomProviderForm(true)}>
+                            {t("setup.addCustomProvider", "Add custom provider")}
+                          </button>
+                        ) : (
+                          <CustomProviderForm
+                            onSave={handleSaveCustomProvider}
+                            onCancel={() => { setShowCustomProviderForm(false); setCustomProviderError(undefined); }}
+                            saving={customProviderSaving}
+                            error={customProviderError}
+                          />
+                        )}
+                      </div>
+                    </OnboardingDisclosure>
+                  </section>
+
+                  {/* Model Selection — placed directly after the provider sections */}
+                  <div
+                    ref={modelSectionRef}
+                    className={`onboarding-model-section${modelChoicePending ? " onboarding-model-section--pending" : ""}`}
+                    data-testid="onboarding-model-section"
+                  >
+                    <h3 className="onboarding-section-title">
+                      {modelChoicePending
+                        ? t("setup.defaultModelChooseNow", "Choose your default model")
+                        : t("setup.defaultModelOptional", "Default Model (Optional)")}
+                    </h3>
+                    <p className="model-onboarding-description">
+                      {t("setup.defaultModelDescription", "Pick a default model for AI tasks, or leave this blank to choose later. Models vary in speed, capability, and cost.")}
+                    </p>
+
+                    <OnboardingDisclosure summary={t("setup.howDoIChooseModel", "How do I choose a model?")}>
+                      <p className="onboarding-helper-text">
+                        {t("setup.howDoIChooseModelBody", "Models vary in speed, capability, and cost. A good default is usually the latest model from your connected provider. You can always change this later in Settings.")}
+                      </p>
+                    </OnboardingDisclosure>
+
+                    {availableModels.length === 0 ? (
+                      <div className="model-onboarding-empty">
+                        {t("setup.noModelsAvailable", "No models available yet. Connect a provider above to see model options.")}
+                      </div>
+                    ) : (
+                      <div className="onboarding-model-selector">
+                        <CustomModelDropdown
+                          models={availableModels}
+                          value={selectedModel}
+                          onChange={handleModelSelect}
+                          placeholder={t("setup.selectDefaultModel", "Select a default model…")}
+                          label={t("setup.defaultModelLabel", "Default model")}
+                        />
+                      </div>
+                    )}
+
+                    {selectedModel && (
+                      <div className="onboarding-model-preview">
+                        <small className="settings-muted">
+                          {t("setup.selectedModel", "Selected:")} {" "}
+                          {availableModels.find((m) => m.id === selectedModel)
+                            ?.name ?? selectedModel}
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* OAuth login disclosure */}
+                  {hasOauthProviders && (
+                    <OnboardingDisclosure summary={t("setup.howDoesLoginWork", "How does login work?")}>
+                      <p className="onboarding-helper-text">
+                        {t("setup.howDoesLoginWorkBody", "Clicking Login opens the provider's website in a new tab where you sign in. Once you authorize Fusion, this page will automatically detect the connection. Your credentials are never stored in Fusion.")}
+                      </p>
+                    </OnboardingDisclosure>
+                  )}
+
+                  {/* API key disclosure */}
+                  {hasApiKeyProviders && (
+                    <OnboardingDisclosure summary={t("setup.whatIsApiKey", "What is an API key?")}>
+                      <p className="onboarding-helper-text">
+                        {t("setup.whatIsApiKeyBody", "An API key is a secret token that authenticates Fusion with the provider. You can find your key in the provider's dashboard under API settings. Keys are stored securely on your machine.")}
+                      </p>
+                    </OnboardingDisclosure>
+                  )}
+
+                  <PluginSlot slotId="onboarding-setup-help" projectId={projectId} />
+
+                </>
+              )}
+
+            </div>
+          )}
+
+          {step === "github" && (
+            <div className="model-onboarding-github">
+              {isGitHubReady ? (
+                <p className="model-onboarding-description">
+                  {isGitHubReadyViaCli
+                    ? t("setup.githubCliAlreadyAuth", "GitHub CLI is already authenticated — issue imports and pull request tracking work right now. You're all set; no further action needed.")
+                    : t("setup.githubConnected", "GitHub is connected — issue imports and pull request tracking are available. You're all set; no further action needed.")}
+                </p>
+              ) : (
+                <p className="model-onboarding-description">
+                  {t("setup.githubConnectionDescription", "Connecting GitHub unlocks issue imports and pull request tracking. You can skip this — task creation works without it.")}
+                </p>
+              )}
+              {/*
+                FNXC:Onboarding 2026-07-03-00:00:
+                The GitHub step must surface missing `git` on the Fusion server host before users reach project clone/init workflows.
+                This prerequisite warning is separate from GitHub OAuth/gh readiness so users can still skip optional GitHub auth.
+              */}
+              {gitCliStatus && (
+                <div
+                  className={`onboarding-github-git-prerequisite ${gitCliStatus.available ? "onboarding-github-git-prerequisite--ready" : "onboarding-github-git-prerequisite--missing"}`}
+                  data-testid="onboarding-git-prerequisite"
+                  role={gitCliStatus.available ? "status" : "alert"}
+                >
+                  <div className="onboarding-github-git-prerequisite__heading">
+                    <GitPullRequest size={16} aria-hidden="true" />
+                    <strong>
+                      {gitCliStatus.available
+                        ? t("setup.gitPrerequisiteReadyTitle", "Git prerequisite ready")
+                        : t("setup.gitPrerequisiteMissingTitle", "Install Git before project setup")}
+                    </strong>
+                  </div>
+                  {gitCliStatus.available ? (
+                    <p>{gitVersionLabel}</p>
+                  ) : (
+                    <>
+                      {/*
+                        FNXC:Onboarding 2026-07-10-10:20:
+                        First-run review flagged raw backtick literals rendering as plain text.
+                        Commands in these strings now render as real <code> elements via renderWithInlineCode.
+                        Missing git is a hard blocker for project setup, so its per-OS instructions stay
+                        expanded (unlike the optional gh CLI guidance which is collapsed behind a disclosure).
+                      */}
+                      <p>
+                        {renderWithInlineCode(t("setup.gitPrerequisiteMissingBody", "Fusion could not find `git` on the server host running Fusion. Install Git there before cloning repositories, initializing projects, or registering Git-backed workspaces."))}
+                      </p>
+                      <ul className="onboarding-github-git-install-list">
+                        <li>{renderWithInlineCode(t("setup.gitPrerequisiteMac", "macOS: install Xcode Command Line Tools with `xcode-select --install`, Homebrew with `brew install git`, or the Git installer."))}</li>
+                        <li>{renderWithInlineCode(t("setup.gitPrerequisiteWindows", "Windows: install Git for Windows and restart the Fusion host shell or service."))}</li>
+                        <li>{renderWithInlineCode(t("setup.gitPrerequisiteLinux", "Linux: install with your package manager, for example `sudo apt install git`, `sudo dnf install git`, or `sudo pacman -S git`."))}</li>
+                      </ul>
+                      <a href={gitInstallUrl} target="_blank" rel="noreferrer">
+                        {t("setup.gitPrerequisiteInstallLink", "Open Git install downloads")}
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/*
+                FNXC:Onboarding 2026-07-10-10:25:
+                First-run review called the GitHub step "slop-coded": it mixed tiny bold micro-headers,
+                bullet items, and helper-text sizes inside one flat list. The with/without comparison is
+                now two labeled groups on one consistent type scale (heading + plain list items), rendered
+                only while GitHub is NOT connected — a connected user does not need the sales pitch.
+              */}
+              {!isGitHubReady && (
+                <div className="onboarding-feature-list">
+                  <div className="onboarding-feature-list__group">
+                    <h4>{t("setup.withoutGitHubHeading", "Without GitHub (available now)")}</h4>
+                    <ul>
+                      <li>{t("setup.withoutGitHub1", "Create tasks manually")}</li>
+                      <li>{t("setup.withoutGitHub2", "Describe work for AI agents")}</li>
+                      <li>{t("setup.withoutGitHub3", "Track progress on the board")}</li>
+                    </ul>
+                  </div>
+                  <div className="onboarding-feature-list__group">
+                    <h4>{t("setup.withGitHubHeading", "With GitHub (after connecting)")}</h4>
+                    <ul>
+                      <li>{t("setup.withGitHub1", "Import issues as tasks")}</li>
+                      <li>{t("setup.withGitHub2", "Sync pull request status")}</li>
+                      <li>{t("setup.withGitHub3", "Link code changes to tasks")}</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Skip-state banner: shown when AI setup was skipped */}
+              {aiSetupSkipped && (
+                <div className="onboarding-skip-banner" role="status">
+                  <strong>{t("setup.noAiProviderConnected", "No AI provider connected")}</strong>
+                  <p>
+                    {t("setup.noAiProviderBody", "AI features like task planning and code generation won't be available until you connect one. You can set this up later in Settings.")}
+                  </p>
+                </div>
+              )}
+
+              <OnboardingDisclosure summary={t("setup.whatDoesGitHubIntegrationDo", "What does GitHub integration do?")}>
+                <p className="onboarding-helper-text">
+                  {t("setup.whatDoesGitHubIntegrationDoBody", "Without GitHub, you can still create and manage tasks manually. GitHub integration adds the ability to import issues as tasks, track pull request status alongside your work, and automatically link commits to tasks. Connect anytime from Settings → Authentication.")}
+                </p>
+              </OnboardingDisclosure>
+
+              {/*
+                FNXC:Onboarding 2026-07-03-17:22:
+                GitHub onboarding must give users in-flow paths for both supported auth modes instead of Settings-only explanatory copy.
+                The dashboard can start OAuth when the GitHub provider exists; `gh` CLI setup remains explicit host-side guidance because Fusion does not install third-party binaries automatically.
+              */}
+              {/*
+                FNXC:Onboarding 2026-07-10-10:30:
+                State-driven GitHub step (first-run review): the gh CLI cards only render while GitHub is
+                NOT ready overall — an OAuth-connected user must never be told to install the GitHub CLI.
+                The per-OS install wall of text is collapsed behind a single disclosure; the card leads
+                with one sentence and commands render as <code> instead of raw backtick literals.
+              */}
+              {!isGitHubReady && githubActionState.ghCli.state === "missing" && (
+                <div className="onboarding-github-setup-card onboarding-github-setup-card--warning" data-testid="onboarding-gh-cli-install-card" role="status">
+                  <div className="onboarding-github-setup-card__heading">
+                    <ProviderIcon provider="github" size="sm" />
+                    <strong>{t("setup.githubCliInstallTitle", "Install GitHub CLI")}</strong>
+                  </div>
+                  <p>
+                    {renderWithInlineCode(t("setup.githubCliInstallBody", "Fusion could not find `gh` on the host running Fusion. Install GitHub CLI there to import issues and track pull requests with CLI authentication."))}
+                  </p>
+                  <OnboardingDisclosure summary={t("setup.githubCliInstallShowInstructions", "Show install instructions")}>
+                    <ul className="onboarding-github-setup-list">
+                      <li>{renderWithInlineCode(t("setup.githubCliInstallMac", "macOS: `brew install gh` or download the installer from GitHub CLI releases."))}</li>
+                      <li>{renderWithInlineCode(t("setup.githubCliInstallWindows", "Windows: install GitHub CLI with WinGet, Chocolatey, or the GitHub CLI installer, then restart the Fusion host shell or service."))}</li>
+                      <li>{renderWithInlineCode(t("setup.githubCliInstallLinux", "Linux: install `gh` with your distribution package manager or the packages from cli.github.com."))}</li>
+                    </ul>
+                    <a className="btn btn-sm" href={GH_CLI_INSTALL_URL} target="_blank" rel="noreferrer">
+                      {t("setup.githubCliInstallLink", "Open GitHub CLI releases")}
+                    </a>
+                  </OnboardingDisclosure>
+                </div>
+              )}
+
+              {!isGitHubReady && githubActionState.ghCli.state === "unauthenticated" && (
+                <div className="onboarding-github-setup-card onboarding-github-setup-card--info" data-testid="onboarding-gh-cli-auth-card" role="status">
+                  <div className="onboarding-github-setup-card__heading">
+                    <ProviderIcon provider="github" size="sm" />
+                    <strong>{t("setup.githubCliAuthTitle", "Authenticate GitHub CLI")}</strong>
+                  </div>
+                  <p>
+                    {t("setup.githubCliAuthBody", "GitHub CLI is installed but not authenticated on the Fusion host. Run this command in the environment where Fusion is running, then return here and continue.")}
+                  </p>
+                  <code className="onboarding-github-command">gh auth login</code>
+                </div>
+              )}
+
+              {/*
+               * FNXC:ProviderAuth 2026-07-07-00:00:
+               * FN-7624: no `github` OAuth provider is ever registered on any Fusion host (pi ships only
+               * anthropic/github-copilot/openai-codex), so this whole `!hasGithubProvider` branch must never
+               * render a dashboard OAuth login affordance (a previous "Connect OAuth (optional)" button here
+               * called handleLogin("github") unconditionally when the gh CLI was ready, which always failed
+               * against a non-existent provider). The gh-CLI-ready and not-ready copy below are the only
+               * offered actions; OAuth login only appears in the `hasGithubProvider` branch below, which is
+               * unreachable while no `github` provider is registered.
+               */}
+              {!hasGithubProvider ? (
+                <div className="model-onboarding-github-optional">
+                  <div className="optional-icon optional-icon--github" aria-hidden="true">
+                    <ProviderIcon provider="github" size="lg" />
+                  </div>
+                  {isGitHubReadyViaCli ? (
+                    <>
+                      <p>
+                        {t("setup.githubCliAuthNote", "GitHub CLI is already authenticated, so imports and PR tracking work now. OAuth from the dashboard is optional and only controls dashboard-managed connect/disconnect.")}
+                      </p>
+                      <div className="model-onboarding-github-optional__actions">
+                        <button
+                          className="btn btn-primary btn-sm"
+                          /*
+                           * FNXC:Onboarding 2026-07-03-08:00:
+                           * Advance via handleNext (not a raw setStep) so the GitHub step's status is
+                           * recorded. When GitHub is ready via the gh CLI, "Continue with gh CLI auth"
+                           * must COMPLETE the step (handleNext) — previously it jumped to project-setup
+                           * without adding "github" to completedSteps, so step 2 never checked off.
+                           */
+                          onClick={handleNext}
+                        >
+                          {t("setup.continueWithGhCli", "Continue with gh CLI auth →")}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    /*
+                     * FNXC:Onboarding 2026-07-10-10:35:
+                     * First-run review: the step offered THREE overlapping escape hatches at once —
+                     * an in-body "Continue without GitHub →" CTA plus footer "Skip GitHub →" plus
+                     * "Next →". The in-body button is removed entirely; the footer "Skip GitHub →"
+                     * is the single skip affordance. The explanatory sentence (and its wrapper) stays,
+                     * and its former actions <div> is dropped with it so no empty button shell remains
+                     * on desktop or mobile.
+                     */
+                    <p>
+                      {t("setup.githubOauthUnavailable", "Dashboard GitHub OAuth is not configured on this Fusion host. You can still skip GitHub below, or use the GitHub CLI setup guidance above when available.")}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="onboarding-provider-row">
+                    <div className="onboarding-provider-info">
+                      <strong>
+                        <GitPullRequest size={16} className="onboarding-provider-title-icon" />
+                        {t("setup.githubProvider", "GitHub")}
+                      </strong>
+                      <span data-testid="onboarding-auth-status-github">
+                        <GitHubStatusBadge status={githubStatus} />
+                      </span>
+                    </div>
+                    {isGithubAuthenticated && (
+                      authActionInProgress === "github" ? (
+                        <button className="btn btn-sm" disabled>
+                          {t("setup.loggingOut", "Logging out…")}
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogout("github")}
+                        >
+                          {t("setup.disconnect", "Disconnect")}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  {(githubStatus === "not-connected" || githubStatus === "pending") && (
+                    <div className="onboarding-github-connect-cta" data-testid="onboarding-github-connect-cta">
+                      {(authActionInProgress === "github" || isGithubLoginInProgress) ? (
+                        <div className="onboarding-github-connect-actions">
+                          <button className="btn btn-sm" disabled>
+                            {t("setup.waitingForLogin", "Waiting for login…")}
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => void handleCancelLogin("github")}
+                          >
+                            {t("setup.cancelLogin", "Cancel")}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          <GitPullRequest size={16} />
+                          {t("setup.connectGitHubOauth", "Connect GitHub OAuth")}
+                        </button>
+                      )}
+                      {(authActionInProgress === "github" || isGithubLoginInProgress) && loginInstructions.github && (
+                        <LoginInstructions
+                          instructions={loginInstructions.github}
+                          data-testid="onboarding-login-instructions-github"
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {githubStatus === "connected" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--success">
+                      {isGitHubReadyViaCli
+                        ? t("setup.githubCliAuthSuccess", "GitHub CLI is authenticated. Imports and pull request tracking are available. Connect OAuth in Settings → Authentication if you want dashboard-managed sign-in controls.")
+                        : t("setup.githubOauthConnected", "GitHub OAuth is connected. You can import issues and track pull requests.")}
+                    </div>
+                  )}
+
+                  {githubStatus === "failed" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--error">
+                      <p>{t("setup.githubConnectionFailed", "Connection failed or timed out.")}</p>
+                      <div className="onboarding-github-feedback-actions">
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          {t("setup.retry", "Retry")}
+                        </button>
+                        <button
+                          className="onboarding-skip-step-link"
+                          onClick={handleSkipGitHubStep}
+                        >
+                          {t("setup.skipForNow", "Skip for now")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {githubStatus === "pending" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--info">
+                      {t("setup.waitingForGitHubAuth", "Waiting for GitHub authorization…")}
+                    </div>
+                  )}
+
+                  {githubStatus === "skipped" && (
+                    <div className="onboarding-github-feedback onboarding-github-feedback--info">
+                      <p>{t("setup.githubSkipped", "GitHub was skipped. You can connect anytime from Settings → Authentication.")}</p>
+                      <div className="onboarding-github-feedback-actions">
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          {t("setup.connectAnyway", "Connect anyway")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {githubStatus === "not-connected" && (
+                    <p className="onboarding-helper-text">
+                      {t("setup.connectGitHubAnytime", "No worries if you're not ready — connect GitHub anytime from Settings → Authentication.")}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {step === "project-setup" && (
+            <div className="model-onboarding-project-setup">
+              <p className="model-onboarding-description">
+                {t("setup.projectSetupDescription", "Choose your first project before creating or importing tasks. You can register an existing local directory or clone a GitHub repository URL through the setup wizard.")}
+              </p>
+
+              {!hasProjectSelected ? (
+                <div className="onboarding-project-prerequisite" data-testid="onboarding-project-prerequisite">
+                  <p className="onboarding-helper-text">
+                    {t("setup.projectRequired", "A project is required before first-task actions are available.")}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={onOpenSetupWizard}
+                    data-testid="onboarding-open-setup-wizard"
+                  >
+                    {t("setup.setUpProject", "Set Up Project")}
+                  </button>
+                  <p className="onboarding-helper-text">
+                    {t("setup.setupWizardHint", "In the setup wizard, pick an existing directory or paste a GitHub clone URL.")}
+                  </p>
+                </div>
+              ) : (
+                <div className="onboarding-project-ready" data-testid="onboarding-project-ready" role="status">
+                  <p>{t("setup.projectSelected", "Project selected — task creation and imports are available.")}</p>
+                </div>
+              )}
+
+              <OnboardingDisclosure summary={t("setup.whatDoesProjectSetupDo", "What does project setup do?")}>
+                <p className="onboarding-helper-text">
+                  {t("setup.whatDoesProjectSetupDoBody", "Project setup registers a workspace so Fusion knows where to read files, run commands, and track task changes.")}
+                </p>
+              </OnboardingDisclosure>
+            </div>
+          )}
+
+          {step === "agent" && (
+            <div className="setup-wizard-agent-step model-onboarding-agent-step">
+              <p className="setup-wizard-agent-intro">
+                {t("setup.firstAgentIntro", "Agents are optional. Fusion can build tasks without one by starting temporary agents for planning, coding, review, and merge. Create an agent only if you want help coordinating tasks and direction.")}
+              </p>
+
+              {!hasProjectSelected && (
+                <div className="onboarding-project-prerequisite" data-testid="onboarding-agent-project-prerequisite">
+                  <p className="onboarding-helper-text">
+                    {t("setup.projectMustBeSelectedForAgent", "Set up a project before creating an agent. You can skip this and create tasks without one.")}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={onOpenSetupWizard}
+                    data-testid="onboarding-agent-open-setup-wizard"
+                  >
+                    {t("setup.setUpProject", "Set Up Project")}
+                  </button>
+                </div>
+              )}
+
+              <div className="setup-wizard-agent-layout">
+                <section className="setup-wizard-agent-presets" aria-labelledby="model-onboarding-first-agent-presets-heading">
+                  <div className="setup-wizard-agent-section-heading" id="model-onboarding-first-agent-presets-heading">
+                    {t("setup.firstAgentTemplates", "Templates")}
+                  </div>
+                  <div className="setup-wizard-agent-preset-list" role="radiogroup" aria-label={t("setup.firstAgentTemplates", "Templates")}>
+                    {AGENT_PRESETS.map((preset) => {
+                      const selected = selectedAgentPresetId === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className={`setup-wizard-agent-preset${selected ? " selected" : ""}`}
+                          role="radio"
+                          aria-checked={selected}
+                          aria-label={selected ? t("setup.selectedAgentTemplate", "{{name}} selected", { name: preset.name }) : preset.name}
+                          tabIndex={preset.id === agentPresetTabStopId ? 0 : -1}
+                          data-model-onboarding-agent-preset-id={preset.id}
+                          disabled={isAgentActionDisabled}
+                          onClick={() => handleAgentPresetSelect(preset.id)}
+                          onKeyDown={(event) => handleAgentPresetKeyDown(event, preset.id)}
+                        >
+                          <AgentAvatar agent={{ id: preset.id, icon: preset.icon, name: preset.name }} size={28} />
+                          <span className="setup-wizard-agent-preset-copy">
+                            <span className="setup-wizard-agent-preset-name">
+                              {preset.name}
+                              {preset.id === "ceo" && <span className="wizard-option-recommended">{t("setup.recommended", "Recommended")}</span>}
+                            </span>
+                            <span className="setup-wizard-agent-preset-description">{preset.description}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="setup-wizard-agent-preview" aria-labelledby="model-onboarding-first-agent-preview-heading">
+                  <div className="setup-wizard-agent-section-heading" id="model-onboarding-first-agent-preview-heading">
+                    {t("setup.firstAgentPreview", "Preview")}
+                  </div>
+                  <div className="setup-wizard-agent-preview-card">
+                    <div className="setup-wizard-agent-preview-title-row">
+                      <AgentAvatar agent={{ id: selectedAgentPresetId || "draft", icon: agentDraft.icon, name: agentDraft.name }} size={36} />
+                      <div>
+                        <h3>{agentDraft.name || t("setup.firstAgentDraftName", "Draft agent")}</h3>
+                        <p>{agentDraft.title || selectedAgentPreset?.title || t("setup.firstAgentCustomDraft", "Custom agent draft")}</p>
+                      </div>
+                    </div>
+                    <dl className="setup-wizard-agent-preview-list">
+                      <div>
+                        <dt>{t("agents.fieldRole", "Role")}</dt>
+                        <dd>{agentDraft.role}</dd>
+                      </div>
+                      <div>
+                        <dt>{t("agents.fieldInstructionsText", "Inline Instructions")}</dt>
+                        <dd>{agentDraft.instructionsText || t("setup.firstAgentNoInstructions", "No inline instructions yet")}</dd>
+                      </div>
+                    </dl>
+                    {agentOnboardingEnabled && (
+                      <button
+                        type="button"
+                        className="btn setup-wizard-agent-ai-btn"
+                        onClick={() => setIsAgentInterviewOpen(true)}
+                        disabled={isAgentActionDisabled}
+                      >
+                        <Sparkles size={16} />
+                        <span>{t("agents.aiInterview", "AI Interview")}</span>
+                      </button>
+                    )}
+                  </div>
+                </section>
+              </div>
+
+              {agentCreationError && (
+                <div className="wizard-error" role="alert" tabIndex={-1} ref={agentErrorRef}>
+                  {agentCreationError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === "first-task" && (
+            <div className="model-onboarding-first-task">
+              <p className="model-onboarding-description">
+                {t("setup.firstTaskDescription", "Create your first task to start the board and launch AI execution.")}
+              </p>
+
+              {showTaskCreated && createdTaskForDisplay ? (
+                <div className="onboarding-task-created">
+                  <CheckCircle size={56} className="success-icon" />
+                  <h3 className="onboarding-task-created__title">{t("setup.firstTaskReady", "Your first task is ready!")}</h3>
+                  <div className="onboarding-task-created__task-id">{createdTaskForDisplay.id}</div>
+                  {firstCreatedTaskPreview && (
+                    <p className="onboarding-task-created__description">{firstCreatedTaskPreview}</p>
+                  )}
+                  <p className="onboarding-task-created__hint">
+                    {t("setup.taskCreatedHint", "Your task has been created and will appear on the board.")}
+                  </p>
+                  <div className="onboarding-task-created__actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleViewCreatedTask}
+                    >
+                      {t("setup.viewTask", "View Task")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleGoToDashboard}
+                    >
+                      {t("setup.goToDashboard", "Go to Dashboard")}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {!hasProjectSelected ? (
+                    <div className="onboarding-project-prerequisite" data-testid="onboarding-project-prerequisite">
+                      <p className="onboarding-helper-text">
+                        {t("setup.projectMustBeSelected", "A project must be selected before you can create tasks or import from GitHub.")}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={onOpenSetupWizard}
+                        data-testid="onboarding-open-setup-wizard"
+                      >
+                        {t("setup.setUpProject", "Set Up Project")}
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="onboarding-first-task-form">
+                        <label className="onboarding-first-task-form__label" htmlFor="onboarding-first-task-input">
+                          {t("setup.describeFirstTask", "Describe your first task")}
+                        </label>
+                        <textarea
+                          id="onboarding-first-task-input"
+                          className="input onboarding-first-task-form__input"
+                          data-testid="onboarding-first-task-input"
+                          value={firstTaskDescription}
+                          onChange={(event) => {
+                            setFirstTaskDescription(event.target.value);
+                            setTaskCreationError(null);
+                          }}
+                          placeholder={t("setup.firstTaskPlaceholder", "Example: Build a login page with email and password")}
+                          rows={4}
+                        />
+                        <div className="onboarding-first-task-form__actions">
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={handleCreateFirstTask}
+                            disabled={isCreatingFirstTask}
+                            data-testid="onboarding-first-task-submit"
+                          >
+                            {isCreatingFirstTask ? (
+                              <>
+                                <Loader2 size={16} className="animate-spin" />
+                                <span>{t("setup.creatingTask", "Creating task…")}</span>
+                              </>
+                            ) : (
+                              t("setup.createFirstTask", "Create First Task")
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {taskCreationError && (
+                        <div className="onboarding-task-error" role="alert" data-testid="onboarding-task-error">
+                          <p className="field-error">{taskCreationError}</p>
+                          <p className="onboarding-helper-text">{t("setup.taskErrorHint", "Your text has been preserved — fix the issue and try again.")}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <ReadinessSummary items={readinessItems} />
+
+                  {hasProjectSelected && (
+                    <>
+                      {/* FNXC:Onboarding 2026-06-22-04:01: The provider/GitHub onboarding flow also reaches task creation, so it must repeat that users can create tasks without creating or assigning a persistent agent; Fusion spawns temporary plan/execute/review/merge agents for task work. */}
+                      <OnboardingDisclosure summary={t("setup.whatHappensWhenCreateTask", "What happens when I create a task?")}>
+                        <p className="onboarding-helper-text">
+                          {t("setup.whatHappensWhenCreateTaskBody", "Describe the work you want done. You can create tasks without an agent: Fusion starts temporary agents to plan, code, review, and merge. Track everything on the board.")}
+                        </p>
+                      </OnboardingDisclosure>
+
+                      <div className="onboarding-cta-options">
+                        <button
+                          className="onboarding-cta-card primary"
+                          onClick={handleOpenNewTask}
+                          disabled={saving}
+                        >
+                          <div className="cta-icon">
+                            <Plus size={24} />
+                          </div>
+                          <div className="cta-content">
+                            <strong>{t("setup.createNewTask", "Create a New Task")}</strong>
+                            <span>{t("setup.createNewTaskSubtitle", "Describe what you need built; Fusion will spawn temporary task agents automatically")}</span>
+                          </div>
+                        </button>
+
+                        <button
+                          className={`onboarding-cta-card${!isGitHubReady ? " onboarding-cta-card--disabled" : ""}`}
+                          data-testid="cta-github-import"
+                          onClick={handleOpenGitHubImport}
+                          disabled={saving || !isGitHubReady}
+                        >
+                          <div className="cta-icon">
+                            <GitPullRequest size={24} />
+                          </div>
+                          <div className="cta-content">
+                            <strong>{t("setup.importFromGitHub", "Import from GitHub")}</strong>
+                            <span>{t("setup.importFromGitHubSubtitle", "Turn GitHub issues into tasks you can track here")}</span>
+                            {!isGitHubReady && (
+                              <small className="onboarding-cta-note">{t("setup.requiresGitHubConnection", "Requires GitHub connection")}</small>
+                            )}
+                          </div>
+                        </button>
+                      </div>
+
+                      <p className="onboarding-skip-note">
+                        {t("setup.createTasksAnytimeNote", "You can create tasks anytime from the board, or use")} {" "}
+                        <code>fn task create</code> {t("setup.createTasksAnytimeNoteTerminal", "in the terminal.")}
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {step === "complete" && (
+            <div className="model-onboarding-complete">
+              <CheckCircle size={48} className="success-icon" />
+              <p>
+                {t("setup.setupComplete", "Setup complete! Head to the board to create your first task, or explore the dashboard to see what's available.")}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="model-onboarding-footer">
+          <a
+            className="btn model-onboarding-help-link"
+            href="https://discord.gg/ksrfuy7WYR"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {t("setup.needHelp", "Need help?")}
+          </a>
+          {step === "ai-setup" && (
+            <>
+              {/*
+                FNXC:Onboarding 2026-07-10-10:40:
+                First-run review: the AI Setup footer showed BOTH "Skip for now" (dismiss onboarding) and
+                "Skip setup →" (skip this step) next to "Next →". Once at least one AI provider is
+                connected the user has effectively completed this step, so "Skip for now" is redundant
+                noise and is hidden; "Skip setup →" and "Next →" remain. No wrapper/aria-label is left
+                behind — the button subtree is omitted entirely (desktop and mobile share this markup).
+              */}
+              {!hasAiProvider && (
+                <button
+                  className="btn btn-sm"
+                  onClick={handleDismiss}
+                  disabled={saving}
+                >
+                  {t("setup.skipForNow", "Skip for now")}
+                </button>
+              )}
+              <button className="onboarding-skip-step-link" onClick={handleSkip}>
+                {t("setup.skipSetup", "Skip setup →")}
+              </button>
+              <button className="btn btn-primary" onClick={handleNext}>
+                {t("setup.next", "Next →")}
+              </button>
+            </>
+          )}
+
+          {step === "github" && (
+            <>
+              <button className="btn btn-sm" onClick={handleBack}>
+                {t("setup.back", "← Back")}
+              </button>
+              <button className="onboarding-skip-step-link" onClick={handleSkip}>
+                {t("setup.skipGitHub", "Skip GitHub →")}
+              </button>
+              <button className="btn btn-primary" onClick={handleNext}>
+                {t("setup.next", "Next →")}
+              </button>
+            </>
+          )}
+
+          {step === "project-setup" && (
+            <>
+              <button className="btn btn-sm" onClick={handleBack}>
+                {t("setup.back", "← Back")}
+              </button>
+              <button className="btn btn-primary" onClick={handleNext} disabled={!hasProjectSelected}>
+                {t("setup.next", "Next →")}
+              </button>
+            </>
+          )}
+
+          {step === "agent" && (
+            <>
+              <button className="btn btn-sm" onClick={handleBack}>
+                {t("setup.back", "← Back")}
+              </button>
+              <button
+                className="btn"
+                onClick={handleSkip}
+                disabled={isCreatingAgent}
+              >
+                {t("setup.skipFirstAgent", "Skip for now")}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => void handleCreateFirstAgent()}
+                disabled={isAgentActionDisabled || !agentDraft.name.trim()}
+                aria-busy={isCreatingAgent}
+              >
+                {isCreatingAgent ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>{t("setup.creatingFirstAgent", "Creating agent...")}</span>
+                  </>
+                ) : (
+                  <span>{t("setup.createFirstAgent", "Create Agent")}</span>
+                )}
+              </button>
+            </>
+          )}
+
+          {step === "first-task" && !showTaskCreated && (
+            <>
+              <button className="btn btn-sm" onClick={handleBack}>
+                {t("setup.back", "← Back")}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleComplete}
+                disabled={saving}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>{t("setup.saving", "Saving…")}</span>
+                  </>
+                ) : (
+                  t("setup.finishSetup", "Finish Setup")
+                )}
+              </button>
+            </>
+          )}
+
+          {step === "complete" && (
+            <button className="btn btn-primary" onClick={handleFinish}>
+              <CheckCircle size={16} />
+              <span>{t("setup.getStarted", "Get Started")}</span>
+            </button>
+          )}
+        </div>
+      </div>
+      {agentOnboardingEnabled && isAgentInterviewOpen && (
+        <ErrorBoundary
+          level="modal"
+          fallback={(
+            <div className="wizard-error setup-wizard-agent-interview-error" role="alert">
+              <span>{t("setup.firstAgentInterviewLoadError", "AI interview could not load. You can still create an agent from a template or skip this step.")}</span>
+              <button type="button" className="btn" onClick={() => setIsAgentInterviewOpen(false)}>
+                {t("setup.firstAgentContinueWithTemplates", "Continue with templates")}
+              </button>
+            </div>
+          )}
+        >
+          <Suspense fallback={(
+            <div className="wizard-error setup-wizard-agent-interview-error" role="status">
+              {t("setup.firstAgentInterviewLoading", "Loading AI Interview...")}
+            </div>
+          )}
+          >
+            <ExperimentalAgentOnboardingModal
+              isOpen={isAgentInterviewOpen}
+              onClose={() => setIsAgentInterviewOpen(false)}
+              onUseDraft={handleApplyAgentDraft}
+              projectId={projectId}
+              existingAgents={[]}
+              mode="create"
+            />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+
+    </FloatingWindow>
+
+      {/*
+      FNXC:ProviderAuth 2026-08-18-04:20:
+      RENDERED OUTSIDE THE FLOATINGWINDOW SUBTREE, DELIBERATELY. A portal relocates the DOM node but
+      not the React tree, and FloatingWindow raises itself to a fresh `nextFloatingZ()` on every
+      pointerdown/focus that reaches it — so while this lived inside the window's children, every
+      click in the dialog lifted the window above it and the following click landed on the window
+      instead. As a sibling, dialog events never reach the window's raise handler. Keep it here.
+      */}
+      {loginDialogProvider && (() => {
+        const dialogProvider = authProviders.find((entry) => entry.id === loginDialogProvider);
+        const manualCode = manualCodeConfigs[loginDialogProvider];
+        const failure = loginErrors[loginDialogProvider];
+        const phase: ProviderLoginPhase = dialogProvider?.authenticated
+          ? "succeeded"
+          : failure
+            ? "failed"
+            : manualCodeSubmitInProgress === loginDialogProvider
+              ? "submitting"
+              : "waiting";
+        return (
+          <ProviderLoginDialog
+            data-testid={`provider-login-dialog-${loginDialogProvider}`}
+            providerName={dialogProvider?.name ?? loginDialogProvider}
+            authUrl={loginAuthUrls[loginDialogProvider]}
+            instructions={loginInstructions[loginDialogProvider]}
+            phase={phase}
+            errorMessage={failure}
+            manualCode={{
+              prompt: manualCode?.prompt ?? t("setup.pasteRedirectUrl", "Paste the final redirect URL or authorization code"),
+              placeholder: manualCode?.placeholder,
+              helpText: manualCode?.helpText,
+            }}
+            codeValue={manualCodeInputs[loginDialogProvider] ?? ""}
+            onCodeChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [loginDialogProvider]: value }))}
+            onSubmitCode={() => void handleSubmitManualCode(loginDialogProvider)}
+            onOpenAuthUrl={() => {
+              const url = loginAuthUrls[loginDialogProvider];
+              if (url) {
+                openExternalUrl(url);
+              }
+            }}
+            onCancel={() => {
+              const closing = loginDialogProvider;
+              setLoginDialogProvider(null);
+              // A still-running flow must be cancelled server-side, or its slot blocks the retry with a 409.
+              if (authActionInProgress === closing) {
+                void handleCancelLogin(closing);
+              }
+            }}
+          />
+        );
+      })()}
+    </>
+  );
+}

@@ -1,0 +1,748 @@
+/*
+FNXC:Workspace 2026-06-21-20:10:
+U2 per-repo acquisition hardening tests. A REAL two-repo git fixture is required
+because the invariants under test are git-shaped: local-ahead-of-origin base
+capture, a resolved-per-repo (non-shared) integration branch, and a working
+identity-guard hook that actually rejects a commit. The shared harness from
+./_workspace-fixture.ts builds genuine on-disk repos under a NON-git workspace
+root. The TaskStore is an in-memory fake (no DB / no network) per FN-5048 — real
+git only where the invariant needs it; everything else is a narrow seam.
+*/
+import { execSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  WORKSPACE_GROUP_MARKER_FILENAME,
+  workspaceRepoSegment,
+  workspaceWorktreeGroupSegment,
+  type Settings,
+  type Task,
+  type TaskStore,
+} from "@fusion/core";
+import {
+  acquireTaskWorktree,
+  acquireWorkspaceRepoWorktree,
+  WorkspaceRepoAcquireBusyError,
+} from "../worktree/worktree-acquisition.js";
+import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
+import { cleanupOrphanedWorktrees } from "../worktree/worktree-pool.js";
+import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
+
+const describeIfGit = hasGit ? describe : describe.skip;
+
+function git(repo: string, command: string): string {
+  return execSync(command, { cwd: repo, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+}
+
+/**
+ * Minimal in-memory TaskStore covering exactly what acquireWorkspaceRepoWorktree
+ * and its acquireTaskWorktree callee touch: updateTask (merge-in-place so the
+ * idempotency re-read sees persisted workspaceWorktrees), logEntry, getTask.
+ */
+function makeFakeStore(
+  task: Task,
+  options: {
+    failWhen?: (patch: Partial<Task>) => boolean;
+    beforeWorkspaceMerge?: (repoRelPath: string) => Promise<void>;
+  } = {},
+): { store: TaskStore; current: () => Task; logs: string[]; patches: Partial<Task>[]; mutationsDuringMerge: () => number } {
+  let current = task;
+  let mergeTail = Promise.resolve();
+  let mergeCallbackActive = false;
+  let nestedMutationCount = 0;
+  const logs: string[] = [];
+  const patches: Partial<Task>[] = [];
+  const store = {
+    async updateTask(id: string, patch: Partial<Task>): Promise<void> {
+      if (mergeCallbackActive) nestedMutationCount += 1;
+      // Deliberately retain wholesale replacement: the concurrent regression below must fail
+      // if production returns to updateTask({ workspaceWorktrees }) instead of the key merge.
+      patches.push(patch);
+      if (options.failWhen?.(patch)) throw new Error("injected update failure");
+      if (id === current.id) current = { ...current, ...patch };
+    },
+    async mergeWorkspaceWorktreeEntry(
+      id: string,
+      repoRelPath: string,
+      patch:
+        | Partial<NonNullable<Task["workspaceWorktrees"]>[string]>
+        | ((freshTask: Task) => Promise<Partial<NonNullable<Task["workspaceWorktrees"]>[string]>>),
+      mergeOptions?: {
+        requireExistingEntry?: boolean;
+        clearSingularWorktree?: boolean;
+        validateBeforePersist?: (freshTask: Task) => Promise<void>;
+      },
+    ): Promise<Task> {
+      if (id !== current.id) throw new Error(`Task ${id} not found`);
+      await options.beforeWorkspaceMerge?.(repoRelPath);
+      // Mirror TaskStore.withTaskLock after the deterministic overlap gate so both contenders
+      // can arrive, then serialize the fresh read + callback + key merge exactly like production.
+      const previousMerge = mergeTail;
+      let releaseMerge!: () => void;
+      mergeTail = new Promise<void>((resolve) => { releaseMerge = resolve; });
+      await previousMerge;
+      try {
+        const workspaceWorktrees = current.workspaceWorktrees ?? {};
+        const existing = workspaceWorktrees[repoRelPath];
+        if (mergeOptions?.requireExistingEntry && !existing) return current;
+        mergeCallbackActive = true;
+        let resolvedPatch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>;
+        try {
+          resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
+        } finally {
+          mergeCallbackActive = false;
+        }
+        await mergeOptions?.validateBeforePersist?.(current);
+        const mergedPatch: Partial<Task> = {
+          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
+          ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
+        };
+        patches.push(mergedPatch);
+        if (options.failWhen?.(mergedPatch)) throw new Error("injected update failure");
+        current = { ...current, ...mergedPatch };
+        return current;
+      } finally {
+        releaseMerge();
+      }
+    },
+    async logEntry(_id: string, message: string): Promise<void> {
+      if (mergeCallbackActive) nestedMutationCount += 1;
+      logs.push(message);
+    },
+    async getTask(id: string): Promise<Task | null> {
+      return id === current.id ? current : null;
+    },
+  } as unknown as TaskStore;
+  return { store, current: () => current, logs, patches, mutationsDuringMerge: () => nestedMutationCount };
+}
+
+function makeTask(id: string): Task {
+  return {
+    id,
+    title: `task ${id}`,
+    description: "workspace task",
+    status: "in-progress",
+  } as unknown as Task;
+}
+
+const SETTINGS: Partial<Settings> = {
+  worktreeNaming: "task-id",
+  commitMsgHookEnabled: true,
+  taskPrefix: "FN",
+  taskAttributionTrailerNames: ["Fusion-Task-Id"],
+};
+
+describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout: 60_000 }, () => {
+  let fixture: WorkspaceFixture;
+
+  afterEach(() => {
+    fixture?.cleanup();
+  });
+
+  it("captures the LOCAL integration tip as baseCommitSha even when origin is behind (inflation invariant)", async () => {
+    // Give repo-a a real origin so origin/main can lag behind local main.
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoA = fixture.repoPath("repo-a");
+    const origin = `${repoA}-origin`;
+    git(repoA, "git init --bare " + JSON.stringify(origin));
+    git(repoA, `git remote add origin ${JSON.stringify(origin)}`);
+    git(repoA, "git push -u origin main");
+
+    // Local main advances by an unpushed predecessor commit (FN-5937 shape).
+    git(repoA, "git commit --allow-empty -m 'FN-9000: unpushed predecessor'");
+    const localTip = git(repoA, "git rev-parse HEAD");
+    const originTip = git(repoA, "git rev-parse origin/main");
+    expect(localTip).not.toBe(originTip);
+
+    const { store, current } = makeFakeStore(makeTask("FN-1"));
+    const registry = new ActiveSessionRegistry();
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry,
+    });
+
+    // Base must be the LOCAL tip, never the behind origin tip.
+    expect(result.baseCommitSha).toBe(localTip);
+    expect(current().workspaceWorktrees?.["repo-a"]?.baseCommitSha).toBe(localTip);
+  });
+
+  it("captures against a NON-main integration branch and does not inherit a shared settings.integrationBranch (KTD3)", async () => {
+    // repo-a's default branch is 'develop'; origin/HEAD points at it. A shared
+    // settings.integrationBranch override must be STRIPPED so per-repo resolution
+    // falls through to this repo's own origin/HEAD.
+    fixture = await createWorkspaceFixture(["repo-a"], "develop");
+    const repoA = fixture.repoPath("repo-a");
+    const origin = `${repoA}-origin`;
+    git(repoA, "git init --bare " + JSON.stringify(origin));
+    git(repoA, `git remote add origin ${JSON.stringify(origin)}`);
+    git(repoA, "git push -u origin develop");
+    // Point origin/HEAD at develop so resolveIntegrationBranch resolves it.
+    git(repoA, "git remote set-head origin develop");
+    const developTip = git(repoA, "git rev-parse develop");
+
+    const { store, current } = makeFakeStore(makeTask("FN-2"));
+    const registry = new ActiveSessionRegistry();
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      // A SHARED integration branch that does NOT exist in this sub-repo. If it
+      // leaked through, base capture would resolve against 'shared-trunk' and
+      // (absent that branch) fall back to HEAD — not develop's tip.
+      settings: { ...SETTINGS, integrationBranch: "shared-trunk" },
+      registry,
+    });
+
+    expect(result.baseCommitSha).toBe(developTip);
+  });
+
+  it("materializes a remote-tracking-only requested base as a local land target", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoA = fixture.repoPath("repo-a");
+    const origin = `${repoA}-origin`;
+    git(repoA, "git init --bare " + JSON.stringify(origin));
+    git(repoA, `git remote add origin ${JSON.stringify(origin)}`);
+    git(repoA, "git checkout -qb release/remote-only");
+    git(repoA, "git commit --allow-empty -m 'release base'");
+    const releaseTip = git(repoA, "git rev-parse HEAD");
+    git(repoA, "git push -u origin release/remote-only");
+    git(repoA, "git checkout main");
+    git(repoA, "git branch -D release/remote-only");
+    expect(git(repoA, "git rev-parse origin/release/remote-only")).toBe(releaseTip);
+
+    const remoteBaseTask = makeTask("FN-9164-remote");
+    remoteBaseTask.baseBranch = "release/remote-only";
+    const { store, current } = makeFakeStore(remoteBaseTask);
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    });
+
+    expect(git(repoA, "git rev-parse release/remote-only")).toBe(releaseTip);
+    expect(git(repoA, `git merge-base ${result.branch} release/remote-only`)).toBe(releaseTip);
+    expect(current().workspaceWorktrees?.["repo-a"]?.baseBranch).toBe("release/remote-only");
+  });
+
+  it("reconciles a sub-repo dangling collision branch from its resolved integration tip", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoA = fixture.repoPath("repo-a");
+    const mainTip = git(repoA, "git rev-parse main");
+    // Leave ambient HEAD on unrelated work to prove fresh acquisition uses the
+    // sub-repo integration branch, not whichever branch the root currently has checked out.
+    git(repoA, "git checkout -qb ambient-work");
+    git(repoA, "git commit --allow-empty -m 'chore: ambient work'");
+    git(repoA, "git branch fusion/fn-7 main");
+
+    const { store, current } = makeFakeStore(makeTask("FN-7"));
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.branch).toBe("fusion/fn-7");
+    expect(git(repoA, "git rev-parse fusion/fn-7")).toBe(mainTip);
+    expect(git(repoA, "git merge-base fusion/fn-7 main")).toBe(mainTip);
+  });
+
+  it("installs the identity-guard hook so a commit on a non-fusion branch is rejected", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(makeTask("FN-3"));
+    const registry = new ActiveSessionRegistry();
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      settings: SETTINGS,
+      store,
+      registry,
+    });
+
+    const wt = result.worktreePath;
+    expect(existsSync(join(wt, ".git"))).toBe(true);
+    git(wt, 'git config user.email "test@example.com"');
+    git(wt, 'git config user.name "Test"');
+
+    // On the fusion/<id> branch the guard permits a commit (real staged change,
+    // so the FN-5345 empty-commit guard also installed by the identity guard
+    // does not refuse it).
+    git(wt, "git checkout fusion/fn-3");
+    writeFileSync(join(wt, "own.txt"), "own work\n", "utf-8");
+    git(wt, "git add own.txt");
+    git(wt, "git commit -m 'FN-3: ok on own branch'");
+
+    // Switch to a foreign branch; the pre-commit identity guard must refuse.
+    git(wt, "git checkout -B rogue-branch");
+    writeFileSync(join(wt, "rogue.txt"), "rogue work\n", "utf-8");
+    git(wt, "git add rogue.txt");
+    const attempt = spawnSync("git", ["commit", "-m", "rogue"], {
+      cwd: wt,
+      encoding: "utf-8",
+    });
+    expect(attempt.status).not.toBe(0);
+    expect(`${attempt.stderr}`).toMatch(/refusing commit/i);
+  });
+
+  it("serializes two concurrent acquisitions of the SAME sub-repo via the exclusivity registry (KTD4)", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoAbs = fixture.repoPath("repo-a");
+    const registry = new ActiveSessionRegistry();
+
+    // Pre-register the sub-repo path as if task FN-A is mid-acquisition, then
+    // prove a second task is rejected while it is held.
+    registry.registerPath(repoAbs, { taskId: "FN-A", kind: "workspace-repo-acquire", ownerKey: "workspace-repo-acquire" });
+
+    const { store, current, patches } = makeFakeStore(makeTask("FN-B"));
+    await expect(
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a",
+        workspaceRootDir: fixture.rootDir,
+        task: current(),
+        store,
+        settings: SETTINGS,
+        registry,
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceRepoAcquireBusyError);
+
+    // The holder's entry is untouched by the rejected loser.
+    expect(registry.lookupByPath(repoAbs)?.taskId).toBe("FN-A");
+    expect(patches).toHaveLength(0);
+
+    // Once released, the same task acquires cleanly and the registry is freed.
+    registry.unregisterPath(repoAbs);
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry,
+    });
+    expect(result.alreadyAcquired).toBe(false);
+    // Acquisition releases its own exclusivity entry on completion.
+    expect(registry.isPathActive(repoAbs)).toBe(false);
+  });
+
+  it("is idempotent across (taskId, repo): re-acquire returns the existing entry without re-capture", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, patches } = makeFakeStore(makeTask("FN-4"));
+    const registry = new ActiveSessionRegistry();
+
+    const first = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry,
+    });
+    expect(first.alreadyAcquired).toBe(false);
+
+    // Re-acquire with the now-populated task: returns the persisted entry,
+    // does not re-register exclusivity, does not re-create a worktree.
+    const second = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry,
+    });
+    expect(second.alreadyAcquired).toBe(true);
+    expect(second.worktreePath).toBe(first.worktreePath);
+    expect(second.baseCommitSha).toBe(first.baseCommitSha);
+    expect(patches).toHaveLength(1);
+    expect(registry.isPathActive(fixture.repoPath("repo-a"))).toBe(false);
+  });
+
+  it("defers task mutations until the lifecycle-locked workspace merge callback has returned", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, logs, mutationsDuringMerge } = makeFakeStore(makeTask("FN-4-lock"));
+
+    await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(mutationsDuringMerge()).toBe(0);
+    expect(logs.some((message) => message.includes("Worktree created at"))).toBe(true);
+  });
+
+  it("creates one durable worktree when the same task acquires the same repository concurrently", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-4-concurrent");
+    const { store, current } = makeFakeStore(initial);
+    const registry = new ActiveSessionRegistry();
+    const auditEvents: Array<{ type: string }> = [];
+    const audit = {
+      async git(event: { type: string }): Promise<void> { auditEvents.push(event); },
+      async filesystem(): Promise<void> {},
+    };
+
+    const [first, second] = await Promise.all([
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+        settings: SETTINGS, registry, audit,
+      }),
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+        settings: SETTINGS, registry, audit,
+      }),
+    ]);
+
+    expect([first.alreadyAcquired, second.alreadyAcquired].sort()).toEqual([false, true]);
+    expect(first.worktreePath).toBe(second.worktreePath);
+    expect(Object.keys(current().workspaceWorktrees ?? {})).toEqual(["repo-a"]);
+    expect(auditEvents.filter((event) => event.type === "worktree:create")).toHaveLength(1);
+  });
+
+  it("replaces a concurrently persisted directory that is not a usable git worktree", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-4-stale-concurrent");
+    let store!: TaskStore;
+    const fake = makeFakeStore(initial, {
+      beforeWorkspaceMerge: async () => {
+        await store.updateTask(initial.id, {
+          workspaceWorktrees: {
+            "repo-a": { worktreePath: fixture.rootDir, branch: "fusion/stale-directory" },
+          },
+        });
+      },
+    });
+    store = fake.store;
+
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: initial,
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.alreadyAcquired).toBe(false);
+    expect(result.worktreePath).not.toBe(fixture.rootDir);
+    expect(fake.current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(result.worktreePath);
+  });
+
+  it("removes a prepared worktree when authoritative pre-persist validation rejects it", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(makeTask("FN-4-rejected-persist"));
+    const auditEvents: Array<{ type: string; target?: string }> = [];
+    let validationCalls = 0;
+
+    await expect(acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+      audit: {
+        async git(event: { type: string; target?: string }): Promise<void> { auditEvents.push(event); },
+        async filesystem(): Promise<void> {},
+      },
+      validateTaskBeforeCreate: async () => {
+        validationCalls += 1;
+        if (validationCalls === 2) throw new Error("lifecycle moved before persistence");
+      },
+    })).rejects.toThrow("lifecycle moved before persistence");
+
+    const createdPath = auditEvents.find((event) => event.type === "worktree:create")?.target;
+    expect(validationCalls).toBe(2);
+    expect(createdPath).toBeTruthy();
+    expect(existsSync(createdPath!)).toBe(false);
+    expect(current().workspaceWorktrees?.["repo-a"]).toBeUndefined();
+  });
+
+  it("surfaces an error and persists an audit event when acquisition fails (no swallowed stall)", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, logs } = makeFakeStore(makeTask("FN-5"));
+    const registry = new ActiveSessionRegistry();
+    const auditEvents: Array<{ type: string }> = [];
+    const audit = {
+      async git(e: { type: string }): Promise<void> {
+        auditEvents.push(e);
+      },
+      async filesystem(): Promise<void> {},
+    };
+
+    await expect(
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "does-not-exist",
+        workspaceRootDir: fixture.rootDir,
+        task: current(),
+        store,
+        settings: SETTINGS,
+        registry,
+        audit: audit as never,
+      }),
+    ).rejects.toThrow();
+
+    expect(auditEvents.some((e) => e.type === "worktree:workspace-repo-acquire-failed")).toBe(true);
+    expect(logs.some((m) => /acquisition failed/i.test(m))).toBe(true);
+    // The exclusivity entry is released even on the failure path.
+    expect(registry.isPathActive(join(fixture.rootDir, "does-not-exist"))).toBe(false);
+  });
+
+  /*
+  FNXC:Workspace 2026-06-21-22:30:
+  F4 — resolveFromSettings falls back integrationBranch → settings.baseBranch →
+  origin/HEAD. A shared settings.baseBranch must be STRIPPED alongside
+  integrationBranch, otherwise a baseBranch absent from this sub-repo leaks through
+  and the per-repo base resolves against the wrong branch. Here repo-a's only branch
+  is its own origin/HEAD (develop); a shared baseBranch of 'shared-trunk' (absent in
+  the sub-repo) must NOT be honored — the base must resolve to develop's tip.
+  */
+  it("strips a shared settings.baseBranch so the base resolves against the sub-repo's own origin/HEAD (KTD3 / F4)", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"], "develop");
+    const repoA = fixture.repoPath("repo-a");
+    const origin = `${repoA}-origin`;
+    git(repoA, "git init --bare " + JSON.stringify(origin));
+    git(repoA, `git remote add origin ${JSON.stringify(origin)}`);
+    git(repoA, "git push -u origin develop");
+    git(repoA, "git remote set-head origin develop");
+    const developTip = git(repoA, "git rev-parse develop");
+
+    const { store, current } = makeFakeStore(makeTask("FN-6"));
+    const registry = new ActiveSessionRegistry();
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      // A shared baseBranch (no integrationBranch) that does NOT exist in this
+      // sub-repo. If it leaked through, base capture would resolve against
+      // 'shared-trunk' instead of develop.
+      settings: { ...SETTINGS, baseBranch: "shared-trunk" } as Partial<Settings>,
+      registry,
+    });
+
+    expect(result.baseCommitSha).toBe(developTip);
+  });
+
+  /*
+  FNXC:Workspace 2026-06-21-22:30:
+  F5 — two sequential acquires for DIFFERENT sub-repos in one task must each persist
+  their own workspaceWorktrees entry. The acquisition re-reads the task fresh before
+  the merge so the second acquire does not clobber the first repo's entry.
+  */
+  it("preserves a sibling sub-repo's workspaceWorktrees entry across two different-repo acquires (F5)", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current, patches } = makeFakeStore(makeTask("FN-7"));
+    const registry = new ActiveSessionRegistry();
+
+    const first = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry,
+    });
+    expect(first.alreadyAcquired).toBe(false);
+
+    const second = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-b",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry,
+    });
+    expect(second.alreadyAcquired).toBe(false);
+
+    // Both entries survive — the second acquire merged into the latest map, not the
+    // stale snapshot, so repo-a was not clobbered.
+    const persisted = current().workspaceWorktrees ?? {};
+    expect(persisted["repo-a"]?.worktreePath).toBe(first.worktreePath);
+    expect(persisted["repo-b"]?.worktreePath).toBe(second.worktreePath);
+    expect(patches.every((patch) => !patch.worktree && !patch.branch)).toBe(true);
+  });
+
+  it("retains both sibling entries when different repo acquisitions overlap deterministically", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    let firstAtMerge!: () => void;
+    const firstReachedMerge = new Promise<void>((resolve) => { firstAtMerge = resolve; });
+    let releaseFirst!: () => void;
+    const release = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let mergeCalls = 0;
+    const { store, current } = makeFakeStore(makeTask("FN-7-concurrent"), {
+      beforeWorkspaceMerge: async () => {
+        mergeCalls += 1;
+        if (mergeCalls === 1) {
+          firstAtMerge();
+          await release;
+        } else {
+          // The second acquisition reaches the atomic merge before the first writes.
+          releaseFirst();
+        }
+      },
+    });
+    const registry = new ActiveSessionRegistry();
+
+    const first = acquireWorkspaceRepoWorktree({ repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store, settings: SETTINGS, registry });
+    await firstReachedMerge;
+    const second = acquireWorkspaceRepoWorktree({ repoRelPath: "repo-b", workspaceRootDir: fixture.rootDir, task: current(), store, settings: SETTINGS, registry });
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a.alreadyAcquired).toBe(false);
+    expect(b.alreadyAcquired).toBe(false);
+    expect(current().workspaceWorktrees).toMatchObject({
+      "repo-a": { worktreePath: a.worktreePath, branch: a.branch },
+      "repo-b": { worktreePath: b.worktreePath, branch: b.branch },
+    });
+    expect(current().worktree).toBeFalsy();
+    expect(current().branch).toBeFalsy();
+  });
+
+  it("keeps same-repo concurrent acquisition exclusive while the winning merge is pending", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    let reachedMerge!: () => void;
+    const firstReachedMerge = new Promise<void>((resolve) => { reachedMerge = resolve; });
+    let releaseFirst!: () => void;
+    const release = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const { store, current } = makeFakeStore(makeTask("FN-7-same-repo"), {
+      beforeWorkspaceMerge: async () => { reachedMerge(); await release; },
+    });
+    const registry = new ActiveSessionRegistry();
+    const first = acquireWorkspaceRepoWorktree({ repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store, settings: SETTINGS, registry });
+    await firstReachedMerge;
+    await expect(acquireWorkspaceRepoWorktree({ repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: makeTask("FN-7-same-repo-loser"), store, settings: SETTINGS, registry })).rejects.toBeInstanceOf(WorkspaceRepoAcquireBusyError);
+    releaseFirst();
+    const winner = await first;
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(winner.worktreePath);
+  });
+
+  it("re-acquires a dead remembered workspace entry without singular persistence", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = {
+      ...makeTask("FN-8"),
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: join(fixture.rootDir, "missing-worktree"), branch: "fusion/fn-8" },
+      },
+    };
+    const { store, current, patches } = makeFakeStore(initial);
+
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.alreadyAcquired).toBe(false);
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(result.worktreePath);
+    expect(patches.every((patch) => !patch.worktree && !patch.branch)).toBe(true);
+  });
+
+  it("never exposes a singular worktree assignment while acquiring a workspace repo", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-8");
+    const { store, patches } = makeFakeStore(initial);
+
+    await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    });
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toHaveProperty("workspaceWorktrees");
+    expect(patches.every((patch) => !patch.worktree && !patch.branch)).toBe(true);
+
+    let replayed = initial;
+    for (const patch of patches) {
+      replayed = { ...replayed, ...patch };
+      expect(replayed.worktree).toBeFalsy();
+      expect(replayed.branch).toBeFalsy();
+    }
+  });
+
+  it("leaves the task workspace-shaped when the final workspace state write fails", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-9");
+    const { store, current, patches } = makeFakeStore(initial, {
+      failWhen: (patch) => "workspaceWorktrees" in patch,
+    });
+
+    await expect(acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    })).rejects.toThrow("injected update failure");
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toHaveProperty("workspaceWorktrees");
+    expect(patches.every((patch) => !patch.worktree && !patch.branch)).toBe(true);
+    expect(current().worktree).toBeFalsy();
+    expect(current().branch).toBeFalsy();
+    expect(Boolean(current().worktree)).toBe(false);
+    expect(current().workspaceWorktrees).toBeUndefined();
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-20-02:04:
+  Grouped workspace roots must be proven through real `git worktree add` calls.
+  A path-helper fixture cannot detect the task-id collision that occurs when two
+  member repositories share a configured root.
+  */
+  it("groups real multi-repo acquisitions and protects their shared-root container from a foreign project sweep", async () => {
+    fixture = await createWorkspaceFixture(["api", "web", "foreign"]);
+    const sharedRoot = join(dirname(fixture.rootDir), "shared-worktrees");
+    const settings = { ...SETTINGS, worktreesDir: sharedRoot };
+    const { store, current } = makeFakeStore(makeTask("FN-9162"));
+    const registry = new ActiveSessionRegistry();
+
+    const api = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "api", workspaceRootDir: fixture.rootDir, task: current(), store, settings, registry,
+    });
+    const web = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "web", workspaceRootDir: fixture.rootDir, task: current(), store, settings, registry,
+    });
+
+    const group = workspaceWorktreeGroupSegment(fixture.rootDir);
+    expect(api.worktreePath).toBe(join(sharedRoot, group, workspaceRepoSegment("api"), "fn-9162"));
+    expect(web.worktreePath).toBe(join(sharedRoot, group, workspaceRepoSegment("web"), "fn-9162"));
+    expect(api.worktreePath).not.toBe(web.worktreePath);
+    expect(existsSync(join(api.worktreePath, ".git"))).toBe(true);
+    expect(existsSync(join(web.worktreePath, ".git"))).toBe(true);
+    expect(readFileSync(join(sharedRoot, group, WORKSPACE_GROUP_MARKER_FILENAME), "utf8").trim()).toBe(fixture.rootDir);
+
+    // A non-workspace project can share the configured root. Its real cleanup
+    // path must not interpret this workspace's group container as an orphan.
+    const cleaned = await cleanupOrphanedWorktrees(
+      fixture.repoPath("foreign"),
+      { listTasks: async () => [] } as unknown as TaskStore,
+      { worktreesDir: sharedRoot, workspaceMode: false },
+    );
+    expect(cleaned).toBe(0);
+    expect(existsSync(api.worktreePath)).toBe(true);
+    expect(existsSync(web.worktreePath)).toBe(true);
+    expect(existsSync(join(sharedRoot, group, WORKSPACE_GROUP_MARKER_FILENAME))).toBe(true);
+  });
+
+  it("keeps the single-repo acquisition persistence contract when suppression is absent", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-10");
+    const { store, patches } = makeFakeStore(initial);
+
+    const result = await acquireTaskWorktree({
+      task: initial,
+      rootDir: fixture.repoPath("repo-a"),
+      store,
+      settings: SETTINGS,
+    });
+
+    expect(patches).toContainEqual({
+      worktree: result.worktreePath,
+      branch: result.branch,
+      branchWriteOrigin: "engine",
+    });
+  });
+});

@@ -1,0 +1,354 @@
+import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Task } from "@fusion/core";
+import { SelfHealingManager } from "../self-healing.js";
+import { TriageProcessor } from "../triage.js";
+
+function task(overrides: Partial<Task> & Pick<Task, "id">): Task {
+  const { id, ...rest } = overrides;
+  return {
+    id,
+    title: overrides.id,
+    description: overrides.id,
+    column: "triage",
+    priority: "normal",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    status: null,
+    createdAt: "2026-05-15T10:00:00.000Z",
+    updatedAt: "2026-05-15T10:00:00.000Z",
+    columnMovedAt: "2026-05-15T10:00:00.000Z",
+    ...rest,
+  } as Task;
+}
+
+describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
+  it("escalates starved refinements once and emits run-audit", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-17:55:
+    The starved refinement rests in the INTAKE column, which post-U11 is `todo` — the merged
+    Planning column carrying intake+hold. `recoverStarvedRefinementTriageTasks` filters by ROLE, and
+    this store fake has no workflow-selection readers, so it resolves the DEFAULT IR in which
+    `triage` is not a declared column: the old fixture therefore carried no intake role, the filter
+    returned no candidates, and the sweep reported 0 escalations.
+
+    Only THIS test's seed moved. The file's default stays `triage` on purpose: the case at the bottom
+    ("auto-approve-all overrides stored workflow approval") calls `recoverApprovedTask` directly, with
+    no role filter, and asserts a move INTO `todo` — seeding it in `todo` makes that move degenerate.
+    Whether asserting a triage -> todo move still encodes anything post-U11 is a question about that
+    test's subject, not this fix: FLAGGED, not guessed.
+    */
+    const tasks: Task[] = [
+      task({ id: "FN-R1", column: "todo", sourceType: "task_refine", createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z", priority: "low" }),
+      task({ id: "FN-P1", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
+      task({ id: "FN-P2", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
+      task({ id: "FN-P3", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
+    ];
+
+    const updateTask = vi.fn(async (id: string, patch: Partial<Task>) => {
+      const idx = tasks.findIndex((t) => t.id === id);
+      tasks[idx] = { ...tasks[idx], ...patch, updatedAt: new Date().toISOString() } as Task;
+    });
+    const recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const store: any = {
+      getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false }),
+      listTasks: vi.fn().mockResolvedValue(tasks),
+      updateTask,
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      recordRunAuditEvent,
+      on: () => {},
+      removeListener: () => {},
+    };
+
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(1);
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(0);
+
+    expect(updateTask).toHaveBeenCalledTimes(1);
+    expect(updateTask).toHaveBeenCalledWith("FN-R1", { priority: "normal" });
+    expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
+    expect(recordRunAuditEvent.mock.calls[0][0]).toMatchObject({ mutationType: "task:auto-recover-starved-refinement", target: "FN-R1" });
+    vi.useRealTimers();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-16:40 (fleet — peer-progress vocabulary):
+  "Peer progress" was `peer.column === "todo"` in two places: the candidate filter and the count written
+  into the log line and audit metadata. On a renamed board both stopped matching, so peer progress read
+  as zero and starved refinements were never escalated — silently, since a zero count is indistinguishable
+  from a genuinely quiet board.
+
+  The board below separates intake from hold on purpose. The candidate rests in INTAKE (`inbox`) and its
+  peers in HOLD (`backlog`), so a conversion that reached for the wrong role set — or that left either
+  site on the literal — resolves no peers and escalates nothing.
+  */
+  it("counts peer progress in the board's own HOLD lane on a renamed board", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+
+    const RENAMED_IR = {
+      version: "v2",
+      name: "renamed-starvation",
+      columns: [
+        { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
+        { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      ],
+      nodes: [],
+      edges: [],
+    };
+
+    const tasks: Task[] = [
+      task({ id: "FN-R9", column: "inbox", sourceType: "task_refine", createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z", priority: "low" }),
+      task({ id: "FN-Q1", column: "backlog", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
+      task({ id: "FN-Q2", column: "backlog", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
+      task({ id: "FN-Q3", column: "backlog", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
+    ];
+
+    const updateTask = vi.fn(async () => undefined);
+    const store: any = {
+      getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false }),
+      listTasks: vi.fn().mockResolvedValue(tasks),
+      updateTask,
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_IR })),
+      /* `starvedWaitingColumns` is a PROJECT union (`resolveProjectColumnsForRoles`), so the fake needs
+         `listWorkflowDefinitions`; the per-task selection readers alone leave it resolving nothing and
+         the test would pass for the wrong reason. */
+      listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),
+      on: () => {},
+      removeListener: () => {},
+    };
+
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(1);
+    expect(updateTask).toHaveBeenCalledWith("FN-R9", { priority: "normal" });
+    vi.useRealTimers();
+  });
+
+  it("does not escalate non-refinement triage tasks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+    const store: any = {
+      listTasks: vi.fn().mockResolvedValue([
+        task({ id: "FN-NON", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:00:00.000Z" }),
+        task({ id: "FN-P1", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
+        task({ id: "FN-P2", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
+        task({ id: "FN-P3", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
+      ]),
+      updateTask: vi.fn(),
+      logEntry: vi.fn(),
+      recordRunAuditEvent: vi.fn(),
+      on: () => {},
+      removeListener: () => {},
+    };
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not escalate refinements under grace", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+    const store: any = {
+      listTasks: vi.fn().mockResolvedValue([
+        task({ id: "FN-YOUNG", sourceType: "task_refine", createdAt: "2026-05-15T10:55:00.000Z", updatedAt: "2026-05-15T10:55:00.000Z" }),
+        task({ id: "FN-P1", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:56:00.000Z" }),
+        task({ id: "FN-P2", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:57:00.000Z" }),
+        task({ id: "FN-P3", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:58:00.000Z" }),
+      ]),
+      updateTask: vi.fn(),
+      logEntry: vi.fn(),
+      recordRunAuditEvent: vi.fn(),
+      on: () => {},
+      removeListener: () => {},
+    };
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not escalate aged refinements when peer progress threshold is not met", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+    const store: any = {
+      listTasks: vi.fn().mockResolvedValue([
+        task({ id: "FN-IDLE", sourceType: "task_refine", createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z" }),
+      ]),
+      updateTask: vi.fn(),
+      logEntry: vi.fn(),
+      recordRunAuditEvent: vi.fn(),
+      on: () => {},
+      removeListener: () => {},
+    };
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not escalate paused refinements", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+    const store: any = {
+      listTasks: vi.fn().mockResolvedValue([
+        task({ id: "FN-PAUSED", sourceType: "task_refine", paused: true, createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z" }),
+        task({ id: "FN-P1", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
+        task({ id: "FN-P2", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
+        task({ id: "FN-P3", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
+      ]),
+      updateTask: vi.fn(),
+      logEntry: vi.fn(),
+      recordRunAuditEvent: vi.fn(),
+      on: () => {},
+      removeListener: () => {},
+    };
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("preserves approval gate flow (never direct todo) after escalation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-fn4662-"));
+    try {
+      const refinement = task({ id: "FN-RG", sourceType: "task_refine" });
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+
+      const store: any = {
+        listTasks: vi.fn().mockResolvedValue([
+          refinement,
+          task({ id: "FN-P1", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
+          task({ id: "FN-P2", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
+          task({ id: "FN-P3", column: "todo", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
+        ]),
+        updateTask,
+        moveTask,
+        logEntry: vi.fn().mockResolvedValue(undefined),
+        recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+        parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
+        parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+        on: () => {},
+        off: () => {},
+        removeListener: () => {},
+      };
+
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+      const manager = new SelfHealingManager(store, { rootDir: root, getPlanningTaskIds: () => new Set() });
+      await manager.recoverStarvedRefinementTriageTasks();
+      expect(moveTask).not.toHaveBeenCalled();
+
+      const taskDir = join(root, ".fusion", "tasks", "FN-RG");
+      await mkdir(taskDir, { recursive: true });
+      const spec = "# FN-RG\n\n## File Scope\n- packages/engine/src/self-healing.ts\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n";
+      await writeFile(join(taskDir, "PROMPT.md"), spec, "utf-8");
+      const processor = new TriageProcessor(store, root);
+      /*
+      FNXC:EngineTests 2026-07-21-00:10:
+      finalizeApprovedTask needs getTask + moveTaskIf/withTaskLock for planning-stage CAS and release.
+      */
+      store.getTask = vi.fn().mockImplementation(async (id: string) => (id === "FN-RG" ? refinement : undefined));
+      store.parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
+      store.withTaskLock = vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn());
+      store.readTaskForMove = vi.fn(async (id: string) => store.getTask(id));
+      store.moveTaskIf = vi.fn(async (id: string, column: string, predicate: (t: any) => boolean) => {
+        const live = await store.getTask(id);
+        if (live && !predicate(live)) return { moved: false, task: live };
+        await moveTask(id, column);
+        return { moved: true, task: live };
+      });
+      await (processor as any).finalizeApprovedTask(refinement, spec, { requirePlanApproval: true });
+      expect(updateTask).toHaveBeenCalledWith("FN-RG", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(moveTask).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-12:20:
+   * FN-7526 — locks the auto-approve-all invariant for the starved-refinement
+   * finalize surface specifically, using the REAL mergeEffectiveSettings pipeline
+   * (not a bare `{ requirePlanApproval }` object) so a project auto-approve-all
+   * override still wins even when the stored workflow value would otherwise
+   * require manual plan approval. This is the surface `recoverApprovedTask`
+   * exercises when self-healing recovers a starved refinement stuck in
+   * `status: "planning"`.
+   */
+  it("moves a starved refinement to todo when project auto-approve-all overrides stored workflow approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-fn7526-refine-"));
+    try {
+      const taskDir = join(root, ".fusion", "tasks", "FN-RG2");
+      await mkdir(taskDir, { recursive: true });
+      const spec = "# FN-RG2\n\n## File Scope\n- packages/engine/src/self-healing.ts\n\n## Steps\n\n### Step 0: Implement\n- [ ] do the work\n";
+      await writeFile(join(taskDir, "PROMPT.md"), spec, "utf-8");
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const refinement = task({
+        id: "FN-RG2",
+        sourceType: "task_refine",
+        status: "planning",
+        log: [{ timestamp: "2026-05-15T10:00:00.000Z", action: "Spec review: APPROVE" }],
+      });
+      const store: any = {
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          planApprovalMode: "auto-approve-all",
+          requirePlanApproval: false,
+        }),
+        getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
+        getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
+        getWorkflowSettingValues: vi.fn().mockReturnValue({ requirePlanApproval: true }),
+        getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
+        // FNXC:EngineTests 2026-07-19-01:20: finalizeApprovedTaskBody re-reads live task via getTask.
+        getTask: vi.fn().mockImplementation(async (id: string) => (id === "FN-RG2" ? refinement : undefined)),
+        updateTask,
+        moveTask,
+        // FNXC:EngineTests 2026-07-21-00:10: recovery finalize releases via moveTaskIf + withTaskLock.
+        moveTaskIf: vi.fn(async (id: string, column: string, predicate: (t: any) => boolean) => {
+          const live = id === "FN-RG2" ? refinement : undefined;
+          if (live && !predicate(live)) return { moved: false, task: live };
+          await moveTask(id, column);
+          return { moved: true, task: live };
+        }),
+        withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+        readTaskForMove: vi.fn(async (id: string) => (id === "FN-RG2" ? refinement : undefined)),
+        logEntry: vi.fn().mockResolvedValue(undefined),
+        parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
+        parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+        on: () => {},
+        off: () => {},
+        removeListener: () => {},
+      };
+
+      const processor = new TriageProcessor(store, root);
+      const recovered = await processor.recoverApprovedTask(refinement);
+
+      expect(recovered).toBe(true);
+      expect(moveTask).toHaveBeenCalledWith("FN-RG2", "todo");
+      expect(updateTask).not.toHaveBeenCalledWith("FN-RG2", expect.objectContaining({ status: "awaiting-approval" }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

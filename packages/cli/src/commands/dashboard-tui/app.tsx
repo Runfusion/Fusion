@@ -1,0 +1,4735 @@
+import React, { useState, useSyncExternalStore, useCallback, useEffect, useRef } from "react";
+import { Box, Text, useInput, useApp, useStdout } from "ink";
+import Spinner from "ink-spinner";
+import TextInput from "ink-text-input";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
+
+const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
+function tuiDebug(tag: string, data: Record<string, unknown>): void {
+  if (!TUI_DEBUG_LOG) return;
+  try {
+    const line = `${new Date().toISOString()} [${tag}] ${JSON.stringify(data)}\n`;
+    appendFileSync(TUI_DEBUG_LOG, line);
+  } catch {
+    // best-effort
+  }
+}
+
+function drainTuiPerformanceTimeline(): void {
+  const perf = globalThis.performance;
+  if (!perf) return;
+  perf.clearMeasures?.();
+  perf.clearMarks?.();
+  perf.clearResourceTimings?.();
+}
+
+// Open a URL in the user's default browser. Uses the platform-native opener
+// (macOS `open`, Windows `start`, Linux `xdg-open`). Detached + ignored stdio
+// so the spawned process doesn't block the TUI's input loop.
+function openInBrowser(url: string): void {
+  let cmd: string;
+  let args: string[];
+  if (process.platform === "darwin") {
+    cmd = "open";
+    args = [url];
+  } else if (process.platform === "win32") {
+    cmd = "cmd";
+    args = ["/c", "start", "", url];
+  } else {
+    cmd = "xdg-open";
+    args = [url];
+  }
+  try {
+    // process-supervisor-allowlist: user-facing browser opener must outlive the TUI process
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    /*
+    FNXC:DashboardTUI 2026-08-19-04:45:
+    A missing opener is reported ASYNCHRONOUSLY as an 'error' event, not a synchronous throw, so the
+    catch below never saw it: Node re-throws an 'error' with no listener and the TUI died. Pressing
+    Enter on the System panel therefore crashed the whole dashboard anywhere `xdg-open` is absent —
+    every slim Linux container, which is exactly where Fusion runs headless.
+    */
+    child.on("error", () => {
+      // Best-effort — the platform tool is missing or not executable.
+    });
+    child.unref();
+  } catch {
+    // Best-effort — silently ignore if the platform tool isn't available.
+  }
+}
+import type { DashboardTUI } from "./controller.js";
+import type {
+  DashboardState,
+  SectionId,
+  ProjectItem,
+  TaskItem,
+  AgentItem,
+  AgentDetailItem,
+  AgentRunItem,
+  ModelItem,
+  SettingsValues,
+  InteractiveView,
+  GitStatus,
+  GitCommit,
+  GitCommitDetail,
+  GitBranch,
+  GitWorktree,
+  FileEntry,
+  FileReadResult,
+  TaskDetailData,
+  TaskEvent,
+  UpdateStatus,
+  SystemInfo,
+} from "./state.js";
+import type { LogEntry } from "./log-ring-buffer.js";
+import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE, FUSION_URL, FUSION_VERSION } from "./logo.js";
+import { useProjects, useTasks } from "./hooks/use-projects.js";
+import { copyToClipboard } from "./utils.js";
+import {
+  TUI_BUCKETS,
+  OTHER_BUCKET,
+  isOtherBucket,
+  groupTasksByBucket,
+  otherBucketSecondaryLabel,
+  type TuiBucket,
+} from "./bucket-mapping.js";
+
+// ── Format helpers ────────────────────────────────────────────────────────────
+
+/*
+FNXC:TuiLogs 2026-07-20-09:50:
+Dense TUI log rows must reserve horizontal space for the level, prefix, and
+message instead of detailed capture timestamps. A compact clock is sufficient
+for list rows, clipboard text, and expanded-entry capture time; the Date stays
+intact for ordering and raw-message debugging.
+*/
+function formatTimestamp(date: Date): string {
+  const h = date.getHours().toString().padStart(2, "0");
+  const m = date.getMinutes().toString().padStart(2, "0");
+  const s = date.getSeconds().toString().padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+
+/*
+FNXC:TuiLogs 2026-07-20-09:55:
+Captured upstream logs can repeat a date, fractional seconds, and timezone in
+message text after the TUI already records capture time. Strip that leading
+wall-clock block only at list/copy display time so narrow panes show the useful
+content while ExpandedLog keeps the raw message for diagnosis.
+*/
+export function stripLeadingDetailedTimestamp(message: string): string {
+  return message.replace(
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+(?:[A-Za-z]{2,5}|[+-]\d{2}:?\d{2})\s*/,
+    "",
+  );
+}
+
+function formatUptime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
+}
+
+// All-blue vertical gradient — top: brightest white, fading through plain
+// blue. blueBright is avoided because some terminal themes render it with
+// a purple cast; we want the gradient to read as strictly white→blue.
+const LOGO_COLORS = ["whiteBright", "white", "white", "cyanBright", "cyanBright", "cyan", "cyan", "blue"] as const;
+type InkColor = typeof LOGO_COLORS[number];
+
+function logoColor(index: number, total: number): InkColor {
+  // Map this row's index proportionally across LOGO_COLORS so gradient
+  // looks consistent regardless of how tall the chosen logo variant is.
+  const slot = Math.min(
+    LOGO_COLORS.length - 1,
+    Math.floor((index / Math.max(1, total - 1)) * (LOGO_COLORS.length - 1)),
+  );
+  return LOGO_COLORS[slot];
+}
+
+function AnimatedFusionLogo({ lines }: { lines: readonly string[] }) {
+  return (
+    <Box flexDirection="column" alignItems="center">
+      {lines.map((line, i) => (
+        <Text key={i} color={logoColor(i, lines.length)} bold>{line}</Text>
+      ))}
+    </Box>
+  );
+}
+
+// ── Splash screen ─────────────────────────────────────────────────────────────
+
+// Narrow-mode threshold: below this column count each multi-pane view collapses
+// to a single pane so content doesn't overflow or overlap on small terminals.
+const NARROW_THRESHOLD = 80;
+
+// In narrow single-pane mode, when there is enough vertical room we
+// horizontally split the screen so log activity stays visible while the
+// user is on a non-logs section. The split is dynamic: the top pane gets
+// exactly the rows it needs to render the active section without
+// truncating, and the bottom log strip absorbs the rest. We only enable
+// the split when the log strip would have at least this many rows.
+const NARROW_SPLIT_MIN_LOG_ROWS = 6;
+
+// Rough upper bound on how many rows each non-System panel needs once
+// rendered — used to size the top pane when the active section is not
+// System. System is computed dynamically from the chip wrap.
+const STATIC_SECTION_CONTENT_ROWS: Record<string, number> = {
+  stats: 4,
+  utilities: 7,
+  settings: 9,
+};
+
+// Estimate the System panel's content row count given the current column
+// count. Mirrors the SystemPanel layout: a wrap-row of small status chips
+// (v / Engine / Auth / [Watcher] / Uptime), then full-width rows for URL
+// and Token (each may wrap onto multiple lines), then an always-on hint
+// row. The hint and token must always be visible, so we never collapse
+// those rows regardless of focus.
+export function estimateSystemContentRows(
+  info: SystemInfo | null,
+  cols: number,
+  _isFocused: boolean,
+): number {
+  if (!info) return 1;
+  // Panel content area: terminal cols minus border (2) minus paddingX (2).
+  const inner = Math.max(20, cols - 4);
+  const chipGap = 2;
+  const statusChips: number[] = [];
+  statusChips.push(1 + 1 + FUSION_VERSION.length);
+  statusChips.push(6 + 1 + 6); // Engine + worst-case state
+  statusChips.push(4 + 1 + 6); // Auth + "bearer"
+  if (cols >= 100) statusChips.push(7 + 1 + 8); // Watcher + "inactive"
+  statusChips.push(6 + 1 + 14); // Uptime + worst-case "Xd Yh Zm Ws"
+
+  // Greedy pack of the wrap-row.
+  let chipRows = 1;
+  let used = 0;
+  for (const c of statusChips) {
+    const next = used === 0 ? c : used + chipGap + c;
+    if (next > inner && used > 0) {
+      chipRows++;
+      used = c;
+    } else {
+      used = next;
+    }
+  }
+
+  // URL and Token are each on their own full-width row. Long values wrap
+  // onto multiple lines: total width = label + 1 (gap) + value, divided
+  // by inner width, rounded up.
+  const urlRows = Math.max(
+    1,
+    Math.ceil((3 + 1 + (info.baseUrl?.length ?? 0)) / inner),
+  );
+  const tokenRows = info.authToken
+    ? Math.max(1, Math.ceil((5 + 1 + info.authToken.length) / inner))
+    : 0;
+  /*
+  FNXC:DevTunnel 2026-08-19-04:45:
+  The tunnel row is measured like URL and Token ("Tunnel" is 6 chars + a gap). Omitting it made the
+  panel one-to-several rows too short for a trycloudflare hostname, so the row it was added for got
+  squeezed out of the panel it lives in.
+  */
+  const tunnelRows = info.tunnelUrl
+    ? Math.max(1, Math.ceil((6 + 1 + info.tunnelUrl.length) / inner))
+    : 0;
+
+  // +1 for the always-on hint row.
+  return chipRows + urlRows + tokenRows + tunnelRows + 1;
+}
+
+function estimateSectionPanelHeight(
+  section: SectionId,
+  state: DashboardState,
+  cols: number,
+  isFocused: boolean,
+): number {
+  const contentRows = section === "system"
+    ? estimateSystemContentRows(state.systemInfo, cols, isFocused)
+    : STATIC_SECTION_CONTENT_ROWS[section] ?? 6;
+  // Panel chrome: top border (1) + title row (1) + bottom border (1).
+  return contentRows + 3;
+}
+
+// Logo width thresholds. Below SPLASH_MIN_COLS we fall back to the plain
+// "FUSION" word; otherwise we pick the largest variant that fits.
+const SPLASH_MIN_COLS = 56;
+const SPLASH_MIN_ROWS = 12;
+const LARGE_LOGO_MIN_COLS = 70;
+const LARGE_LOGO_MIN_ROWS = 16;
+
+function SplashScreen({ loadingStatus, updateStatus }: { loadingStatus: string; updateStatus: UpdateStatus | null }) {
+  const { t } = useTranslation("cli");
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const rows = stdout?.rows ?? 24;
+  const compact = cols < SPLASH_MIN_COLS || rows < SPLASH_MIN_ROWS;
+  const large = cols >= LARGE_LOGO_MIN_COLS && rows >= LARGE_LOGO_MIN_ROWS;
+
+  return (
+    <Box flexDirection="column" paddingX={1} paddingY={1}>
+      {compact ? (
+        <Text bold color="cyanBright">FUSION</Text>
+      ) : (
+        <AnimatedFusionLogo lines={large ? FUSION_LOGO_LARGE_LINES : FUSION_LOGO_LINES} />
+      )}
+      <Text color="cyanBright" dimColor>{FUSION_TAGLINE}</Text>
+      <Text color="cyanBright" dimColor>{FUSION_URL}</Text>
+      <Text color="cyanBright" dimColor>{`v${FUSION_VERSION}`}</Text>
+      {updateStatus?.updateAvailable && (
+        <Text color="yellow" dimColor>{t("tui.updateAvailable", "Update available: v{{currentVersion}} → v{{latestVersion}}. Run `fn update` for an installed CLI, or pull this source checkout.", { currentVersion: updateStatus.currentVersion, latestVersion: updateStatus.latestVersion })}</Text>
+      )}
+      <Box height={1} />
+      <Box flexDirection="row" gap={1}>
+        <Text color="cyanBright"><Spinner type="dots" /></Text>
+        <Text color="cyanBright" dimColor>{loadingStatus}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+// ── Mini inline logo (header) ─────────────────────────────────────────────────
+
+function MiniLogo() {
+  return (
+    <Box flexDirection="row" gap={0} flexShrink={0}>
+      <Text color="cyanBright" bold wrap="truncate-end">FUSION</Text>
+    </Box>
+  );
+}
+
+// ── Panel wrapper ─────────────────────────────────────────────────────────────
+
+interface PanelProps {
+  title: string;
+  isFocused: boolean;
+  children: React.ReactNode;
+  flexGrow?: number;
+  flexShrink?: number;
+  width?: number | string;
+}
+
+function Panel({ title, isFocused, children, flexGrow, flexShrink, width }: PanelProps) {
+  return (
+    <Box
+      borderStyle="round"
+      borderColor={isFocused ? "cyanBright" : "gray"}
+      flexDirection="column"
+      flexGrow={flexGrow}
+      // Default flexShrink to 1. Yoga's default is 0 (unlike CSS), so without
+      // this a panel whose intrinsic content height exceeds its container —
+      // common at narrow widths where Text wraps — refuses to shrink, the
+      // frame grows past terminal rows, and Ink scrolls the top (header) off.
+      flexShrink={flexShrink ?? 1}
+      width={width}
+      overflow="hidden"
+    >
+      <Box paddingX={1} flexShrink={0}>
+        <Text bold={isFocused} color={isFocused ? "cyanBright" : undefined} dimColor={!isFocused}>
+          {title}
+        </Text>
+      </Box>
+      <Box flexDirection="column" paddingX={1} flexGrow={1} flexShrink={1} overflow="hidden">
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
+// ── System panel ──────────────────────────────────────────────────────────────
+
+function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
+  const { t } = useTranslation("cli");
+  const info = state.systemInfo;
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  // Watcher is the lowest-signal chip — drop it first when chips would wrap.
+  const showWatcher = cols >= 100;
+  return (
+    <Panel title={t("tui.systemPanelTitle", "System")} isFocused={isFocused} flexGrow={1}>
+      {!info ? (
+        <Text dimColor>{t("tui.systemInfoUnavailable", "System information not available.")}</Text>
+      ) : (
+        <Box flexDirection="column" flexShrink={0}>
+          {/* Status chips wrap to multiple rows at narrow widths. */}
+          <Box flexDirection="row" gap={2} flexWrap="wrap">
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>v</Text>
+              <Text>{FUSION_VERSION}</Text>
+            </Box>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Engine</Text>
+              {info.engineMode === "no-engine" && <Text color="yellow">no-engine</Text>}
+              {info.engineMode === "paused" && <Text color="yellow">paused</Text>}
+              {info.engineMode === "active" && <Text color="green">active</Text>}
+            </Box>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Auth</Text>
+              {info.authEnabled
+                ? <Text color="yellow">bearer</Text>
+                : <Text color="yellow">none</Text>}
+            </Box>
+            {showWatcher && (
+              <Box flexDirection="row" gap={1} flexShrink={0}>
+                <Text dimColor>Watcher</Text>
+                {info.fileWatcher ? <Text color="green">active</Text> : <Text color="red">inactive</Text>}
+              </Box>
+            )}
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Uptime</Text>
+              <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
+            </Box>
+          </Box>
+          {/* URL and Token each get their own full-width row so long values
+              wrap onto multiple lines instead of being truncated or pushed
+              off-panel. The token in particular MUST always render in
+              full so users can copy it (via [c]) or click-drag select it. */}
+          {state.isReady && Number.isFinite(info.startupDurationMs) && (
+            <Text dimColor>{t("tui.readyIn", "Ready in {{secs}}s", { secs: ((info.startupDurationMs ?? 0) / 1000).toFixed(1) })}</Text>
+          )}
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>URL</Text>
+            <Text color="cyanBright">{info.baseUrl}</Text>
+          </Box>
+          {info.authToken && (
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Token</Text>
+              <Text color="yellow">{info.authToken}</Text>
+            </Box>
+          )}
+          {/* FNXC:DevTunnel 2026-08-19-04:45: a tunnel's public URL — dev (--tunnel) or the
+              operator's own remote tunnel — is shown here full width, never truncated, like the
+              token. The dev wrapper's stdout banner is painted over by this TUI, and the remote
+              tunnel's URL never reached the terminal at all. */}
+          {info.tunnelUrl && (
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Tunnel</Text>
+              <Text color="cyanBright">{info.tunnelUrl}</Text>
+            </Box>
+          )}
+          {/* Inline hint row — always shown so the [Enter] / [c] shortcuts
+              stay discoverable even when the panel doesn't currently own
+              keyboard focus (e.g. when the narrow-mode log strip below has
+              sub-focus). Mouse reporting is auto-off when System is the
+              active section so users can still click-drag to select the
+              token, regardless of split focus. */}
+          <Box flexShrink={0}>
+            <Text dimColor wrap="truncate-end">
+              <Text color="cyanBright">[Enter]</Text> {t("tui.systemOpenUrl", "open URL")}
+              {info.authToken ? (
+                <Text> · <Text color="cyanBright">[c]</Text> {t("tui.systemCopyTokenHint", "copy token · select token text to copy manually")}</Text>
+              ) : (
+                <Text> · {t("tui.systemDragToSelect", "drag to select")}</Text>
+              )}
+            </Text>
+          </Box>
+        </Box>
+      )}
+    </Panel>
+  );
+}
+
+// ── Stats panel ───────────────────────────────────────────────────────────────
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const mb = bytes / (1024 * 1024);
+  // Space between number and unit so a wrap break, if forced, happens after
+  // the unit rather than splitting "450MB" across two lines.
+  if (mb < 1024) return `${mb.toFixed(0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+function heapColor(used: number, limit: number): "red" | "yellow" | "green" {
+  if (limit <= 0) return "green";
+  const pct = used / limit;
+  if (pct >= 0.85) return "red";
+  if (pct >= 0.65) return "yellow";
+  return "green";
+}
+
+function rssColor(rss: number, totalSystemMem: number): "red" | "yellow" | undefined {
+  if (totalSystemMem <= 0) return undefined;
+  const pct = rss / totalSystemMem;
+  if (pct >= 0.5) return "red";
+  if (pct >= 0.25) return "yellow";
+  return undefined;
+}
+
+function sysMemColor(used: number, total: number): "red" | "yellow" | undefined {
+  if (total <= 0) return undefined;
+  const pct = used / total;
+  if (pct >= 0.9) return "red";
+  if (pct >= 0.75) return "yellow";
+  return undefined;
+}
+
+function cpuColor(percent: number, cores: number): "red" | "yellow" | undefined {
+  // Per-core normalized — >100% means oversubscribed.
+  const norm = cores > 0 ? percent / cores : percent;
+  if (norm >= 80) return "red";
+  if (norm >= 50) return "yellow";
+  return undefined;
+}
+
+function StatRow({ label, children }: { label: string; children: React.ReactNode }) {
+  // Fixed-width label column + gap={2} between value tokens so each
+  // measurement (number + unit + dim qualifier) stays on the same row
+  // without breaking apart when one of the tokens is wider than usual.
+  return (
+    <Box flexDirection="row">
+      <Box width={10}>
+        <Text dimColor>{label}</Text>
+      </Box>
+      <Box flexDirection="row" gap={2}>{children}</Box>
+    </Box>
+  );
+}
+
+function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
+  const { t } = useTranslation("cli");
+  const sys = state.systemStats;
+  const systemMemUsed = sys ? sys.systemTotalMem - sys.systemFreeMem : 0;
+  const systemMemUsageColor = sys ? sysMemColor(systemMemUsed, sys.systemTotalMem) : undefined;
+  const systemMemUsagePct =
+    sys && sys.systemTotalMem > 0
+      ? `${((systemMemUsed / sys.systemTotalMem) * 100).toFixed(1)}%`
+      : null;
+
+  return (
+    <Panel title={t("tui.statsPanelTitle", "Stats")} isFocused={isFocused} flexGrow={1}>
+      <Box flexDirection="column">
+        {sys ? (
+          <>
+            <StatRow label="RSS">
+              <Text color={rssColor(sys.rss, sys.systemTotalMem)}>
+                {formatBytes(sys.rss)}
+              </Text>
+              {sys.systemTotalMem > 0 && (
+                <Text dimColor>
+                  {((sys.rss / sys.systemTotalMem) * 100).toFixed(1)}%
+                </Text>
+              )}
+            </StatRow>
+            <StatRow label="Heap">
+              <Text color={heapColor(sys.heapUsed, sys.heapLimit)}>
+                {formatBytes(sys.heapUsed)}
+              </Text>
+              <Text dimColor>/</Text>
+              <Text>{formatBytes(sys.heapTotal)}</Text>
+            </StatRow>
+            <StatRow label="CPU">
+              <Text color={cpuColor(sys.cpuPercent, sys.cpuCount)}>
+                {sys.cpuPercent.toFixed(1)}%
+              </Text>
+              <Text dimColor>load</Text>
+              <Text>{sys.loadAvg.map((n) => n.toFixed(2)).join(" ")}</Text>
+            </StatRow>
+            <StatRow label="MEM">
+              {systemMemUsagePct && (
+                <Text color={systemMemUsageColor}>{systemMemUsagePct}</Text>
+              )}
+              <Text color={systemMemUsageColor}>{formatBytes(systemMemUsed)}</Text>
+              <Text dimColor>/</Text>
+              <Text>{formatBytes(sys.systemTotalMem)}</Text>
+            </StatRow>
+          </>
+        ) : (
+          <Text dimColor>{t("tui.statsUnavailable", "Stats not available.")}</Text>
+        )}
+      </Box>
+    </Panel>
+  );
+}
+
+// ── Settings panel (status mode) ──────────────────────────────────────────────
+
+function SettingsPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
+  const { t } = useTranslation("cli");
+  const s = state.settings;
+  return (
+    <Panel title={t("tui.settingsPanelTitle", "Settings")} isFocused={isFocused} flexGrow={1}>
+      {!s ? (
+        <Text dimColor>{t("tui.settingsUnavailable", "Settings not available.")}</Text>
+      ) : (
+        <Box flexDirection="column">
+          {(
+            [
+              ["maxConcurrent", s.maxConcurrent.toString()],
+              ["maxWorktrees", s.maxWorktrees.toString()],
+              ["autoMerge", s.autoMerge ? "enabled" : "disabled"],
+              ["mergeStrategy", s.mergeStrategy],
+              ["pollMs", `${s.pollIntervalMs}`],
+              ["paused", s.enginePaused ? "yes" : "no"],
+              ["globalPause", s.globalPause ? "yes" : "no"],
+              ["remoteProvider", s.remoteActiveProvider ?? "none"],
+              ["remoteState", s.remoteStatus?.state ?? "unknown"],
+            ] as Array<[string, string]>
+          ).map(([key, value]) => {
+            const isEnabled = value === "enabled" || value === "yes";
+            const isDisabled = value === "disabled" || value === "no";
+            const color = isEnabled ? "green" : isDisabled ? "yellow" : undefined;
+            return (
+              <Box key={key} flexDirection="row" gap={1}>
+                <Text dimColor>{key}</Text>
+                <Text color={color}>{value}</Text>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+    </Panel>
+  );
+}
+
+// ── Logs panel ────────────────────────────────────────────────────────────────
+
+// Width of the prefix slot in log rows. Long prefixes are truncated; short
+// ones (and missing prefixes) are padded so the message column stays aligned.
+const PREFIX_WIDTH = 14;
+// Narrow-mode log layout: reduced widths to maximise message space.
+const NARROW_PREFIX_WIDTH = 8;
+
+function narrowTimestamp(index: number): string {
+  // Show a short 1-based index padded to 3 chars (e.g. "  1", " 42", "999").
+  return String(index + 1).padStart(3);
+}
+
+function narrowPrefix(prefix: string | undefined, maxWidth: number): string {
+  if (!prefix) return " ".repeat(maxWidth);
+  const bracketed = `[${prefix}]`;
+  if (bracketed.length <= maxWidth) return bracketed.padEnd(maxWidth);
+  // Truncate inside the brackets: "[long…]"
+  return `[${prefix.slice(0, maxWidth - 3)}…]`.padEnd(maxWidth);
+}
+
+function LevelBadge({ level }: { level: LogEntry["level"] }) {
+  if (level === "error") return <Text color="red">✗</Text>;
+  if (level === "warn") return <Text color="yellow">⚠</Text>;
+  return <Text color="green">✓</Text>;
+}
+
+function LogsPanel({
+  state,
+  isFocused,
+  availableRows,
+}: {
+  state: DashboardState;
+  isFocused: boolean;
+  // Optional override; when omitted LogsPanel reads stdout.rows itself so
+  // the windowing budget always reflects live terminal dimensions, even on
+  // timer-driven re-renders that race tmux/ssh resize bursts.
+  availableRows?: number;
+}) {
+  const { logsSeverityFilter, logsWrapEnabled, logsExpandedMode, selectedLogIndex } = state;
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const isNarrow = cols < NARROW_THRESHOLD;
+  // Subtract the chrome (header ~2, status bar 1, panel borders/title ~3,
+  // utilities/settings sub-row ~5) from live rows. Same heuristic the parent
+  // grid used; keeping it co-located ensures we always read the freshest
+  // stdout.rows on every render.
+  const liveRows = stdout?.rows ?? 24;
+  const rowBudget = Math.max(1, availableRows ?? Math.max(4, liveRows - 11));
+
+  const entries = logsSeverityFilter === "all"
+    ? state.logEntries
+    : state.logEntries.filter((e) => e.level === logsSeverityFilter);
+
+  // Default cursor to the newest entry when the user hasn't navigated yet
+  // (selectedLogIndex of 0 on a long buffer would be offscreen at the top).
+  const cursor = entries.length === 0
+    ? 0
+    : Math.min(Math.max(selectedLogIndex, 0), entries.length - 1);
+
+  // Slide the viewport so the cursor is always visible. Newest entries sit at
+  // the bottom; oldest at the top — matching `tail`/`less` and how every
+  // human reads a log file.
+  const visibleStart = Math.max(0, Math.min(
+    cursor - Math.floor(rowBudget / 2),
+    entries.length - rowBudget,
+  ));
+  const visibleEnd = Math.min(entries.length, visibleStart + rowBudget);
+  const visibleEntries = entries.slice(visibleStart, visibleEnd);
+  const hiddenAbove = visibleStart;
+  const hiddenBelow = entries.length - visibleEnd;
+
+  const { t } = useTranslation("cli");
+  const panelTitle = state.clipboardFlash
+    ? `${t("tui.logsPanelTitle", "Logs")} (${state.logEntries.length}/1000) · ${state.clipboardFlash.ok ? t("tui.copiedSuccess", "✓ Copied!") : t("tui.copyFailed", "✗ Copy failed")}`
+    : `${t("tui.logsPanelTitle", "Logs")} (${state.logEntries.length}/1000)`;
+  return (
+    <Panel title={panelTitle} isFocused={isFocused} flexGrow={1}>
+      {logsExpandedMode && entries[cursor] ? (
+        <ExpandedLog
+          entry={entries[cursor]}
+          index={cursor}
+          total={entries.length}
+          clipboardFlash={state.clipboardFlash}
+        />
+      ) : entries.length === 0 ? (
+        <Text dimColor>{t("tui.noLogEntries", "No log entries yet.")}</Text>
+      ) : entries.length !== state.logEntries.length && entries.length === 0 ? (
+        <Text dimColor>{t("tui.noEntriesMatchFilter", "No entries match filter {{filter}}.", { filter: logsSeverityFilter.toUpperCase() })}</Text>
+      ) : (
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          <Box height={1} flexDirection="row" gap={1} marginBottom={0} flexShrink={0} overflow="hidden">
+            <Text wrap="truncate-end" dimColor>[w] wrap {logsWrapEnabled ? "on" : "off"}</Text>
+            <Text wrap="truncate-end" dimColor>[f] {logsSeverityFilter}</Text>
+            {hiddenAbove > 0 && <Text wrap="truncate-end" dimColor>↑ {hiddenAbove} more</Text>}
+            {hiddenBelow > 0 && <Text wrap="truncate-end" dimColor>↓ {hiddenBelow} more</Text>}
+          </Box>
+          {visibleEntries.map((entry, displayIdx) => {
+            const absoluteIndex = visibleStart + displayIdx;
+            const isSelected = absoluteIndex === cursor;
+            const bg = isSelected ? "cyan" : undefined;
+            const fg = isSelected ? "whiteBright" : undefined;
+            const lvl = entry.level === "error" ? "✗" : entry.level === "warn" ? "⚠" : "✓";
+            const lvlColor = entry.level === "error" ? "red" : entry.level === "warn" ? "yellow" : "green";
+            const marker = isSelected ? "▶ " : "  ";
+
+            // Wrap each entry in a height-pinned Box (when wrap is off) so a
+            // single entry can never grow beyond 1 row. Without this, certain
+            // narrow widths can cause Ink/Yoga to measure the nested-Text
+            // entry as taller than 1 row even with truncate-end set, which
+            // pushes the panel intrinsic height past the slot and scrolls
+            // the outer header off the top of the alt-screen.
+            const entryHeight = logsWrapEnabled ? undefined : 1;
+
+            const displayMessage = stripLeadingDetailedTimestamp(entry.message);
+
+            if (isNarrow) {
+              const idx = narrowTimestamp(absoluteIndex);
+              const pfx = narrowPrefix(entry.prefix, NARROW_PREFIX_WIDTH);
+              return (
+                <Box
+                  key={`${entry.timestamp.getTime()}-${displayIdx}`}
+                  height={entryHeight}
+                  flexShrink={0}
+                  overflow="hidden"
+                >
+                  <Text
+                    backgroundColor={bg}
+                    wrap={logsWrapEnabled ? "wrap" : "truncate-end"}
+                  >
+                    <Text color={isSelected ? "white" : "gray"} bold={isSelected}>{marker}</Text>
+                    <Text color={fg} dimColor={!isSelected}>{idx} </Text>
+                    <Text color={lvlColor}>{lvl}</Text>
+                    <Text color={fg} dimColor={!isSelected}>{` ${pfx} `}</Text>
+                    <Text color={fg} bold={isSelected}>{displayMessage}</Text>
+                  </Text>
+                </Box>
+              );
+            }
+
+            const ts = formatTimestamp(entry.timestamp);
+            const prefixSlot = entry.prefix
+              ? `[${entry.prefix}]`.slice(0, PREFIX_WIDTH).padEnd(PREFIX_WIDTH)
+              : " ".repeat(PREFIX_WIDTH);
+            return (
+              <Box
+                key={`${entry.timestamp.getTime()}-${displayIdx}`}
+                height={entryHeight}
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Text
+                  backgroundColor={bg}
+                  wrap={logsWrapEnabled ? "wrap" : "truncate-end"}
+                >
+                  <Text color={isSelected ? "white" : "gray"} bold={isSelected}>{marker}</Text>
+                  <Text color={fg} dimColor={!isSelected}>{ts} </Text>
+                  <Text color={lvlColor}>{lvl}</Text>
+                  <Text color={fg} dimColor={!isSelected}>{` ${prefixSlot} `}</Text>
+                  <Text color={fg} bold={isSelected}>{displayMessage}</Text>
+                </Text>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+    </Panel>
+  );
+}
+
+function ExpandedLog({
+  entry,
+  index,
+  total,
+  clipboardFlash,
+}: {
+  entry: LogEntry;
+  index: number;
+  total: number;
+  clipboardFlash: { ok: boolean; at: number } | null;
+}) {
+  const { t } = useTranslation("cli");
+  return (
+    <Box flexDirection="column" flexGrow={1} width="100%">
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>{t("tui.expandedLogHeader", "Entry {{index}}/{{total}} · [Enter/Esc] close · [c] copy", { index: index + 1, total })}</Text>
+        {clipboardFlash && (
+          <Text color={clipboardFlash.ok ? "greenBright" : "redBright"} bold>
+            {clipboardFlash.ok ? t("tui.copiedSuccess", "✓ Copied!") : t("tui.copyFailed", "✗ Copy failed")}
+          </Text>
+        )}
+      </Box>
+      <Box height={1} />
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>{t("tui.expandedLogTime", "Time:")}</Text>
+        <Text>{formatTimestamp(entry.timestamp)}</Text>
+      </Box>
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>{t("tui.expandedLogLevel", "Level:")}</Text>
+        <LevelBadge level={entry.level} />
+        <Text>{entry.level.toUpperCase()}</Text>
+      </Box>
+      {entry.prefix && (
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>{t("tui.expandedLogPrefix", "Prefix:")}</Text>
+          <Text>{entry.prefix}</Text>
+        </Box>
+      )}
+      <Box height={1} />
+      <Text wrap="wrap">{entry.message}</Text>
+    </Box>
+  );
+}
+
+// ── Utilities panel ───────────────────────────────────────────────────────────
+
+function UtilitiesPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
+  const { t } = useTranslation("cli");
+  const autoKill = state.autoKillVitestOnPressure;
+  const thresholdPct = Math.round(state.vitestKillThreshold * 100);
+  const actions: Array<{ key: string; label: string }> = [
+    { key: "r", label: t("tui.utilitiesRefreshStats", "Refresh Stats") },
+    { key: "c", label: t("tui.utilitiesClearLogs", "Clear Logs") },
+    { key: "t", label: t("tui.utilitiesToggleEnginePause", "Toggle Engine Pause") },
+    { key: "k", label: t("tui.utilitiesKillVitest", "Kill Vitest Processes") },
+    { key: "v", label: t("tui.utilitiesAutoKillVitest", "Auto-Kill Vitest >{{pct}}% Mem: {{state}}", { pct: thresholdPct, state: autoKill ? "ON" : "OFF" }) },
+    { key: "+/-", label: t("tui.utilitiesAdjustThreshold", "Adjust Threshold ({{pct}}%)", { pct: thresholdPct }) },
+    { key: "?", label: t("tui.utilitiesHelp", "Help") },
+  ];
+  return (
+    <Panel title={t("tui.utilitiesPanelTitle", "Utilities")} isFocused={isFocused} flexGrow={1}>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+        {actions.map((action) => (
+          <Box key={action.key} flexDirection="row" flexShrink={0}>
+            <Text color="yellow">{`[${action.key}] `}</Text>
+            <Text wrap="truncate-end">{action.label}</Text>
+          </Box>
+        ))}
+      </Box>
+    </Panel>
+  );
+}
+
+// ── Help overlay ──────────────────────────────────────────────────────────────
+
+function HelpOverlay() {
+  const { t } = useTranslation("cli");
+  const shortcuts: Array<[string, string]> = [
+    ["[m] / [s]", t("tui.helpShortcutMain", "Main (status mode)")],
+    ["[b]", t("tui.helpShortcutBoard", "Board view")],
+    ["[a]", t("tui.helpShortcutAgents", "Agents view")],
+    ["[g]", t("tui.helpShortcutSettings", "Settings view")],
+    ["[t]", t("tui.helpShortcutGit", "Git view")],
+    ["[f]", t("tui.helpShortcutFiles", "Files (when not on Logs); cycles log severity filter on Logs")],
+    ["[Tab]", t("tui.helpShortcutTabForward", "Cycle focused panel / pane forward")],
+    ["[Shift+Tab]", t("tui.helpShortcutTabBackward", "Cycle focused panel / pane backward")],
+    ["[1-5]", t("tui.helpShortcutJumpPanel", "Jump to panel (Main: System/Logs/Stats/Utilities/Settings)")],
+    ["[← / →]", t("tui.helpShortcutSwitchPane", "Switch pane (Agents, Settings, Files, Git)")],
+    ["[→] / [↓] / [n]", t("tui.helpShortcutNextPanel", "Next panel (Main; ↑/↓ scroll on Logs)")],
+    ["[←] / [↑] / [p]", t("tui.helpShortcutPrevPanel", "Previous panel (Main; ↑/↓ scroll on Logs)")],
+    ["[Enter]", t("tui.helpShortcutExpandLog", "Expand log + release mouse for text selection (Logs)")],
+    ["[r]", t("tui.helpShortcutRefreshStats", "Refresh stats (Utilities)")],
+    ["[c]", t("tui.helpShortcutClearLogs", "Clear logs (Utilities)")],
+    ["[k]", t("tui.helpShortcutKillVitest", "Kill all vitest processes (Utilities)")],
+    ["[v]", t("tui.helpShortcutToggleAutoKill", "Toggle auto-kill vitest on memory pressure (Utilities)")],
+    ["[+/-]", t("tui.helpShortcutAdjustThreshold", "Adjust vitest kill memory threshold (Utilities)")],
+    ["[Enter]", t("tui.helpShortcutOpenUrl", "Open dashboard URL in browser (System)")],
+    ["[c]", t("tui.helpShortcutCopyToken", "Copy auth token to clipboard (System)")],
+    ["[M]", t("tui.helpShortcutMouseToggle", "Manual mouse-mode toggle (auto: on for Logs/Files/Git/Board, off elsewhere)")],
+    ["[↑/↓/k/j]", t("tui.helpShortcutNavigate", "Navigate list / log entries")],
+    ["[Home / G]", t("tui.helpShortcutFirstLast", "First / last log entry (Logs)")],
+    ["[Enter/Space]", t("tui.helpShortcutExpandEntry", "Expand log entry (Logs)")],
+    ["[c]", t("tui.helpShortcutCopyEntry", "Copy selected log entry to clipboard (Logs)")],
+    ["[w]", t("tui.helpShortcutWordWrap", "Toggle word wrap (Logs / Files)")],
+    ["[Space]", t("tui.helpShortcutToggleBool", "Toggle boolean (Settings)")],
+    ["[+/-]", t("tui.helpShortcutAdjustNumber", "Adjust number (Settings)")],
+    ["[p]", t("tui.helpShortcutProjectPicker", "Project picker (Board, Files)")],
+    ["[n]", t("tui.helpShortcutNewTask", "New task (Board)")],
+    ["[D]", t("tui.helpShortcutDeleteAgent", "Delete agent — requires confirm (Agents)")],
+    ["[P] / [F]", t("tui.helpShortcutPushFetch", "Push / fetch (Git)")],
+    ["[.]", t("tui.helpShortcutHiddenFiles", "Toggle hidden files (Files)")],
+    ["[?] / [h]", t("tui.helpShortcutToggleHelp", "Toggle help")],
+    ["[q]", t("tui.helpShortcutQuit", "Quit")],
+    ["[Ctrl+C]", t("tui.helpShortcutForceQuit", "Force quit")],
+  ];
+
+  const rowKeyWidth = 22;
+  const rowDescWidth = Math.max(...shortcuts.map(([, d]) => d.length));
+  const innerWidth = rowKeyWidth + 2 + rowDescWidth + 2;
+  const titleRow = ` ${t("tui.helpTitle", "KEYBOARD SHORTCUTS")}`.padEnd(innerWidth);
+
+  return (
+    <Box borderStyle="round" borderColor="cyanBright" flexDirection="column" backgroundColor="black">
+      <Text backgroundColor="black" bold color="white">{titleRow}</Text>
+      <Text backgroundColor="black"> </Text>
+      {shortcuts.map(([key, desc], i) => {
+        const keyCell = ` ${key.padEnd(rowKeyWidth - 1)} `;
+        const descCell = ` ${desc.padEnd(rowDescWidth)} `;
+        // Some shortcut keys repeat across contexts (e.g. [t] for Git view
+        // and [t] for Toggle engine pause), so index-based keys are correct
+        // here — each row is genuinely unique by position, not by key char.
+        return (
+          <Box key={i} flexDirection="row">
+            <Text backgroundColor="black" color="yellow">{keyCell}</Text>
+            <Text backgroundColor="black" color="white">{descCell}</Text>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+// ── Status mode grid layout ────────────────────────────────────────────────────
+
+const PANEL_ORDER: SectionId[] = ["system", "logs", "stats", "utilities", "settings"];
+
+function StatusModeGrid({
+  state,
+  controller,
+}: {
+  state: DashboardState;
+  controller: DashboardTUI;
+}) {
+  const focused = state.activeSection;
+  const { stdout } = useStdout();
+  const rows = stdout?.rows ?? 24;
+  const cols = stdout?.columns ?? 80;
+  // Middle area = rows - header(1) - statusbar(1) = rows-2 (no top spacer).
+  // Bottom row scales with available space; Logs fills what remains.
+  const middleHeight = Math.max(1, rows - 2);
+  const systemFocused = focused === "system";
+  // Match the same intrinsic sizing logic used by single-pane mode so URL/token
+  // wrapping at narrow widths cannot clip in the grid layout.
+  const systemContentRows = estimateSystemContentRows(state.systemInfo, cols, systemFocused);
+  // Grid Panel chrome: border (2) + title row (1).
+  const SYSTEM_HEIGHT = systemContentRows + 3 + (systemFocused ? 1 : 0);
+  const bottomShare = Math.min(10, Math.max(6, Math.floor(middleHeight * 0.35)));
+  const logsShare = Math.max(1, middleHeight - SYSTEM_HEIGHT - bottomShare);
+  // LogsPanel chrome: border 2 + title 1 + filter 1 = 4.
+  const logsAvailableRows = Math.max(1, logsShare - 4);
+  // On very wide terminals, the left column stacks Stats + Utilities + Settings
+  // and Logs takes the full right column for its full height. Stats absorbs
+  // whatever vertical room Utilities/Settings don't claim.
+  const wideLayout = cols >= 150;
+  const wideLogsAvailableRows = Math.max(1, logsShare + bottomShare - 4);
+  // Fixed heights for Utilities (7 actions + 3 chrome) and Settings (9 keys +
+  // 3 chrome). Stats flex-grows above these so it gets the leftover space.
+  const UTILITIES_HEIGHT = 10;
+  const SETTINGS_HEIGHT = 12;
+  tuiDebug("StatusModeGrid", { cols, rows, middleHeight, logsShare, bottomShare, focused, wideLayout });
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      {/* No top spacer — saves a row. System panel's top border sits at the
+          same terminal row as the header overlay (covered by it), same
+          tradeoff as StatusModeSingle. */}
+      <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        {/* System: full width, dynamically sized from intrinsic content rows
+            so wrapped URL/token lines remain visible. flexShrink=0 so it never
+            shrinks below this computed height. */}
+        <Box height={SYSTEM_HEIGHT} flexShrink={0} overflow="hidden">
+          <SystemPanel state={state} isFocused={focused === "system"} />
+        </Box>
+        {wideLayout ? (
+          <>
+            {/* Wide: left column stacks Stats / Utilities / Settings; Logs fills
+                the right column for the full middle-area height. Stats flex-grows
+                so it claims any space Utilities/Settings don't need. */}
+            <Box flexGrow={1} flexShrink={0} flexDirection="row" overflow="hidden">
+              <Box flexDirection="column" width="30%" flexShrink={0} overflow="hidden">
+                <Box flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
+                  <StatsPanel state={state} isFocused={focused === "stats"} />
+                </Box>
+                <Box height={UTILITIES_HEIGHT} flexShrink={0} flexDirection="column" overflow="hidden">
+                  <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
+                </Box>
+                <Box height={SETTINGS_HEIGHT} flexShrink={0} flexDirection="column" overflow="hidden">
+                  <SettingsPanel state={state} isFocused={focused === "settings"} />
+                </Box>
+              </Box>
+              <Box flexGrow={1} flexDirection="column" overflow="hidden">
+                <LogsPanel
+                  state={state}
+                  isFocused={focused === "logs"}
+                  availableRows={wideLogsAvailableRows}
+                />
+              </Box>
+            </Box>
+          </>
+        ) : (
+          <>
+            {/* Logs: fills remaining vertical space. flexShrink=0 so System and
+                the bottom row collapse first — Logs keeps its space. */}
+            <Box flexGrow={1} flexShrink={0} flexDirection="column" overflow="hidden">
+              <LogsPanel
+                state={state}
+                isFocused={focused === "logs"}
+                availableRows={logsAvailableRows}
+              />
+            </Box>
+            {/* Bottom row: Stats + Utilities + Settings, equal-width. flexShrink=2
+                so when terminal height is small they collapse before Logs does. */}
+            <Box flexDirection="row" flexShrink={2} overflow="hidden">
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <StatsPanel state={state} isFocused={focused === "stats"} />
+              </Box>
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
+              </Box>
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <SettingsPanel state={state} isFocused={focused === "settings"} />
+              </Box>
+            </Box>
+          </>
+        )}
+      </Box>
+
+      <Box flexShrink={0}>
+        <StatusBar state={state} controller={controller} />
+      </Box>
+    </Box>
+  );
+}
+
+function StatusModeSingle({
+  state,
+  controller,
+}: {
+  state: DashboardState;
+  controller: DashboardTUI;
+}) {
+  const focused = state.activeSection;
+  const { stdout } = useStdout();
+  const rows = stdout?.rows ?? 24;
+  const cols = stdout?.columns ?? 80;
+  // LogsPanel's row budget when it owns the whole single-pane view. Chrome=6:
+  //   header(1) + statusbar(1) +
+  //   panel border top(1) + panel title(1) + panel border bottom(1) +
+  //   filter row(1) = 6.
+  const logsAvailableRowsFull = Math.max(1, rows - 6);
+
+  // Dynamic split: give the top pane exactly the rows it needs to render
+  // the active section without truncating, and let the log strip absorb
+  // everything else. We only enable the split when the leftover would still
+  // give the log strip enough rows to be useful.
+  const contentRows = Math.max(1, rows - 2); // rows minus header + statusbar
+  const topNeededRows =
+    focused === "logs"
+      ? contentRows
+      : estimateSectionPanelHeight(focused, state, cols, !state.narrowLogSplitFocused);
+  const candidateSplitHeight = contentRows - topNeededRows;
+  const showLogSplit =
+    focused !== "logs" && candidateSplitHeight >= NARROW_SPLIT_MIN_LOG_ROWS;
+  const splitHeight = showLogSplit ? candidateSplitHeight : 0;
+  // Bottom log pane has its own border + title + filter chrome (4), so the
+  // visible-entries budget is splitHeight - 4.
+  const splitLogRows = Math.max(1, splitHeight - 4);
+  const splitFocused = showLogSplit && state.narrowLogSplitFocused;
+
+  tuiDebug("StatusModeSingle", {
+    cols,
+    rows,
+    logsAvailableRowsFull,
+    focused,
+    showLogSplit,
+    splitHeight,
+    splitFocused,
+  });
+
+  const topPanel = () => {
+    switch (focused) {
+      case "system": return <SystemPanel state={state} isFocused={!splitFocused} />;
+      case "logs": return <LogsPanel state={state} isFocused availableRows={logsAvailableRowsFull} />;
+      case "utilities": return <UtilitiesPanel state={state} isFocused={!splitFocused} />;
+      case "stats": return <StatsPanel state={state} isFocused={!splitFocused} />;
+      case "settings": return <SettingsPanel state={state} isFocused={!splitFocused} />;
+    }
+  };
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      <Box flexGrow={1} flexDirection="column" overflow="hidden">
+        {topPanel()}
+      </Box>
+      {showLogSplit && (
+        <Box flexShrink={0} flexDirection="column" height={splitHeight} overflow="hidden">
+          <LogsPanel state={state} isFocused={splitFocused} availableRows={splitLogRows} />
+        </Box>
+      )}
+      <Box flexShrink={0}>
+        <StatusBar state={state} controller={controller} />
+      </Box>
+    </Box>
+  );
+}
+
+function StatusBar({ state, controller: _controller }: { state: DashboardState; controller: DashboardTUI }) {
+  const { t } = useTranslation("cli");
+  const { systemInfo, updateStatus } = state;
+  const hasUpdate = updateStatus?.updateAvailable === true;
+  const uptime = systemInfo ? formatUptime(Date.now() - systemInfo.startTimeMs) : null;
+  const url = systemInfo?.baseUrl ?? null;
+  const help = t("tui.statusBarHelp", "Tab cycle panel  ·  1-5 jump");
+
+  // Single Text so Yoga truncates the tail (help text) when natural width
+  // exceeds cols — guarantees a one-row footer with version/url preserved.
+  const leftSegments = [`v${FUSION_VERSION}`];
+  if (url) leftSegments.push(url);
+  if (uptime) leftSegments.push(uptime);
+  const left = leftSegments.join("  ·  ");
+  return (
+    <Box height={1} paddingX={1} flexShrink={0} overflow="hidden">
+      <Text wrap="truncate-end">
+        <Text dimColor>{left}</Text>
+        {hasUpdate && <Text color="yellow">{" ●"}</Text>}
+        <Text dimColor>{`  │  ${help}`}</Text>
+      </Text>
+    </Box>
+  );
+}
+
+// ── Interactive mode ──────────────────────────────────────────────────────────
+
+// ── Unified main header — used by both status and interactive modes ──────────
+
+function MainHeader({ state }: { state: DashboardState }) {
+  const { t } = useTranslation("cli");
+  const inInteractive = state.mode === "interactive";
+  const interactiveView = state.interactiveView;
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  type Tab =
+    | { key: string; label: string; kind: "main" }
+    | { key: string; label: string; kind: "interactive"; view: InteractiveView };
+  const tabs: Tab[] = [
+    { key: "m", label: t("tui.tabMain", "Main"), kind: "main" },
+    { key: "b", label: t("tui.tabBoard", "Board"), kind: "interactive", view: "board" },
+    { key: "a", label: t("tui.tabAgents", "Agents"), kind: "interactive", view: "agents" },
+    { key: "g", label: t("tui.tabSettings", "Settings"), kind: "interactive", view: "settings" },
+    { key: "t", label: t("tui.tabGit", "Git"), kind: "interactive", view: "git" },
+    { key: "f", label: t("tui.tabFiles", "Files"), kind: "interactive", view: "files" },
+  ];
+  const showHelpHint = cols >= 110;
+  const fullLabels = cols >= 90;
+  const tiny = cols < 50;
+  const compact = !fullLabels && !tiny;
+  const isActive = (t: Tab) =>
+    t.kind === "main" ? !inInteractive : inInteractive && t.view === interactiveView;
+  if (tiny) {
+    const active = tabs.find(isActive);
+    return (
+      <Box height={1} flexDirection="row" gap={1} paddingX={1} flexShrink={0} overflow="hidden">
+        <MiniLogo />
+        {active && (
+          <Box flexShrink={0}>
+            <Text wrap="truncate-end" backgroundColor="cyan" color="black" bold>{` ${active.key} ${active.label} `}</Text>
+          </Box>
+        )}
+      </Box>
+    );
+  }
+  return (
+    <Box height={1} flexDirection="row" gap={1} paddingX={1} paddingY={0} flexShrink={0} overflow="hidden">
+      <MiniLogo />
+      <Box flexShrink={0}><Text wrap="truncate-end" dimColor>│</Text></Box>
+      {tabs.map((t) => {
+        const active = isActive(t);
+        return (
+          <Box key={t.key} marginRight={1} flexShrink={0}>
+            {active ? (
+              <Text wrap="truncate-end" backgroundColor="cyan" color="black" bold>
+                {compact ? ` ${t.key} ` : ` [${t.key}] ${t.label} `}
+              </Text>
+            ) : compact ? (
+              <Text wrap="truncate-end" dimColor>{`[${t.key}]`}</Text>
+            ) : (
+              <Text wrap="truncate-end" dimColor>{`[${t.key}] ${t.label}`}</Text>
+            )}
+          </Box>
+        );
+      })}
+      <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" overflow="hidden" marginRight={1}>
+        {state.remoteStatus?.state === "running" && (
+          <Text wrap="truncate-end" color="green" bold>
+            ● {t("tui.headerTunnelRunning", "tunnel")}
+            {state.remoteStatus.url ? ` ${state.remoteStatus.url}` : ""}
+            {cols >= 80 ? t("tui.headerTunnelQrHint", "  [^Q] QR") : ""}
+          </Text>
+        )}
+        {state.remoteStatus?.state === "starting" && (
+          <Text wrap="truncate-end" color="yellow">● {t("tui.headerTunnelStarting", "tunnel starting…")}</Text>
+        )}
+      </Box>
+      {showHelpHint && <Box flexShrink={0}><Text wrap="truncate-end" dimColor>{t("tui.headerHelpQuitHint", "[?] help  [q] quit")}</Text></Box>}
+    </Box>
+  );
+}
+
+// ── Kanban board ──────────────────────────────────────────────────────────────
+
+// U11 (R18): the TUI renders five buckets — its four legacy kanban columns plus
+// a read-only "Other (custom)" catch-all wedged between in-review and done for
+// workflow columns it can't express. `KANBAN_COLUMNS` is the bucket render
+// order; see ./bucket-mapping.ts for how tasks land in each.
+const KANBAN_COLUMNS = TUI_BUCKETS;
+type KanbanColumn = TuiBucket;
+
+const COLUMN_COLORS: Record<string, "yellow" | "cyanBright" | "cyan" | "green" | "magenta"> = {
+  todo: "yellow",
+  "in-progress": "cyanBright",
+  "in-review": "cyan",
+  [OTHER_BUCKET]: "magenta",
+  done: "green",
+};
+
+function columnLabel(col: string): string {
+  if (col === OTHER_BUCKET) return "Other (custom)";
+  return col.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+}
+
+function TaskCard({
+  task,
+  selected,
+  width,
+  secondaryLabel,
+}: {
+  task: TaskItem;
+  selected: boolean;
+  width: number;
+  // U11: real column name shown under cards in the read-only "other" bucket so
+  // the user keeps the true position despite the TUI not modeling that column.
+  secondaryLabel?: string;
+}) {
+  const { t } = useTranslation("cli");
+  const accent = COLUMN_COLORS[task.column] ?? "white";
+  const borderColor = selected ? "cyanBright" : "gray";
+  const titleColor = selected ? "whiteBright" : undefined;
+  const shortId = task.id.length > 10 ? task.id.slice(0, 8) : task.id;
+  const title = task.title ?? task.description ?? t("tui.taskCardUntitled", "(untitled)");
+  return (
+    <Box
+      borderStyle="round"
+      borderColor={borderColor}
+      flexDirection="column"
+      paddingX={1}
+      width={width}
+      flexShrink={0}
+    >
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text dimColor>{shortId}</Text>
+        {task.agentState && (
+          <Text color={accent}>● {task.agentState}</Text>
+        )}
+      </Box>
+      <Text bold={selected} color={titleColor} wrap="wrap">
+        {title}
+      </Text>
+      {secondaryLabel && (
+        <Text dimColor wrap="truncate-end">↳ {secondaryLabel}</Text>
+      )}
+    </Box>
+  );
+}
+
+function KanbanColumnView({
+  column,
+  tasks,
+  isFocused,
+  selectedIndex,
+  width,
+  availableRows,
+}: {
+  column: KanbanColumn;
+  tasks: TaskItem[];
+  isFocused: boolean;
+  selectedIndex: number;
+  width: number;
+  availableRows: number;
+}) {
+  const accent = COLUMN_COLORS[column];
+  const headerColor = isFocused ? "whiteBright" : accent;
+  const isOther = isOtherBucket(column);
+  const cardWidth = Math.max(16, width - 2);
+  const innerHeaderWidth = Math.max(8, width - 2);
+  const label = `${columnLabel(column).toUpperCase()} (${tasks.length})`;
+  const headerText = ` ${label} `.length > innerHeaderWidth
+    ? ` ${label} `.slice(0, innerHeaderWidth)
+    : ` ${label} `.padEnd(innerHeaderWidth, " ");
+
+  // Each TaskCard takes ~4 rows (top border + id row + title row + bottom
+  // border + sometimes a wrapped title row). Reserve 2 rows for header +
+  // header spacer + 2 rows for "↑/↓ N more" hints, then floor(remaining/4).
+  const cardRowsBudget = Math.max(0, availableRows - 4);
+  const visibleCount = Math.max(1, Math.floor(cardRowsBudget / 4));
+  // Slide the window so the selected card is centered when possible.
+  const halfWindow = Math.floor(visibleCount / 2);
+  const maxStart = Math.max(0, tasks.length - visibleCount);
+  const windowStart = Math.max(0, Math.min(selectedIndex - halfWindow, maxStart));
+  const windowEnd = Math.min(tasks.length, windowStart + visibleCount);
+  const visibleTasks = tasks.slice(windowStart, windowEnd);
+  const hiddenAbove = windowStart;
+  const hiddenBelow = tasks.length - windowEnd;
+
+  return (
+    <Box
+      flexDirection="column"
+      width={width}
+      flexShrink={1}
+      flexGrow={1}
+      paddingX={1}
+      overflow="hidden"
+    >
+      <Box width={innerHeaderWidth} flexShrink={0}>
+        <Text bold color={headerColor} backgroundColor={isFocused ? accent : undefined}>
+          {headerText}
+        </Text>
+      </Box>
+      <Box height={1} flexShrink={0} />
+      {tasks.length === 0 ? (
+        <Text dimColor>—</Text>
+      ) : (
+        <Box flexDirection="column" gap={0} flexShrink={1} overflow="hidden">
+          {hiddenAbove > 0 && (
+            <Text dimColor>↑ {hiddenAbove} more</Text>
+          )}
+          {visibleTasks.map((task, i) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              selected={isFocused && (windowStart + i) === selectedIndex}
+              width={cardWidth}
+              secondaryLabel={isOther ? otherBucketSecondaryLabel(task) : undefined}
+            />
+          ))}
+          {hiddenBelow > 0 && (
+            <Text dimColor>↓ {hiddenBelow} more</Text>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function ProjectSelector({
+  open,
+  projects,
+  selectedIndex,
+  onSelect: _onSelect,
+}: {
+  open: boolean;
+  projects: ProjectItem[];
+  selectedIndex: number;
+  onSelect: (i: number) => void;
+}) {
+  const { t } = useTranslation("cli");
+  const current = projects[selectedIndex] ?? null;
+  if (!open) {
+    return (
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>{t("tui.projectSelectorLabel", "Project:")}</Text>
+        <Text bold color="white">{current?.name ?? t("tui.projectSelectorNone", "(none)")}</Text>
+        <Text dimColor>{t("tui.projectSelectorChangeHint", "[p] change")}</Text>
+      </Box>
+    );
+  }
+  return (
+    <Box
+      borderStyle="round"
+      borderColor="cyanBright"
+      flexDirection="column"
+      paddingX={1}
+      backgroundColor="black"
+      width={Math.max(30, ...projects.map((p) => p.name.length + 4))}
+    >
+      <Text bold color="cyanBright" backgroundColor="black">{t("tui.projectSelectorPickTitle", "Pick a project")}</Text>
+      {projects.length === 0 ? (
+        <Text dimColor backgroundColor="black">{t("tui.projectSelectorNoProjects", "(no projects registered)")}</Text>
+      ) : (
+        projects.map((p, i) => {
+          const isSel = i === selectedIndex;
+          return (
+            <Box key={p.id} flexDirection="row" gap={1} backgroundColor="black">
+              <Text color={isSel ? "white" : "gray"} backgroundColor="black">{isSel ? "▶" : " "}</Text>
+              <Text bold={isSel} color={isSel ? "whiteBright" : undefined} backgroundColor="black">
+                {p.name}
+              </Text>
+            </Box>
+          );
+        })
+      )}
+      <Box height={1} />
+      <Text dimColor backgroundColor="black">{t("tui.projectSelectorNavHints", "↑↓ navigate · Enter select · Esc cancel")}</Text>
+    </Box>
+  );
+}
+
+// ── Duration helpers for step display ────────────────────────────────────────
+
+function formatDurationMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  if (m > 0) return `${m}m ${s % 60}s`;
+  return `${s}s`;
+}
+
+// Format a single log timestamp as HH:MM:SS, gracefully falling back on parse errors.
+function formatLogTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
+  } catch {
+    return "??:??:??";
+  }
+}
+
+// ── Step checklist icon + color mapping ──────────────────────────────────────
+
+const STEP_ICON: Record<string, string> = {
+  done: "✓",
+  running: "▶",
+  pending: "·",
+  failed: "✗",
+  skipped: "⏭",
+};
+type StepStatusColor = "green" | "blue" | "gray" | "red" | "white";
+const STEP_COLOR: Record<string, StepStatusColor> = {
+  done: "green",
+  running: "blue",
+  pending: "gray",
+  failed: "red",
+  skipped: "gray",
+};
+
+// MAX log entries kept in the detail pane to avoid unbounded growth.
+const MAX_LOG_ENTRIES = 1000;
+// Initial log rows fetched from the store.
+const INITIAL_LOG_LIMIT = 200;
+
+// ── TaskDetailScreen ──────────────────────────────────────────────────────────
+
+function TaskDetailScreen({
+  task,
+  projectPath,
+  interactiveData,
+  controller,
+}: {
+  task: TaskItem;
+  projectPath: string | null;
+  interactiveData: DashboardState["interactiveData"];
+  controller: DashboardTUI;
+}) {
+  const { t } = useTranslation("cli");
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const isNarrow = cols < NARROW_THRESHOLD;
+  // How many lines the log pane can show — leave room for header + steps + dividers.
+  const rows = stdout?.rows ?? 24;
+
+  // Live task detail — initially null (loading) until the initial fetch resolves.
+  const [detail, setDetail] = useState<TaskDetailData | null | "unavailable">(null);
+
+  // Log scroll state: scrollOffset is from the bottom (0 = at bottom).
+  const [logScrollOffset, setLogScrollOffset] = useState(0);
+  const [autoFollow, setAutoFollow] = useState(true);
+
+  // Steps section height is bounded so logs get the remaining space.
+  // Reserve: header (3) + title (3) + meta row (2) + steps header (2) +
+  //          up to 8 step rows + log header (2) + hints (2) + borders (2) = ~22 fixed
+  const FIXED_ROWS = 22;
+  const logPaneRows = Math.max(4, rows - FIXED_ROWS);
+
+  // ── Mount: fetch initial data + subscribe to live events ─────────────────
+  useEffect(() => {
+    if (!projectPath || !interactiveData) {
+      setDetail("unavailable");
+      return;
+    }
+    let cancelled = false;
+
+    void interactiveData.tasks.getTaskDetail(projectPath, task.id).then((d) => {
+      if (cancelled) return;
+      if (d === null) {
+        setDetail("unavailable");
+      } else {
+        // Only keep last INITIAL_LOG_LIMIT entries in the initial load.
+        const trimmed = { ...d, recentLogs: d.recentLogs.slice(-INITIAL_LOG_LIMIT) };
+        setDetail(trimmed);
+      }
+    });
+
+    const unsub = interactiveData.tasks.subscribeTaskEvents(
+      projectPath,
+      task.id,
+      (event: TaskEvent) => {
+        if (cancelled) return;
+        setDetail((prev) => {
+          if (!prev || prev === "unavailable") return prev;
+          if (event.kind === "step:updated") {
+            const steps = prev.steps.map((s) =>
+              s.index === event.step.index ? event.step : s,
+            );
+            return { ...prev, steps };
+          }
+          if (event.kind === "log:appended") {
+            const logs = [...prev.recentLogs, event.entry];
+            // Cap at MAX_LOG_ENTRIES, dropping oldest when over limit.
+            const trimmed = logs.length > MAX_LOG_ENTRIES ? logs.slice(logs.length - MAX_LOG_ENTRIES) : logs;
+            return { ...prev, recentLogs: trimmed };
+          }
+          if (event.kind === "task:updated") {
+            // Full replacement but merge logs so we don't lose buffered entries.
+            const merged = [...prev.recentLogs, ...event.task.recentLogs];
+            const deduped = Array.from(
+              new Map(merged.map((e) => [e.timestamp + e.text, e])).values(),
+            );
+            const trimmed = deduped.length > MAX_LOG_ENTRIES ? deduped.slice(deduped.length - MAX_LOG_ENTRIES) : deduped;
+            return { ...event.task, recentLogs: trimmed };
+          }
+          return prev;
+        });
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [projectPath, task.id]);
+
+  // When auto-follow is on and new log entries arrive, reset scroll to bottom.
+  const logCount = detail && detail !== "unavailable" ? detail.recentLogs.length : 0;
+  useEffect(() => {
+    if (autoFollow) setLogScrollOffset(0);
+  }, [autoFollow, logCount]);
+
+  // ── Mouse wheel: scroll logs by WHEEL_STEP lines per tick ──
+  // Subscribes to controller wheel events; the controller decodes xterm SGR
+  // mouse sequences off stdin. Mirrors the keyboard arrow behavior including
+  // auto-follow toggling.
+  const WHEEL_STEP = 3;
+  // Latest log count + pane size in refs so the subscription doesn't need
+  // to re-register on every render (which would also miss wheel ticks
+  // arriving between renders).
+  const logCountRef = useRef(logCount);
+  const logPaneRowsRef = useRef(logPaneRows);
+  logCountRef.current = logCount;
+  logPaneRowsRef.current = logPaneRows;
+  useEffect(() => {
+    return controller.onWheel((dir) => {
+      const maxOffset = Math.max(0, logCountRef.current - logPaneRowsRef.current);
+      if (maxOffset === 0) return;
+      if (dir === "up") {
+        setAutoFollow(false);
+        setLogScrollOffset((o) => Math.min(maxOffset, o + WHEEL_STEP));
+      } else {
+        setLogScrollOffset((o) => {
+          const next = Math.max(0, o - WHEEL_STEP);
+          if (next === 0) setAutoFollow(true);
+          return next;
+        });
+      }
+    });
+  }, [controller]);
+
+  // ── Keyboard: ↑↓ / j/k scroll logs; G = jump to bottom; g = jump to top ──
+  useInput((input, key) => {
+    // All detail-screen keys except Esc/Backspace are consumed here so they
+    // don't bleed into BoardView's handler (which has return guards for detail).
+    if (detail && detail !== "unavailable" && detail.recentLogs.length > 0) {
+      const maxOffset = Math.max(0, detail.recentLogs.length - logPaneRows);
+      if (key.upArrow || input === "k") {
+        setAutoFollow(false);
+        setLogScrollOffset((o) => Math.min(maxOffset, o + 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setLogScrollOffset((o) => {
+          const next = Math.max(0, o - 1);
+          if (next === 0) setAutoFollow(true);
+          return next;
+        });
+        return;
+      }
+      if (key.pageUp) {
+        setAutoFollow(false);
+        setLogScrollOffset((o) => Math.min(maxOffset, o + Math.floor(logPaneRows / 2)));
+        return;
+      }
+      if (key.pageDown) {
+        setLogScrollOffset((o) => {
+          const next = Math.max(0, o - Math.floor(logPaneRows / 2));
+          if (next === 0) setAutoFollow(true);
+          return next;
+        });
+        return;
+      }
+      if (input === "G") {
+        setLogScrollOffset(0);
+        setAutoFollow(true);
+        return;
+      }
+      if (input === "g") {
+        setAutoFollow(false);
+        setLogScrollOffset(maxOffset);
+        return;
+      }
+    }
+  });
+
+  const accent = COLUMN_COLORS[task.column] ?? "white";
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <Box
+      borderStyle="round"
+      borderColor="cyanBright"
+      flexDirection="column"
+      paddingX={2}
+      paddingY={1}
+      flexGrow={1}
+    >
+      {/* Header strip: id + pills + back hint */}
+      <Box flexDirection="row" justifyContent="space-between" flexShrink={0}>
+        <Box flexDirection="row" gap={2}>
+          <Text dimColor>{task.id}</Text>
+          <Text color={accent} bold>[{columnLabel(task.column)}]</Text>
+          {task.agentState && (
+            <Text color={accent}>▶ {task.agentState}</Text>
+          )}
+        </Box>
+        <Text dimColor>{t("tui.taskDetailBack", "[Esc] back")}</Text>
+      </Box>
+
+      <Box height={1} flexShrink={0} />
+
+      {/* Title */}
+      <Text bold color="whiteBright" wrap="wrap">{task.title ?? task.id}</Text>
+
+      <Box height={1} flexShrink={0} />
+
+      {/* Loading / unavailable state */}
+      {detail === null && (
+        <Box flexDirection="row" gap={1} flexShrink={0}>
+          <Text color="cyanBright"><Spinner type="dots" /></Text>
+          <Text dimColor>{t("tui.taskDetailLoading", "Loading task details…")}</Text>
+        </Box>
+      )}
+
+      {detail === "unavailable" && (
+        <Text color="yellow">{t("tui.taskDetailUnavailable", "Task no longer available — Esc to go back")}</Text>
+      )}
+
+      {detail && detail !== "unavailable" && (
+        <>
+          {/* Meta row: branch + worktree */}
+          {(detail.branch || detail.worktree) && (
+            <Box flexDirection="row" gap={2} flexShrink={0}>
+              {detail.branch && (
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>Branch</Text>
+                  <Text color="cyan">{detail.branch}</Text>
+                </Box>
+              )}
+              {detail.worktree && (
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>Worktree</Text>
+                  <Text color="cyan" wrap="truncate">{detail.worktree}</Text>
+                </Box>
+              )}
+            </Box>
+          )}
+
+          {/* Card-placed custom fields (U13/KTD-14): read-only bracketed labels. */}
+          {detail.customFields && detail.customFields.length > 0 && (
+            <Box flexDirection="row" gap={1} flexWrap="wrap" flexShrink={0}>
+              {detail.customFields.map((f) => (
+                <Text key={f.label} color="magenta">[{f.label}: {f.value}]</Text>
+              ))}
+            </Box>
+          )}
+
+          <Box height={1} flexShrink={0} />
+
+          {/* Steps section */}
+          <Text dimColor>{t("tui.taskDetailStepsSectionHeader", "── Steps ──────────────────────────────────────")}</Text>
+          {detail.steps.length === 0 ? (
+            <Text dimColor>{t("tui.taskDetailNoSteps", "(no steps yet)")}</Text>
+          ) : (
+            detail.steps.map((step) => {
+              const icon = STEP_ICON[step.status] ?? "·";
+              const color = STEP_COLOR[step.status] ?? "white";
+              const isRunning = step.status === "running";
+              const isDone = step.status === "done" || step.status === "failed" || step.status === "skipped";
+
+              let durationText = "";
+              if (isRunning && step.startedAt) {
+                const elapsed = Date.now() - new Date(step.startedAt).getTime();
+                durationText = t("tui.stepDurationRunning", " (running — {{duration}})", { duration: formatDurationMs(elapsed) });
+              } else if (isDone && step.startedAt && step.endedAt) {
+                const elapsed = new Date(step.endedAt).getTime() - new Date(step.startedAt).getTime();
+                durationText = t("tui.stepDurationDone", " ({{status}} — {{duration}})", { status: step.status, duration: formatDurationMs(elapsed) });
+              }
+
+              return (
+                <Box key={step.index} flexDirection="row" gap={1} flexShrink={0}>
+                  <Text color={color}>{icon}</Text>
+                  <Text bold={isRunning} color={isRunning ? "whiteBright" : undefined} dimColor={step.status === "pending"}>
+                    {step.index + 1}. {step.name}
+                  </Text>
+                  {durationText !== "" && (
+                    <Text dimColor>{durationText}</Text>
+                  )}
+                </Box>
+              );
+            })
+          )}
+
+          <Box height={1} flexShrink={0} />
+
+          {/* Logs section — flexGrow so it fills remaining vertical space */}
+          <Box flexDirection="row" justifyContent="space-between" flexShrink={0}>
+            <Text dimColor>{t("tui.taskDetailLogsSectionHeader", "── Logs ───────────────────────────────────────")}</Text>
+            <Text color={autoFollow ? "cyanBright" : undefined} dimColor={!autoFollow}>
+              {autoFollow ? t("tui.taskDetailLogsLive", "[live]") : t("tui.taskDetailLogsPaused", "[paused]")}
+            </Text>
+          </Box>
+
+          {detail.recentLogs.length === 0 ? (
+            <Text dimColor>{t("tui.taskDetailNoLogEntries", "(no log entries yet)")}</Text>
+          ) : (
+            <Box flexDirection="column" flexGrow={1} overflow="hidden">
+              {/* Compute the visible window from the bottom, offset by scroll position. */}
+              {(() => {
+                const logs = detail.recentLogs;
+                const total = logs.length;
+                // scrollOffset counts lines from the bottom; 0 = show tail.
+                const endIdx = total - logScrollOffset;
+                const startIdx = Math.max(0, endIdx - logPaneRows);
+                const visible = logs.slice(startIdx, endIdx);
+                return visible.map((entry, i) => {
+                  const levelColor =
+                    entry.level === "warn" ? "yellow" :
+                    entry.level === "error" ? "red" :
+                    entry.level === "debug" ? "gray" : "white";
+
+                  if (isNarrow) {
+                    const levelSymbol = entry.level === "error" ? "✗" : entry.level === "warn" ? "⚠" : "✓";
+                    return (
+                      <Box key={startIdx + i} flexDirection="row" gap={1} flexShrink={0}>
+                        <Text dimColor>{narrowTimestamp(startIdx + i)}</Text>
+                        <Text color={levelColor}>{levelSymbol}</Text>
+                        <Text wrap="wrap">{entry.text}</Text>
+                      </Box>
+                    );
+                  }
+
+                  const levelLabel = entry.level.toUpperCase().padEnd(5);
+                  return (
+                    <Box key={startIdx + i} flexDirection="row" gap={1} flexShrink={0}>
+                      <Text dimColor>{formatLogTime(entry.timestamp)}</Text>
+                      <Text color={levelColor}>{levelLabel}</Text>
+                      {entry.source && (
+                        <Text color="cyan" dimColor>[{entry.source}]</Text>
+                      )}
+                      <Text wrap="wrap">{entry.text}</Text>
+                    </Box>
+                  );
+                });
+              })()}
+            </Box>
+          )}
+        </>
+      )}
+
+      <Box flexGrow={1} />
+      <Text dimColor>{t("tui.taskDetailScrollHints", "↑↓/j/k scroll · PgUp/PgDn half-page · g top · G bottom · Esc back")}</Text>
+    </Box>
+  );
+}
+
+type BoardSubView = "board" | "detail" | "picker" | "create";
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+// U11 (R18): bucket tasks into the five TUI buckets via trait-flag mapping so
+// cards in workflow columns the TUI can't express land in a legacy bucket or
+// the read-only "other" bucket — never dropped. Delegates to the shared helper.
+const groupTasksByColumn = groupTasksByBucket;
+
+function BoardView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
+  const { t } = useTranslation("cli");
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const rows = stdout?.rows ?? 24;
+  // Narrow mode: collapse 4-column kanban to a single full-width column so
+  // columns don't overflow or overlap when the terminal is too slim.
+  const isNarrow = cols < NARROW_THRESHOLD;
+  const columnWidth = isNarrow
+    ? Math.max(20, cols - 2)
+    : Math.max(20, Math.floor((cols - 2) / KANBAN_COLUMNS.length));
+  // Reserve rows for header + project bar + spacer + footer hints. The
+  // kanban column then windows its cards based on what remains so cards
+  // beyond the visible area still scroll into view as the cursor moves.
+  const availableCardRows = Math.max(8, rows - 8);
+
+  const [subView, setSubView] = useState<BoardSubView>("board");
+  const [projectIndex, setProjectIndex] = useState(0);
+  const [colIndex, setColIndex] = useState(0);
+  const [rowByColumn, setRowByColumn] = useState<Record<KanbanColumn, number>>({
+    todo: 0,
+    "in-progress": 0,
+    "in-review": 0,
+    [OTHER_BUCKET]: 0,
+    done: 0,
+  });
+  const [pickerOriginal, setPickerOriginal] = useState(0);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const projectsState = useProjects(state.interactiveData);
+  const selectedProject = projectsState.projects[projectIndex] ?? null;
+  const tasksState = useTasks(state.interactiveData, selectedProject);
+  const grouped = groupTasksByColumn(tasksState.tasks);
+
+  // Push the board's selected project into the controller so dashboard.ts
+  // refreshes the global Stats panel from this project's store instead of cwd.
+  useEffect(() => {
+    controller.setBoardScopedProjectPath(selectedProject?.path ?? null);
+    return () => {
+      controller.setBoardScopedProjectPath(null);
+    };
+  }, [controller, selectedProject?.path]);
+
+  const focusedColumn = KANBAN_COLUMNS[colIndex];
+  const focusedTasks = grouped[focusedColumn];
+  const focusedRow = clamp(rowByColumn[focusedColumn] ?? 0, 0, Math.max(0, focusedTasks.length - 1));
+  const selectedTask = focusedTasks[focusedRow] ?? null;
+
+  useInput((input, key) => {
+    if (subView === "picker") {
+      if (key.upArrow || input === "k") {
+        setProjectIndex((p) => Math.max(0, p - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setProjectIndex((p) => Math.min(projectsState.projects.length - 1, p + 1));
+        return;
+      }
+      if (key.return) {
+        setSubView("board");
+        return;
+      }
+      if (key.escape) {
+        setProjectIndex(pickerOriginal);
+        setSubView("board");
+        return;
+      }
+      return;
+    }
+
+    if (subView === "detail") {
+      if (key.escape || key.backspace || input === "h") {
+        setSubView("board");
+      }
+      return;
+    }
+
+    if (subView === "create") {
+      // TextInput owns most key handling; only Esc cancels here. Submit is
+      // wired through the TextInput's onSubmit prop.
+      if (key.escape) {
+        setSubView("board");
+        setNewTaskTitle("");
+        setCreateError(null);
+      }
+      return;
+    }
+
+    // Cross-view shortcuts — explicit so they work regardless of any
+    // global-handler ordering quirks. Lowercase only; uppercase G is
+    // reserved for "jump to end" semantics in scrollable panels.
+    if (input === "g") {
+      controller.setInteractiveView("settings");
+      return;
+    }
+    if (input === "a" || input === "A") {
+      controller.setInteractiveView("agents");
+      return;
+    }
+    if (input === "t" || input === "T") {
+      controller.setInteractiveView("git");
+      return;
+    }
+
+    if (input === "p" || input === "P") {
+      setPickerOriginal(projectIndex);
+      setSubView("picker");
+      return;
+    }
+    if (input === "n" || input === "N") {
+      if (!selectedProject) return;
+      setNewTaskTitle("");
+      setCreateError(null);
+      setSubView("create");
+      return;
+    }
+    if (key.return) {
+      if (selectedTask) setSubView("detail");
+      return;
+    }
+    if (key.leftArrow || input === "h") {
+      setColIndex((c) => Math.max(0, c - 1));
+      return;
+    }
+    if (key.rightArrow || input === "l") {
+      setColIndex((c) => Math.min(KANBAN_COLUMNS.length - 1, c + 1));
+      return;
+    }
+    if (key.upArrow || input === "k") {
+      setRowByColumn((m) => ({
+        ...m,
+        [focusedColumn]: Math.max(0, (m[focusedColumn] ?? 0) - 1),
+      }));
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      setRowByColumn((m) => {
+        const len = grouped[focusedColumn].length;
+        return { ...m, [focusedColumn]: Math.min(Math.max(0, len - 1), (m[focusedColumn] ?? 0) + 1) };
+      });
+      return;
+    }
+  });
+
+  const narrowColumnIndicator = isNarrow
+    ? ` · ${colIndex + 1}/${KANBAN_COLUMNS.length} ${columnLabel(focusedColumn).toUpperCase()} (${focusedTasks.length})`
+    : "";
+  // U11 (R18): the "other" bucket is a read-only view of custom workflow
+  // columns the TUI can't model — moving cards into/out of it from here would
+  // mean expressing a column the TUI has no name for, so it's disabled with a
+  // hint. (The TUI has no in-place move action yet; this keeps the affordance
+  // honest for when one lands.)
+  const focusedIsReadOnly = isOtherBucket(focusedColumn);
+  const boardHint = focusedIsReadOnly
+    ? `←→ column · ↑↓ task · Enter open · ${t("tui.boardOtherReadOnlyHint", "custom column — move disabled here")}`
+    : `←→ column · ↑↓ task · Enter open · n new · p project`;
+  const hintText = subView === "picker"
+    ? "↑↓ pick · Enter confirm · Esc cancel"
+    : subView === "detail"
+    ? "Esc back · q quit"
+    : subView === "create"
+    ? "type a task title · Enter create · Esc cancel"
+    : `${boardHint}${narrowColumnIndicator}`;
+
+  const submitNewTask = async () => {
+    const title = newTaskTitle.trim();
+    if (!title) {
+      setCreateError(t("tui.boardCreateTaskTitleEmpty", "Title cannot be empty"));
+      return;
+    }
+    if (!state.interactiveData || !selectedProject) {
+      setCreateError(t("tui.boardCreateTaskNoProject", "No project selected"));
+      return;
+    }
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await state.interactiveData.createTask(selectedProject.path, { title });
+      setNewTaskTitle("");
+      setSubView("board");
+      tasksState.refresh();
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="row" gap={2} paddingX={1} flexShrink={0}>
+        <ProjectSelector
+          open={subView === "picker"}
+          projects={projectsState.projects}
+          selectedIndex={projectIndex}
+          onSelect={setProjectIndex}
+        />
+        <Box flexGrow={1} />
+        <Text dimColor>{hintText}</Text>
+      </Box>
+
+      <Box height={1} flexShrink={0} />
+
+      {subView === "create" ? (
+        <Box justifyContent="center" alignItems="center" flexGrow={1}>
+          <Box
+            borderStyle="round"
+            borderColor="cyanBright"
+            flexDirection="column"
+            paddingX={2}
+            paddingY={1}
+            width={Math.min(80, Math.max(40, cols - 8))}
+          >
+            <Text bold color="white">{t("tui.boardNewTaskTitle", "New Task")}</Text>
+            <Text dimColor>{t("tui.boardNewTaskProject", "Project: {{name}}", { name: selectedProject?.name ?? "(none)" })}</Text>
+            <Box height={1} />
+            <Text dimColor>{t("tui.boardNewTaskTitleLabel", "Title")}</Text>
+            <Box>
+              <Text color="white">▸ </Text>
+              <TextInput
+                value={newTaskTitle}
+                onChange={setNewTaskTitle}
+                onSubmit={() => void submitNewTask()}
+                placeholder={t("tui.boardNewTaskPlaceholder", "What needs doing?")}
+              />
+            </Box>
+            <Box height={1} />
+            {createError && (
+              <Text color="red">{createError}</Text>
+            )}
+            {creating ? (
+              <Box flexDirection="row" gap={1}>
+                <Text color="white"><Spinner type="dots" /></Text>
+                <Text dimColor>{t("tui.boardCreatingTask", "Creating…")}</Text>
+              </Box>
+            ) : (
+              <Text dimColor>{t("tui.boardCreateTaskHints", "Enter to create · Esc to cancel")}</Text>
+            )}
+          </Box>
+        </Box>
+      ) : subView === "detail" && selectedTask ? (
+        <Box flexGrow={1} paddingX={1}>
+          <TaskDetailScreen
+            task={selectedTask}
+            projectPath={selectedProject?.path ?? null}
+            interactiveData={state.interactiveData}
+            controller={controller}
+          />
+        </Box>
+      ) : tasksState.loading ? (
+        <Box justifyContent="center" alignItems="center" flexGrow={1} gap={1}>
+          <Text color="white"><Spinner type="dots" /></Text>
+          <Text dimColor>{t("tui.loadingTasks", "Loading tasks…")}</Text>
+        </Box>
+      ) : tasksState.tasks.length === 0 ? (
+        <Box justifyContent="center" alignItems="center" flexGrow={1} flexDirection="column">
+          <Text dimColor>{t("tui.noTasks", "No tasks in this project.")}</Text>
+          {/* Keybinding accelerator [{{key}}] stays literal — never translated. */}
+          <Text dimColor>{t("tui.switchProjectsHint", { key: "p", defaultValue: "Press [{{key}}] to switch projects." })}</Text>
+        </Box>
+      ) : (
+        <Box flexDirection="row" flexGrow={1} overflow="hidden">
+          {/* Narrow: render only the focused column at full width; ←→ cycles columns */}
+          {isNarrow ? (
+            <KanbanColumnView
+              key={focusedColumn}
+              column={focusedColumn}
+              tasks={focusedTasks}
+              isFocused={true}
+              selectedIndex={focusedRow}
+              width={columnWidth}
+              availableRows={availableCardRows}
+            />
+          ) : (
+            KANBAN_COLUMNS.map((col, i) => (
+              <KanbanColumnView
+                key={col}
+                column={col}
+                tasks={grouped[col]}
+                isFocused={i === colIndex}
+                selectedIndex={rowByColumn[col] ?? 0}
+                width={columnWidth}
+                availableRows={availableCardRows}
+              />
+            ))
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+// ── Agents view ───────────────────────────────────────────────────────────────
+
+function agentStateColor(state: string): string {
+  switch (state) {
+    case "active": return "cyanBright";
+    case "running": return "green";
+    case "error": return "red";
+    default: return "gray";
+  }
+}
+
+function heartbeatFreshness(lastHeartbeatAt?: string): { fresh: boolean; label: string } {
+  if (!lastHeartbeatAt) return { fresh: false, label: "never" };
+  const ageMs = Date.now() - new Date(lastHeartbeatAt).getTime();
+  return { fresh: ageMs < 5 * 60 * 1000, label: formatRelativeTime(lastHeartbeatAt) };
+}
+
+type AgentSubView = "list" | "confirm-delete";
+
+function formatRunStatusLabel(status: string, t: TFunction): string {
+  switch (status) {
+    case "completed":
+      return t("tui.runStatusCompleted", "Completed");
+    case "failed":
+      return t("tui.runStatusFailed", "Failed");
+    case "terminated":
+      return t("tui.runStatusTerminated", "Terminated");
+    case "active":
+      return t("tui.runStatusActive", "Active");
+    default:
+      return status.length > 0 ? `${status[0]!.toUpperCase()}${status.slice(1)}` : t("tui.runStatusUnknown", "Unknown");
+  }
+}
+
+function runStatusColor(status: string): "green" | "red" | "yellow" | "cyanBright" | "gray" {
+  switch (status) {
+    case "completed":
+      return "green";
+    case "failed":
+      return "red";
+    case "terminated":
+      return "yellow";
+    case "active":
+      return "cyanBright";
+    default:
+      return "gray";
+  }
+}
+
+function getRunLogLines(run: AgentRunItem, t: TFunction): string[] {
+  if (Array.isArray(run.logs) && run.logs.length > 0) return run.logs;
+
+  const lines: string[] = [];
+  if (run.triggerDetail) lines.push(`${t("tui.runLogTrigger", "trigger")}: ${run.triggerDetail}`);
+  if (run.invocationSource) lines.push(`${t("tui.runLogSource", "source")}: ${run.invocationSource}`);
+  if (run.stdoutExcerpt) {
+    lines.push(t("tui.runLogStdout", "stdout:"));
+    lines.push(...run.stdoutExcerpt.split(/\r?\n/).filter((line) => line.length > 0));
+  }
+  if (run.stderrExcerpt) {
+    lines.push(t("tui.runLogStderr", "stderr:"));
+    lines.push(...run.stderrExcerpt.split(/\r?\n/).filter((line) => line.length > 0));
+  }
+  if (run.resultJson) {
+    lines.push(t("tui.runLogResult", "result:"));
+    lines.push(JSON.stringify(run.resultJson));
+  }
+
+  return lines.length > 0 ? lines : [t("tui.runLogNone", "No logs captured for this run.")];
+}
+
+function AgentsView({ state }: { state: DashboardState }) {
+  const { t } = useTranslation("cli");
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  // Narrow mode: hide the inactive pane so list and detail don't overlap side-by-side.
+  const isNarrow = cols < NARROW_THRESHOLD;
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [agents, setAgents] = useState<AgentItem[]>([]);
+  const [detail, setDetail] = useState<AgentDetailItem | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [subView, setSubView] = useState<AgentSubView>("list");
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [detailFocused, setDetailFocused] = useState(false);
+  const [selectedRunIndex, setSelectedRunIndex] = useState(0);
+  const [showRunLogs, setShowRunLogs] = useState(false);
+
+  const data = state.interactiveData;
+
+  useEffect(() => {
+    if (!data) return;
+    data.listAgents().then(setAgents).catch(() => setAgents([]));
+  }, [data]);
+
+  const selectedAgent = agents[selectedIndex] ?? null;
+  const recentRuns = detail?.recentRuns ?? [];
+  const selectedRun = recentRuns[selectedRunIndex] ?? null;
+
+  useEffect(() => {
+    if (!data || !selectedAgent) {
+      setDetail(null);
+      return;
+    }
+    setLoadingDetail(true);
+    data.getAgentDetail(selectedAgent.id).then((d) => {
+      setDetail(d);
+      setLoadingDetail(false);
+    }).catch(() => {
+      setDetail(null);
+      setLoadingDetail(false);
+    });
+  }, [data, selectedAgent?.id]);
+
+  useEffect(() => {
+    setSelectedRunIndex(0);
+    setShowRunLogs(false);
+  }, [selectedAgent?.id]);
+
+  useEffect(() => {
+    setSelectedRunIndex((i) => Math.min(i, Math.max(0, recentRuns.length - 1)));
+  }, [recentRuns.length]);
+
+  function refreshDetail() {
+    if (!data || !selectedAgent) return;
+    setLoadingDetail(true);
+    data.getAgentDetail(selectedAgent.id).then((d) => {
+      setDetail(d);
+      setLoadingDetail(false);
+    }).catch(() => {
+      setDetail(null);
+      setLoadingDetail(false);
+    });
+  }
+
+  async function refreshList() {
+    if (!data) return;
+    const list = await data.listAgents().catch(() => [] as AgentItem[]);
+    setAgents(list);
+    setSelectedIndex((i) => Math.min(i, Math.max(0, list.length - 1)));
+  }
+
+  useInput((input, key) => {
+    if (subView === "confirm-delete") {
+      if (input === "y" || input === "Y") {
+        if (!data || !selectedAgent) { setSubView("list"); return; }
+        data.deleteAgent(selectedAgent.id)
+          .then(() => {
+            setStatusMsg(t("tui.agentDeleted", "Deleted agent {{name}}", { name: selectedAgent.name }));
+            return refreshList();
+          })
+          .catch((err: unknown) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`))
+          .finally(() => setSubView("list"));
+        return;
+      }
+      setSubView("list");
+      return;
+    }
+
+    // Tab cycles list ↔ detail. Left/right also switch — the list is the
+    // "left" pane and detail the "right" pane, so the arrow direction
+    // matches the visual layout.
+    if (key.tab) {
+      setDetailFocused((f) => !f);
+      return;
+    }
+    if (key.leftArrow) {
+      setDetailFocused(false);
+      return;
+    }
+    if (key.rightArrow) {
+      setDetailFocused(true);
+      return;
+    }
+
+    const isEnterKey = key.return || input === "\r" || input === "\n";
+    if ((isEnterKey || input === "l") && selectedRun) {
+      setDetailFocused(true);
+      setShowRunLogs(true);
+      return;
+    }
+
+    if (!detailFocused) {
+      if (key.upArrow || input === "k") {
+        setSelectedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSelectedIndex((i) => Math.min(agents.length - 1, i + 1));
+        return;
+      }
+    } else {
+      if (showRunLogs && (key.escape || input === "q" || key.backspace)) {
+        setShowRunLogs(false);
+        return;
+      }
+      if (!showRunLogs && (key.upArrow || input === "k")) {
+        setSelectedRunIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (!showRunLogs && (key.downArrow || input === "j")) {
+        setSelectedRunIndex((i) => Math.min(recentRuns.length - 1, i + 1));
+        return;
+      }
+    }
+
+    if (input === "s") {
+      if (!data || !selectedAgent) return;
+      data.updateAgentState(selectedAgent.id, "active")
+        .then(() => { setStatusMsg(t("tui.agentStarted", "Agent started")); return refreshList(); })
+        .catch((err: unknown) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+    if (input === "x") {
+      if (!data || !selectedAgent) return;
+      data.updateAgentState(selectedAgent.id, "idle")
+        .then(() => { setStatusMsg(t("tui.agentStopped", "Agent stopped")); return refreshList(); })
+        .catch((err: unknown) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+    if (input === "D") {
+      if (selectedAgent) setSubView("confirm-delete");
+      return;
+    }
+    if (input === "r") {
+      refreshDetail();
+      return;
+    }
+  });
+
+  if (subView === "confirm-delete" && selectedAgent) {
+    return (
+      <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+        <Box borderStyle="round" borderColor="red" flexDirection="column" paddingX={2} paddingY={1}>
+          <Text bold color="red">{t("tui.agentDeleteConfirmTitle", "Delete agent?")}</Text>
+          <Box height={1} />
+          <Text>{t("tui.agentDeleteConfirmName", "Agent:")} <Text bold color="whiteBright">{selectedAgent.name}</Text></Text>
+          <Text dimColor>{t("tui.agentDeleteConfirmId", "ID:")} {selectedAgent.id}</Text>
+          <Box height={1} />
+          <Text>{t("tui.agentDeleteConfirmHints", "[y] confirm delete  [any other key] cancel")}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      {statusMsg && (
+        <Box paddingX={1}>
+          <Text color="yellow">{statusMsg}</Text>
+        </Box>
+      )}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* List panel — in narrow mode, hidden when detail pane is focused */}
+        {(!isNarrow || !detailFocused) && (
+          <Box
+            borderStyle="round"
+            borderColor={detailFocused ? "gray" : "cyanBright"}
+            flexDirection="column"
+            width={isNarrow ? undefined : "30%"}
+            flexGrow={isNarrow ? 1 : 0}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={!detailFocused} color={!detailFocused ? "cyanBright" : undefined} dimColor={detailFocused}>
+                {t("tui.agentsListTitle", "Agents ({{count}})", { count: agents.length })}
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {agents.length === 0 ? (
+                <Text dimColor>{t("tui.agentsNoAgents", "No agents found.")}</Text>
+              ) : (
+                agents.map((agent, i) => {
+                  const isSel = i === selectedIndex;
+                  const { fresh, label } = heartbeatFreshness(agent.lastHeartbeatAt);
+                  return (
+                    <Box key={agent.id} flexDirection="row" gap={1}>
+                      <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
+                      <Box flexDirection="column" flexGrow={1}>
+                        <Box flexDirection="row" gap={1}>
+                          <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
+                            {agent.name}
+                          </Text>
+                          <Text color={agentStateColor(agent.state) as "cyanBright" | "green" | "red" | "gray"}>
+                            {agent.state}
+                          </Text>
+                        </Box>
+                        <Box flexDirection="row" gap={1}>
+                          <Text color={fresh ? "green" : "gray"} dimColor>●</Text>
+                          <Text dimColor>{label}</Text>
+                        </Box>
+                      </Box>
+                    </Box>
+                  );
+                })
+              )}
+            </Box>
+          </Box>
+        )}
+
+        {/* Right: agent detail — in narrow mode, hidden when list pane is focused */}
+        {(!isNarrow || detailFocused) && (
+          <Box
+            borderStyle="round"
+            borderColor={detailFocused ? "cyanBright" : "gray"}
+            flexDirection="column"
+            flexGrow={1}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={detailFocused} color={detailFocused ? "cyanBright" : undefined} dimColor={!detailFocused}>
+                {t("tui.agentDetailTitle", "Agent Detail")}
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {!selectedAgent ? (
+                <Text dimColor>{t("tui.agentDetailSelectHint", "Select an agent from the list.")}</Text>
+              ) : loadingDetail ? (
+                <Box flexDirection="row" gap={1}>
+                  <Text color="white"><Spinner type="dots" /></Text>
+                  <Text dimColor>{t("tui.loading", "Loading…")}</Text>
+                </Box>
+              ) : !detail ? (
+                <Text dimColor>{t("tui.agentDetailLoadError", "Could not load agent detail.")}</Text>
+              ) : (
+                <Box flexDirection="column">
+                  <Text bold color="whiteBright">{detail.name}</Text>
+                  <Text dimColor>{detail.id}</Text>
+                  <Box height={1} />
+
+                  {showRunLogs && selectedRun ? (
+                    <>
+                      <Text dimColor>{t("tui.agentRunLogsTitle", "Run logs ({{index}})", { index: selectedRunIndex + 1 })}</Text>
+                      <Text dimColor>{t("tui.agentRunId", "ID:")} {selectedRun.id}</Text>
+                      <Box height={1} />
+                      {getRunLogLines(selectedRun, t).slice(0, 10).map((line, i) => (
+                        <Text key={`${selectedRun.id}-log-${i}`} wrap="truncate-end">{line}</Text>
+                      ))}
+                      <Box height={1} />
+                      <Text dimColor>{t("tui.agentRunLogsBackHint", "[Esc/q] back to runs")}</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>{t("tui.agentDetailState", "State:")}</Text>
+                        <Text color={agentStateColor(detail.state) as "cyanBright" | "green" | "red" | "gray"} bold>
+                          {detail.state}
+                        </Text>
+                      </Box>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>{t("tui.agentDetailRole", "Role:")}</Text>
+                        <Text>{detail.role}</Text>
+                      </Box>
+                      {detail.title && (
+                        <Box flexDirection="row" gap={1}>
+                          <Text dimColor>{t("tui.agentDetailTitle2", "Title:")}</Text>
+                          <Text>{detail.title}</Text>
+                        </Box>
+                      )}
+                      {detail.taskId && (
+                        <Box flexDirection="row" gap={1}>
+                          <Text dimColor>{t("tui.agentDetailTask", "Task:")}</Text>
+                          <Text color="cyanBright">{detail.taskId}</Text>
+                        </Box>
+                      )}
+                      {detail.capabilities.length > 0 && (
+                        <Box flexDirection="row" gap={1}>
+                          <Text dimColor>{t("tui.agentDetailCaps", "Caps:")}</Text>
+                          <Text>{detail.capabilities.join(", ")}</Text>
+                        </Box>
+                      )}
+                      {recentRuns.length > 0 && (
+                        <>
+                          <Box height={1} />
+                          <Text dimColor>{t("tui.agentRunHistory", "Run history (latest first):")}</Text>
+                          {recentRuns.slice(0, 5).map((run, i) => (
+                            <Box key={run.id} flexDirection="row" gap={1} marginLeft={1}>
+                              <Text color={detailFocused && i === selectedRunIndex ? "white" : "gray"}>
+                                {detailFocused && i === selectedRunIndex ? "▶" : " "}
+                              </Text>
+                              <Text color={runStatusColor(run.status)}>{formatRunStatusLabel(run.status, t)}</Text>
+                              <Text dimColor>{run.startedAt.slice(11, 19)}</Text>
+                              {run.triggerDetail && <Text dimColor wrap="truncate-end">{run.triggerDetail}</Text>}
+                            </Box>
+                          ))}
+                          <Text dimColor>{t("tui.agentOpenLogsHint", "[Enter] open logs")}</Text>
+                        </>
+                      )}
+                    </>
+                  )}
+                </Box>
+              )}
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      {/* Footer */}
+      <Box paddingX={1} flexDirection="row" gap={1}>
+        <Text dimColor>{t("tui.agentsFooterHints", "[s] start  [x] stop  [D] delete  [r] refresh  [Tab] focus  ↑↓ select")}</Text>
+        {isNarrow && (
+          <Text dimColor>{t("tui.narrowModeIndicator", "[narrow]")} {detailFocused ? t("tui.agentNarrowDetail", "detail") : t("tui.agentNarrowList", "list")}</Text>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+// ── Settings interactive view ─────────────────────────────────────────────────
+
+type SettingKey = "maxConcurrent" | "maxWorktrees" | "autoMerge" | "mergeStrategy" | "pollIntervalMs" | "enginePaused" | "globalPause" | "remoteActiveProvider" | "remoteShortLivedEnabled" | "remoteShortLivedTtlMs";
+
+interface SettingDef {
+  key: SettingKey;
+  labelKey: string;
+  labelDefault: string;
+  type: "number" | "boolean" | "enum";
+  options?: string[];
+}
+
+const SETTING_DEFS: SettingDef[] = [
+  { key: "maxConcurrent", labelKey: "tui.settingMaxConcurrent", labelDefault: "Max Concurrent", type: "number" },
+  { key: "maxWorktrees", labelKey: "tui.settingMaxWorktrees", labelDefault: "Max Worktrees", type: "number" },
+  { key: "autoMerge", labelKey: "tui.settingAutoMerge", labelDefault: "Auto Merge", type: "boolean" },
+  { key: "mergeStrategy", labelKey: "tui.settingMergeStrategy", labelDefault: "Merge Strategy", type: "enum", options: ["direct", "squash", "rebase"] },
+  { key: "pollIntervalMs", labelKey: "tui.settingPollIntervalMs", labelDefault: "Poll Interval (ms)", type: "number" },
+  { key: "enginePaused", labelKey: "tui.settingEnginePaused", labelDefault: "Engine Paused", type: "boolean" },
+  { key: "globalPause", labelKey: "tui.settingGlobalPause", labelDefault: "Global Pause", type: "boolean" },
+  { key: "remoteActiveProvider", labelKey: "tui.settingRemoteActiveProvider", labelDefault: "Remote Provider", type: "enum", options: ["tailscale", "cloudflare"] },
+  { key: "remoteShortLivedEnabled", labelKey: "tui.settingRemoteShortLivedEnabled", labelDefault: "Short-Lived Tokens", type: "boolean" },
+  { key: "remoteShortLivedTtlMs", labelKey: "tui.settingRemoteShortLivedTtlMs", labelDefault: "Short-Lived TTL (ms)", type: "number" },
+];
+
+function SettingsInteractiveView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
+  const { t } = useTranslation("cli");
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [localSettings, setLocalSettings] = useState<SettingsValues | null>(null);
+  const [models, setModels] = useState<ModelItem[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [detailFocused, setDetailFocused] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
+  const [remoteTokenMeta, setRemoteTokenMeta] = useState<string | null>(null);
+  const [remoteQrDisplay, setRemoteQrDisplay] = useState<string | null>(null);
+  const [remoteQrFallback, setRemoteQrFallback] = useState<string | null>(null);
+  const [persistentMaskedToken, setPersistentMaskedToken] = useState<string | null>(null);
+  const [shortLivedExpiresAt, setShortLivedExpiresAt] = useState<string | null>(null);
+  const [ttlInputMode, setTtlInputMode] = useState(false);
+  const [ttlInputValue, setTtlInputValue] = useState("900000");
+
+  const data = state.interactiveData;
+
+  useEffect(() => {
+    controller.setInteractiveInputLocked(ttlInputMode);
+    return () => {
+      controller.setInteractiveInputLocked(false);
+    };
+  }, [controller, ttlInputMode]);
+
+  useEffect(() => {
+    if (!data) return;
+    data.getSettings().then(async (settings) => {
+      if (data.remote) {
+        try {
+          const [remoteStatus, remoteSettingsSnapshot] = await Promise.all([
+            data.remote.getStatus(),
+            data.remote.getSettings().catch(() => settings.remoteSettingsSnapshot),
+          ]);
+          setLocalSettings({ ...settings, remoteStatus, remoteSettingsSnapshot });
+        } catch {
+          setLocalSettings(settings);
+        }
+      } else {
+        setLocalSettings(settings);
+      }
+    }).catch(() => {});
+    setModels(data.listModels());
+  }, [data]);
+
+  const selectedDef = SETTING_DEFS[selectedIndex];
+
+  async function saveField(partial: Partial<SettingsValues>) {
+    if (!data || !localSettings) return;
+    setSaving(true);
+    try {
+      await data.updateSettings(partial);
+      const updated = await data.getSettings();
+      const remoteStatus = data.remote ? await data.remote.getStatus().catch(() => null) : null;
+      const remoteSettingsSnapshot = data.remote ? await data.remote.getSettings().catch(() => updated.remoteSettingsSnapshot) : undefined;
+      setLocalSettings(remoteStatus ? { ...updated, remoteStatus, remoteSettingsSnapshot } : updated);
+      setStatusMsg(t("tui.settingsSaved", "Saved"));
+    } catch (err) {
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function refreshRemoteStatus() {
+    if (!data || !localSettings) return;
+    try {
+      const [remoteStatus, remoteSettingsSnapshot] = await Promise.all([
+        data.remote.getStatus(),
+        data.remote.getSettings().catch(() => localSettings.remoteSettingsSnapshot),
+      ]);
+      setLocalSettings({ ...localSettings, remoteStatus, remoteSettingsSnapshot });
+    } catch {
+      // best-effort
+    }
+  }
+
+  async function handleFetchRemoteUrl(tokenType: "persistent" | "short-lived", ttlMs?: number) {
+    if (!data?.remote) return;
+    const result = await data.remote.getRemoteUrl(tokenType, ttlMs);
+    setRemoteUrl(result.url);
+    setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : result.tokenType);
+  }
+
+  async function handleFetchRemoteQr(tokenType: "persistent" | "short-lived", ttlMs?: number) {
+    if (!data?.remote) return;
+    const result = await data.remote.getQrPayload(tokenType, ttlMs, "terminal");
+    setRemoteUrl(result.url);
+    setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : tokenType);
+    setRemoteQrDisplay(result.data ?? result.url);
+    setRemoteQrFallback(null);
+  }
+
+  useInput((input, key) => {
+    if (ttlInputMode) {
+      if (key.escape) {
+        setTtlInputMode(false);
+        setStatusMsg(t("tui.settingsCancelledTokenInput", "Cancelled short-lived token input"));
+      }
+      return;
+    }
+
+    /*
+    FNXC:TuiSettingsKeyboard 2026-06-30-22:52:
+    Tab is the only Settings pane-switch key. Arrow keys must remain available to the focused pane so Windows terminals can use ←/→ to edit enum settings such as Remote Provider instead of getting trapped switching focus.
+    */
+    if (key.tab) {
+      setDetailFocused((f) => !f);
+      return;
+    }
+
+    if (input === "R") {
+      void refreshRemoteStatus();
+      setStatusMsg(t("tui.settingsRemoteStatusRefreshed", "Remote status refreshed"));
+      return;
+    }
+
+    if (!localSettings) return;
+
+    if (!detailFocused) {
+      if (key.upArrow || input === "k") {
+        setSelectedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSelectedIndex((i) => Math.min(SETTING_DEFS.length - 1, i + 1));
+        return;
+      }
+      return;
+    }
+
+    if (!selectedDef) return;
+
+    if (selectedDef.type === "enum" && selectedDef.options) {
+      const current = localSettings[selectedDef.key];
+      const idx = typeof current === "string" ? selectedDef.options.indexOf(current) : -1;
+      if (key.rightArrow || input === "l") {
+        const next = selectedDef.options[(idx + 1) % selectedDef.options.length];
+        const updated = { ...localSettings, [selectedDef.key]: next };
+        setLocalSettings(updated);
+        void saveField({ [selectedDef.key]: next });
+        if (selectedDef.key === "remoteActiveProvider" && data?.remote) {
+          void data.remote.activateProvider(next as "tailscale" | "cloudflare").catch(() => {});
+        }
+        return;
+      }
+      if (key.leftArrow || input === "h") {
+        const prev = selectedDef.options[(idx - 1 + selectedDef.options.length) % selectedDef.options.length];
+        const updated = { ...localSettings, [selectedDef.key]: prev };
+        setLocalSettings(updated);
+        void saveField({ [selectedDef.key]: prev });
+        if (selectedDef.key === "remoteActiveProvider" && data?.remote) {
+          void data.remote.activateProvider(prev as "tailscale" | "cloudflare").catch(() => {});
+        }
+        return;
+      }
+    }
+
+    if (data?.remote && input === "C") {
+      const provider = localSettings.remoteActiveProvider;
+      if (!provider) {
+        setStatusMsg(t("tui.settingsSelectProviderFirst", "Select a remote provider first"));
+      } else {
+        void data.remote.activateProvider(provider)
+          .then(() => refreshRemoteStatus())
+          .then(() => setStatusMsg(t("tui.settingsActivatedProvider", "Activated provider: {{provider}}", { provider })))
+          .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      return;
+    }
+
+    if (data?.remote && input === "V") {
+      void data.remote.startTunnel().then(() => refreshRemoteStatus()).then(() => setStatusMsg(t("tui.settingsTunnelStarting", "Remote tunnel starting")))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "X") {
+      void data.remote.stopTunnel().then(() => refreshRemoteStatus()).then(() => setStatusMsg(t("tui.settingsTunnelStopped", "Remote tunnel stopped")))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "P") {
+      void data.remote.regeneratePersistentToken()
+        .then((result) => {
+          setPersistentMaskedToken(result.maskedToken ?? null);
+          setStatusMsg(t("tui.settingsPersistentTokenRegenerated", "Persistent token regenerated"));
+        })
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "L") {
+      setTtlInputValue(String(localSettings.remoteShortLivedTtlMs));
+      setTtlInputMode(true);
+      setStatusMsg(t("tui.settingsEnterTtl", "Enter TTL milliseconds and press Enter"));
+      return;
+    }
+
+    if (data?.remote && input === "U") {
+      void handleFetchRemoteUrl("persistent")
+        .then(() => setStatusMsg(t("tui.settingsRemoteUrlFetched", "Remote URL fetched")))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "K") {
+      void handleFetchRemoteQr("persistent")
+        .then(() => setStatusMsg(t("tui.settingsQrFetched", "QR payload fetched")))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (selectedDef.type === "boolean" && input === " ") {
+      const current = localSettings[selectedDef.key] as boolean;
+      const updated = { ...localSettings, [selectedDef.key]: !current };
+      setLocalSettings(updated);
+      void saveField({ [selectedDef.key]: !current });
+      return;
+    }
+
+    if (selectedDef.type === "number") {
+      const current = localSettings[selectedDef.key] as number;
+      if (input === "+" || input === "=") {
+        const step = selectedDef.key === "pollIntervalMs" ? 5000 : 1;
+        const updated = { ...localSettings, [selectedDef.key]: current + step };
+        setLocalSettings(updated);
+        void saveField({ [selectedDef.key]: current + step });
+        return;
+      }
+      if (input === "-" || input === "_") {
+        const step = selectedDef.key === "pollIntervalMs" ? 5000 : 1;
+        const newVal = Math.max(0, current - step);
+        const updated = { ...localSettings, [selectedDef.key]: newVal };
+        setLocalSettings(updated);
+        void saveField({ [selectedDef.key]: newVal });
+        return;
+      }
+    }
+
+  });
+
+  function renderValue(def: SettingDef, settings: SettingsValues): React.ReactNode {
+    const v = settings[def.key];
+    if (def.type === "boolean") {
+      return <Text color={v ? "green" : "yellow"}>{v ? "enabled" : "disabled"}</Text>;
+    }
+    if (def.type === "enum") {
+      return <Text color="cyanBright">{String(v)}</Text>;
+    }
+    return <Text>{String(v)}</Text>;
+  }
+
+  async function submitShortLivedTtlInput(value: string) {
+    if (!data?.remote || !localSettings) return;
+    const ttlMs = Number(value.trim());
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      setStatusMsg(t("tui.settingsTtlMustBePositive", "TTL must be a positive number (ms)"));
+      return;
+    }
+
+    setTtlInputMode(false);
+    setSaving(true);
+    try {
+      const tokenResult = await data.remote.generateShortLivedToken(ttlMs);
+      setShortLivedExpiresAt(tokenResult.expiresAt);
+      setRemoteTokenMeta(tokenResult.expiresAt ? `expires ${new Date(tokenResult.expiresAt).toLocaleString()}` : "short-lived");
+      setLocalSettings({ ...localSettings, remoteShortLivedTtlMs: ttlMs });
+      await saveField({ remoteShortLivedTtlMs: ttlMs });
+      await handleFetchRemoteUrl("short-lived", ttlMs);
+      setStatusMsg(t("tui.settingsShortLivedTokenGenerated", "Short-lived token generated"));
+    } catch (err) {
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      {statusMsg && (
+        <Box paddingX={1}>
+          <Text color="yellow">{saving ? t("tui.settingsSavingInProgress", "Saving…") : statusMsg}</Text>
+        </Box>
+      )}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* Left: settings list */}
+        <Box
+          borderStyle="round"
+          borderColor={detailFocused ? "gray" : "cyanBright"}
+          flexDirection="column"
+          width="35%"
+          overflow="hidden"
+        >
+          <Box paddingX={1}>
+            <Text bold={!detailFocused} color={!detailFocused ? "cyanBright" : undefined} dimColor={detailFocused}>
+              {t("tui.settingsInteractivePanelTitle", "Settings")}
+            </Text>
+          </Box>
+          <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+            {!localSettings ? (
+              <Text dimColor>{t("tui.loading", "Loading…")}</Text>
+            ) : (
+              SETTING_DEFS.map((def, i) => {
+                const isSel = i === selectedIndex;
+                return (
+                  <Box key={def.key} flexDirection="row" gap={1}>
+                    <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
+                    <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
+                      {t(def.labelKey, def.labelDefault)}
+                    </Text>
+                    <Box flexGrow={1} />
+                    {renderValue(def, localSettings)}
+                  </Box>
+                );
+              })
+            )}
+          </Box>
+        </Box>
+
+        {/* Right: edit + models */}
+        <Box
+          borderStyle="round"
+          borderColor={detailFocused ? "cyanBright" : "gray"}
+          flexDirection="column"
+          flexGrow={1}
+          overflow="hidden"
+        >
+          <Box paddingX={1}>
+            <Text bold={detailFocused} color={detailFocused ? "cyanBright" : undefined} dimColor={!detailFocused}>
+              {t("tui.settingsEditModelsTitle", "Edit / Models")}
+            </Text>
+          </Box>
+          <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+            {!localSettings ? (
+              <Text dimColor>{t("tui.settingsLoadingSettings", "Loading settings…")}</Text>
+            ) : !selectedDef ? null : (
+              <>
+                <Text bold color="whiteBright">{t(selectedDef.labelKey, selectedDef.labelDefault)}</Text>
+                <Box height={1} />
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>{t("tui.settingsCurrentLabel", "Current:")}</Text>
+                  {renderValue(selectedDef, localSettings)}
+                </Box>
+                <Box height={1} />
+                {selectedDef.type === "boolean" && (
+                  <Text dimColor>{t("tui.settingsBoolToggleHint", "[Space] toggle")}</Text>
+                )}
+                {selectedDef.type === "number" && (
+                  <Text dimColor>
+                    {selectedDef.key === "pollIntervalMs" ? t("tui.settingsAdjust5000ms", "[+/-] adjust by 5000ms") : t("tui.settingsAdjust1", "[+/-] adjust by 1")}
+                  </Text>
+                )}
+                {selectedDef.type === "enum" && selectedDef.options && (
+                  <Box flexDirection="column">
+                    <Text dimColor>{t("tui.settingsEnumCycleHint", "[←/→] cycle options:")}</Text>
+                    {selectedDef.options.map((opt) => (
+                      <Box key={opt} flexDirection="row" gap={1} marginLeft={1}>
+                        <Text color={(localSettings[selectedDef.key] as string) === opt ? "white" : "gray"}>
+                          {(localSettings[selectedDef.key] as string) === opt ? "▶" : " "}
+                        </Text>
+                        <Text>{opt}</Text>
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+
+                <Box height={1} />
+                <Text dimColor>{t("tui.settingsRemoteHeader", "──── Remote ────")}</Text>
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>{t("tui.settingsRemoteProvider", "Provider:")}</Text>
+                  <Text>{localSettings.remoteActiveProvider ?? t("tui.settingsRemoteProviderNone", "none")}</Text>
+                  <Text dimColor>{t("tui.settingsRemoteState", "State:")}</Text>
+                  <Text color={localSettings.remoteStatus?.state === "running" ? "green" : "yellow"}>{localSettings.remoteStatus?.state ?? t("tui.settingsRemoteStateUnknown", "unknown")}</Text>
+                </Box>
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>{t("tui.settingsRemoteShortLived", "Short-lived:")}</Text>
+                  <Text>{localSettings.remoteSettingsSnapshot?.shortLivedEnabled ? t("tui.settingsRemoteOn", "on") : t("tui.settingsRemoteOff", "off")}</Text>
+                </Box>
+                {localSettings.remoteStatus?.url && (
+                  <Text dimColor wrap="truncate-end">{t("tui.settingsRemoteTunnelUrl", "Tunnel URL:")} {localSettings.remoteStatus.url}</Text>
+                )}
+                {remoteUrl && (
+                  <Text color="white" wrap="truncate-end">{t("tui.settingsRemoteAuthUrl", "Auth URL:")} {remoteUrl}</Text>
+                )}
+                {remoteTokenMeta && (
+                  <Text dimColor wrap="truncate-end">{t("tui.settingsRemoteToken", "Token:")} {remoteTokenMeta}</Text>
+                )}
+                {persistentMaskedToken && (
+                  <Text dimColor wrap="truncate-end">{t("tui.settingsRemotePersistentToken", "Persistent token:")} {persistentMaskedToken}</Text>
+                )}
+                {shortLivedExpiresAt && (
+                  <Text dimColor wrap="truncate-end">{t("tui.settingsRemoteShortLivedExpires", "Short-lived expires:")} {new Date(shortLivedExpiresAt).toLocaleString()}</Text>
+                )}
+                {remoteQrDisplay && (
+                  <Box flexDirection="column">
+                    {remoteQrDisplay.split("\n").map((line, idx) => (
+                      <Text key={idx}>{line}</Text>
+                    ))}
+                  </Box>
+                )}
+                {remoteQrFallback && (
+                  <Text color="yellow" wrap="truncate-end">{remoteQrFallback}</Text>
+                )}
+                {ttlInputMode && (
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>{t("tui.settingsTtlLabel", "TTL ms:")}</Text>
+                    <TextInput
+                      value={ttlInputValue}
+                      onChange={setTtlInputValue}
+                      onSubmit={(value) => {
+                        void submitShortLivedTtlInput(value);
+                      }}
+                    />
+                    <Text dimColor>{t("tui.settingsTtlHints", "[Enter] generate [Esc] cancel")}</Text>
+                  </Box>
+                )}
+                <Text dimColor>{t("tui.settingsRemoteActions1", "[C] activate provider  [V] start  [X] stop  [P] persistent token  [L] short-lived token")}</Text>
+                <Text dimColor>{t("tui.settingsRemoteActions2", "[U] URL hand-off  [K] QR hand-off  [R] refresh")}</Text>
+
+                {/* Models subsection */}
+                {models.length > 0 && (
+                  <>
+                    <Box height={1} />
+                    <Text dimColor>{t("tui.settingsAvailableModelsHeader", "──── Available Models ────")}</Text>
+                    <Text dimColor>{t("tui.settingsConfigureModelInDashboard", "Configure default model in web dashboard")}</Text>
+                    <Box height={1} />
+                    {models.slice(0, 8).map((m) => (
+                      <Box key={`${m.provider}/${m.id}`} flexDirection="row" gap={1}>
+                        <Text dimColor>{m.provider}</Text>
+                        <Text wrap="truncate">{m.name}</Text>
+                        <Text dimColor>{Math.round(m.contextWindow / 1000)}k ctx</Text>
+                      </Box>
+                    ))}
+                    {models.length > 8 && (
+                      <Text dimColor>{t("tui.settingsMoreModels", "… and {{count}} more", { count: models.length - 8 })}</Text>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </Box>
+        </Box>
+      </Box>
+
+      <Box paddingX={1}>
+        <Text dimColor>{t("tui.settingsFooterHints", "[Tab] switch panel  ↑↓ select setting  [Space] toggle bool  [+/-] adjust num  [←/→] cycle enum  [C/V/X/P/L/U/K/R] remote actions")}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+// ── Git view ──────────────────────────────────────────────────────────────────
+
+function relMs(ms: number | null): string {
+  if (ms === null) return "never";
+  const diff = Date.now() - ms;
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function statusColor(s: string): "green" | "yellow" | "red" | "cyan" | "gray" {
+  if (s === "A") return "green";
+  if (s === "D") return "red";
+  if (s === "R" || s === "C") return "cyan";
+  if (s === "M" || s === "m") return "yellow";
+  return "gray";
+}
+
+function truncatePath(p: string, maxLen: number): string {
+  if (p.length <= maxLen) return p;
+  return "…" + p.slice(-(maxLen - 1));
+}
+
+function authorInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return (parts[0] ?? "?").slice(0, 2).toUpperCase();
+  return ((parts[0]?.[0] ?? "") + (parts[parts.length - 1]?.[0] ?? "")).toUpperCase();
+}
+
+type GitPane = "status" | "branches" | "worktrees" | "commits" | "changes";
+
+type PushModalState =
+  | { phase: "confirm"; commits: GitCommit[] }
+  | { phase: "pushing" }
+  | { phase: "done"; message: string; isError: boolean };
+
+function PushModal({
+  status,
+  commits,
+  onConfirm,
+  onCancel,
+}: {
+  status: GitStatus;
+  commits: GitCommit[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation("cli");
+  useInput((_input, key) => {
+    if (key.return) { onConfirm(); return; }
+    if (key.escape) { onCancel(); return; }
+  });
+
+  const toPush = commits.slice(0, status.ahead);
+  return (
+    <Box
+      position="absolute"
+      flexDirection="column"
+      borderStyle="round"
+      borderColor="cyanBright"
+      paddingX={2}
+      paddingY={1}
+      backgroundColor="black"
+    >
+      <Text bold color="white">{t("tui.gitPushModalTitle", "Push to remote")}</Text>
+      <Box height={1} />
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>{t("tui.gitPushModalBranch", "Branch:")}</Text>
+        <Text color="cyan">{status.branch}</Text>
+        <Text dimColor>{t("tui.gitPushModalAhead", "ahead")}</Text>
+        <Text color="yellow">{status.ahead}</Text>
+      </Box>
+      {toPush.length > 0 && (
+        <>
+          <Box height={1} />
+          <Text dimColor>{t("tui.gitPushModalCommits", "Commits to push (oldest→newest):")}</Text>
+          {[...toPush].reverse().map((c) => (
+            <Box key={c.sha} flexDirection="row" gap={1} marginLeft={1}>
+              <Text color="gray">{c.shortSha}</Text>
+              <Text wrap="truncate">{c.subject}</Text>
+            </Box>
+          ))}
+        </>
+      )}
+      <Box height={1} />
+      <Text dimColor>{t("tui.gitPushModalHints", "[Enter] push  [Esc] cancel")}</Text>
+    </Box>
+  );
+}
+
+function GitView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
+  const { t } = useTranslation("cli");
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+
+  const data = state.interactiveData;
+
+  const [projectIndex, setProjectIndex] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOriginal, setPickerOriginal] = useState(0);
+
+  const projectsState = useProjects(data);
+  const selectedProject = projectsState.projects[projectIndex] ?? null;
+  const projectPath = selectedProject?.path ?? null;
+
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [commits, setCommits] = useState<GitCommit[]>([]);
+  const [branches, setBranches] = useState<GitBranch[]>([]);
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  const [commitIndex, setCommitIndex] = useState(0);
+  const [commitDetail, setCommitDetail] = useState<GitCommitDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const [branchIndex, setBranchIndex] = useState(0);
+  const [worktreeIndex, setWorktreeIndex] = useState(0);
+
+  const [activePane, setActivePane] = useState<GitPane>("status");
+
+  const [pushModal, setPushModal] = useState<PushModalState | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!data || !projectPath) return;
+    setLoading(true);
+    try {
+      const [s, c, b, w] = await Promise.all([
+        data.git.getStatus(projectPath),
+        data.git.listCommits(projectPath, 15),
+        data.git.listBranches(projectPath),
+        data.git.listWorktrees(projectPath),
+      ]);
+      setGitStatus(s);
+      setCommits(c);
+      setBranches(b);
+      setWorktrees(w);
+    } catch (err) {
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [data, projectPath]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const id = setInterval(() => { void refresh(); }, 5000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const selectedCommit = commits[commitIndex] ?? null;
+
+  useEffect(() => {
+    if (!data || !projectPath || !selectedCommit) {
+      setCommitDetail(null);
+      return;
+    }
+    setLoadingDetail(true);
+    data.git.showCommit(projectPath, selectedCommit.sha).then((d) => {
+      setCommitDetail(d);
+      setLoadingDetail(false);
+    }).catch(() => {
+      setCommitDetail(null);
+      setLoadingDetail(false);
+    });
+  }, [data, projectPath, selectedCommit?.sha]);
+
+  useInput((input, key) => {
+    if (pushModal) {
+      if (pushModal.phase === "confirm") {
+        if (key.return) {
+          setPushModal({ phase: "pushing" });
+          if (data && projectPath) {
+            data.git.push(projectPath).then((result) => {
+              setPushModal({ phase: "done", message: result.output || (result.success ? t("tui.gitPushSuccessful", "Push successful") : t("tui.gitPushFailed", "Push failed")), isError: !result.success });
+              if (result.success) {
+                setTimeout(() => { setPushModal(null); void refresh(); }, 2000);
+              }
+            }).catch((err: unknown) => {
+              setPushModal({ phase: "done", message: err instanceof Error ? err.message : String(err), isError: true });
+            });
+          }
+          return;
+        }
+        if (key.escape) { setPushModal(null); return; }
+      }
+      if (pushModal.phase === "done" && (pushModal.isError || key.escape)) {
+        setPushModal(null);
+        return;
+      }
+      return;
+    }
+
+    if (pickerOpen) {
+      if (key.upArrow || input === "k") { setProjectIndex((p) => Math.max(0, p - 1)); return; }
+      if (key.downArrow || input === "j") { setProjectIndex((p) => Math.min(projectsState.projects.length - 1, p + 1)); return; }
+      if (key.return) { setPickerOpen(false); return; }
+      if (key.escape) { setProjectIndex(pickerOriginal); setPickerOpen(false); return; }
+      return;
+    }
+
+    if (input === "p") { setPickerOriginal(projectIndex); setPickerOpen(true); return; }
+
+    if (input === "r") { void refresh(); return; }
+
+    if (input === "P" && gitStatus && gitStatus.ahead > 0) {
+      setPushModal({ phase: "confirm", commits });
+      return;
+    }
+
+    if (input === "F" && data && projectPath) {
+      setStatusMsg(t("tui.gitFetching", "Fetching…"));
+      data.git.fetch(projectPath).then((result) => {
+        setStatusMsg(result.success ? t("tui.gitFetched", "Fetched") : t("tui.gitFetchFailed", "Fetch failed: {{output}}", { output: result.output }));
+        void refresh();
+      }).catch((err: unknown) => {
+        setStatusMsg(`Fetch error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+      return;
+    }
+
+    if (key.leftArrow || input === "h") {
+      setActivePane((p) => {
+        const order: GitPane[] = worktrees.length > 1
+          ? ["status", "branches", "worktrees", "commits", "changes"]
+          : ["status", "branches", "commits", "changes"];
+        const i = order.indexOf(p);
+        return order[Math.max(0, i - 1)] ?? p;
+      });
+      return;
+    }
+    if (key.rightArrow || input === "l") {
+      setActivePane((p) => {
+        const order: GitPane[] = worktrees.length > 1
+          ? ["status", "branches", "worktrees", "commits", "changes"]
+          : ["status", "branches", "commits", "changes"];
+        const i = order.indexOf(p);
+        return order[Math.min(order.length - 1, i + 1)] ?? p;
+      });
+      return;
+    }
+
+    if (activePane === "commits") {
+      if (key.upArrow || input === "k") { setCommitIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow || input === "j") { setCommitIndex((i) => Math.min(commits.length - 1, i + 1)); return; }
+    }
+    if (activePane === "branches") {
+      if (key.upArrow || input === "k") { setBranchIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow || input === "j") { setBranchIndex((i) => Math.min(branches.length - 1, i + 1)); return; }
+    }
+    if (activePane === "worktrees") {
+      if (key.upArrow || input === "k") { setWorktreeIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow || input === "j") { setWorktreeIndex((i) => Math.min(worktrees.length - 1, i + 1)); return; }
+    }
+  });
+
+  // ── Mouse-wheel scrolling for the active list pane ──────────────────────
+  // Wheel moves selection by 3 rows in the focused list. Only active when
+  // the Git view is mounted (interactiveView === "git").
+  const gitWheelRef = useRef({ activePane, commits, branches, worktrees });
+  gitWheelRef.current = { activePane, commits, branches, worktrees };
+  useEffect(() => {
+    if (state.interactiveView !== "git") return;
+    return controller.onWheel((dir) => {
+      const { activePane: pane, commits: cs, branches: bs, worktrees: ws } = gitWheelRef.current;
+      const STEP = 3;
+      const delta = dir === "up" ? -STEP : STEP;
+      if (pane === "commits") {
+        setCommitIndex((i) => Math.max(0, Math.min(cs.length - 1, i + delta)));
+      } else if (pane === "branches") {
+        setBranchIndex((i) => Math.max(0, Math.min(bs.length - 1, i + delta)));
+      } else if (pane === "worktrees") {
+        setWorktreeIndex((i) => Math.max(0, Math.min(ws.length - 1, i + delta)));
+      }
+    });
+  }, [controller, state.interactiveView]);
+
+  // Narrow mode: collapse multi-pane layout to a single full-width pane so
+  // the stacked left+right columns don't overflow on small terminals.
+  const isNarrow = cols < NARROW_THRESHOLD;
+  const leftWidth = Math.max(24, Math.floor(cols * 0.35));
+  const rightWidth = cols - leftWidth - 1;
+
+  return (
+    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+      {/* Top bar: project selector + status */}
+      <Box flexDirection="row" gap={2} paddingX={1}>
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>{t("tui.projectSelectorLabel", "Project:")}</Text>
+          <Text bold color="white">{selectedProject?.name ?? t("tui.projectSelectorNone", "(none)")}</Text>
+          <Text dimColor>{t("tui.projectSelectorChangeHint", "[p] change")}</Text>
+        </Box>
+        {loading && (
+          <Box flexDirection="row" gap={1}>
+            <Text color="cyanBright"><Spinner type="dots" /></Text>
+            <Text dimColor>{t("tui.gitRefreshing", "refreshing")}</Text>
+          </Box>
+        )}
+        {statusMsg && <Text color="yellow">{statusMsg}</Text>}
+        <Box flexGrow={1} />
+        {gitStatus && (
+          <Box flexDirection="row" gap={1}>
+            {gitStatus.detached ? (
+              <Text color="yellow">detached HEAD</Text>
+            ) : (
+              <>
+                <Text color="cyanBright">{gitStatus.branch}</Text>
+                {gitStatus.ahead > 0 && <Text color="green">↑{gitStatus.ahead}</Text>}
+                {gitStatus.behind > 0 && <Text color="yellow">↓{gitStatus.behind}</Text>}
+              </>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* Main body — narrow: render only the active pane at full width so stacked columns don't overflow */}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* Left column: status + branches + worktrees — hidden in narrow when right pane is active */}
+        {(!isNarrow || activePane === "status" || activePane === "branches" || activePane === "worktrees") && (
+          <Box
+            flexDirection="column"
+            width={isNarrow ? undefined : leftWidth}
+            flexGrow={isNarrow ? 1 : 0}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            {/* Status panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "status") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "status" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "status"} color={activePane === "status" ? "blue" : undefined} dimColor={activePane !== "status"}>
+                    Status
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} overflow="hidden">
+                  {!gitStatus ? (
+                    <Text dimColor>{projectPath ? t("tui.loading", "Loading…") : t("tui.gitNoProject", "No project")}</Text>
+                  ) : (
+                    <>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Remote:</Text>
+                        <Text color="gray" wrap="truncate">{gitStatus.remoteUrl || "(none)"}</Text>
+                      </Box>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Fetched:</Text>
+                        <Text color="gray">{relMs(gitStatus.lastFetchAt)}</Text>
+                      </Box>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Staged:</Text>
+                        <Text color={gitStatus.staged.length > 0 ? "green" : "gray"}>{gitStatus.staged.length}</Text>
+                        <Text dimColor>Modified:</Text>
+                        <Text color={gitStatus.unstaged.length > 0 ? "yellow" : "gray"}>{gitStatus.unstaged.length}</Text>
+                        <Text dimColor>New:</Text>
+                        <Text color={gitStatus.untracked.length > 0 ? "cyan" : "gray"}>{gitStatus.untracked.length}</Text>
+                      </Box>
+                    </>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {/* Branches panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "branches") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "branches" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexGrow={isNarrow ? 1 : 1}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "branches"} color={activePane === "branches" ? "blue" : undefined} dimColor={activePane !== "branches"}>
+                    Branches
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+                  {branches.length === 0 ? (
+                    <Text dimColor>—</Text>
+                  ) : (
+                    branches.slice(0, 8).map((b, bi) => {
+                      const isSel = activePane === "branches" && bi === branchIndex;
+                      return (
+                        <Box key={b.name} flexDirection="row" gap={1}>
+                          <Text color={isSel ? "white" : b.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : b.isCurrent ? "▶" : " "}</Text>
+                          <Text color={isSel ? "whiteBright" : b.isCurrent ? "white" : "gray"} bold={isSel || b.isCurrent} wrap="truncate">
+                            {b.name}
+                          </Text>
+                          <Text dimColor>{b.shortSha}</Text>
+                        </Box>
+                      );
+                    })
+                  )}
+                  {branches.length > 8 && <Text dimColor>…+{branches.length - 8} more</Text>}
+                </Box>
+              </Box>
+            )}
+
+            {/* Worktrees panel — in narrow mode only shown when it is the active pane */}
+            {worktrees.length > 1 && (!isNarrow || activePane === "worktrees") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "worktrees" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "worktrees"} color={activePane === "worktrees" ? "blue" : undefined} dimColor={activePane !== "worktrees"}>
+                    Worktrees ({worktrees.length})
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} overflow="hidden">
+                  {worktrees.map((wt, wi) => {
+                    const isSel = activePane === "worktrees" && wi === worktreeIndex;
+                    return (
+                      <Box key={wt.path} flexDirection="row" gap={1}>
+                        <Text color={isSel ? "white" : wt.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : wt.isCurrent ? "▶" : " "}</Text>
+                        <Text color={isSel ? "whiteBright" : wt.isCurrent ? "white" : "gray"} bold={isSel} wrap="truncate">
+                          {wt.branch}
+                        </Text>
+                        {wt.isLocked && <Text color="yellow">🔒</Text>}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* Right column: commits + changes — hidden in narrow when left pane is active */}
+        {(!isNarrow || activePane === "commits" || activePane === "changes") && (
+          <Box flexDirection="column" flexGrow={1} overflow="hidden">
+            {/* Commits panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "commits") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "commits" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexGrow={1}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "commits"} color={activePane === "commits" ? "blue" : undefined} dimColor={activePane !== "commits"}>
+                    Commits
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+                  {commits.length === 0 ? (
+                    <Text dimColor>{loading ? t("tui.loading", "Loading…") : t("tui.gitNoCommits", "No commits")}</Text>
+                  ) : (
+                    commits.map((c, i) => {
+                      const isSel = i === commitIndex;
+                      const initials = authorInitials(c.authorName);
+                      const subjectWidth = Math.max(10, (isNarrow ? cols - 30 : rightWidth - 30));
+                      const subject = c.subject.length > subjectWidth
+                        ? c.subject.slice(0, subjectWidth - 1) + "…"
+                        : c.subject;
+                      return (
+                        <Box key={c.sha} flexDirection="row" gap={1}>
+                          <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
+                          <Text color="gray">{c.shortSha}</Text>
+                          <Text dimColor>{c.relativeTime.slice(0, 8).padEnd(8)}</Text>
+                          <Text color="cyanBright">{initials.padEnd(2)}</Text>
+                          <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
+                            {subject}
+                          </Text>
+                        </Box>
+                      );
+                    })
+                  )}
+                </Box>
+                {/* Commit detail strip */}
+                {selectedCommit && (
+                  <Box
+                    borderStyle="round"
+                    borderColor="gray"
+                    flexDirection="column"
+                    paddingX={1}
+                    flexShrink={0}
+                    overflow="hidden"
+                  >
+                    {loadingDetail ? (
+                      <Box flexDirection="row" gap={1}>
+                        <Text color="cyanBright"><Spinner type="dots" /></Text>
+                        <Text dimColor>Loading…</Text>
+                      </Box>
+                    ) : commitDetail ? (
+                      <>
+                        <Box flexDirection="row" gap={1}>
+                          <Text color="gray">{commitDetail.shortSha}</Text>
+                          <Text dimColor>{commitDetail.isoTime.slice(0, 16)}</Text>
+                          <Text dimColor>by</Text>
+                          <Text color="cyanBright">{commitDetail.authorName}</Text>
+                        </Box>
+                        {commitDetail.body && (
+                          <Text dimColor wrap="wrap">{commitDetail.body.slice(0, 200)}</Text>
+                        )}
+                        {commitDetail.stat && (
+                          <Text dimColor wrap="truncate">{commitDetail.stat.split("\n").slice(-1)[0]}</Text>
+                        )}
+                      </>
+                    ) : null}
+                  </Box>
+                )}
+              </Box>
+            )}
+
+            {/* Changes panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "changes") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "changes" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "changes"} color={activePane === "changes" ? "blue" : undefined} dimColor={activePane !== "changes"}>
+                    Changes
+                  </Text>
+                </Box>
+                {gitStatus && (gitStatus.staged.length > 0 || gitStatus.unstaged.length > 0 || gitStatus.untracked.length > 0) ? (
+                  <Box flexDirection="row" paddingX={1} overflow="hidden">
+                    {/* Staged */}
+                    <Box flexDirection="column" width="50%" overflow="hidden">
+                      <Text dimColor>Staged ({gitStatus.staged.length})</Text>
+                      {gitStatus.staged.slice(0, 6).map((f) => (
+                        <Box key={`s-${f.path}`} flexDirection="row" gap={1}>
+                          <Text color={statusColor(f.status)}>{f.status}</Text>
+                          <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(leftWidth / 2) - 4)}</Text>
+                        </Box>
+                      ))}
+                      {gitStatus.staged.length > 6 && <Text dimColor>…+{gitStatus.staged.length - 6}</Text>}
+                    </Box>
+                    {/* Unstaged + untracked */}
+                    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+                      <Text dimColor>Unstaged ({gitStatus.unstaged.length + gitStatus.untracked.length})</Text>
+                      {gitStatus.unstaged.slice(0, 4).map((f) => (
+                        <Box key={`u-${f.path}`} flexDirection="row" gap={1}>
+                          <Text color={statusColor(f.status)}>{f.status}</Text>
+                          <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor((isNarrow ? cols : rightWidth) / 2) - 4)}</Text>
+                        </Box>
+                      ))}
+                      {gitStatus.untracked.slice(0, 2).map((f) => (
+                        <Box key={`n-${f.path}`} flexDirection="row" gap={1}>
+                          <Text color="gray">?</Text>
+                          <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor((isNarrow ? cols : rightWidth) / 2) - 4)}</Text>
+                        </Box>
+                      ))}
+                      {(gitStatus.unstaged.length + gitStatus.untracked.length) > 6 && (
+                        <Text dimColor>…+{gitStatus.unstaged.length + gitStatus.untracked.length - 6}</Text>
+                      )}
+                    </Box>
+                  </Box>
+                ) : (
+                  <Box paddingX={1}>
+                    <Text dimColor>{t("tui.gitWorkingTreeClean", "Working tree clean")}</Text>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* Footer */}
+      <Box paddingX={1} flexDirection="row" gap={1}>
+        <Text dimColor>
+          {t("tui.gitFooterHints", "[r] refresh  {{push}}[F] fetch  [↑↓] rows  [←→] status▸branches{{worktrees}}▸commits▸changes  [p] project  [Esc/s] back", { push: gitStatus && gitStatus.ahead > 0 ? "[P] push  " : "", worktrees: worktrees.length > 1 ? "▸worktrees" : "" })}
+        </Text>
+        {isNarrow && (
+          <Text dimColor>{t("tui.narrowModeIndicator", "[narrow]")} {activePane}</Text>
+        )}
+      </Box>
+
+      {/* Project picker overlay */}
+      {pickerOpen && (
+        <Box position="absolute" marginTop={1} marginLeft={1}>
+          <ProjectSelector
+            open={true}
+            projects={projectsState.projects}
+            selectedIndex={projectIndex}
+            onSelect={setProjectIndex}
+          />
+        </Box>
+      )}
+
+      {/* Push modal overlay */}
+      {pushModal && (
+        <Box position="absolute" marginTop={2} marginLeft={4}>
+          {pushModal.phase === "confirm" && gitStatus && (
+            <PushModal
+              status={gitStatus}
+              commits={commits}
+              onConfirm={() => {
+                setPushModal({ phase: "pushing" });
+                if (data && projectPath) {
+                  data.git.push(projectPath).then((result) => {
+                    setPushModal({ phase: "done", message: result.output || (result.success ? t("tui.gitPushSuccessful", "Push successful") : t("tui.gitPushFailed", "Push failed")), isError: !result.success });
+                    if (result.success) {
+                      setTimeout(() => { setPushModal(null); void refresh(); }, 2000);
+                    }
+                  }).catch((err: unknown) => {
+                    setPushModal({ phase: "done", message: err instanceof Error ? err.message : String(err), isError: true });
+                  });
+                }
+              }}
+              onCancel={() => setPushModal(null)}
+            />
+          )}
+          {pushModal.phase === "pushing" && (
+            <Box
+              borderStyle="round"
+              borderColor="cyanBright"
+              flexDirection="row"
+              paddingX={2}
+              paddingY={1}
+              gap={1}
+              backgroundColor="black"
+            >
+              <Text color="cyanBright"><Spinner type="dots" /></Text>
+              <Text color="white">{t("tui.gitPushingToOrigin", "Pushing to origin/{{branch}}", { branch: gitStatus?.branch ?? "…" })}</Text>
+            </Box>
+          )}
+          {pushModal.phase === "done" && (
+            <Box
+              borderStyle="round"
+              borderColor={pushModal.isError ? "red" : "blue"}
+              flexDirection="column"
+              paddingX={2}
+              paddingY={1}
+              backgroundColor="black"
+            >
+              <Text color={pushModal.isError ? "red" : "green"}>
+                {pushModal.message}
+              </Text>
+              {pushModal.isError && <Text dimColor>{t("tui.gitPushDismissHint", "[Esc] dismiss")}</Text>}
+            </Box>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+// ── File explorer view ────────────────────────────────────────────────────────
+
+// Directories we never descend into — same list as the data layer denylist.
+const FILES_DENYLIST = new Set(["node_modules", ".git", "dist", ".next", "target", "build"]);
+
+type FilesPane = "tree" | "preview";
+
+interface TreeNode {
+  entry: FileEntry;
+  depth: number;
+  expanded: boolean;
+  // children loaded; undefined = not yet fetched
+  children: TreeNode[] | undefined;
+}
+
+// Truncate a path string in the middle: "…/long/path/file.ts"
+function truncateMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 1) / 2);
+  return s.slice(0, half) + "…" + s.slice(s.length - (max - half - 1));
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+// Build the flat visible list from the tree (depth-first, expanded nodes reveal children)
+function flattenTree(nodes: TreeNode[], showHidden: boolean): TreeNode[] {
+  const result: TreeNode[] = [];
+  function walk(list: TreeNode[]) {
+    for (const node of list) {
+      if (!showHidden && node.entry.name.startsWith(".")) continue;
+      result.push(node);
+      if (node.expanded && node.children) {
+        walk(node.children);
+      }
+    }
+  }
+  walk(nodes);
+  return result;
+}
+
+// Convert FileEntry[] from listDirectory into TreeNode[]
+function entriesToNodes(entries: FileEntry[], depth: number): TreeNode[] {
+  // Filter denylist entries
+  const filtered = entries.filter((e) => !FILES_DENYLIST.has(e.name));
+  // Sort: directories first, then files; alphabetical within each group
+  const dirs = filtered.filter((e) => e.isDirectory).sort((a, b) => a.name.localeCompare(b.name));
+  const files = filtered.filter((e) => !e.isDirectory).sort((a, b) => a.name.localeCompare(b.name));
+  return [...dirs, ...files].map((e) => ({ entry: e, depth, expanded: false, children: undefined }));
+}
+
+function FilesView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
+  const { t } = useTranslation("cli");
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+
+  const data = state.interactiveData;
+
+  const [projectIndex, setProjectIndex] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOriginal, setPickerOriginal] = useState(0);
+
+  const projectsState = useProjects(data);
+  const selectedProject = projectsState.projects[projectIndex] ?? null;
+  const projectPath = selectedProject?.path ?? null;
+
+  // Tree state
+  const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [showHidden, setShowHidden] = useState(false);
+
+  // Preview state
+  const [previewResult, setPreviewResult] = useState<FileReadResult | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewScroll, setPreviewScroll] = useState(0);
+  const [wrapEnabled, setWrapEnabled] = useState(false);
+
+  // Focus
+  const [focusedPane, setFocusedPane] = useState<FilesPane>("tree");
+
+  // Derived flat list for rendering
+  const flatNodes = flattenTree(rootNodes, showHidden);
+  const selectedNode = flatNodes[selectedIndex] ?? null;
+
+  // Count hidden top-level items for footer hint
+  const hiddenCount = rootNodes.filter((n) => n.entry.name.startsWith(".")).length;
+
+  // Load root directory when project changes
+  useEffect(() => {
+    if (!data || !projectPath) return;
+    setTreeLoading(true);
+    setRootNodes([]);
+    setSelectedIndex(0);
+    setPreviewResult(null);
+    setPreviewPath(null);
+    data.files.listDirectory(projectPath, "").then((entries) => {
+      setRootNodes(entriesToNodes(entries, 0));
+    }).catch(() => {
+      setRootNodes([]);
+    }).finally(() => {
+      setTreeLoading(false);
+    });
+  }, [data, projectPath]);
+
+  // Load file preview when selected node changes (only for files, on demand)
+  // The preview is loaded when Enter is pressed or pane switches to preview;
+  // here we auto-preview when selection lands on a file so it feels snappy.
+  useEffect(() => {
+    if (!data || !projectPath || !selectedNode) return;
+    if (selectedNode.entry.isDirectory) return;
+    const rel = selectedNode.entry.path;
+    if (rel === previewPath) return; // already loaded
+    setPreviewLoading(true);
+    setPreviewScroll(0);
+    data.files.readFile(projectPath, rel).then((result) => {
+      setPreviewResult(result);
+      setPreviewPath(rel);
+    }).catch(() => {
+      setPreviewResult(null);
+      setPreviewPath(rel);
+    }).finally(() => {
+      setPreviewLoading(false);
+    });
+  }, [data, projectPath, selectedNode?.entry.path]);
+
+  // Expand a directory node and load its children
+  const expandNode = useCallback(async (node: TreeNode) => {
+    if (!data || !projectPath) return;
+    if (!node.entry.isDirectory) return;
+    if (node.children !== undefined) {
+      // Already loaded — just toggle
+      node.expanded = !node.expanded;
+      setRootNodes((prev) => [...prev]);
+      return;
+    }
+    try {
+      const entries = await data.files.listDirectory(projectPath, node.entry.path);
+      node.children = entriesToNodes(entries, node.depth + 1);
+      node.expanded = true;
+      setRootNodes((prev) => [...prev]);
+    } catch {
+      node.children = [];
+      node.expanded = true;
+      setRootNodes((prev) => [...prev]);
+    }
+  }, [data, projectPath]);
+
+  const collapseNode = useCallback((node: TreeNode) => {
+    node.expanded = false;
+    setRootNodes((prev) => [...prev]);
+  }, []);
+
+  // Find parent node in tree (for left-arrow collapse-to-parent)
+  function findParentOf(nodes: TreeNode[], target: TreeNode, depth: number): TreeNode | null {
+    for (const n of nodes) {
+      if (n.depth === depth - 1 && n.expanded && n.children) {
+        if (n.children.includes(target)) return n;
+        const found = findParentOf(n.children, target, depth);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  // Compute visible preview line count for PgUp/PgDn
+  // Reserve: header (3 lines) + footer (2 lines) + pane border (2 lines) = ~7 lines overhead
+  const previewHeight = Math.max(4, (stdout?.rows ?? 24) - 7);
+  const halfPage = Math.max(1, Math.floor(previewHeight / 2));
+
+  useInput((input, key) => {
+    if (!data) return;
+
+    if (pickerOpen) {
+      if (key.upArrow || input === "k") { setProjectIndex((p) => Math.max(0, p - 1)); return; }
+      if (key.downArrow || input === "j") { setProjectIndex((p) => Math.min(projectsState.projects.length - 1, p + 1)); return; }
+      if (key.return) { setPickerOpen(false); return; }
+      if (key.escape) { setProjectIndex(pickerOriginal); setPickerOpen(false); return; }
+      return;
+    }
+
+    if (input === "p") { setPickerOriginal(projectIndex); setPickerOpen(true); return; }
+
+    // Tab cycles pane focus
+    if (key.tab) {
+      setFocusedPane((p) => p === "tree" ? "preview" : "tree");
+      return;
+    }
+
+    if (input === ".") {
+      setShowHidden((v) => !v);
+      return;
+    }
+
+    if (input === "w" || input === "W") {
+      setWrapEnabled((v) => !v);
+      return;
+    }
+
+    if (input === "r" || input === "R") {
+      // Force-reload the current file preview
+      if (data && projectPath && selectedNode && !selectedNode.entry.isDirectory) {
+        setPreviewLoading(true);
+        setPreviewScroll(0);
+        setPreviewPath(null); // clear to force re-fetch via effect
+      }
+      return;
+    }
+
+    if (focusedPane === "tree") {
+      if (key.upArrow || input === "k") {
+        setSelectedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSelectedIndex((i) => Math.min(flatNodes.length - 1, i + 1));
+        return;
+      }
+      if (key.rightArrow) {
+        if (selectedNode?.entry.isDirectory) {
+          if (selectedNode.expanded) {
+            // Move into first child
+            const ci = flatNodes.indexOf(selectedNode) + 1;
+            if (ci < flatNodes.length) setSelectedIndex(ci);
+          } else {
+            void expandNode(selectedNode);
+          }
+        }
+        return;
+      }
+      if (key.leftArrow) {
+        if (selectedNode?.entry.isDirectory && selectedNode.expanded) {
+          collapseNode(selectedNode);
+        } else if (selectedNode && selectedNode.depth > 0) {
+          // Move to parent
+          const parent = findParentOf(rootNodes, selectedNode, selectedNode.depth);
+          if (parent) {
+            const pi = flatNodes.indexOf(parent);
+            if (pi >= 0) setSelectedIndex(pi);
+          }
+        }
+        return;
+      }
+      if (key.return) {
+        if (selectedNode?.entry.isDirectory) {
+          void expandNode(selectedNode);
+        } else if (selectedNode) {
+          // Switch to preview pane when opening a file
+          setFocusedPane("preview");
+          setPreviewScroll(0);
+        }
+        return;
+      }
+    }
+
+    if (focusedPane === "preview") {
+      const lineCount = previewResult?.lineCount ?? 0;
+      const maxScroll = Math.max(0, lineCount - previewHeight);
+
+      if (key.upArrow || input === "k") {
+        setPreviewScroll((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setPreviewScroll((s) => Math.min(maxScroll, s + 1));
+        return;
+      }
+      if (key.pageUp) {
+        setPreviewScroll((s) => Math.max(0, s - halfPage));
+        return;
+      }
+      if (key.pageDown) {
+        setPreviewScroll((s) => Math.min(maxScroll, s + halfPage));
+        return;
+      }
+      if (input === "g") {
+        setPreviewScroll(0);
+        return;
+      }
+      if (input === "G") {
+        setPreviewScroll(maxScroll);
+        return;
+      }
+    }
+  }, { isActive: state.interactiveView === "files" });
+
+  // ── Mouse-wheel scrolling for the focused pane ──────────────────────────
+  // Tree pane: wheel moves the selection cursor. Preview pane: wheel
+  // scrolls the file viewport. Active only on the Files view.
+  const filesWheelRef = useRef({ focusedPane, flatNodes, previewResult, previewHeight });
+  filesWheelRef.current = { focusedPane, flatNodes, previewResult, previewHeight };
+  useEffect(() => {
+    if (state.interactiveView !== "files") return;
+    return controller.onWheel((dir) => {
+      const { focusedPane: pane, flatNodes: nodes, previewResult: pr, previewHeight: ph } =
+        filesWheelRef.current;
+      const STEP = 3;
+      const delta = dir === "up" ? -STEP : STEP;
+      if (pane === "tree") {
+        setSelectedIndex((i) => Math.max(0, Math.min(nodes.length - 1, i + delta)));
+      } else {
+        const lineCount = pr?.lineCount ?? 0;
+        const maxScroll = Math.max(0, lineCount - ph);
+        setPreviewScroll((s) => Math.max(0, Math.min(maxScroll, s + delta)));
+      }
+    });
+  }, [controller, state.interactiveView]);
+
+  // Narrow mode: collapse tree+preview side-by-side to a single pane so the
+  // two columns don't overflow on terminals below the threshold.
+  const isNarrow = cols < NARROW_THRESHOLD;
+  // Layout: 38% tree, 62% preview; in narrow mode the active pane takes full width
+  const treeWidth = isNarrow ? Math.max(20, cols - 2) : Math.max(20, Math.floor(cols * 0.38));
+
+  const previewEntry = selectedNode && !selectedNode.entry.isDirectory ? selectedNode.entry : null;
+
+  // Lines of preview content to show
+  const previewLines = previewResult?.content
+    ? previewResult.content.split("\n").slice(previewScroll, previewScroll + previewHeight)
+    : null;
+  const totalLines = previewResult?.lineCount ?? 0;
+  const lineNumWidth = Math.max(3, String(previewScroll + previewHeight).length);
+
+  return (
+    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+      {/* Header strip */}
+      <Box flexDirection="row" paddingX={1} gap={1}>
+        <Text color="cyanBright" bold>{selectedProject?.name ?? "—"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor color={focusedPane === "tree" ? "cyanBright" : "gray"}>
+          {focusedPane === "tree" ? "tree" : "preview"}
+        </Text>
+        {previewEntry && (
+          <>
+            <Text dimColor>│</Text>
+            <Text color="white" wrap="truncate">{truncateMiddle(previewEntry.path, Math.max(10, cols - 40))}</Text>
+            <Text dimColor>│</Text>
+            <Text dimColor>{formatFileSize(previewEntry.size)}</Text>
+            {previewResult && !previewResult.isBinary && !previewResult.tooLarge && (
+              <>
+                <Text dimColor>{previewResult.lineCount}L</Text>
+                <Text dimColor>{formatRelativeTime(previewEntry.modifiedAt)}</Text>
+              </>
+            )}
+          </>
+        )}
+      </Box>
+
+      {/* Main pane row — narrow: only the focused pane is rendered at full width */}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* Left: tree pane — hidden in narrow mode when preview is focused */}
+        {(!isNarrow || focusedPane === "tree") && (
+        <Box
+          flexDirection="column"
+          width={isNarrow ? undefined : treeWidth}
+          flexGrow={isNarrow ? 1 : 0}
+          flexShrink={0}
+          borderStyle="round"
+          borderColor={focusedPane === "tree" ? "cyanBright" : "gray"}
+          overflow="hidden"
+        >
+          <Box paddingX={1}>
+            <Text bold={focusedPane === "tree"} color={focusedPane === "tree" ? "cyanBright" : undefined} dimColor={focusedPane !== "tree"}>
+              Files
+            </Text>
+          </Box>
+          <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+            {treeLoading ? (
+              <Box flexDirection="row" gap={1}>
+                <Text color="cyanBright"><Spinner type="dots" /></Text>
+                <Text dimColor>{t("tui.loading", "Loading…")}</Text>
+              </Box>
+            ) : flatNodes.length === 0 ? (
+              <Text dimColor>{t("tui.filesEmpty", "(empty)")}</Text>
+            ) : (
+              flatNodes.map((node, i) => {
+                const isSelected = focusedPane === "tree" && i === selectedIndex;
+                const indent = "  ".repeat(node.depth);
+                let prefix: string;
+                if (node.entry.isDirectory) {
+                  prefix = node.expanded ? "▾ " : "▸ ";
+                } else {
+                  prefix = "· ";
+                }
+                const name = node.entry.name;
+                const maxNameWidth = treeWidth - node.depth * 2 - 4;
+                const displayName = name.length > maxNameWidth ? name.slice(0, maxNameWidth - 1) + "…" : name;
+                return (
+                  <Box key={node.entry.path} flexDirection="row">
+                    {isSelected && <Text color="cyanBright">▶</Text>}
+                    {!isSelected && <Text> </Text>}
+                    <Text
+                      color={isSelected ? "whiteBright" : node.entry.isDirectory ? "cyan" : undefined}
+                      dimColor={!isSelected && !node.entry.isDirectory}
+                      wrap="truncate"
+                    >
+                      {indent}{prefix}{displayName}
+                    </Text>
+                  </Box>
+                );
+              })
+            )}
+          </Box>
+          {/* Tree footer: path strip */}
+          <Box paddingX={1}>
+            <Text dimColor wrap="truncate">
+              {selectedNode
+                ? truncateMiddle(
+                    projectPath ? `${projectPath}/${selectedNode.entry.path}` : selectedNode.entry.path,
+                    treeWidth - 4,
+                  )
+                : " "}
+            </Text>
+            {!showHidden && hiddenCount > 0 && (
+              <Text dimColor> [{hiddenCount} hidden]</Text>
+            )}
+          </Box>
+        </Box>
+        )}
+
+        {/* Right: preview pane — hidden in narrow mode when tree is focused */}
+        {(!isNarrow || focusedPane === "preview") && (
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            borderStyle="round"
+            borderColor={focusedPane === "preview" ? "cyanBright" : "gray"}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={focusedPane === "preview"} color={focusedPane === "preview" ? "cyanBright" : undefined} dimColor={focusedPane !== "preview"}>
+                Preview
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {previewLoading ? (
+                <Box flexDirection="row" gap={1}>
+                  <Text color="cyanBright"><Spinner type="dots" /></Text>
+                  <Text dimColor>{t("tui.loading", "Loading…")}</Text>
+                </Box>
+              ) : !previewEntry ? (
+                <Text dimColor>{t("tui.filesSelectToPreview", "Select a file to preview")}</Text>
+              ) : previewResult === null ? (
+                <Text dimColor>{t("tui.filesUnableToRead", "Unable to read file")}</Text>
+              ) : previewResult.isBinary ? (
+                <Text dimColor>{t("tui.filesBinary", "[binary file, {{size}}]", { size: formatFileSize(previewResult.size) })}</Text>
+              ) : previewResult.tooLarge ? (
+                <Text dimColor>{t("tui.filesTooLarge", "{{size}} — [too large to preview]", { size: formatFileSize(previewResult.size) })}</Text>
+              ) : previewResult.content === "" ? (
+                <Text dimColor>{t("tui.filesEmptyFile", "(empty file)")}</Text>
+              ) : previewLines ? (
+                <Box flexDirection="column" overflow="hidden">
+                  {previewLines.map((line, i) => {
+                    const lineNo = previewScroll + i + 1;
+                    return (
+                      <Box key={lineNo} flexDirection="row">
+                        <Box width={lineNumWidth + 1} flexShrink={0}>
+                          <Text dimColor>{String(lineNo).padStart(lineNumWidth)}</Text>
+                        </Box>
+                        <Text wrap={wrapEnabled ? "wrap" : "truncate-end"}>{line}</Text>
+                      </Box>
+                    );
+                  })}
+                  {totalLines > previewScroll + previewHeight && (
+                    <Text dimColor>{t("tui.filesMoreLines", "… {{count}} more lines", { count: totalLines - previewScroll - previewHeight })}</Text>
+                  )}
+                </Box>
+              ) : null}
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      {/* Footer hints */}
+      <Box paddingX={1} flexDirection="row" gap={1}>
+        <Text dimColor>
+          {t("tui.filesFooterHints", "[Tab] switch pane  [↑↓/jk] move  [Enter] open  [←/→] collapse/expand  [.] hidden  [w] wrap  [p] project  [r] reload")}
+        </Text>
+        {isNarrow && (
+          <Text dimColor>{t("tui.narrowModeIndicator", "[narrow]")} {focusedPane}</Text>
+        )}
+      </Box>
+
+      {/* Project picker overlay */}
+      {pickerOpen && (
+        <Box position="absolute" marginTop={2} marginLeft={2}>
+          <Box
+            borderStyle="round"
+            borderColor="cyanBright"
+            flexDirection="column"
+            paddingX={2}
+            paddingY={1}
+            backgroundColor="black"
+          >
+            <Text bold color="white">{t("tui.filesSelectProject", "Select Project")}</Text>
+            <Box height={1} />
+            {projectsState.projects.map((proj, i) => (
+              <Box key={proj.id} flexDirection="row" gap={1}>
+                <Text color={i === projectIndex ? "cyanBright" : "gray"}>{i === projectIndex ? "▶" : " "}</Text>
+                <Text color={i === projectIndex ? "whiteBright" : undefined}>{proj.name}</Text>
+              </Box>
+            ))}
+            <Box height={1} />
+            <Text dimColor>[↑↓] move  [Enter] select  [Esc] cancel</Text>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+// ── Interactive mode root ─────────────────────────────────────────────────────
+
+function InteractiveMode({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
+  const { t } = useTranslation("cli");
+  if (state.interactiveData === null) {
+    return (
+      <Box flexDirection="column" flexGrow={1}>
+        <Box justifyContent="center" alignItems="center" flexGrow={1}>
+          <Text dimColor>{t("tui.interactiveModeUnavailable", "Interactive mode unavailable — no data source")}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      <Box height={1} flexShrink={0} />
+      <Box flexGrow={1} overflow="hidden">
+        {state.interactiveView === "board" && <BoardView state={state} controller={controller} />}
+        {state.interactiveView === "agents" && <AgentsView state={state} />}
+        {state.interactiveView === "settings" && <SettingsInteractiveView state={state} controller={controller} />}
+        {state.interactiveView === "git" && <GitView state={state} controller={controller} />}
+        {state.interactiveView === "files" && <FilesView state={state} controller={controller} />}
+      </Box>
+    </Box>
+  );
+}
+
+// ── Root App ──────────────────────────────────────────────────────────────────
+
+interface DashboardAppProps {
+  controller: DashboardTUI;
+}
+
+export function DashboardApp({ controller }: DashboardAppProps) {
+  const { t } = useTranslation("cli");
+  const { exit } = useApp();
+  const { stdout } = useStdout();
+
+  useEffect(() => {
+    /*
+     * FNXC:DashboardTuiHeap 2026-06-23-12:14:
+     * React/Ink development renders emit User Timing measures for every committed component. Clear them after each TUI commit so long-running execution does not retain render diagnostics in the dashboard server heap.
+     */
+    drainTuiPerformanceTimeline();
+  });
+
+  // Bump a state counter on resize so React re-renders with the latest
+  // dimensions. (The controller separately calls inkInstance.clear() to
+  // reset Ink's log-update line tracking — manually writing clear escape
+  // codes here would desync that tracking and break subsequent renders.)
+  const [resizeTick, setResizeTick] = useState(0);
+  useEffect(() => {
+    if (!stdout) return;
+    let followup: ReturnType<typeof setTimeout> | null = null;
+    const onResize = () => {
+      // Bump immediately so React re-reads dims on the next render. Then
+      // schedule a follow-up bump ~60ms later (past the controller's 50ms
+      // resize debounce) to cover the case where stdout.columns/rows had
+      // not yet settled at the first render — common under tmux/ssh.
+      setResizeTick((t) => t + 1);
+      if (followup) clearTimeout(followup);
+      followup = setTimeout(() => {
+        followup = null;
+        setResizeTick((t) => t + 1);
+      }, 60);
+    };
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+      if (followup) clearTimeout(followup);
+    };
+  }, [stdout]);
+
+  const cols = stdout?.columns ?? 80;
+  const rows = stdout?.rows ?? 24;
+
+  const state = useSyncExternalStore(
+    useCallback((cb) => controller.subscribe(cb), [controller]),
+    useCallback(() => controller.getSnapshot(), [controller]),
+  );
+
+  // ── Mouse-wheel scrolling for the main logs section ─────────────────────
+  // Only active when the logs panel is focused. Uses a ref for `state` so
+  // the subscription doesn't need to re-register on every render.
+  const wheelStateRef = useRef(state);
+  wheelStateRef.current = state;
+  useEffect(() => {
+    return controller.onWheel((dir) => {
+      const s = wheelStateRef.current;
+      if (s.activeSection !== "logs" && !s.narrowLogSplitFocused) return;
+      const filtered = controller.getFilteredLogEntries();
+      if (filtered.length === 0) return;
+      const WHEEL_STEP = 3;
+      const cur = s.selectedLogIndex;
+      if (dir === "up") {
+        controller.setSelectedLogIndex(Math.max(0, cur - WHEEL_STEP));
+      } else {
+        controller.setSelectedLogIndex(Math.min(filtered.length - 1, cur + WHEEL_STEP));
+      }
+    });
+  }, [controller]);
+
+  // Auto-toggle xterm mouse reporting based on whether the focused panel
+  // benefits from wheel scrolling. We default-off so click-drag selection
+  // works (e.g. copying the auth token from the System panel), and switch
+  // on for panels that wire `controller.onWheel` consumers:
+  //   - Status mode: Logs panel
+  //   - Interactive: Files / Git / Board (task detail uses the wheel too)
+  // Other status panels (System / Stats / Utilities / Settings) leave it
+  // off so the user can select text natively. [M] is still a manual
+  // override, but the next focus change will reapply this policy.
+  // When a log entry is expanded, disable mouse reporting so the user can
+  // click-drag to select the message text natively. Esc/Enter closes the
+  // expanded view and the policy reapplies, restoring wheel scrolling.
+  const statusLogsFocused = state.activeSection === "logs"
+    // Narrow-mode split keeps wheel scrolling for the bottom log strip,
+    // except when System is selected (preserve native text selection).
+    || (state.narrowLogSplitFocused && state.activeSection !== "system");
+  const wantsMouse = state.mode === "interactive"
+    ? (state.interactiveView === "files"
+       || state.interactiveView === "git"
+       || state.interactiveView === "board")
+    : (statusLogsFocused && !state.logsExpandedMode);
+  useEffect(() => {
+    if (state.mouseEnabled !== wantsMouse) {
+      controller.setMouseEnabled(wantsMouse);
+    }
+  }, [controller, wantsMouse, state.mouseEnabled]);
+
+  // Global QR overlay state — populated when the user hits Ctrl+Q on a
+  // running tunnel. `loading` covers the network request; `error` surfaces
+  // the message inline so the overlay never sits blank.
+  const [qrOverlay, setQrOverlay] = useState<
+    | { state: "loading" }
+    | { state: "ready"; url: string; ascii: string; tokenType: string; expiresAt: string | null }
+    | { state: "error"; message: string }
+    | null
+  >(null);
+
+  // Global key handling
+  useInput((input, key) => {
+    // Quit — route through SIGINT so the dashboard's shutdown handler runs
+    // (stops dev-server child process groups, engines, mesh, etc.). Calling
+    // process.exit(0) directly here orphans node/vitest children spawned by
+    // user-project dev servers.
+    if (((input === "q" || input === "Q") && !key.ctrl) || (key.ctrl && input === "c")) {
+      void controller.stop();
+      exit();
+      process.kill(process.pid, "SIGINT");
+      return;
+    }
+
+    // QR overlay open/close — Ctrl+Q toggles, Esc closes when open.
+    if (qrOverlay && key.escape) {
+      setQrOverlay(null);
+      return;
+    }
+    if (key.ctrl && input === "q") {
+      if (qrOverlay) {
+        setQrOverlay(null);
+        return;
+      }
+      const remote = state.interactiveData?.remote;
+      if (!remote) return;
+      if (state.remoteStatus?.state !== "running") {
+        setQrOverlay({ state: "error", message: t("tui.qrNoTunnelRunning", "No remote tunnel is running. Start one in Settings (g).") });
+        return;
+      }
+      setQrOverlay({ state: "loading" });
+      void remote
+        .getQrPayload("persistent", undefined, "terminal")
+        .then((payload) => {
+          setQrOverlay({
+            state: "ready",
+            url: payload.url,
+            ascii: payload.data ?? "",
+            tokenType: "persistent",
+            expiresAt: payload.expiresAt,
+          });
+        })
+        .catch((err: unknown) => {
+          setQrOverlay({ state: "error", message: err instanceof Error ? err.message : String(err) });
+        });
+      return;
+    }
+
+    if (state.mode === "interactive" && state.interactiveInputLocked) {
+      return;
+    }
+
+    // Narrow single-pane mode shows a bottom log strip when the terminal has
+    // enough rows after the top pane is given everything it needs. Down-arrow
+    // shifts sub-focus into that strip; once focused it gets the same key
+    // bindings as the dedicated logs section. Mirrors the showLogSplit logic
+    // in StatusModeSingle.
+    const narrowSplitActive = (() => {
+      if (state.mode !== "status") return false;
+      if (!(cols < NARROW_THRESHOLD || rows < 20)) return false;
+      if (state.activeSection === "logs") return false;
+      const topNeeded = estimateSectionPanelHeight(
+        state.activeSection,
+        state,
+        cols,
+        !state.narrowLogSplitFocused,
+      );
+      return rows - 2 - topNeeded >= NARROW_SPLIT_MIN_LOG_ROWS;
+    })();
+    const logsFocused =
+      state.mode === "status" &&
+      (state.activeSection === "logs" || (narrowSplitActive && state.narrowLogSplitFocused));
+
+    // View switching shortcuts — b/a/g enter interactive + set view
+    if (input === "b" || input === "B") {
+      controller.setMode("interactive");
+      controller.setInteractiveView("board");
+      return;
+    }
+    if (input === "a" || input === "A") {
+      controller.setMode("interactive");
+      controller.setInteractiveView("agents");
+      return;
+    }
+    // Lowercase only — uppercase G is reserved for vim-style "jump to end"
+    // in panels that opt-in (e.g. logs in status mode, file preview, etc.).
+    if (input === "g") {
+      controller.setMode("interactive");
+      controller.setInteractiveView("settings");
+      return;
+    }
+    // 'f' is overloaded:
+    //   * status mode + Logs panel focused → cycle severity filter
+    //   * everywhere else → switch to Files view (interactive)
+    if (input === "f" || input === "F") {
+      if (logsFocused) {
+        controller.cycleSeverityFilter();
+        return;
+      }
+      controller.setMode("interactive");
+      controller.setInteractiveView("files");
+      return;
+    }
+
+    /*
+    FNXC:DashboardTui 2026-07-24-18:40:
+    `t` is overloaded: global → Git view, Utilities section → Toggle Engine Pause.
+    The global branch runs first in this same handler and returned unconditionally,
+    so `handleUtilityAction("t")` below was unreachable and the Utilities panel
+    advertised a shortcut that did nothing. Yield to the Utilities dispatch when
+    that section owns focus (matching the `f` / logs-focus precedent above).
+    */
+    const utilitiesOwnsInput = state.mode === "status" && state.activeSection === "utilities" && !logsFocused;
+    if ((input === "t" || input === "T") && !utilitiesOwnsInput) {
+      controller.setMode("interactive");
+      controller.setInteractiveView("git");
+      return;
+    }
+
+    /*
+    FNXC:DashboardTui 2026-06-16-17:40:
+    The global `s` shortcut remains a Main/status alias everywhere except the Agents interactive view, where `s` is reserved for starting the selected agent. Keep `m` as the universal Main switch so Agents users can start an agent without being bounced out of the view.
+    */
+    const agentsStartKeyOwnsInput = state.mode === "interactive" && state.interactiveView === "agents";
+    if (input === "m" || (input === "s" && !agentsStartKeyOwnsInput)) {
+      if (state.mode === "interactive") {
+        controller.setMode("status");
+        return;
+      }
+    }
+
+    // Number keys 1-5 always jump to a status-mode section (matching the
+    // [1]System [2]Logs [3]Stats [4]Utilities [5]Settings tabs in the
+    // MainHeader). They switch back from interactive mode if needed —
+    // the interactive views still have letter shortcuts (b/a/g/t).
+    const sectionForNumber: Record<string, SectionId | undefined> = {
+      "1": "system",
+      "2": "logs",
+      "3": "stats",
+      "4": "utilities",
+      "5": "settings",
+    };
+    const targetSection = sectionForNumber[input];
+    if (targetSection) {
+      if (state.mode === "interactive") controller.setMode("status");
+      controller.setActiveSection(targetSection);
+      return;
+    }
+
+    // Let interactive views handle their own keys (n/p/arrows/etc).
+    if (state.mode === "interactive") {
+      return;
+    }
+
+    // Help toggle
+    if (input === "?" || input === "h" || input === "H") {
+      controller.setShowHelp(!state.showHelp);
+      return;
+    }
+
+    // Status mode: Enter from the System panel opens the dashboard URL in
+    // the user's browser. Logs panel handles Enter itself (expand log entry)
+    // so we gate by activeSection.
+    if (key.return && state.activeSection === "system" && state.systemInfo) {
+      const url = state.systemInfo.tokenizedUrl ?? state.systemInfo.baseUrl;
+      openInBrowser(url);
+      return;
+    }
+
+    // System panel: [c] copies the auth token to the clipboard. Mouse mode
+    // is on for log scrolling, which blocks normal click-drag selection of
+    // the token text in the panel — this gives users a keyboard path.
+    if (
+      (input === "c" || input === "C") &&
+      state.activeSection === "system" &&
+      state.systemInfo?.authToken
+    ) {
+      const token = state.systemInfo.authToken;
+      void copyToClipboard(token).then((ok) => {
+        controller.flashClipboard(ok);
+        if (ok) {
+          controller.log("Auth token copied to clipboard.", "clipboard");
+        } else {
+          controller.warn(
+            "Clipboard copy failed (no pbcopy/xclip/wl-copy/clip available).",
+            "clipboard",
+          );
+        }
+      });
+      return;
+    }
+
+    // [M] toggles mouse reporting. With it off, native click-drag selection
+    // works (the only path that works under tmux's `mouse on`); cost is
+    // wheel-scroll on Logs/Files/Git stops working until re-enabled.
+    if (input === "M") {
+      const next = !state.mouseEnabled;
+      controller.setMouseEnabled(next);
+      controller.log(
+        next
+          ? "Mouse mode ON — wheel scrolls panels."
+          : "Mouse mode OFF — click-drag to select text; press M to restore wheel.",
+        "mouse",
+      );
+      return;
+    }
+
+    // Tab / Shift+Tab cycle focused panel
+    if (key.tab) {
+      const shift = key.shift;
+      const idx = PANEL_ORDER.indexOf(state.activeSection);
+      if (shift) {
+        controller.setActiveSection(PANEL_ORDER[(idx - 1 + PANEL_ORDER.length) % PANEL_ORDER.length]);
+      } else {
+        controller.setActiveSection(PANEL_ORDER[(idx + 1) % PANEL_ORDER.length]);
+      }
+      return;
+    }
+
+    // Arrow/n/p navigation (skip when logs expanded). cycleSection clears
+    // any narrow-split sub-focus via setActiveSection — left/right always
+    // cycle sections, including reaching the dedicated logs section.
+    if (key.rightArrow || input === "n" || input === "N") {
+      if (state.activeSection !== "logs" || !state.logsExpandedMode) {
+        controller.cycleSection(1);
+      }
+      return;
+    }
+    if (key.leftArrow || input === "p" || input === "P") {
+      // While sub-focus is on the narrow log strip, ← returns to the main
+      // pane (System / Stats / Utilities / Settings) instead of cycling
+      // sections — so the user can jump back to System to drag-select the
+      // auth token without losing their place. p/P still cycle sections.
+      if (key.leftArrow && narrowSplitActive && state.narrowLogSplitFocused) {
+        controller.setNarrowLogSplitFocused(false);
+        return;
+      }
+      if (state.activeSection !== "logs" || !state.logsExpandedMode) {
+        controller.cycleSection(-1);
+      }
+      return;
+    }
+
+    // Down arrow:
+    //   * dedicated logs section → handled below as log entry navigation
+    //   * narrow split active, top focused → drop sub-focus into the log strip
+    //   * narrow split active, strip focused → handled below as log navigation
+    //   * otherwise → cycleSection
+    if (key.downArrow && state.activeSection !== "logs") {
+      if (narrowSplitActive && !state.narrowLogSplitFocused) {
+        controller.setNarrowLogSplitFocused(true);
+        return;
+      }
+      if (!(narrowSplitActive && state.narrowLogSplitFocused)) {
+        controller.cycleSection(1);
+        return;
+      }
+      // fall through to log navigation
+    }
+    // Up arrow: when the split strip is focused and the cursor is at the
+    // top, return focus to the main pane instead of navigating further up.
+    if (key.upArrow && state.activeSection !== "logs") {
+      if (narrowSplitActive && state.narrowLogSplitFocused) {
+        if (state.selectedLogIndex <= 0) {
+          controller.setNarrowLogSplitFocused(false);
+          return;
+        }
+        // fall through to log navigation
+      } else {
+        controller.cycleSection(-1);
+        return;
+      }
+    }
+
+    // Utilities actions — skipped when sub-focus has moved to the log strip
+    // so j/k/G/Home/etc. don't get swallowed by utility shortcuts.
+    if (state.activeSection === "utilities" && !logsFocused) {
+      void controller.handleUtilityAction(input);
+      return;
+    }
+
+    // Logs-specific keys (apply to dedicated logs section AND the narrow
+    // bottom split when it has sub-focus).
+    if (logsFocused) {
+      const filteredEntries = controller.getFilteredLogEntries();
+
+      if (key.escape) {
+        if (state.logsExpandedMode) {
+          controller.setLogsExpandedMode(false);
+          controller.setShowHelp(false);
+        } else if (state.showHelp) {
+          controller.setShowHelp(false);
+        } else if (state.narrowLogSplitFocused) {
+          // Esc out of the bottom log strip back to the main pane.
+          controller.setNarrowLogSplitFocused(false);
+        }
+        return;
+      }
+
+      if (key.return || input === " " || input === "e" || input === "E") {
+        if (filteredEntries.length > 0) {
+          controller.setLogsExpandedMode(!state.logsExpandedMode);
+        }
+        return;
+      }
+
+      if (input === "w" || input === "W") {
+        controller.setLogsWrapEnabled(!state.logsWrapEnabled);
+        return;
+      }
+
+      if (key.upArrow || input === "k" || input === "K") {
+        if (state.selectedLogIndex > 0) {
+          controller.setSelectedLogIndex(state.selectedLogIndex - 1);
+        }
+        return;
+      }
+
+      if (key.downArrow || input === "j" || input === "J") {
+        if (state.selectedLogIndex < filteredEntries.length - 1) {
+          controller.setSelectedLogIndex(state.selectedLogIndex + 1);
+        }
+        return;
+      }
+
+      if (key.home) {
+        controller.setSelectedLogIndex(0);
+        return;
+      }
+
+      // Vim-style "G" jumps to the newest log entry. "g" stays as the
+      // global Settings shortcut, so we don't bind it here.
+      if (key.end || input === "G") {
+        controller.setSelectedLogIndex(Math.max(0, filteredEntries.length - 1));
+        return;
+      }
+
+      if (input === "c" || input === "C") {
+        // Clamp the index to match the display logic in LogsPanel — the cursor
+        // shown is always Math.min(Math.max(idx, 0), entries.length - 1), so
+        // we copy whatever the user is actually looking at instead of silently
+        // hitting `undefined` when selectedLogIndex is briefly out of range.
+        const idx = filteredEntries.length === 0
+          ? -1
+          : Math.min(Math.max(state.selectedLogIndex, 0), filteredEntries.length - 1);
+        const target = idx >= 0 ? filteredEntries[idx] : undefined;
+        if (target) {
+          const ts = formatTimestamp(target.timestamp);
+          const prefix = target.prefix ? `[${target.prefix}] ` : "";
+          const displayMessage = stripLeadingDetailedTimestamp(target.message);
+          const text = `${ts} ${target.level.toUpperCase()} ${prefix}${displayMessage}`;
+          void copyToClipboard(text).then((ok) => {
+            controller.flashClipboard(ok);
+            if (ok) {
+              controller.log("Log entry copied to clipboard.", "clipboard");
+            } else {
+              controller.warn(
+                "Clipboard copy failed (no pbcopy/xclip/wl-copy/clip available).",
+                "clipboard",
+              );
+            }
+          });
+        } else {
+          controller.warn("No log entry to copy.", "clipboard");
+          controller.flashClipboard(false);
+        }
+        return;
+      }
+    }
+  });
+
+  // The `key` keyed off live dimensions forces React to unmount and
+  // remount the entire tree whenever the terminal resizes. This is the
+  // hammer fix for Ink's stale-layout-on-resize: instead of trying to
+  // diff a layout that's still bound to old dimensions, we throw the
+  // tree away and rebuild from scratch with the new bounds. Cheap on
+  // every keystroke (resize is rare), avoids subtle Yoga caching bugs.
+  // Include resizeTick so every resize event remounts even if stdout reports
+  // the same cols×rows string (stale-read race, or two consecutive resizes
+  // back to the same width). Without this, Yoga keeps the cached layout from
+  // the prior render and the screen stays broken until the next dim change.
+  const layoutKey = `${cols}x${rows}#${resizeTick}`;
+
+  // Splash: show while systemInfo is not yet set.
+  // isReady mirrors systemInfo presence today; future interactive controls
+  // that must wait for engine-ready should check state.isReady.
+  if (!state.systemInfo) {
+    return (
+      <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
+        <SplashScreen loadingStatus={state.loadingStatus} updateStatus={state.updateStatus} />
+      </Box>
+    );
+  }
+
+  const isNarrow = cols < 80 || rows < 20;
+  tuiDebug("DashboardApp", {
+    cols,
+    rows,
+    isNarrow,
+    mode: state.mode,
+    layoutKey,
+    resizeTick,
+    hasSystemInfo: Boolean(state.systemInfo),
+  });
+
+  return (
+    <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
+      {/* Header: explicit height={1} so the wrapper always reserves row 0. */}
+      <Box height={1} width={cols} flexShrink={0} flexGrow={0} flexDirection="row" overflow="hidden">
+        <MainHeader state={state} />
+      </Box>
+      <Box flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
+        {state.mode === "interactive" ? (
+          <InteractiveMode state={state} controller={controller} />
+        ) : isNarrow ? (
+          <StatusModeSingle state={state} controller={controller} />
+        ) : (
+          <StatusModeGrid state={state} controller={controller} />
+        )}
+      </Box>
+      {state.showHelp && (
+        <Box position="absolute" marginTop={3} marginLeft={4}>
+          <HelpOverlay />
+        </Box>
+      )}
+      {qrOverlay && (
+        <Box position="absolute" marginTop={2} marginLeft={2} flexDirection="column" borderStyle="round" borderColor="cyan" backgroundColor="black" paddingX={1}>
+          <Text bold color="cyanBright">{t("tui.qrOverlayTitle", "Remote Access — Scan to connect")}</Text>
+          {qrOverlay.state === "loading" && <Text dimColor>{t("tui.qrGenerating", "Generating QR…")}</Text>}
+          {qrOverlay.state === "error" && <Text color="red">{qrOverlay.message}</Text>}
+          {qrOverlay.state === "ready" && (
+            <>
+              {qrOverlay.ascii.split("\n").map((line, idx) => (
+                <Text key={idx}>{line}</Text>
+              ))}
+              <Text wrap="truncate-end">{qrOverlay.url}</Text>
+              <Text dimColor>
+                {qrOverlay.tokenType}
+                {qrOverlay.expiresAt ? ` · expires ${new Date(qrOverlay.expiresAt).toLocaleString()}` : ""}
+              </Text>
+            </>
+          )}
+          <Text dimColor>{t("tui.qrCloseHint", "[Esc] close")}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+}

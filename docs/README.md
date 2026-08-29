@@ -1,0 +1,172 @@
+# Fusion Documentation
+
+[← Back to repository root](../README.md)
+
+Fusion is an AI-orchestrated task board that turns ideas into reviewed, merged code using a structured workflow: **planning → todo → in-progress → in-review → done**.
+
+![Fusion Dashboard Overview](screenshots/dashboard-overview.png)
+
+## Quick Start
+
+Start the local dashboard with `pnpm dev dashboard`, then create your first task from the board or CLI.
+
+For a full walkthrough (installation, onboarding, first task, and daily workflow basics):
+
+➡️ **[Getting Started](./getting-started.md)**
+
+## Documentation Index
+
+### Getting Started
+| Guide | Description |
+|---|---|
+| [Getting Started](./getting-started.md) | Installation, first-run, first task, and daily workflow basics |
+| [Dashboard Guide](./dashboard-guide.md) | Board/list views, left/right sidebar navigation, Artifacts, Import Tasks, chat, workflow selection/editor, terminal, git manager, files, planning, and UI tools |
+| [CLI Reference](./cli-reference.md) | Complete `fn` command reference with subcommands, flags, and examples |
+| [Computer Use](./computer-use.md) | `fn computer` desktop-app discovery, snapshots, actions, permissions, and JSON contract |
+| [Remote Access](./remote-access.md) | Operator runbook for Tailscale/Cloudflare setup, tokenized login links, security caveats, and troubleshooting |
+| [Native Shell Connection Guide](./native-shell.md) | Canonical mobile/desktop shell onboarding, profile management, QR/manual setup, and remote handoff behavior |
+
+### Task & Project Management
+| Guide | Description |
+|---|---|
+| [Task Management](./task-management.md) | Task creation modes, lifecycle, prompt specs, comments, archiving, and GitHub integration |
+| [Todo View](./todo-view.md) | Canonical guide for the experimental Todo View, including enablement, usage, API routes, and storage |
+| [Missions](./missions.md) | Mission hierarchy, planning flow, activation, progress tracking, and autopilot behavior |
+| [Goals Refinement Gate](./goals-refinement-gate.md) | Evidence gate for activating the conditional post-v1 goals refinement slice only after real usage pain is documented |
+| [Goals Refinement Evidence Pack](./goals-refinement-evidence-pack.md) | Structured observation template and two-observation threshold for conditional Slice 4 activation requests |
+| [Research](./research.md) | Research runs, provider setup, dashboard/CLI usage, findings, exports, and task integration |
+| [Research View UX Spec](./research-view-ux-spec.md) | Canonical layout and capability-state messaging spec for the Research dashboard view (FN-4138, informs FN-4134/FN-4135) |
+| [Workflow Steps](./workflow-steps.md) | Workflow overview, built-in workflow catalog, per-task selection, runtime semantics, reusable quality gates, templates, phases, and execution results |
+| [Workflow Editor](./workflow-editor.md) | Visual workflow editor guide for opening, viewing, authoring, validating, importing/exporting, custom fields/columns/settings, and tuning workflows |
+| [Custom Workflow Reliability Acceptance Map](./custom-workflow-reliability-acceptance-map.md) | End-to-end reliability acceptance criteria for custom workflow authoring, selection, execution, recovery, restart durability, and deferred journeys |
+| [Custom Non-Coding Workflows MVP Spec](./custom-workflows-mvp-spec.md) | MVP framing for user-authored non-coding workflows, lifecycle mapping, metrics, and risk checklist |
+| [Task Evaluations](./evals.md) | Eval scoring contract, evidence persistence, score categories, and evaluation pipeline |
+| [Multi-Project](./multi-project.md) | Central registry architecture, project management, isolation modes, and migration paths |
+| [Workspaces (Multi-Repository)](./workspaces.md) | Workspace setup, per-repository execution and land, recovery, revert, and archive cleanup |
+
+### Configuration & Agents
+<!--
+FNXC:DocsIndex 2026-07-05-00:00:
+Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Reference, Dashboard Guide, and Architecture but had no index entry, so it was undiscoverable from the docs hub. Add a labeled pointer row rather than a new doc, since the existing reference docs already cover the feature end to end (FN-7598).
+-->
+| [Settings Reference](./settings-reference.md) | Global/project settings, workflow setting values, model/fallback lane hierarchy, defaults, and API endpoints |
+| [MCP](./mcp.md) | Model Context Protocol server configuration, secret references, validation, CLI, dashboard, and import/export workflows |
+| [Agents](./agents.md) | Agent management, presets, prompts, heartbeat behavior, spawning, and mailbox workflows |
+| Planner Oversight (see [Settings Reference](./settings-reference.md#workflow-settings), [Dashboard Guide](./dashboard-guide.md), [Architecture](./architecture.md)) | Workflow-native oversight levels (`off`/`observe`/`steer`/`autonomous`), per-task overrides, notification verbosity, the human-confirmation gate on merge/PR and destructive actions, and the Task Detail overseer controls/Intervention Timeline |
+
+### Architecture & Development
+| Guide | Description |
+|---|---|
+| [Architecture](./architecture.md) | System architecture, package layout, storage model, and engine execution flow |
+| [Secrets Store (`SecretsStore`)](./architecture.md#secrets-store-secretsstore) | Core encrypted secret subsystem overview: scopes, AES-256-GCM at-rest model, policy semantics, and public store API surface |
+| [Dashboard Real-Time](./dashboard-realtime.md) | Canonical event-stream architecture contract (shared `/api/events` bus + dedicated stream boundaries), with project/node scoping, reconnect/cleanup behavior, and realtime pitfalls |
+| [Agent Activity Contract](./agent-activity-contract.md) | Canonical wire, cursor, and retention contract for the project-scoped `GET /api/agent-activity` durable activity-history API |
+| [Storage](./storage.md) | PostgreSQL runtime storage, archive, migration compatibility, and file-backed payloads |
+| [Memory Backend Integration](./memory-backend-integration.md) | Stash memory backend persistence: session capture, per-chat transcript backfill, and opt-in vector search |
+| [DAG Architecture Deliverables](./dag/) | Milestone A DAG architecture documents plus Milestone B prototype scaffold docs (schema migration plan, DagCoordinator design, implementation checklist) |
+| [Dev Server Module Audit](./dev-server-modules.md) | Analysis of parallel dashboard dev-server module families, production wiring, and consolidation guidance |
+| [Shared Cluster Protocol](./shared-mesh-protocol.md) | Shared PostgreSQL multi-node contract: claims/leases, membership, auth, and retired multi-leader mesh replication |
+| [Signals Connectors](./signals-connectors.md) | HMAC-signed external signal connectors for setup, payload mapping, and security notes across Sentry, Datadog, PagerDuty, and generic webhooks |
+| [Multi-Project Sequencing and Dependency Analysis](./multi-project-sequencing.md) | Sequencing guidance for FN-3448/FN-3449/FN-3503/FN-3182, including identity boundaries and recommended board dependency edges |
+| [Contributing](./contributing.md) | Local development setup, testing, release flow, and contributor conventions |
+| [Docker](./docker.md) | Container builds, deployment, and persistence configuration |
+| [Code Signing](./CODE_SIGNING.md) | macOS and Windows code signing configuration for release binaries |
+| [Diagnostics](./diagnostics.md) | Engine diagnostic logging subsystems, structured log keys, and key diagnostic points catalog |
+| [Run-Audit Catalogue](./run-audit.md) | Durable reference catalogue of delivery-pipeline run-audit events (finalization, self-healing reconciliation, durable-agent error-state) — the S4 reliability/durability/observability observability surface |
+| [Sandbox Backends](./sandbox.md) | Pluggable sandbox backends for executor command isolation (bubblewrap, spawn-based) |
+| [Secrets](./secrets.md) | Encrypted secrets storage, per-secret access policies, scopes, and agent tool wiring |
+| [Testing](./testing.md) | Full testing lanes, worker fanout guidance, test taxonomy, and file organization |
+| [Real iOS Safari Acceptance Surface](./ios-acceptance.md) | Provisioning runbook and harness usage for terminal verification gates on physical or cloud real-iOS Safari |
+| [Solutions Catalog](./solutions/) | Documented solutions to past problems (bugs, architecture patterns, best practices) organized by category |
+| [Localization Contributing Guide](./i18n-contributing.md) | Conventions for contributing translations, locale file structure, and i18n tooling |
+| [Mobile](../MOBILE.md) | Capacitor/PWA mobile development setup and workflow |
+
+### Plugins
+| Guide | Description |
+|---|---|
+| [Plugin Management](./plugin-management.md) | End-user guide for discovering, installing, enabling, configuring, updating, uninstalling, and troubleshooting Fusion plugins |
+| [Plugin Authoring](./PLUGIN_AUTHORING.md) | Developer guide for building Fusion plugins (manifest, SDK hooks, routes, UI/runtime contributions) |
+| [Even Realities Glasses Plugin](../plugins/fusion-plugin-even-realities-glasses/README.md) | Task-focused Even Realities glasses bridge with quick capture, polling notifications, and agent actions |
+| [Reports Plugin](./plugins/reports.md) | Reports plugin rendering, export, standalone HTML generation, and section configuration |
+| [Even Realities Plugin API](./even-realities-plugin-api.md) | Even Realities plugin API endpoint reference and test coverage matrix |
+| [Memory Plugin Contract](./memory-plugin-contract.md) | Pluggable memory backend architecture, interface contract, and migration strategy |
+| [Compound Engineering Plugin](./plugins/compound-engineering.md) | CE workflow dashboard surface: artifact hub, interactive sessions, work→board bridge, and bidirectional sync |
+| [External Plugin Authoring](./plugins/external-authoring.md) | Step-by-step guide for authoring plugins using an installed `fn` CLI (no monorepo access needed) |
+| [External Plugin Proof-Point Runbook](./plugins/external-proof-point-runbook.md) | Repeatable release-validation runbook for proving an external plugin runs against a published Fusion CLI build |
+
+### Audit Reports
+<!--
+FNXC:DocsIndex 2026-06-15-01:35:
+docs/upstream/ artifacts are indexed under Audit Reports for FN-6479 instead of treating docs/upstream/ as an intentional-orphan directory.
+
+FNXC:DocsIndex 2026-06-26-18:42:
+FN-7088 links previously-unlinked first-class testing and baseline docs here so the documentation index remains discoverable without changing intentional-orphan conventions such as docs/rfcs/.
+-->
+| Report | Description |
+|---|---|
+| [Test Feedback-Loop Baseline](./test-feedback-loop-baseline.md) | Weekly FN-6612 signal-per-second baseline for gate/test wall-time, slowest files, and quarantine trends |
+| [Test Value Audit](./test-value-audit.md) | Heuristic test-value audit generated by scripts/test-value-audit.mjs to support human deletion and review decisions |
+| [Test Velocity Baseline](./test-velocity-baseline.md) | Weekly feedback-loop velocity baseline for merge-gate, boot-smoke, changed-test, and quarantine metrics |
+| [UX Audit Report](./ux-audit-report.md) | Comprehensive UX audit with prioritized recommendations for dashboard improvements |
+| [Codebase Improvement Audit](./codebase-improvement-audit.md) | Evidence-based technical debt and reliability gap audit with prioritized recommendations |
+| [Gap Analysis](./gap-analysis.md) | System completeness analysis comparing Fusion to Paperclip feature set |
+| [Permanent Agent Heartbeat Playbooks](./agents-playbooks.md) | Worked manager/IC/message/blocked/no-task heartbeat scenarios and anti-patterns |
+| [Agent Sandbox Research](./agent-sandboxing-research.md) | Research on agent isolation, capability enforcement, and sandboxing approaches |
+| [Even Realities Integration Research (FN-3737)](./even-realities-integration-research.md) | Research summary and recommended integration topology for Even Realities glasses + Fusion |
+| [pi-autoresearch Analysis for Fusion Port](./research/pi-autoresearch-analysis.md) | Upstream architecture/license analysis and Fusion integration mapping for autoresearch capabilities |
+| [pi-autoresearch Audit vs Fusion Research](./research/pi-autoresearch-audit-2026-05.md) | Audit comparing Fusion's research subsystem against upstream pi-autoresearch capabilities and parity gaps (FN-4136) |
+| [Research Hardening Preflight Baseline](./research/research-hardening-preflight.md) | Verified research subsystem baseline, lifecycle contracts, and hardening pressure points |
+| [Test Audit Report](./test-audit-report.md) | Test coverage and effectiveness audit with recommendations |
+| [Skipped Test Inventory](./skipped-test-inventory.md) | Current intentional test-skip inventory and reconciliation status for older skip follow-ups |
+| [Dev Server Module Boundary Audit](./dev-server-module-boundary-audit.md) | Boundary/ownership audit for parallel `dev-server-*` vs `devserver-*` dashboard modules and FN-2212 prioritization guidance |
+| [spawn_agent Approval Evaluation (FN-3973)](./spawn-agent-approval-evaluation.md) | Decision to keep fn_spawn_agent under generic action-gate governance rather than durable agent provisioning policy |
+| [Task Lineage Reconciliation Notes](./task-lineage-reconciliation.md) | Historical task-ID reuse patterns, confidence semantics for commit attribution, and reconciliation methodology (FN-3953, FN-3998) |
+| [Dashboard Load Performance (historical)](./performance/dashboard-load.md) | Pre-cutover SQLite index analysis retained for performance archaeology |
+| [CLI Printing Press Plugin Design](./design/cli-printing-press-plugin.md) | Architecture design for the CLI printing press bundled plugin (FN-3762) |
+| [CLI Printing Press Research](./research/cli-printing-press.md) | Upstream `cli-printing-press` analysis and Fusion integration mapping (FN-3761) |
+| [Research vs Experiment Session Naming Decision](./research/naming-decision-2026-05.md) | Naming decision record: hybrid approach retaining `research_*` for cited-search/synthesis and adding `experiment_session_*` for upstream parity (FN-4223) |
+| [Experiment Executor Design](./research/experiment-executor.md) | Experiment executor architecture: lifecycle, run state machine, and worktree isolation model |
+| [Experiment Finalize Flow](./research/experiment-finalize.md) | Experiment finalize contract: branch grouping, dry-run planning, and session completion semantics |
+| [Experiment Session Model](./research/experiment-session-model.md) | Experiment session data model: state transitions, iteration tracking, and persisted run state |
+| [Experiment Session MVP Spec](./research/experiment-session-mvp-spec.md) | MVP specification for the experiment session feature: scope, invariants, and delivery milestones |
+| [Sandbox Options Research (FN-4635)](./research/sandbox-options.md) | Pluggable sandbox options research: threat model, backend evaluation, and spawn-based isolation design |
+| [Triage Duplicate Detection Postmortem](./triage-duplicate-detection-postmortem.md) | Postmortem on duplicate task detection gaps and scheduler dedup hardening |
+| [Multi-Node Runtime Readiness (FN-4814)](./design/fn-4814-multi-node-runtime-readiness.md) | Runtime readiness assessment for multi-node distributed coordination |
+| [Distributed Multi-Node Coordination Gap (FN-4819)](./design/fn-4819-distributed-multi-node-coordination-gap.md) | Gap analysis for distributed multi-node agent coordination and cross-node task assignment |
+| [Cross-Node Assignment Wake Contract (FN-4824)](./design/fn-4824-cross-node-assignment-wake-contract.md) | Contract specification for cross-node task assignment wake signaling |
+| [Multi-Node Coordination Validation Findings (FN-4820)](./findings/fn-4820-multi-node-coordination-validation.md) | Validation findings from multi-node coordination testing and edge-case analysis |
+| [Secrets Sync Auth Parity Review (FN-4886)](./reviews/fn-4886-secrets-sync-auth-parity.md) | Review of node secrets sync API authentication parity and security boundaries |
+| [Test Speed Audit (FN-5048)](./test-speed-audit-FN-5048.md) | Measured baseline test performance, offender list, and optimization priorities |
+| [Soft-Delete Verification Matrix](./soft-delete-verification-matrix.md) | Authoritative checklist for the FN-5105 → FN-5143 soft-delete stream: scenario × layer coverage |
+| [Self-Healing Backward Move Audit](./self-healing-backward-move-audit.md) | Audit of self-healing backward-move safety checks and edge-case validation |
+| [Workflow Policy Ownership Map](./workflow-policy-ownership-map.md) | U1 characterization map classifying production merge, retry, scheduling, and recovery policy branches before workflow-policy migration cutover |
+| [Test-Speed Baseline (2026-06-03)](./test-speed-baseline-2026-06-03.md) | Measured per-file test timing baseline and optimization targets (successor to FN-5048 audit) |
+| [ACP Runtime Contract](./acp-contract.md) | Agent Client Protocol plugin launch/readiness contract and failure taxonomy |
+| [ACP MCP Passthrough & Permission Forwarding Upstream Sponsorship (FN-6475)](./upstream/claude-code-cli-acp-mcp-permission-forwarding.md) | Ready-to-file upstream sponsorship for `claude-code-cli-acp` ACP `session/new.mcpServers` passthrough and permission-gate traversal; Route A remains NOT GO until proven |
+| [Mission Completion Gate Contract](./missions-completion-contract.md) | Decision record for mission completion gate invariants and acceptance flow |
+
+| [Lost-Work Tasks Incident (2026-05-23)](./incidents/2026-05-23-lost-work-tasks.md) | Incident catalog of 9 lost-work tasks from no-op finalize and reuse-handoff bugs |
+| [GitLab Parity Inventory (FN-7421)](./gitlab-parity-inventory.md) | Implementation map for first-class GitLab support: import, linked issue tracking, comments, auth/settings UI, CLI/extension, and Command Center surfaces to mirror or explicitly exclude |
+| [PostgreSQL Runtime Cutover Review (2026-07-14)](./postgres-migration-review-2026-07-14.md) | Current end-to-end authority inventory, intentional legacy SQLite readers, deployment contract, and verification record |
+| [SQLite → PostgreSQL Migration Review (2026-06-26, historical)](./postgres-migration-review-2026-06-26.md) | Historical multi-agent review of the incomplete migration branch and its original findings |
+| [Dashboard Theme & UI Plugin System Proposal (2026-07-01)](./proposals/2026-07-01-dashboard-theme-plugin-system.md) | Feasibility-spike proposal for a controlled dashboard theme/UI shell extension point sharing one backend source of truth |
+| [Full-loop Agent Tool-Surface Audit and Delivery Plan](./agent-tool-surface-full-loop.md) | Source-grounded audit of engine-agent and dashboard chat tool factories, gap analysis for mission hierarchy integration, and delivery plan (FN-8280) |
+| [Dashboard Modal Inventory](./dashboard-modal-inventory.md) | Canonical classification of all 45 dashboard modal surfaces (classes A–D) with file:line evidence, FloatingWindow migration targets, and the shared migration contract (FN-8605 → FN-8617) |
+| [Workflow-Owned Lifecycle Closing Verification](./workflow-owned-lifecycle-closing-verification.md) | Closing-bar verification runbook and recorded pass history for the workflow-owned lifecycle cutover programme — gate, verify:fast, E2E families, and census |
+| [Native `spawn@:-1` Storm Source Attribution (RUFU-077)](./performance/spawn-storm-attribution.md) | Measured local contribution plus out-of-repo/native-dependency attribution for native spawn storms |
+| [Stash Vector/Semantic Search Evaluation (RUFU-126)](./research/stash-vector-search-evaluation.md) | Decision record and opt-in prototype for Stash-backed vector/semantic recall; live-instance rollout is operator-gated |
+
+## External Resources
+
+- GitHub repository: https://github.com/Runfusion/Fusion
+- npm package: https://www.npmjs.com/package/@runfusion/fusion
+- pi agent framework: https://github.com/earendil-works/pi
+
+## Suggested Reading Paths
+
+- **New user:** Getting Started → Dashboard Guide → Task Management
+- **Workflow author:** Dashboard Guide → Workflow Editor → Workflow Steps → Settings Reference
+- **Power user / automation owner:** Settings Reference → Workflow Steps → Agents → Planner Oversight (Settings Reference § Workflow Settings)
+- **Maintainer / contributor:** Architecture → Multi-Project → Contributing
+
+- [Knowledge graph](knowledge-graph.md) — deterministic committable codebase structure graph.

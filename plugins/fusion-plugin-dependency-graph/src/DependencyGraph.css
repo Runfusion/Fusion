@@ -1,0 +1,65 @@
+.dependency-graph {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 100%;
+  padding: var(--space-md);
+}
+
+.dependency-graph__viewport {
+  position: relative;
+  overflow: hidden;
+  height: 100%;
+  min-height: calc(var(--space-2xl) * 10);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  touch-action: none;
+}
+
+.dependency-graph__viewport:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+.graph-canvas-transform {
+  position: relative;
+  transform-origin: top left;
+}
+
+.graph-canvas-transform--animate {
+  transition: transform var(--transition-normal);
+}
+
+.dependency-graph__nodes-layer {
+  position: relative;
+  z-index: 1;
+}
+
+.dependency-graph__nodes-layer .graph-task-node {
+  max-width: min(100%, calc(var(--space-2xl) * 9));
+}
+
+.dependency-graph-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+
+.dependency-graph__empty {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+@media (max-width: 768px) {
+  .dependency-graph {
+    padding: var(--space-sm);
+  }
+}

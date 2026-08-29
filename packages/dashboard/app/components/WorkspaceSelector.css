@@ -1,0 +1,128 @@
+.workspace-selector {
+  position: relative;
+}
+
+.workspace-selector-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-selector-trigger:hover {
+  background: var(--card-hover);
+}
+
+.workspace-selector-trigger-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.workspace-selector-trigger-icon {
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.workspace-selector-trigger-icon.open {
+  transform: rotate(180deg);
+}
+
+.workspace-selector-menu {
+  position: absolute;
+  top: calc(100% + var(--space-sm));
+  left: auto;
+  right: 0;
+  z-index: 20;
+  min-width: 300px;
+  max-width: min(360px, calc(100vw - var(--space-xl)));
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+}
+
+.workspace-selector-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.workspace-selector-group-label {
+  padding: 4px 8px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.workspace-selector-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-selector-option:hover {
+  background: var(--card-hover);
+}
+
+.workspace-selector-option.active {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.workspace-selector-option-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workspace-selector-option-meta {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .workspace-selector-trigger {
+    min-width: 0;
+    max-width: min(56vw, 160px);
+  }
+
+  .workspace-selector-menu {
+    min-width: min(300px, calc(100vw - var(--space-xl)));
+    max-width: calc(100vw - var(--space-xl));
+  }
+
+  .workspace-selector-option-meta {
+    max-width: 120px;
+  }
+}
