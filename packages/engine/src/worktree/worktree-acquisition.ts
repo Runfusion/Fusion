@@ -39,7 +39,8 @@ import {
   type WorktrunkOpName,
 } from "./worktrunk-failure-handler.js";
 import { resolveWorkspaceReviewRemediationRepository } from "../executor/workspace-review-remediation.js";
-import type { RunAuditor } from "../util/run-audit.js";
+import { generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
@@ -47,7 +48,7 @@ import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./work
 import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "./workspace-base-branch.js";
-import { activeSessionRegistry, type ActiveSessionRegistry } from "../agents/active-session-registry.js";
+import { acquireActiveSessionPath, activeSessionRegistry, executingTaskLock, type ActiveSessionRegistry } from "../agents/active-session-registry.js";
 import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../worktree-base-refresh.js";
 import { normalizeWorkspaceTaskRouting } from "../executor/workspace-config-resolver.js";
 
@@ -1394,6 +1395,7 @@ export interface AcquireWorkspaceTaskWorktreesOptions {
   addActiveWorktree?: (taskId: string, path: string) => void;
   /** Limit acquisition to the confirmed repository scope; omitted retains the declared manifest. */
   repoRelPaths?: readonly string[];
+  holderLiveProbe?: AcquireWorkspaceRepoWorktreeOptions["holderLiveProbe"];
 }
 
 export interface AcquireWorkspaceRepoWorktreeOptions {
@@ -1408,6 +1410,11 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   runContext?: RunMutationContext;
   /** Test seam: inject the path-keyed exclusivity registry (defaults to the process singleton). */
   registry?: ActiveSessionRegistry;
+  /**
+   * Proves a foreign acquisition holder is still alive. Ambiguous/throwing probes
+   * deliberately read live so a cache reclaim never steals a real critical section.
+   */
+  holderLiveProbe?: (holderTaskId: string, path: string) => boolean;
   runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
   /**
@@ -1466,6 +1473,15 @@ export async function acquireWorkspaceRepoWorktree(
   const repoAbsPath = join(workspaceRootDir, repoRelPath);
 
   let durableAcquireLease: WorkspaceLeaseHandle | undefined;
+  let acquireLeaseLost = false;
+  let acquireLeaseRenewalInFlight: Promise<void> | undefined;
+  let acquireLeaseRenewalTimer: ReturnType<typeof setInterval> | undefined;
+
+  const assertAcquireLeaseLive = (): void => {
+    if (acquireLeaseLost) {
+      throw new WorkspacePreparationError(repoRelPath, "acquire", "durable workspace acquire lease renewal was lost");
+    }
+  };
 
   /*
   FNXC:WorkspaceWorktree 2026-06-22-00:00:
@@ -1492,11 +1508,10 @@ export async function acquireWorkspaceRepoWorktree(
   }
 
   /*
-  FNXC:Workspace 2026-08-15-08:50:
-  Registry-only acquire serialization is invisible to another engine sharing the
-  central database. Claim before the local lookup/register fast path; a durable
-  conflict (including this task on a different node incarnation) is retryable
-  busy rather than permission to overwrite another process's worktree state.
+  FNXC:WorkspaceWorktree 2026-08-23-06:25:
+  The durable acquire lease is the sole cross-process admission authority. It is
+  renewed while legitimate preparation runs; the local registry is only a derived
+  same-process guard and must never outlive a lost or released lease.
   */
   try {
     const acquireWorkspaceLease = (store as Partial<TaskStore>).acquireWorkspaceLease;
@@ -1517,6 +1532,25 @@ export async function acquireWorkspaceRepoWorktree(
         throw new WorkspaceRepoAcquireBusyError(repoRelPath, claim.conflict.taskId, task.id);
       }
       durableAcquireLease = claim.handle;
+      const renewWorkspaceLease = (store as Partial<TaskStore>).renewWorkspaceLease;
+      if (typeof renewWorkspaceLease === "function") {
+        const renew = async (): Promise<void> => {
+          if (!durableAcquireLease || acquireLeaseLost) return;
+          try {
+            const renewed = await renewWorkspaceLease.call(store, durableAcquireLease, 5 * 60_000);
+            if (!renewed) throw new Error("Workspace acquire lease renewal was refused");
+            durableAcquireLease = renewed;
+          } catch {
+            acquireLeaseLost = true;
+          }
+        };
+        acquireLeaseRenewalTimer = setInterval(() => {
+          if (!acquireLeaseRenewalInFlight) {
+            acquireLeaseRenewalInFlight = renew().finally(() => { acquireLeaseRenewalInFlight = undefined; });
+          }
+        }, 60_000);
+        acquireLeaseRenewalTimer.unref?.();
+      }
     }
   } catch (error) {
     if (error instanceof WorkspaceRepoAcquireBusyError) throw error;
@@ -1554,24 +1588,68 @@ export async function acquireWorkspaceRepoWorktree(
   it once acquisition completes (success or failure) — it guards the acquisition
   critical section, not the whole task lifetime.
   */
-  const exclusivityHolder = registry.lookupByPath(repoAbsPath);
-  if (exclusivityHolder && exclusivityHolder.ownerKey === WORKSPACE_REPO_ACQUIRE_OWNER_KEY && exclusivityHolder.taskId !== task.id) {
-    const err = new WorkspaceRepoAcquireBusyError(repoRelPath, exclusivityHolder.taskId, task.id);
-    /*
-    FNXC:Workspace 2026-06-21-22:30:
-    F6 — the busy short-circuit's logEntry/audit are best-effort observability; if
-    either throws (e.g. a DB write hiccup) it must NOT replace the
-    WorkspaceRepoAcquireBusyError the caller relies on to classify "serialized,
-    retry later". Swallow logging failures so the busy error is what propagates.
-    */
+  /*
+  FNXC:WorkspaceWorktree 2026-08-23-06:25:
+  Keep the local check/register decision synchronous (F9), but make it a derived
+  cache gate. The durable lease has already decided cross-process admission; this
+  guard only prevents two same-process calls interleaving in this JavaScript turn.
+  A missing or throwing liveness probe is deliberately live/fail-closed.
+  */
+  const holderLiveProbe = (holderTaskId: string, path: string): boolean => {
     try {
-      const message = `sub-repo ${repoRelPath} is being acquired by ${exclusivityHolder.taskId}; serializing concurrent workspace acquisition`;
+      return opts.holderLiveProbe?.(holderTaskId, path) ?? executingTaskLock.has(holderTaskId);
+    } catch {
+      return true;
+    }
+  };
+  let registryClaim = acquireActiveSessionPath(registry, repoAbsPath, {
+    taskId: task.id,
+    kind: "workspace-repo-acquire",
+    ownerKey: WORKSPACE_REPO_ACQUIRE_OWNER_KEY,
+  }, {
+    holderLiveProbe,
+    restrictReclaimToKind: "workspace-repo-acquire",
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-23-06:51 (FN-179):
+  A successful durable acquire lease proves that any same-kind local entry is a
+  stale cache, even when its liveness probe is conservatively LIVE. Never let the
+  cache veto the authority; retain the cross-kind land fence so acquire cannot
+  clobber a live merge claim on the same repository path.
+  */
+  if (durableAcquireLease && registryClaim.action === "contended" && registryClaim.holderKind === "workspace-repo-acquire") {
+    const staleHolderTaskId = registryClaim.holderTaskId;
+    const staleAgeMs = registryClaim.ageMs;
+    registry.unregisterPath(repoAbsPath);
+    registryClaim = acquireActiveSessionPath(registry, repoAbsPath, {
+      taskId: task.id,
+      kind: "workspace-repo-acquire",
+      ownerKey: WORKSPACE_REPO_ACQUIRE_OWNER_KEY,
+    }, {
+      holderLiveProbe,
+      restrictReclaimToKind: "workspace-repo-acquire",
+    });
+    void emitBoundedRunAudit(store, {
+      taskId: task.id,
+      agentId: runContext?.agentId ?? "workspace-acquire",
+      runId: runContext?.runId ?? generateSyntheticRunId("workspace-acquire", task.id),
+      domain: "git",
+      mutationType: "worktree:workspace-repo-acquire-reclaimed",
+      target: repoRelPath,
+      metadata: { taskId: task.id, repoRelPath, holderTaskId: staleHolderTaskId, ageMs: staleAgeMs, outcome: "lease-authority" },
+    });
+  }
+  if (registryClaim.action === "contended") {
+    const err = new WorkspaceRepoAcquireBusyError(repoRelPath, registryClaim.holderTaskId, task.id);
+    try {
+      const message = `sub-repo ${repoRelPath} is being acquired by ${registryClaim.holderTaskId}; serializing concurrent workspace acquisition`;
       logger?.warn(`${task.id}: ${message}`);
       await store.logEntry(task.id, message, undefined, runContext);
       await audit?.git({
         type: "worktree:workspace-repo-acquire-busy",
         target: repoAbsPath,
-        metadata: { repoRelPath, holderTaskId: exclusivityHolder.taskId, requestingTaskId: task.id },
+        metadata: { repoRelPath, holderTaskId: registryClaim.holderTaskId, requestingTaskId: task.id },
       });
     } catch {
       // best-effort observability only — never mask the busy error
@@ -1579,18 +1657,6 @@ export async function acquireWorkspaceRepoWorktree(
     if (durableAcquireLease) await store.releaseWorkspaceLease(durableAcquireLease).catch(() => undefined);
     throw err;
   }
-  /*
-  FNXC:Workspace 2026-06-21-22:30:
-  F9 — no `await` may be inserted between lookupByPath and registerPath: the
-  atomicity of the exclusivity claim depends on staying in one synchronous slice.
-  An interleaved await would let a second task pass the lookup gate before this
-  task registers, defeating the same-sub-repo serialization (KTD4).
-  */
-  registry.registerPath(repoAbsPath, {
-    taskId: task.id,
-    kind: "workspace-repo-acquire",
-    ownerKey: WORKSPACE_REPO_ACQUIRE_OWNER_KEY,
-  });
 
   try {
     /*
@@ -1814,6 +1880,7 @@ export async function acquireWorkspaceRepoWorktree(
     never makes dashboard workspace rendering, self-healing, or executor dispatch read it as
     single-repo.
     */
+        assertAcquireLeaseLive();
         acquisitionResult = {
           worktreePath: result.worktreePath,
           branch: result.branch,
@@ -1832,7 +1899,19 @@ export async function acquireWorkspaceRepoWorktree(
             : {}),
         };
         },
-        { clearSingularWorktree: true, validateBeforePersist: validateTaskBeforeCreate },
+        {
+          clearSingularWorktree: true,
+          /*
+          FNXC:WorkspaceWorktree 2026-08-23-08:12:
+          The callback's earlier check cannot fence an interval renewal that loses its lease
+          while the persist transaction awaits I/O. Re-check at the transaction's existing
+          lifecycle-validation seam immediately before the fresh-row update publishes this entry.
+          */
+          validateBeforePersist: async (current) => {
+            assertAcquireLeaseLive();
+            await validateTaskBeforeCreate?.(current);
+          },
+        },
       );
     } catch (error) {
       mergeError = error;
@@ -1883,6 +1962,7 @@ export async function acquireWorkspaceRepoWorktree(
       runContext,
     });
 
+    assertAcquireLeaseLive();
     return acquisitionResult;
   } catch (err) {
     /*
@@ -1919,6 +1999,8 @@ export async function acquireWorkspaceRepoWorktree(
       err instanceof Error ? err.message : String(err),
     );
   } finally {
+    if (acquireLeaseRenewalTimer) clearInterval(acquireLeaseRenewalTimer);
+    await acquireLeaseRenewalInFlight?.catch(() => undefined);
     /*
     FNXC:Workspace 2026-06-21-20:10:
     Release the acquisition-time exclusivity entry only when WE hold it. The busy-path
@@ -2009,6 +2091,7 @@ export async function acquireWorkspaceTaskWorktrees(
       audit: opts.audit,
       runContext: opts.runContext,
       registry: opts.registry,
+      holderLiveProbe: opts.holderLiveProbe,
       runConfiguredCommand: opts.runConfiguredCommand,
       taskEnv: opts.taskEnv,
       worktreePath: legacyLayout ? undefined : resolveWorkspaceRepoWorktreePath(taskWorktreeDir, repoRelPath),

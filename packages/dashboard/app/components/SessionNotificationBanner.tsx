@@ -274,7 +274,7 @@ export function SessionNotificationBanner({
   };
 
   return (
-    <Banner as="section" className="session-notification-banner" tone="info" layout="chrome" role="region" aria-live="polite" aria-label={t("sessionBanner.regionLabel", "AI sessions in progress, needing input, or failed")}> 
+    <Banner as="section" className="session-notification-banner" tone="info" layout="chrome" role="region" aria-live="polite" aria-label={t("sessionBanner.regionLabel", "AI sessions in progress, needing input, or failed")}>
       <div className="session-notification-banner__header">
         <div className="session-notification-banner__headline">
           <AlertCircle size={16} aria-hidden="true" />

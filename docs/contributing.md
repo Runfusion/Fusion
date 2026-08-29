@@ -240,6 +240,10 @@ Never fabricate source URLs, command names, release locations, or checksums. Cit
 ```
 <!-- evidence-example:end -->
 
+### Product summary in task specifications
+
+Every generated or hand-authored `PROMPT.md` must place `## What This Delivers` immediately after `## Original Description` and before `## Before → After Transformation`. Write this short section in plain product language: state what the operator will be able to do, see, or stop suffering once the task ships. Do not include file paths or symbol names; those technical details belong in `## Mission`. This is the operator's at-a-glance intent check, and Plan Review treats a missing or jargon-only summary as a blocking REVISE.
+
 ## Quality Gate Checklist
 
 Before submitting changes, verify:

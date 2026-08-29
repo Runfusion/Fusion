@@ -328,6 +328,26 @@ const EXPECTATIONS: BuiltinExpectation[] = [
     finalColumn: "done",
     leasedGates: ["plan-review", "code-review"],
   },
+  /*
+  FNXC:CodingIdeasV2Workflow 2026-08-26-05:56:
+  Same board and same crossings as builtin:coding-ideas — the difference is entirely INSIDE the two
+  working columns, so the trail is identical and that is the point: a read-only review lane must not
+  change where the card goes, only what happens while it is there.
+  This entry was missing when the workflow was registered, which left the catalog-coverage assertion
+  red on main while every other test in this file passed.
+  */
+  {
+    id: "builtin:coding-ideas-v2",
+    entryColumn: "ideas",
+    trail: [
+      ["ideas", "todo", "graph"],
+      ["todo", "in-progress", "scheduler"],
+      ["in-progress", "in-review", "graph"],
+      ["in-review", "done", "graph"],
+    ],
+    finalColumn: "done",
+    leasedGates: ["plan-review", "code-review"],
+  },
   {
     id: "builtin:legacy-coding",
     entryColumn: "triage",

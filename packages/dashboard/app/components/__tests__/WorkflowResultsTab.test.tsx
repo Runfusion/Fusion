@@ -781,6 +781,15 @@ describe("WorkflowResultsTab", () => {
       return render(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
     }
 
+    it("keeps thinking live-log entries as raw console text without transcript controls", () => {
+      const view = renderLiveLog([{ timestamp: "2026-08-23T00:00:00Z", taskId: "FN-001", text: "**One**\n\nBody one", type: "thinking" }]);
+      const container = screen.getByTestId("workflow-live-log-WS-004");
+      expect(within(container).getByText((_, element) => element?.classList.contains("workflow-live-log-thinking") === true && element.textContent === "**One**\n\nBody one")).toBeInTheDocument();
+      expect(container.querySelector("[data-testid='thinking-trace-section']")).toBeNull();
+      expect(container.querySelector("[data-testid='thinking-trace-raw-toggle']")).toBeNull();
+      view.unmount();
+    });
+
     it.each([{ name: "desktop", isMobile: false }, { name: "mobile", isMobile: true }])("does not override an unsnapped $name reader during appended streaming growth", ({ isMobile }) => {
       mockWorkflowViewport(isMobile);
       const view = renderLiveLog(initialEntries);

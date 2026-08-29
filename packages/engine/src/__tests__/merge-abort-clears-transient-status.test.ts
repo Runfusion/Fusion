@@ -122,6 +122,7 @@ describe("runAiMerge transient status write authority", () => {
       expect(statusWrites).toEqual([[workspaceTask.id, { status: "merging" }]]);
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
+
     }
   });
 
@@ -419,7 +420,9 @@ describe("ProjectEngine aborted merge stamp cleanup", () => {
     const task = {
       id: "FN-8912-auto-abort",
       column: "in-review",
-      status,
+      // A live merge stamp is rejected at admission. The body below writes this transient
+      // stamp before aborting so the no-manual-resolver abort arm owns the cleanup.
+      status: null as string | null,
       paused: false,
       userPaused: false,
       branch: "fusion/fn-8912-auto-abort",
@@ -446,6 +449,7 @@ describe("ProjectEngine aborted merge stamp cleanup", () => {
     engine.options = {};
     engine.runtime = { getTaskStore: () => store, getPluginRunner: () => undefined };
     mocks.runAiMerge.mockImplementationOnce(async () => {
+      task.status = status;
       const err = new Error("test abort");
       err.name = "MergeAbortedError";
       throw err;

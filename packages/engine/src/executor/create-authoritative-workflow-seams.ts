@@ -21,6 +21,8 @@ import {
 import { graphActiveContextKey } from "./task-predicates.js";
 import { WorkflowReviewService } from "../workflows/workflow-review-service.js";
 import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { SESSION_CONTENTION_HOLD_VALUE } from "../workflows/workflow-graph-executor.js";
+import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { resolveReviewCheckoutCwd } from "../execution/review-checkout.js";
 import { logReviewCheckoutRouting } from "./review-checkout-routing.js";
@@ -354,9 +356,17 @@ export function createAuthoritativeWorkflowSeams(
         (the step genuinely did not complete) while the VALUE names the ending, which is what the
         foreach propagates upward — `runForeach` returns a failing instance's value as its own —
         so the `steps` node can carry an `outcome:review-pending` edge to the park node.
-        Every other ending keeps `step-failed` exactly as before.
+
+        FNXC:WorkspaceContention 2026-08-23-00:00:
+        A step-session acquisition contention is also a scheduling wait. Preserve its typed graph
+        value so the foreach reaches `holdForSessionContention`; flattening it to `step-failed`
+        sends this path through ordinary graph failure and recreates the worktree-churn incident.
         */
-        const failureValue = result.exit === "review-handoff-pending-review" ? "review-pending" : "step-failed";
+        const failureValue = result.exit === "review-handoff-pending-review"
+          ? "review-pending"
+          : isSessionContentionError(result.error ?? "")
+            ? SESSION_CONTENTION_HOLD_VALUE
+            : "step-failed";
         return {
           outcome: result.outcome,
           value: result.outcome === "success" ? "step-done" : failureValue,

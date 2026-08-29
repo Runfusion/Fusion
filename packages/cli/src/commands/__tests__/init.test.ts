@@ -10,7 +10,7 @@ import { runInit } from "../init.js";
 import { installShippedSkillsIntoProject, SHIPPED_SKILL_NAMES, type ShippedSkillName } from "../claude-skills.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { ensureGitRepositoryForProjectPath, GitRepositoryInitializationError } from "@fusion/core";
+import { ensureProjectGitReadiness, GitRepositoryInitializationError } from "@fusion/core";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
   const mock = vi.fn(function () {});
@@ -111,19 +111,23 @@ describe("init command", () => {
       createdAt: "2026-07-14T00:00:00.000Z",
       updatedAt: "",
     });
-    mockEnsureProjectForPath.mockImplementation(async ({ path }: { path: string }) => ({
-      outcome: "registered" as const,
-      gitRepository: await ensureGitRepositoryForProjectPath(path),
-      project: {
-        id: "proj_1234567890abcdef",
-        name: "test-project",
-        path,
-        isolationMode: "in-process" as const,
-        status: "initializing" as const,
-        createdAt: "2026-07-14T00:00:00.000Z",
-        updatedAt: "",
-      },
-    }));
+    mockEnsureProjectForPath.mockImplementation(async ({ path }: { path: string }) => {
+      const gitReadiness = await ensureProjectGitReadiness(path);
+      return {
+        outcome: "registered" as const,
+        gitRepository: gitReadiness.outcome,
+        integrationBranches: gitReadiness.integrationBranches,
+        project: {
+          id: "proj_1234567890abcdef",
+          name: "test-project",
+          path,
+          isolationMode: "in-process" as const,
+          status: "initializing" as const,
+          createdAt: "2026-07-14T00:00:00.000Z",
+          updatedAt: "",
+        },
+      };
+    });
     mockIsValidSqliteDatabaseFile.mockImplementation((dbPath: string) => {
       if (!existsSync(dbPath)) {
         return false;
@@ -472,6 +476,7 @@ describe("init command", () => {
     mockEnsureProjectForPath.mockResolvedValueOnce({
       outcome: "registered",
       gitRepository: "initialized",
+      integrationBranches: [{ repoRelPath: ".", branch: "master", source: "well-known-local", action: "existing" }],
       project: {
         id: "proj_1234567890abcdef",
         name: "test-project",
@@ -496,5 +501,42 @@ describe("init command", () => {
     }
 
     expect(logs.join("\n")).toContain("Initialized git repository");
+    expect(logs.join("\n")).toContain("Integration branch: master (existing)");
+  });
+
+  it("reports an unavailable integration-branch reconciliation without failing init", async () => {
+    mockEnsureProjectForPath.mockResolvedValueOnce({
+      outcome: "registered",
+      gitRepository: "existing",
+      integrationBranches: [{
+        repoRelPath: ".",
+        branch: "release/9.9",
+        source: "configured",
+        action: "unavailable",
+        reason: "test branch write failure",
+      }],
+      project: {
+        id: "proj_1234567890abcdef",
+        name: "test-project",
+        path: tempProjectDir,
+        isolationMode: "in-process",
+        status: "initializing",
+        createdAt: "2026-07-14T00:00:00.000Z",
+        updatedAt: "",
+      },
+    });
+    const originalLog = console.log;
+    const logs: string[] = [];
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+    };
+
+    try {
+      await runInit({ path: tempProjectDir });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs.join("\n")).toContain("Integration branch: release/9.9 (unavailable)");
   });
 });

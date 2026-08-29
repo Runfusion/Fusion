@@ -34,9 +34,13 @@ import {
   type WorkflowStepOutcome,
 } from "./workflow-step-verdict.js";
 import { parseAwaitInputSentinel } from "./await-input-parse.js";
+// FNXC:ReviewLaneRecommendations 2026-08-26-07:34: a readonly review node holds no writer; projection is its only durable channel.
+import { parseWorkflowStepRecommendations, resolveMaxRecommendationsPerTask } from "./workflow-step-recommendations.js";
 import { buildAgentPersona } from "./agent-binding-pure.js";
 import { reviewWorkspacePerRepo } from "./workspace-review-per-repo.js";
 import type { ReviewResult } from "../execution/reviewer.js";
+import type { SessionBoundaryDescriptor } from "../agents/agent-runtime.js";
+import { runDeterministicVerificationGate } from "../workflow-node-runners/verification-gate.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
@@ -62,6 +66,72 @@ export type RunGraphCustomNodeDeps = {
   runCliAgentNode: AnyFn;
   runRawCliCommand: AnyFn;
 };
+
+/*
+FNXC:WorkspaceBoundary 2026-08-24-06:30:
+Pure so the decision is testable without driving a whole graph run. A write-capable node on a
+workspace task runs from the task DIRECTORY, a container of per-repository worktrees with no `.git`
+of its own; with no declared boundary the session applies the single-repo assertion to that
+container and refuses to start ("Refusing to start coding agent in incomplete worktree"), so the
+gate fails before producing a verdict and the task requeues to todo. `workspace-task-dir` validates
+the per-repository children instead. `undefined` preserves the existing implicit boundary for
+single-repo tasks, for the legacy per-repo layout, and when the scope is unconfirmed (a
+zero-repoRoots descriptor is itself refused, so guessing only trades one refusal for another).
+*/
+export function resolveGraphNodeSessionBoundary(input: {
+  isWorkspace: boolean;
+  writeCapable: boolean;
+  legacyWorkspaceLayout: boolean;
+  rootDir: string;
+  worktreePath: string;
+  confirmedRepositories?: readonly string[];
+}): SessionBoundaryDescriptor | undefined {
+  if (!input.isWorkspace || !input.writeCapable || input.legacyWorkspaceLayout) return undefined;
+  const repoRoots = (input.confirmedRepositories ?? []).map((repoRelPath) => ({
+    repoRelPath,
+    repoRootDir: join(input.rootDir, repoRelPath),
+  }));
+  if (repoRoots.length === 0) return undefined;
+  return {
+    kind: "workspace-task-dir",
+    writableRoot: input.worktreePath,
+    projectRoot: input.rootDir,
+    repoRoots,
+  };
+}
+
+/*
+FNXC:WorkspaceReviewFindings 2026-08-27-12:05:
+FN-201 requires the workspace callback to preserve structured reviewer findings. Dropping them here
+made a workspace REVISE unremediable even though the per-repository reviewer named actionable work.
+*/
+export function toWorkspaceRepoReviewResult(repoOutcome: WorkflowStepOutcome): ReviewResult {
+  return {
+    verdict: (repoOutcome.verdict ?? (repoOutcome.success ? "APPROVE" : "UNAVAILABLE")) as ReviewResult["verdict"],
+    review: repoOutcome.output ?? repoOutcome.error ?? "",
+    summary: repoOutcome.output ?? repoOutcome.error ?? "",
+    retryable: !repoOutcome.success,
+    ...(repoOutcome.findings ? { findings: repoOutcome.findings } : {}),
+  };
+}
+
+export function buildWorkspaceReviewOutcome(aggregate: ReviewResult, options: { superseded?: boolean } = {}): WorkflowStepOutcome {
+  return {
+    success: aggregate.verdict === "APPROVE",
+    verdict: aggregate.verdict as WorkflowStepOutcome["verdict"],
+    output: aggregate.review,
+    repositoryReviewOutcomes: aggregate.repositoryReviewOutcomes,
+    repositoryScopeRevision: aggregate.repositoryScopeRevision,
+    ...(!options.superseded && aggregate.findings ? { findings: aggregate.findings } : {}),
+    ...(aggregate.verdict === "UNAVAILABLE" ? { failureValue: "workspace-review-unavailable" } : {}),
+  };
+}
+
+export function preserveOutcomeFindingsFromReviewOutput(outcome: WorkflowStepOutcome): WorkflowStepOutcome {
+  if (outcome.findings || typeof outcome.output !== "string") return outcome;
+  const parsedReviewOutput = parseWorkflowStepOutput(outcome.output, { requireVerdict: false });
+  return parsedReviewOutput.findings?.length ? { ...outcome, findings: parsedReviewOutput.findings } : outcome;
+}
 
 export async function runGraphCustomNode(
   deps: RunGraphCustomNodeDeps,
@@ -190,7 +260,8 @@ export async function runGraphCustomNode(
     leave runtime requiring a worktree that preparation declined to acquire.
     Plan Review remains excluded because it uses the narrow PROMPT.md writer.
     */
-    const writeCapable = workflowNodeRequiresWorktree(node, {
+    const isDeterministicVerificationGate = cfg.workflowAction === "deterministic-verification";
+    const writeCapable = isDeterministicVerificationGate || workflowNodeRequiresWorktree(node, {
       optionalGroupId,
       reviewerInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes,
     });
@@ -278,6 +349,33 @@ export async function runGraphCustomNode(
     const worktreePath = workspaceConfig && !writeCapable
       ? deps.rootDir
       : executionTarget.worktree || legacyWorkspacePath || workspaceTaskDir!;
+    /*
+    FNXC:WorkspaceBoundary 2026-08-24-06:30:
+    A write-capable graph node on a workspace task runs from the TASK DIRECTORY, which is a plain
+    container of per-repository worktrees and carries no `.git` of its own. Without a declared
+    boundary the session falls back to the single-repo assertion, which resolves that container as
+    a worktree and refuses to start: "Refusing to start coding agent in incomplete worktree". The
+    node then fails before producing a verdict and the task requeues to todo — measured on a
+    Documentation & Delivery gate in a multi-repo project.
+    FN-158 gave Code Review this boundary (see reviewBoundary below) but not the generic prompt
+    path, so every OTHER write-capable gate stayed broken on workspace projects. `workspace-task-dir`
+    validates the per-repository CHILDREN instead of the root, which is what makes the session legal.
+    Single-repository tasks keep their existing implicit boundary; a workspace task whose scope is
+    unconfirmed also keeps it, because `workspace-task-dir` with zero repoRoots is itself refused.
+    */
+    const nodeSessionBoundary = resolveGraphNodeSessionBoundary({
+      isWorkspace: Boolean(workspaceConfig),
+      writeCapable,
+      legacyWorkspaceLayout: Boolean(legacyWorkspacePath),
+      rootDir: deps.rootDir,
+      worktreePath,
+      confirmedRepositories: executionTarget.repositoryScope?.state === "confirmed"
+        ? executionTarget.repositoryScope.repositories
+        : undefined,
+    });
+    if (isDeterministicVerificationGate) {
+      return runDeterministicVerificationGate({ store: deps.store, getRunContextFor: deps.getRunContextFor }, node, executionTarget, settings, worktreePath);
+    }
     let prompt = typeof cfg.prompt === "string" ? cfg.prompt : "";
     let modelProvider = typeof cfg.modelProvider === "string" && cfg.modelProvider.trim() ? cfg.modelProvider : undefined;
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
@@ -537,15 +635,28 @@ export async function runGraphCustomNode(
           const repoEnv = mode === "prompt"
             ? (await deps.buildInjectedRuntimeEnv(live.id, repoWorktreePath, undefined)).env
             : nodeEnv;
+          /*
+          FNXC:WorkspaceReviewScope 2026-08-26-09:12:
+          Hand the reviewer the base of the repository it is actually reading. The singular
+          `task.baseCommitSha` does not resolve inside a sub-repository worktree, so the scope capture
+          returned nothing and the prompt told the reviewer there were no modified files — after the
+          executor had COMMITTED in that repository. Measured on a real card: the reviewer reported
+          the delivered fixtures as never delivered. The per-repo base was already recorded and
+          already used by this file's own evidence capture; it simply never reached the reviewer.
+          */
+          const repoDiffBaseCommitSha = repoRelPath
+            ? live.workspaceWorktrees?.[repoRelPath]?.baseCommitSha ?? undefined
+            : undefined;
           const repoOutcome = mode === "script"
             ? await deps.executeScriptWorkflowStep(live, step, repoWorktreePath, settings, repoEnv)
-            : await deps.executeWorkflowStep(live, step, repoWorktreePath, settings, repoEnv, { unattended, principalAgentId, outputLanguage, sessionBoundary: reviewBoundary });
-          return {
-            verdict: (repoOutcome.verdict ?? (repoOutcome.success ? "APPROVE" : "UNAVAILABLE")) as ReviewResult["verdict"],
-            review: repoOutcome.output ?? repoOutcome.error ?? "",
-            summary: repoOutcome.output ?? repoOutcome.error ?? "",
-            retryable: !repoOutcome.success,
-          };
+            : await deps.executeWorkflowStep(live, step, repoWorktreePath, settings, repoEnv, {
+              unattended,
+              principalAgentId,
+              outputLanguage,
+              sessionBoundary: reviewBoundary,
+              ...(repoDiffBaseCommitSha ? { diffBaseCommitSha: repoDiffBaseCommitSha } : {}),
+            });
+          return toWorkspaceRepoReviewResult(repoOutcome);
         }, { workspaceRepos: workspaceConfig.repos, workspaceRootDir: deps.rootDir, settings });
         /*
         FNXC:RepositoryScope 2026-08-21-02:35:
@@ -589,14 +700,7 @@ export async function runGraphCustomNode(
             repositoryScopeRevision: aggregate.repositoryScopeRevision,
           };
         }
-        outcome = {
-          success: aggregate.verdict === "APPROVE",
-          verdict: aggregate.verdict as WorkflowStepOutcome["verdict"],
-          output: aggregate.review,
-          repositoryReviewOutcomes: aggregate.repositoryReviewOutcomes,
-          repositoryScopeRevision: aggregate.repositoryScopeRevision,
-          ...(aggregate.verdict === "UNAVAILABLE" ? { failureValue: "workspace-review-unavailable" } : {}),
-        };
+        outcome = buildWorkspaceReviewOutcome(aggregate, { superseded: reviewSuperseded });
       }
     } else if (workspaceConfig && declaredReviewKind === "plan") {
       /*
@@ -626,7 +730,12 @@ export async function runGraphCustomNode(
     } else {
       outcome = mode === "script"
         ? await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv)
-        : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, { unattended, principalAgentId, outputLanguage });
+        : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
+          unattended,
+          principalAgentId,
+          outputLanguage,
+          ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
+        });
     }
     /*
      * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
@@ -635,8 +744,9 @@ export async function runGraphCustomNode(
      * gain review metadata merely because their output happens to contain a findings key.
      */
     if (declaredReviewKind && typeof outcome.output === "string") {
-      const parsedReviewOutput = parseWorkflowStepOutput(outcome.output, { requireVerdict: false });
-      if (parsedReviewOutput.findings?.length) outcome = { ...outcome, findings: parsedReviewOutput.findings };
+      const rawReviewOutput = outcome.output;
+      outcome = preserveOutcomeFindingsFromReviewOutput(outcome);
+      const parsedReviewOutput = parseWorkflowStepOutput(rawReviewOutput, { requireVerdict: false });
       if (parsedReviewOutput.supersededFindingIds?.length && parsedReviewOutput.supersededFindingSourceWorkflowStepId && !outcome.supersededFindingIds?.length) {
         outcome = { ...outcome, supersededFindingSourceWorkflowStepId: parsedReviewOutput.supersededFindingSourceWorkflowStepId, supersededFindingIds: parsedReviewOutput.supersededFindingIds };
       }
@@ -689,7 +799,25 @@ export async function runGraphCustomNode(
       contextPatch.supersededFindingSourceWorkflowStepId = outcome.supersededFindingSourceWorkflowStepId;
       contextPatch.supersededFindingIds = outcome.supersededFindingIds;
     }
-    if (cfg.summaryTarget === "task" && typeof stepOutput === "string" && stepOutput.trim()) {
+    /*
+    FNXC:ReviewLaneRecommendations 2026-08-26-07:34:
+    A node declaring `recommendationsTarget: "task"` proposes follow-up work through its OUTPUT, not
+    through a tool. It has none: a readonly workflow-step session is limited to read/grep/find/ls plus
+    a few read-only task reads, and `fn_task_create` is explicitly denied there. Projection is the
+    only durable channel such a node has, and proposing is the only thing it may do — an operator
+    turns a proposal into a task from the Recommendations tab.
+    The JSON block is REMOVED from the text before the summary projection reads it, so a card summary
+    never shows the machine payload that produced it.
+    */
+    let projectedText = typeof stepOutput === "string" ? stepOutput : "";
+    if (cfg.recommendationsTarget === "task" && projectedText.trim()) {
+      const proposed = parseWorkflowStepRecommendations(projectedText, {
+        max: resolveMaxRecommendationsPerTask(settings),
+      });
+      if (proposed.recommendations.length > 0) contextPatch.recommendations = proposed.recommendations;
+      projectedText = proposed.remainingText;
+    }
+    if (cfg.summaryTarget === "task" && projectedText.trim()) {
       /*
        * FNXC:WorkflowCompletion 2026-06-29-11:09:
        * Built-in completion-summary nodes are agent/model workflow steps. Persist
@@ -697,7 +825,7 @@ export async function runGraphCustomNode(
        * authored during workflow execution, before review/merge, and not only
        * synthesized later by recovery fallback code.
        */
-      contextPatch.summary = stepOutput.trim();
+      contextPatch.summary = projectedText.trim();
     }
     /*
      * FNXC:PlanReview 2026-06-29-02:05:
@@ -709,8 +837,30 @@ export async function runGraphCustomNode(
     const malformed = (outcome as { malformed?: boolean }).malformed === true;
     const advisoryFailureValue = malformed ? "advisory_failure" : "failed";
     /*
-    FNXC:ReviewLeniency 2026-07-02-00:30:
-    Malformed review output (no parseable verdict, even after the fallback-model retry in executeWorkflowStep) is treated as a NON-BLOCKING advisory rather than a hard gate failure. Operators asked that an unparseable reviewer response not block a task in review — a genuine REVISE (parsed verdict) still blocks, and the advisory_failure value keeps the malformed result visible on the Workflow tab. Only `malformed` relaxes a gate; every parsed non-pass verdict continues to block exactly as before.
+    FNXC:ReviewLeniency 2026-07-02-00:30 (SUPERSEDED for blocking gates — see below):
+    Malformed review output (no parseable verdict, even after the fallback-model retry in executeWorkflowStep) was treated as a NON-BLOCKING advisory rather than a hard gate failure. Operators asked that an unparseable reviewer response not block a task in review — a genuine REVISE (parsed verdict) still blocks, and the advisory_failure value keeps the malformed result visible on the Workflow tab.
+
+    FNXC:ReviewLeniency 2026-08-26-09:34:
+    A BLOCKING gate no longer approves on malformed output. Operator decision, reversing the line
+    above with the reason it was missing: "the only valid reason a task can be blocked is an LLM
+    problem (429, 503); everything else is fixed at the source, or the AI is made unable to return
+    anything other than what is expected — and if it does anyway, restart cleanly".
+
+    Restarting cleanly is ALREADY implemented, twice: `executeWorkflowStep` retries a malformed
+    primary on the fallback model, or self-retries once on the primary when no fallback is
+    configured. `malformed` therefore does not mean "one fumbled response" — it means the reviewer
+    failed to return a usable verdict across every attempt, which IS the LLM-class condition the
+    operator accepts as a legitimate stop.
+
+    What it must never mean is APPROVAL. Measured on a real card: a reviewer reported in prose that
+    the deliverables were absent, carried no verdict JSON, and the gate recorded success — unreviewed
+    work merged on a rejection nobody could see. The prose classifier cannot close this: that text
+    contained no rejection marker at all (no "revise", "reject", "must fix"), because it was a
+    factual statement of absence. Only the ABSENCE of a verdict is detectable, so absence must not
+    approve.
+
+    Advisory gates are untouched: `!blocking` still passes, keeping the original operator ask exactly
+    where it applies — a step that was never allowed to hold a card cannot start holding one.
     */
     return {
       /*
@@ -719,7 +869,7 @@ export async function runGraphCustomNode(
       UNAVAILABLE result is never a pass. Returning success here would persist it as passed
       and admit an obsolete Code Review edge.
       */
-      outcome: outcome.success || ((!blocking || malformed) && verdict !== "UNAVAILABLE") ? "success" : "failure",
+      outcome: outcome.success || (!blocking && verdict !== "UNAVAILABLE") ? "success" : "failure",
       value: (outcome as WorkflowStepOutcome).failureValue ?? verdict ?? (outcome.success ? "passed" : advisoryFailureValue),
       ...(Object.keys(contextPatch).length > 0 ? { contextPatch } : {}),
     };

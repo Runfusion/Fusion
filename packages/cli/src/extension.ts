@@ -822,6 +822,19 @@ function emitSecretAudit(
 }
 
 /**
+ * FNXC:Secrets 2026-08-27-03:47:
+ * Pi forwards tool `content` to the model but treats `details` as host-render metadata.
+ * A policy-allowed read must therefore include its value here or it is audited but undelivered.
+ * Keep details.value for host consumers; refusal and approval-pending returns remain plaintext-free.
+ */
+function formatRevealedSecretContent(confirmation: string, plaintextValue: string): string {
+  const delivery = plaintextValue === ""
+    ? "The stored secret value is empty."
+    : `Secret value:\n${plaintextValue}`;
+  return `${confirmation}\n${delivery}\nUse this value only for the immediate operation. Never write it to files, commits, logs, PR descriptions, or task documents.`;
+}
+
+/**
  * Validate an agent id supplied to task create/update tools.
  * Returns null on success, or an error message describing why the id was rejected.
  *
@@ -3673,7 +3686,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           });
           emitSecretAudit(store, effectiveCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope, approvalRequestId: existing.id });
           return {
-            content: [{ type: "text", text: `Loaded secret '${params.key}' from ${resolvedScope} scope (approval ${existing.id} consumed).` }],
+            content: [{ type: "text", text: formatRevealedSecretContent(`Loaded secret '${params.key}' from ${resolvedScope} scope (approval ${existing.id} consumed).`, revealedAfterApproval.plaintextValue) }],
             details: { key: params.key, value: revealedAfterApproval.plaintextValue, scope: resolvedScope, approvalRequestId: existing.id },
           };
         }
@@ -3703,7 +3716,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const revealed = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: secretPrincipal.agentId });
       emitSecretAudit(store, effectiveCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope });
       return {
-        content: [{ type: "text", text: `Loaded secret '${params.key}' from ${resolvedScope} scope.` }],
+        content: [{ type: "text", text: formatRevealedSecretContent(`Loaded secret '${params.key}' from ${resolvedScope} scope.`, revealed.plaintextValue) }],
         details: { key: params.key, value: revealed.plaintextValue, scope: resolvedScope },
       };
     },

@@ -121,14 +121,4 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     helpFallback: " After a dashboard update installs, requests a supervised restart. Unset: disabled. ",
     keywords: ["auto update", "automatic restart", "restart", "supervisor"],
   },
-  {
-    sectionId: "global-general",
-    key: "autoReloadOnVersionChange",
-    labelKey: "settings.globalGeneral.autoReloadDashboardOnVersionChange",
-    labelFallback: " Auto-reload dashboard on version change ",
-    helpKey: "settings.globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen",
-    helpFallback:
-      " When enabled (default), the dashboard automatically reloads when it detects a new build version — either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. ",
-    keywords: ["refresh", "service worker", "hot reload"],
-  },
 ];

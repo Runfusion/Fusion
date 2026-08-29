@@ -261,6 +261,22 @@ export interface WorkflowOptionalGroupConfig {
   `WorkflowStepResult.phase` and `[post-merge]` logs follow this value.
   */
   phase?: "pre-merge" | "post-merge";
+  /*
+  FNXC:ReportingOnlyGroup 2026-08-26-06:56:
+  A REPORTING group observes accepted work and records what it found. It carries no approval and can
+  never hold or reopen a card, so it is excluded from the required pre-merge approval set and may
+  not schedule executor remediation.
+
+  `gateMode: "advisory"` on the inner node was NOT enough, and the gap was measured on a real card:
+  an advisory REVISE records `advisory_failure`, which `evaluatePreMergeApprovals` reads as
+  "not-approved" — so the merge door held — AND still reached `requestPreMergeOptionalStepFix`, which
+  bounced the card to implementation. The Documentation milestone therefore both blocked the merge
+  and demanded work, while its own contract says it reports and never vetoes.
+
+  Deliberately opt-in and absent everywhere else: advisory gates that DO own remediation (browser
+  verification) keep their existing blocking behaviour untouched.
+  */
+  reportingOnly?: boolean;
   template: {
     nodes: WorkflowIrNode[];
     edges: WorkflowIrEdge[];

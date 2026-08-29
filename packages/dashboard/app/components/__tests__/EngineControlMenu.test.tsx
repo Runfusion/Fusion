@@ -36,10 +36,6 @@ const legacyMocks = vi.hoisted(() => ({
 
 vi.mock("../../api", () => apiMocks);
 vi.mock("../../api/legacy", () => legacyMocks);
-vi.mock("../../versionCheck", () => ({
-  setAutoReloadEnabled: vi.fn(),
-}));
-
 async function openMenu(projectId: string | undefined = "proj_123") {
   render(
     <ConfirmDialogProvider>

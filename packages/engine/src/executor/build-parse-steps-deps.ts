@@ -24,6 +24,7 @@ export function buildParseStepsDeps(
     writeSteps: async (task, steps: TaskStep[]): Promise<void> => {
       await deps.store.updateTask(task.id, { steps });
     },
+    getLiveTask: (taskId) => deps.store.getTask(taskId),
     hasExpandedForeach: async (task): Promise<boolean> => {
       const store = deps.store as unknown as {
         loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;

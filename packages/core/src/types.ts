@@ -60,6 +60,18 @@ export type { IngestedCheckState, IngestedCheckStateValue, MergeablePrCheck } fr
  * selection. FN-7970 and FN-7969 preserve direct resolution for pre-existing
  * Brainstorming and Coding (Ideas) task selections while hiding them elsewhere.
  */
+/*
+FNXC:WorkflowDeprecation 2026-08-25-14:40:
+builtin:review-gated-coding is DELETED, not deprecated. It shipped with a success path that could
+never complete: `code-review -> documentation-delivery` put a write-capable node after a passed
+review, which `execute-workflow-graph` refuses with `workspace-review-seal-required`, and its plan
+node declared a seam `resolveSeamName` throws on. builtin:coding-ideas-v2 replaces it.
+It was briefly kept as a deprecated id so an existing selection still resolved. That is no longer
+worth its cost: it SHARED the documentation-delivery node with V2, so changing that node for V2
+silently changed this workflow too — a second consumer nobody was maintaining. A task that selected
+it now falls back to the project default workflow, which is the same outcome its own graph could
+never reach.
+*/
 export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
   "builtin:brainstorming",
 ]);

@@ -263,7 +263,10 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   /* FNXC:UpdateAutomation 2026-08-21-02:48: Keep these schema keys unset because defaults merge into effective settings and `undefined` is distinct from explicit false. */
   autoUpdateEnabled: undefined,
   autoRestartAfterUpdate: undefined,
-  autoReloadOnVersionChange: true,
+  /*
+  FNXC:VersionAutoReload 2026-08-23-04:03:
+  Version-change reload is mandatory, so its key is retired. Older persisted values are ignored because GLOBAL_SETTINGS_KEYS derives from this object and rejects unknown keys before save patches.
+  */
   githubTrackingDefaultRepo: undefined,
   reportRoadmapDedupeEnabled: undefined,
   reportRoadmapLabel: undefined,
@@ -887,7 +890,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryBackendType === "stash". executorSessionCaptureEnabled gates ONLY the
   transcript upload (the RUFU-068 terminal anchor event still fires when it is
   off) and defaults ON. executorSessionCaptureMaxEvents caps transcript events
-  per task; the engine keeps the most recent N (default 20000). 
+  per task; the engine keeps the most recent N (default 20000).
   executorSessionCaptureIncludeStatus is the schema-only "keep a setting" for
   uploading `status` log entries (default off; no UI row).
   */

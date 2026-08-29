@@ -220,6 +220,12 @@ export type AcquireActiveSessionPathOutcome =
 export interface AcquireActiveSessionPathOptions {
   /** Returns true when the foreign holder still has a live session/execution surface. */
   holderLiveProbe?: ForeignHolderLiveProbe;
+  /**
+   * Opt-in cross-phase fence. When set, a stale foreign holder of another kind
+   * remains contended so acquire and land claims sharing a path never reclaim
+   * each other. The default preserves the existing generic session behavior.
+   */
+  restrictReclaimToKind?: ActiveSessionKind;
   /** Minimum entry age before a foreign entry may be reclaimed. Defaults to `DEFAULT_SELF_OWNED_MIN_IDLE_MS`. */
   minIdleMs?: number;
   /** Test seam — defaults to `Date.now()`. */
@@ -242,6 +248,9 @@ export function acquireActiveSessionPath(
   const ageMs = now - existing.registeredAt;
   const minIdleMs = options.minIdleMs ?? DEFAULT_SELF_OWNED_MIN_IDLE_MS;
   const holderIsLive = options.holderLiveProbe?.(existing.taskId, path) ?? true;
+  if (existing.kind !== options.restrictReclaimToKind && options.restrictReclaimToKind !== undefined) {
+    return { action: "contended", holderTaskId: existing.taskId, holderKind: existing.kind, ageMs };
+  }
   if (holderIsLive || ageMs < minIdleMs) {
     return { action: "contended", holderTaskId: existing.taskId, holderKind: existing.kind, ageMs };
   }

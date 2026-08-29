@@ -438,6 +438,7 @@ export function MainContent({
             openTaskDetail: openPluginTaskDetail,
             openFile: openFileInBrowser,
             beginNativeStructureDrag: attachNativeStructureRefToDrag,
+            /* FNXC:NearDuplicateDetection 2026-08-23-04:53: Plugin-rendered cards share the duplicate tag contract, so forward the board update seam and keep the mark-as-read control available on this host. */
             renderTaskCard: (task: Task | TaskDetail) => (
               <TaskCard
                 task={task}
@@ -447,6 +448,7 @@ export function MainContent({
                 projectId={currentProject?.id}
                 onOpenDetail={openPluginTaskDetail}
                 addToast={addToast}
+                onUpdateTask={updateTask}
                 prAuthAvailable={prAuthAvailable}
                 autoMergeEnabled={autoMerge}
                 nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
@@ -968,7 +970,6 @@ export function MainContent({
               /* FNXC:FloatingWindow 2026-06-22-21:10: Popping out from the board's full-panel detail also returns the main panel to the board, so the board (not the emptied detail) sits behind the floating window. */
               onPopOut={(task) => { popOutTaskDetail(task); closeTaskDetailMainPanel(); }}
               onOpenDetail={(value, initialTab) => openTaskDetailInMainPanel(value, initialTab ?? "chat")}
-              onMoveTask={moveTask}
               onDeleteTask={deleteTask}
               onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onMergeTask={mergeTask}

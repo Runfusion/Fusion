@@ -178,6 +178,37 @@ describe("NotificationService deferred failure notifications", () => {
   it. No delivery or durable wedge claim is allowed until the writer clears that
   ownership at exhaustion, when the existing once-per-episode seam must alert.
   */
+  it("writes clear-or-delete guidance for a held triage duplicate", async () => {
+    const store = createStore();
+    const sendMessageOnce = vi.fn(async () => ({ message: {} as any, inserted: true }));
+    const service = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+    });
+    await service.start();
+
+    const duplicate = task({
+      id: "FN-duplicate",
+      paused: true,
+      pausedReason: "duplicate-decision-required",
+      sourceMetadata: { duplicateSource: "triage-marker", nearDuplicateOf: "FN-1234" },
+    });
+    store.emit("task:updated", duplicate);
+    await flushAsyncHandlers();
+
+    expect(sendMessageOnce).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("Clear the duplicate flag"),
+        metadata: expect.objectContaining({ kind: "triage-duplicate-decision" }),
+      }),
+      "triage-duplicate-decision:FN-duplicate",
+    );
+    const payload = (sendMessageOnce.mock.calls as unknown as Array<[{ content: string }]>)[0][0];
+    expect(payload.content).not.toMatch(/keep it/i);
+    expect(payload.content).toMatch(/delete the task/i);
+
+    await service.stop();
+  });
+
   it("suppresses recovery-owned failed snapshots and alerts once after exhaustion", async () => {
     const store = createStore();
     const sendMessageOnce = vi.fn(async () => ({ message: {} as any, inserted: true }));

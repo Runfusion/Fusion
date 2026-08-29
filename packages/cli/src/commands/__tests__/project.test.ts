@@ -26,6 +26,7 @@ const mockListProjects = vi.fn();
 const mockRegisterProject = vi.fn();
 const mockEnsureProjectForPath = vi.fn(async (...args: unknown[]) => ({
   outcome: "registered",
+  integrationBranches: [],
   project: await mockRegisterProject(...args),
 }));
 const mockUpdateProject = vi.fn().mockResolvedValue({});
@@ -260,6 +261,27 @@ describe("project commands", () => {
     expect(lines.some((line) => line.includes("Registered project 'demo'"))).toBe(true);
     expect(lines.some((line) => line.includes("Location:"))).toBe(true);
     expect(lines.some((line) => line.includes("/tmp/demo"))).toBe(false);
+  });
+
+  it("runProjectAdd reports an unavailable integration-branch reconciliation without crashing", async () => {
+    mockListProjects.mockResolvedValue([]);
+    mockEnsureProjectForPath.mockResolvedValueOnce({
+      outcome: "registered",
+      gitRepository: "existing",
+      integrationBranches: [{
+        repoRelPath: ".",
+        branch: "release/9.9",
+        source: "configured",
+        action: "unavailable",
+        reason: "test branch write failure",
+      }],
+      project: { id: "proj-1", name: "demo", path: process.cwd(), isolationMode: "in-process" },
+    });
+
+    const { runProjectAdd } = await import("../project.js");
+    await runProjectAdd("demo", ".", { force: true });
+
+    expect(consoleSpy).toHaveBeenCalledWith("    ✓ Integration branch: release/9.9 (unavailable)");
   });
 
   it("runProjectRemove unregisters project after confirmation", async () => {

@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.77.0-beta.8",
+  "version": "0.77.0-beta.10",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -75,6 +75,8 @@
     "test:coverage:cli": "pnpm --filter @runfusion/fusion exec vitest run --silent=passed-only --reporter=dot --coverage",
     "test:coverage:dashboard": "pnpm --filter @fusion/dashboard exec vitest run --silent=passed-only --reporter=dot --coverage",
     "test:slow-cli": "pnpm --filter @runfusion/fusion test:slow-cli",
+    "test:pipeline-smoke": "node scripts/run-pipeline-smoke.mjs",
+    "smoke:pipeline": "node scripts/run-pipeline-smoke.mjs",
     "typecheck": "pnpm -r --filter=!@fusion/desktop --filter=!@fusion/mobile typecheck",
     "i18n:extract": "i18next-cli extract",
     "i18n:sync": "i18next-cli sync",

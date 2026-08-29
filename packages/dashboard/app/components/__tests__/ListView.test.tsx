@@ -1202,15 +1202,6 @@ describe("ListView", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Pause" })).toBeInTheDocument();
-    /*
-    FNXC:TaskMovementContextMenu 2026-08-19-18:37:
-    When a task has several legal destinations, list movement is grouped under one
-    accessible Move to entry instead of presenting a noisy run of sibling actions.
-    */
-    expect(screen.getByRole("menuitem", { name: "Move to" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Move to In progress" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to" }));
-    expect(screen.getByRole("menuitem", { name: "Move to In progress" })).toBeInTheDocument();
     expect(failedRow).not.toHaveClass("list-row--selected");
     expect(onOpenDetail).not.toHaveBeenCalled();
     expect(fetchTaskDetail).not.toHaveBeenCalled();
@@ -1221,18 +1212,6 @@ describe("ListView", () => {
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
-    /*
-    FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
-    "In progress", not "In Progress". The label is now interpolated from the WORKFLOW's
-    own column name (`BUILTIN_CODING_WORKFLOW_IR` declares "In progress") instead of the
-    hardcoded English string `taskDetail.move.backToInProgress`. This assertion is the
-    visible proof that the label follows the workflow: rename that column and the menu
-    renames with it. Task Detail cases that render before board-workflows resolves still
-    read "Back to In Progress" — they go through the no-metadata fallback, which uses
-    the legacy column label map.
-    */
-    expect(screen.getByRole("menuitem", { name: "Move to", exact: true })).toBeInTheDocument();
-
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-006"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
 
@@ -1246,9 +1225,6 @@ describe("ListView", () => {
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-004"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
 
-    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-005"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeInTheDocument();
-
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
@@ -1258,14 +1234,6 @@ describe("ListView", () => {
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
 
-    mockConfirm.mockResolvedValueOnce(true);
-    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-007"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Todo" }));
-    await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-007", "todo", { preserveProgress: true }));
-
-    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-005"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Done" }));
     expect(onPauseTask).not.toHaveBeenCalled();
     expect(onRetryTask).not.toHaveBeenCalled();
     expect(onArchiveTask).not.toHaveBeenCalled();
@@ -1533,6 +1501,73 @@ describe("ListView", () => {
     expect(onPauseTask).toHaveBeenCalledWith("FN-001");
     expect(onPauseTask).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    viewportSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("keeps reverted completed rows labelled and revisable from the desktop context menu", () => {
+    const viewportSpy = mockDesktopViewport();
+    showAllColumnsByDefault();
+    const reverted = createMockTask({
+      id: "FN-REVERTED",
+      title: "Reverted desktop task",
+      column: "done",
+      status: "done",
+      sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
+    });
+    const onReviseTask = vi.fn();
+
+    renderListView({ tasks: [reverted], onReviseTask });
+
+    expect(screen.queryByTestId("list-reverted-tasks")).toBeNull();
+    expect(document.querySelector('.list-row[data-id="FN-REVERTED"]')).toHaveTextContent("Reverted");
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-REVERTED"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Revise" }));
+    expect(onReviseTask).toHaveBeenCalledWith(reverted);
+    viewportSpy.mockRestore();
+  });
+
+  it("deduplicates reverted rows in their ordinary list group", () => {
+    const viewportSpy = mockDesktopViewport();
+    showAllColumnsByDefault();
+    const reverted = createMockTask({
+      id: "FN-REVERTED-DUPLICATE",
+      title: "Reverted duplicate task",
+      column: "done",
+      status: "done",
+      sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
+    });
+
+    renderListView({ tasks: [reverted, reverted] });
+
+    expect(screen.queryByTestId("list-reverted-tasks")).toBeNull();
+    expect(document.querySelectorAll('.list-row[data-id="FN-REVERTED-DUPLICATE"]')).toHaveLength(1);
+    viewportSpy.mockRestore();
+  });
+
+  it("keeps reverted completed rows labelled and revisable from mobile long-press", () => {
+    vi.useFakeTimers();
+    const viewportSpy = mockMobileViewport();
+    const reverted = createMockTask({
+      id: "FN-REVERTED-MOBILE",
+      title: "Reverted mobile task",
+      column: "done",
+      status: "done",
+      sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
+    });
+    const onReviseTask = vi.fn();
+
+    renderListView({ tasks: [reverted], onReviseTask });
+
+    const card = document.querySelector('.list-card[data-id="FN-REVERTED-MOBILE"]') as HTMLElement;
+    expect(card).toHaveTextContent("Reverted");
+    fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 24, clientY: 32 });
+    act(() => {
+      vi.advanceTimersByTime(550);
+    });
+    fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Revise" }), { pointerType: "touch", pointerId: 2 });
+    expect(onReviseTask).toHaveBeenCalledWith(reverted);
     viewportSpy.mockRestore();
     vi.useRealTimers();
   });

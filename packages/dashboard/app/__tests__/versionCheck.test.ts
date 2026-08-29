@@ -11,8 +11,6 @@ import {
   consumeVersionUpdateFlag,
   _resetCheckState,
   _resetState,
-  setAutoReloadEnabled,
-  _isAutoReloadEnabled,
   MIN_CHECK_INTERVAL_MS,
   POLL_INTERVAL_MS,
   _resetMismatchState,
@@ -300,14 +298,6 @@ describe("installVersionCheck periodic polling", () => {
     };
   }
 
-  function settingsResponse() {
-    return {
-      ok: true,
-      headers: new Headers({ "content-type": "application/json" }),
-      json: () => Promise.resolve({ autoReloadOnVersionChange: true }),
-    };
-  }
-
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubEnv("PROD", true);
@@ -328,7 +318,6 @@ describe("installVersionCheck periodic polling", () => {
 
   it("sets up a periodic interval that calls checkVersion with the poll trigger", async () => {
     const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(settingsResponse())
       .mockResolvedValueOnce(versionResponse("test-build-abc123"))
       .mockResolvedValueOnce(versionResponse("different-version"));
     vi.stubGlobal("fetch", fetchSpy);
@@ -339,7 +328,7 @@ describe("installVersionCheck periodic polling", () => {
 
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS - 2_000);
 
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     const mismatchTrace = getTraces().find((entry) => entry.event === "mismatch");
     expect(mismatchTrace?.detail).toMatchObject({ trigger: "poll", remote: "different-version" });
     expect(reloadSpy).not.toHaveBeenCalled();
@@ -347,7 +336,6 @@ describe("installVersionCheck periodic polling", () => {
 
   it("polling detects a confirmed version mismatch and triggers reload", async () => {
     const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(settingsResponse())
       .mockResolvedValueOnce(versionResponse("test-build-abc123"))
       .mockResolvedValueOnce(versionResponse("different-version"))
       .mockResolvedValueOnce(versionResponse("different-version"));
@@ -367,13 +355,12 @@ describe("installVersionCheck periodic polling", () => {
 
   it("cleans up the polling interval when state is reset", async () => {
     const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(settingsResponse())
       .mockResolvedValueOnce(versionResponse("test-build-abc123"));
     vi.stubGlobal("fetch", fetchSpy);
 
     installVersionCheck();
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     _resetState();
     fetchSpy.mockClear();
@@ -384,120 +371,92 @@ describe("installVersionCheck periodic polling", () => {
 
   it("polling respects MIN_CHECK_INTERVAL_MS cooldown", async () => {
     const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(settingsResponse())
       .mockResolvedValue(versionResponse("test-build-abc123"));
     vi.stubGlobal("fetch", fetchSpy);
 
     installVersionCheck();
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS - 1);
-    expect(fetchSpy).toHaveBeenCalledTimes(2); // settings + initial check
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // initial check
 
     await checkVersion("focus");
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(reloadSpy).not.toHaveBeenCalled();
   });
 });
 
-describe("autoReloadOnVersionChange setting", () => {
+describe("mandatory auto-reload", () => {
   const reloadSpy = vi.fn();
 
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubEnv("PROD", true);
     vi.stubGlobal("location", { reload: reloadSpy });
     window.sessionStorage.clear();
     reloadSpy.mockClear();
     _resetState();
+    _resetCheckState();
+    clearTraces();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });
 
   afterEach(() => {
     _resetState();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
-  describe("reloadOnce with auto-reload setting", () => {
-    it("calls window.location.reload() when auto-reload is enabled (default)", () => {
-      expect(_isAutoReloadEnabled()).toBe(true);
-      reloadOnce("test reason");
-      expect(window.sessionStorage.getItem("fusion:version-reload")).toBe("1");
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
+  it("ignores a legacy opt-out payload without requesting settings", async () => {
+    const fetchSpy = vi.fn((input: string) => {
+      if (input.includes("/api/settings")) {
+        return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "application/json" }), json: () => Promise.resolve({ autoReloadOnVersionChange: false }) });
+      }
+      return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "application/json" }), json: () => Promise.resolve({ version: "different-version" }) });
     });
+    vi.stubGlobal("fetch", fetchSpy);
 
-    it("does NOT call reload when auto-reload is disabled", () => {
-      const consoleInfoSpy = vi.spyOn(console, "info");
-      setAutoReloadEnabled(false);
-      expect(_isAutoReloadEnabled()).toBe(false);
-      reloadOnce("test reason");
-      // Should still set the flag to prevent retries
-      expect(window.sessionStorage.getItem("fusion:version-reload")).toBe("1");
-      expect(reloadSpy).not.toHaveBeenCalled();
-      expect(consoleInfoSpy).toHaveBeenCalledWith(
-        "[versionCheck] auto-reload disabled by setting, skipping reload:",
-        "test reason",
-      );
-      consoleInfoSpy.mockRestore();
-    });
+    installVersionCheck();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
 
-    it("re-enables reload after setAutoReloadEnabled(true)", () => {
-      setAutoReloadEnabled(false);
-      reloadOnce("suppressed");
-      expect(reloadSpy).not.toHaveBeenCalled();
-
-      // Reset for next call
-      window.sessionStorage.clear();
-      setAutoReloadEnabled(true);
-      reloadOnce("now enabled");
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
-    });
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/api/settings"))).toBe(false);
   });
 
-  describe("setAutoReloadEnabled", () => {
-    it("toggles the guard correctly", () => {
-      expect(_isAutoReloadEnabled()).toBe(true);
-      setAutoReloadEnabled(false);
-      expect(_isAutoReloadEnabled()).toBe(false);
-      setAutoReloadEnabled(true);
-      expect(_isAutoReloadEnabled()).toBe(true);
-    });
+  it("reloads for service-worker activation and stale chunks", () => {
+    reloadOnce("service worker activated new version");
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+    window.sessionStorage.clear();
+    reloadSpy.mockClear();
+    expect(handleChunkLoadError(new Error("ChunkLoadError: loading chunk foo failed"))).toBe(true);
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 
-  describe("bootstrap setting fetch", () => {
-    it("respects autoReloadOnVersionChange=false from settings API", async () => {
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: () => Promise.resolve({ autoReloadOnVersionChange: false }),
-      });
-      vi.stubGlobal("fetch", fetchSpy);
+  it("retains the session and remote-version loop protection", async () => {
+    reloadOnce("first reload");
+    reloadOnce("duplicate reload");
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
 
-      // Dynamically import to trigger bootstrap (we test the effect via setAutoReloadEnabled)
-      // Instead, directly test the fetch + setAutoReloadEnabled integration:
-      const res = await fetch("/api/settings", {
-        headers: { Accept: "application/json" },
-      });
-      const data = await res.json();
-      if (data.autoReloadOnVersionChange === false) {
-        setAutoReloadEnabled(false);
-      }
-      expect(_isAutoReloadEnabled()).toBe(false);
-
-      // Now reloadOnce should not actually reload
-      reloadOnce("bootstrap test");
-      expect(reloadSpy).not.toHaveBeenCalled();
+    window.sessionStorage.clear();
+    reloadSpy.mockClear();
+    window.sessionStorage.setItem("fusion:version-reloaded-remote", "different-version");
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: () => Promise.resolve({ version: "different-version" }),
     });
+    vi.stubGlobal("fetch", fetchSpy);
 
-    it("keeps default (true) if settings fetch fails", async () => {
-      const fetchSpy = vi.fn().mockRejectedValue(new Error("Network error"));
-      vi.stubGlobal("fetch", fetchSpy);
+    await checkVersion();
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion();
 
-      try {
-        await fetch("/api/settings");
-      } catch {
-        // Expected — guard should remain true
-      }
-      expect(_isAutoReloadEnabled()).toBe(true);
-    });
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(getTraces().some((entry) => entry.event === "reload-suppressed")).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ const taskDetailSseSubscriptions = vi.hoisted(() => [] as Array<{
 }>);
 
 export { taskDetailSseSubscriptions };
+export const mockFetchOverlapBlockerReport = vi.fn();
 
 /*
 FNXC:TaskDetailOptimisticOpening 2026-08-05-07:39:
@@ -51,6 +52,7 @@ vi.mock("../../api", async (importOriginal) => {
     deleteAttachment: vi.fn(),
     updateTask: vi.fn().mockResolvedValue({}),
     repairOverlapBlocker: vi.fn().mockResolvedValue({ repaired: true, statusCleared: false, reason: "repaired", message: "Repaired", task: makeTask() }),
+    fetchOverlapBlockerReport: mockFetchOverlapBlockerReport.mockResolvedValue({ taskId: "FN-099", blockerId: null, blockerColumn: null, reason: "no-overlap-blocker", taskScopeCount: 0, blockerScopeCount: 0, overlaps: [] }),
     summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
     fetchTaskPrompt: vi.fn().mockResolvedValue({ id: "FN-099", prompt: "# Task FN-099" }),

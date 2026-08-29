@@ -60,7 +60,7 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "modelPresetId", "modelProvider", "credentialInstanceId", "modelId",
       "validatorModelProvider", "validatorCredentialInstanceId", "validatorModelId",
       "planningModelProvider", "planningCredentialInstanceId", "planningModelId", "mergerModelProvider", "mergerCredentialInstanceId", "mergerModelId",
-      "mergeRetries", "aiMergeReviewReconciliation", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "reviewConvergenceStage", "reviewConvergenceEscalationCount", "nextRecoveryAt",
+      "mergeRetries", "aiMergeReviewReconciliation", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "sessionContentionHoldCount", "sessionContentionWaitReason", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "reviewConvergenceStage", "reviewConvergenceEscalationCount", "nextRecoveryAt",
       // FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8): this projection is a SECOND
       // copy of the slim column list (see getTaskSelectClauseImpl2). The IR pin, its node entry,
       // and the adoption stamp must appear in BOTH or a task read through this path reads as
@@ -536,26 +536,27 @@ export async function mergeWorkspaceWorktreeEntryImpl(
     validateBeforePersist?: (current: Task) => Promise<void>;
   } = {},
 ): Promise<Task> {
-  return store.withTaskLock(id, async () => {
-    let resolvedPatch: Partial<WorkspaceWorktreeEntry>;
-    if (typeof patch === "function") {
-      const callbackTask = await store.getTask(id, { includeDeleted: true });
-      if (callbackTask.deletedAt) throw new TaskDeletedError(id, callbackTask.deletedAt);
-      const callbackExisting = callbackTask.workspaceWorktrees?.[repoRelPath];
-      if (options.requireExistingEntry && !callbackExisting) return callbackTask;
-      /*
-      FNXC:WorkspaceWorktree 2026-08-20-07:08:
-      Filesystem creation, configured init commands, hydration, and secrets materialization must not
-      occupy a PostgreSQL transaction or one of the small runtime connection pool's sessions. The
-      in-process task mutex and durable repository-acquisition lease serialize preparation; the short
-      transaction below revalidates authoritative lifecycle state under the cross-process advisory
-      lock immediately before persisting the prepared entry.
-      */
-      resolvedPatch = await patch(callbackTask);
-    } else {
-      resolvedPatch = patch;
-    }
+  let resolvedPatch: Partial<WorkspaceWorktreeEntry>;
+  if (typeof patch === "function") {
+    const callbackTask = await store.getTask(id, { includeDeleted: true });
+    if (!callbackTask) throw new TaskNotFoundError(id);
+    if (callbackTask.deletedAt) throw new TaskDeletedError(id, callbackTask.deletedAt);
+    const callbackExisting = callbackTask.workspaceWorktrees?.[repoRelPath];
+    if (options.requireExistingEntry && !callbackExisting) return callbackTask;
+    /*
+    FNXC:WorkspaceWorktree 2026-08-23-06:25:
+    Filesystem creation, init commands, hydration, and secrets materialization run before the
+    in-process task mutex. A planning-lock holder may wait on that mutex, so holding it during
+    long preparation pins the cross-process advisory lock and makes other takers time out. The
+    durable repository lease, sequential acquisition loop, and transaction revalidation below
+    still serialize and fence publication of the prepared result.
+    */
+    resolvedPatch = await patch(callbackTask);
+  } else {
+    resolvedPatch = patch;
+  }
 
+  return store.withTaskLock(id, async () => {
     const layer = store.asyncLayer!;
     const outcome = await layer.transactionImmediate(async (tx) => {
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);

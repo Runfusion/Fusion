@@ -143,6 +143,7 @@ export { resetStepsIfWorkLost as resetStepsIfWorkLostImpl } from "./reset-steps-
 export { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixImpl } from "./route-retryable-remediation.js";
 export { buildForeachWorktreeDeps as buildForeachWorktreeDepsImpl } from "./build-foreach-worktree-deps.js";
 export { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixImpl } from "./request-pre-merge-optional-step-fix.js";
+export { appendReviewRemediationSteps as appendReviewRemediationStepsImpl } from "./append-review-remediation-steps.js";
 export { createSpawnAgentTool as createSpawnAgentToolImpl } from "./create-spawn-agent-tool.js";
 export { createTaskUpdateTool as createTaskUpdateToolImpl } from "./create-task-update-tool.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } from "./attempt-executor-verification-fix.js";

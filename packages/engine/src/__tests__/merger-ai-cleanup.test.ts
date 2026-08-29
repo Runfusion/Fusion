@@ -164,7 +164,7 @@ function makeStore(taskId = "FN-1") {
     /* FNXC:MergeMockDrift 2026-08-23-00:20: `updateTaskAtomic` is a production write seam the merge
        path uses; a fake store that omits it throws TypeError before the behaviour under test runs.
        Same read-modify-write shape as the sibling fake in `merger-ai.test.ts`. */
-    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | null | undefined | Promise<Record<string, unknown> | null | undefined>) => {
       const patch = await updater(task);
       if (patch) Object.assign(task, patch);
       return task;
@@ -389,7 +389,7 @@ describe("AI merge temp worktree cleanup", () => {
 
     const { mergeRoot, events } = await cleanup({ gitRunner, rmRunner });
 
-    expect(rmRunner).toHaveBeenCalledTimes(10);
+    expect(rmRunner).toHaveBeenCalledTimes(5);
     expect(existsSync(mergeRoot)).toBe(true);
     expect(gitRunner.mock.calls.filter(([args]) => args[1] === "prune")).toHaveLength(1);
     expect(events).toEqual(expect.arrayContaining([

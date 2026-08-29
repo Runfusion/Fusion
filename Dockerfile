@@ -98,6 +98,27 @@ RUN apt-get update \
 # needs `--cap-add NET_ADMIN --device /dev/net/tun` on `docker run`. Shipping the binary is the part
 # the image can own; granting kernel capabilities stays an explicit operator decision.
 #
+# FNXC:DockerRun 2026-08-27-20:00: google-chrome-stable joins them, because the image shipped NO
+# browser at all and two shipped features silently need one. `plugins/fusion-plugin-agent-browser`
+# drives a browser through `playwright-core`, which by design does NOT download one at install time
+# (`src/driver.ts`), and probes fixed paths whose first two Linux entries are `/usr/bin/google-chrome`
+# and `/usr/bin/google-chrome-stable` (`src/probe.ts`). The Chrome DevTools MCP server
+# (`chrome-devtools-mcp`) likewise launches an EXISTING Chrome and downloads nothing; with no browser
+# present it fails every call with "Could not find Google Chrome executable for channel 'stable'".
+# Google Chrome stable is chosen over Debian's `chromium` because it is the only browser
+# chrome-devtools-mcp officially supports (its README supports Chrome and Chrome for Testing only,
+# and treats other Chromium builds as unsupported), and Google publishes it for BOTH amd64 and arm64,
+# so `arch=$(dpkg --print-architecture)` resolves on either host. Measured 2026-08-27 in the stable
+# repo index: google-chrome-stable 152.0.7977.64-1 for amd64 and arm64.
+#
+# NOTE: shipping the binary does not make Chrome's own sandbox usable. Chrome sandboxes itself with
+# unprivileged user namespaces, which the default container seccomp profile blocks — `unshare -U`
+# returns EPERM here even though the kernel allows namespaces (max_user_namespaces=126143), and
+# Chrome then aborts at startup with "No usable sandbox!". Callers must therefore either pass
+# `--no-sandbox` (chrome-devtools-mcp: `--chromeArg=--no-sandbox`) or the operator must relax the
+# profile at `docker run` with `--security-opt seccomp=unconfined`. Same division of responsibility
+# as tailscale above: the image owns the binary, kernel privileges stay an operator decision.
+#
 # External integration evidence:
 #   gh          — repo https://github.com/cli/cli, docs https://cli.github.com/,
 #                 apt https://cli.github.com/packages, binary `gh`, key
@@ -108,6 +129,13 @@ RUN apt-get update \
 #   cloudflared — repo https://github.com/cloudflare/cloudflared, docs https://pkg.cloudflare.com/,
 #                 apt https://pkg.cloudflare.com/cloudflared, binary `cloudflared`,
 #                 key cloudflare-main.gpg (vendor-signed; upstream-pending-verification)
+#   chrome      — repo https://chromium.googlesource.com/chromium/src/ (upstream Chromium; Chrome
+#                 itself is closed-source and has no public repo), docs https://www.google.com/chrome/,
+#                 apt https://dl.google.com/linux/chrome/deb/ stable main, binaries
+#                 `google-chrome-stable`/`google-chrome`, key
+#                 https://dl.google.com/linux/linux_signing_key.pub (ASCII-armored, so it is
+#                 gpg --dearmor'ed into the keyring; vendor-signed; upstream-pending-verification)
+#                 Consumer docs: https://github.com/ChromeDevTools/chrome-devtools-mcp
 RUN install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -116,8 +144,10 @@ RUN install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list \
   && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg \
   && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main" > /etc/apt/sources.list.d/cloudflared.list \
+  && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh tailscale cloudflared \
+  && apt-get install -y --no-install-recommends gh tailscale cloudflared google-chrome-stable \
   && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate

@@ -26,7 +26,6 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
       <TaskDetailModal
         task={makeTask()}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -51,7 +50,6 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
       <TaskDetailModal
         task={makeTask()}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -82,7 +80,6 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
       <TaskDetailModal
         task={makeTask()}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -113,7 +110,6 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
       <TaskDetailModal
         task={makeTask({ column: "done" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onArchiveTask={onArchiveTask}
         onMergeTask={noopMerge}
