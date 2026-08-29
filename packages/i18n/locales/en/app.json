@@ -1314,6 +1314,7 @@
     "modeAgent": "Agent",
     "modeModel": "Model",
     "newChat": "New Chat",
+    "newChatOpenInNewWindowHint": "Ctrl/Cmd + click to open the new conversation in a separate window",
     "newChatModeAgent": "Agent",
     "newChatModeModel": "Model",
     "newChatTitle": "New Chat",
@@ -1385,6 +1386,9 @@
     "save": "Save",
     "scopeDirect": "Direct",
     "scopeRooms": "Rooms",
+    "quoteMessage": "Quote message",
+    "agentRepliesFailed": "Some agents could not reply: {{agents}}",
+    "noDefaultModelConfigured": "Configure a default chat model in Settings before creating a conversation.",
     "scrollMessageToTop": "Scroll message to top",
     "searchConversations": "Search conversations...",
     "conversationSearchPlaceholder": "Find in conversation",
@@ -1524,7 +1528,6 @@
     "autoMerge": "Auto-merge",
     "autoMergeDisabled": "Auto-merge disabled",
     "autoMergeEnabled": "Auto-merge enabled",
-    "cancelMove": "Cancel Move",
     "collapseArchivedLabel": "Collapse archived tasks",
     "collapseArchivedTitle": "Collapse archived tasks",
     "expandArchivedLabel": "Expand archived tasks",
@@ -1533,41 +1536,25 @@
     "keepProgress": "Keep Progress",
     "loadMore_one": "Load {{count}} more ({{remaining}} remaining)",
     "loadMore_other": "Load {{count}} more ({{remaining}} remaining)",
-    "moveAllToTodo": "Move All to Todo",
-    "moveAllToTodoMessage_one": "Move all {{count}} {{columnLabel}} task{{plural}} to Todo?",
-    "moveAllToTodoMessage_other": "Move all {{count}} {{columnLabel}} task{{plural}} to Todo?",
-    "moveAllToTodoTitle": "Move All to Todo",
-    "movedToPlanning_one": "Moved {{count}} task{{plural}} to planning for replanning",
-    "movedToPlanning_other": "Moved {{count}} task{{plural}} to planning for replanning",
-    "movedToTodo_one": "Moved {{count}} task{{plural}} to Todo",
-    "movedToTodo_other": "Moved {{count}} task{{plural}} to Todo",
-    "movePartialFailure": "Moved {{moved}} of {{total}} tasks; {{failed}} failed",
-    "moveToTodoHint_one": "Move {{count}} task{{plural}} to Todo",
-    "moveToTodoHint_other": "Move {{count}} task{{plural}} to Todo",
-    "moveToTodoPartialFailure": "Moved {{moved}} of {{total}} tasks to Todo; {{failed}} failed",
     "newTask": "New Task",
     "noManuallyPausableTasks": "No manually pausable tasks",
     "noTasks": "No tasks",
     "noTasksInColumn": "No tasks in this column",
     "pauseHint_one": "Pause {{count}} active unassigned task{{plural}}",
     "pauseHint_other": "Pause {{count}} active unassigned task{{plural}}",
-    "preserveProgressMessage": "This task has completed steps. Keep progress before moving?",
-    "preserveProgressMoveTodoMessage": "Some tasks have completed steps. Keep progress before moving to Todo?",
     "preserveProgressTitle": "Preserve Progress?",
     "promoteUnplannedCancel": "Keep Waiting",
     "promoteUnplannedConfirm": "Start Anyway",
     "promoteUnplannedMessage": "{{taskId}} is still waiting on planning or plan review. Promoting now starts execution with the current plan and cancels the pending replan.",
     "promoteUnplannedTitle": "Start execution anyway?",
     "replanAll": "Replan All",
-    "replanAllHint_one": "Move {{count}} task{{plural}} to Planning",
-    "replanAllHint_other": "Move {{count}} task{{plural}} to Planning",
-    "replanAllMessage_one": "Move all {{count}} todo task{{plural}} back to planning to be replanned?",
-    "replanAllMessage_other": "Move all {{count}} todo task{{plural}} back to planning to be replanned?",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "Replan All Tasks",
     "resetProgress": "Reset Progress",
     "resetProgressConfirm": "Reset Progress",
-    "resetProgressMessage": "Reset all step progress before moving this task?",
-    "resetProgressMoveTodoMessage": "Reset step progress for tasks before moving to Todo?",
     "resetProgressTitle": "Reset Progress?",
     "stopAll": "Stop All",
     "stopAllMessage_one": "Stop all {{count}} {{columnLabel}} task{{plural}}?",
@@ -1575,7 +1562,10 @@
     "stopAllTitle": "Stop All Tasks",
     "stopPartialFailure": "Stopped {{paused}} of {{total}} tasks; {{failed}} failed",
     "stoppedTasks_one": "Stopped {{count}} task{{plural}}",
-    "stoppedTasks_other": "Stopped {{count}} task{{plural}}"
+    "stoppedTasks_other": "Stopped {{count}} task{{plural}}",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -3449,6 +3439,8 @@
     "statsInColumn_other": "{{count}} of {{total}} tasks in {{column}}",
     "statusMergingFix": "Merging fixes…",
     "statusReplan": "Revising",
+    "statusWaiting": "Waiting",
+    "statusWaitingOn": "Waiting on {{reason}}",
     "stuck": "Stuck",
     "taskCreationUnavailable": "Task creation not available",
     "unpauseSelected": "Unpause selected",
@@ -6196,7 +6188,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
-      "autoReloadDashboardOnVersionChange": " Auto-reload dashboard on version change ",
       "checkForThe": " Check for the ",
       "checkForUpdatesAutomatically": " Check for updates automatically ",
       "cLIBinaryOnPATH": " CLI binary on PATH ",
@@ -6232,7 +6223,6 @@
       "updates": "Updates",
       "weekly": "Weekly",
       "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": " When enabled (default), the dashboard automatically reloads when it detects a new build version — either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": " When enabled, Fusion checks npm for new versions of",
       "whenEnabledTheDashboardProbesForAGlobally": " When enabled, the dashboard probes for a globally-installed",
       "gitLabEnabledHint": "Global GitLab URL and token fallbacks apply to projects that do not set their own values. No default — unset (unset behaves as enabled until explicitly disabled).",
@@ -7948,7 +7938,14 @@
       "overlapBlocker": "File scope overlap blocker:",
       "removeTitle": "Remove dependency {{id}}",
       "searchPlaceholder": "Search tasks…",
-      "stale": "(stale)"
+      "stale": "(stale)",
+      "overlapFiles": {
+        "loading": "Loading overlapping files…",
+        "error": "Could not load overlapping files.",
+        "noScope": "The blocker declares no file scope.",
+        "none": "No overlapping files found.",
+        "matches": "matches {{path}}"
+      }
     },
     "description": {
       "showLess": "Show less",
@@ -8092,21 +8089,8 @@
       "noBranchToMerge": "no branch to merge",
       "title": "Merge Task"
     },
-    "move": {
-      "backToInProgress": "Back to In Progress",
-      "backTo": "Back to {{column}}",
-      "cancelMove": "Cancel Move",
-      "keepProgress": "Keep Progress",
-      "movedTo": "Moved to {{column}}",
-      "moveTo": "Move to {{column}}",
-      "preserveProgressMessage": "This task has completed steps. Keep progress before moving?",
-      "preserveProgressTitle": "Preserve Progress?",
-      "resetProgress": "Reset Progress",
-      "resetProgressMessage": "Reset all step progress before moving this task?",
-      "resetProgressTitle": "Reset Progress?"
-    },
     "nearDuplicate": {
-      "actions": "Choose Archive to move this task to archived, or Keep to continue with this task.",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "Archive",
       "archiveConfirm": "Archive",
       "archived": "Archived {{id}}",
@@ -8119,9 +8103,9 @@
       "deleteMessage": "Delete {{id}} as a duplicate of {{duplicateOf}}?",
       "deleteTitle": "Delete duplicate task",
       "headline": "Potential duplicate detected",
-      "keepBtn": "Keep",
-      "kept": "Kept {{id}} and dismissed duplicate warning",
-      "triageActions": "Choose Delete to remove this duplicate, or Keep to continue anyway."
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "Next recovery at {{time}}",
     "no": "No",
@@ -8340,7 +8324,11 @@
       "worktreeTerminal": "Terminal",
       "workflow": "Workflow",
       "cost": "Cost",
-      "recommendations": "Recommendations"
+      "recommendations": "Recommendations",
+      "dependencies": "Dependencies",
+      "attachments": "Attachments",
+      "details": "Details",
+      "debug": "Debug"
     },
     "terminal": {
       "loading": "Loading terminal…"
@@ -8419,6 +8407,9 @@
       "candidate": "Candidate:",
       "dismissFinding": "Dismiss this finding",
       "terminalGuidance": "Rebase or re-push the branch, dismiss a finding with justification, or land manually."
+    },
+    "debug": {
+      "none": "No debug details available."
     }
   },
   "taskDocuments": {
@@ -8699,9 +8690,8 @@
     "depsCount_other": "{{count}} deps",
     "descriptionPlaceholder": "Task description",
     "descriptionRefined": "Description refined with AI",
-    "doneNoMerge": "Done (no merge)",
     "duplicateCheckFailed": "Duplicate check failed; creating task anyway.",
-    "duplicateDismissed": "Kept {{taskId}}; duplicate warning dismissed",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "Duplicate of {{id}}",
     "editTask": "Edit task",
     "enterDescriptionFirst": "Enter a description first",
@@ -8737,10 +8727,7 @@
     "issueClosed": "closed",
     "issueDeleted": "deleted",
     "issueLeft": "left",
-    "keep": "Keep",
-    "keepFailed": "Failed to keep {{taskId}}: {{error}}",
     "keepProgress": "Keep Progress",
-    "keepTaskTitle": "Keep this task and dismiss duplicate warning",
     "leaveUnchanged": "Leave Unchanged",
     "lineageConflict": "{{taskId}} has lineage children ({{children}}) that reference it as a source parent.\n\nDelete anyway by unlinking these references first?",
     "linkedIssueChipAriaLabel": "Linked GitHub issue #{{number}}",
@@ -8764,7 +8751,7 @@
     "moved": "Moved {{taskId}} to {{column}}",
     "moveFailed": "Failed to move {{taskId}}: {{error}}",
     "moveTask": "Move task",
-    "nearDuplicateTitle": "Potential near-duplicate of {{id}}",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "Needs input",
     "noAgentsAvailable": "No agents available",
     "node": "Node",
@@ -8860,7 +8847,10 @@
     "workflow": "workflow",
     "workflowCheck": "Workflow check",
     "costBadgeTitle": "Estimated cost {{amount}}",
-    "costBadgeAriaLabel": "Estimated cost {{amount}}"
+    "costBadgeAriaLabel": "Estimated cost {{amount}}",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
   },
   "terminal": {
     "arrowKeysLabel": "Terminal arrow keys",
@@ -9720,6 +9710,8 @@
     "expandAll": "Expand all",
     "collapseAll": "Collapse all",
     "noDetail": "No reasoning captured for this step",
+    "showRaw": "Raw trace",
+    "showSections": "Sectioned trace",
     "untitledSection": "Untitled reasoning",
     "sectionCount": "{{count}} section",
     "sectionCountPlural": "{{count}} sections"

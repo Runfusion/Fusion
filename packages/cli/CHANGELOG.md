@@ -1,5 +1,279 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.10
+
+### Minor Changes
+
+- c31c15a: summary: Show task delivery summaries first in the Plan tab.
+  category: feature
+  dev: Adds the `## What This Delivers` PROMPT.md section and Plan-tab disclosure.
+- 54403ff: summary: Reserve task-detail Plan for steps and PROMPT.md, moving metadata and diagnostics into dedicated tabs.
+  category: feature
+  dev: New task-detail tab ids dependencies/attachments/details/debug; the Original prompt section and initialTab="retries" now resolve to details. Adds GET /tasks/:id/overlap-blocker backed by the new engine describeFileScopeOverlapBlocker helper.
+- 5c111be: summary: Remove dashboard controls that manually move tasks between workflow columns.
+  category: feature
+  dev: Removes move menu model exports, Task Detail move props and CSS, and obsolete translations; Replan All now uses POST /tasks/:id/spec/rebuild.
+- c4e775e: summary: Unify Task Chat model and thinking controls in one Brain popover.
+  category: feature
+  dev: ChatThinkingLevelControl now supports model-only targeting, picker labels, target identity, default targets, and echo-safe dismissal.
+- 8fa9acb: summary: Add the Flexoki color theme (warm inky dark, cream paper light).
+  category: feature
+
+### Patch Changes
+
+- 5e14551: summary: The Docker image now ships Google Chrome, so browser automation works in a container.
+  category: fix
+  dev: Runner stage installs `google-chrome-stable` from Google's signed apt repository (https://dl.google.com/linux/chrome/deb/), alongside gh, tailscale and cloudflared. The image previously shipped no browser at all, which silently broke two features that launch an existing browser and download none: `plugins/fusion-plugin-agent-browser` (uses `playwright-core`, which by design does not fetch a browser at install time, and probes `/usr/bin/google-chrome` first) and the Chrome DevTools MCP server, which failed every call with "Could not find Google Chrome executable for channel 'stable'". Chrome rather than Debian's `chromium` because it is the only browser chrome-devtools-mcp officially supports, and Google publishes it for both amd64 and arm64 so the existing `arch=$(dpkg --print-architecture)` pattern resolves on either host. Chrome's own sandbox still needs unprivileged user namespaces, which the default container seccomp profile blocks, so callers pass `--no-sandbox` (chrome-devtools-mcp: `--chromeArg=--no-sandbox`) or the operator runs with `--security-opt seccomp=unconfined`. Package name and repo URL are asserted in scripts/**tests**/dockerfile-workspace-manifests.test.mjs.
+- e213b94: summary: Open popped-out chats on their requested thread and keep stacked windows visibly separated.
+  category: fix
+  dev: Seed `useChat` `initialSession` and replace `resolveFloatingWindowCascadeOffset` with `resolveFloatingWindowCascade`.
+- 1936c78: summary: Prevent board text selection from involuntarily scrolling Kanban columns.
+  category: fix
+  dev: Adds a board-wide selection suppression rule with editable-content opt-ins.
+- 1d08fcb: summary: Show the New Task Start button with quick entry parity.
+  category: fix
+  dev: Aligns NewTaskModal and TaskForm with quickAddStart eligibility parity.
+- 808f4c6: summary: Show detailed reasoning bodies alongside titles for supported Responses models.
+  category: fix
+  dev: Uses the pi Agent `onPayload` seam only for the OpenAI Responses API family.
+- 017ebd5: summary: Route multi-repository Code Review fixes to the repository that failed.
+  category: fix
+  dev: Preserves repository-qualified review findings through workspace aggregation and named remediation routing.
+- 0fd247b: summary: Let agents receive secrets read through fn_secret_get.
+  category: fix
+  dev: The value now ships in tool result content; details.value and non-delivery returns are unchanged.
+- 25f24c7: summary: Show each project's installed skills and prevent duplicate catalog installs.
+  category: fix
+  dev: Skills discovery now resolves project-local roots per dashboard request.
+- 6fd4fdd: summary: Show project-scoped Automations and Routines instead of an empty list.
+  category: fix
+  dev: GET /routines and GET /automations now let scope=project bypass legacy global-store guards and resolve the project store.
+- 286dd0a: summary: Workspace tasks no longer stall on uncommitted edits sitting in a shared repo checkout.
+  category: fix
+  dev: The main-checkout completion guard blocks only task-attributed commits; uncommitted status entries emit `worktree:workspace-main-checkout-edit` with `outcome:"warned"`, `reason:"uncommitted-only"`, and their evidence enum. Delivery stays proven by the acquired-worktree `no_commits` invariant, and the land path already stashes/restores a dirty sub-repo checkout via `merger.allowDirtyLocalCheckoutSync`.
+
+## 0.77.0-beta.9
+
+### Minor Changes
+
+- 8fcf4bd: summary: Add a per-chat "Preserve to Stash" action that backfills a chat's full history into Stash.
+  category: feature
+  dev: New `POST /api/chat/sessions/:id/backfill-stash` route reuses the live-capture `captureMemory`
+  path (per-project session folder, real per-message `created_at` timestamps instead of upload time).
+  Idempotent via a client-side pre-check: Stash's `/events/batch` is a bare INSERT with no
+  server-side dedupe (verified against the backend source and live — the same backfill twice
+  took a session 4 -> 8 -> 12 events), so the route pages the session's existing events and
+  skips messages whose content is already stored; re-runs and backfill-after-live-capture
+  insert nothing new. The chat context menu shows the action only when the project memory
+  backend is Stash.
+- b818eb2: summary: Add the Coding (Ideas) V2 workflow, with verification and documentation as visible review steps.
+  category: feature
+  dev: New selectable built-in `builtin:coding-ideas-v2` clones `BUILTIN_CODING_IDEAS_WORKFLOW_IR` without mutating it, keeps the manual `ideas` intake (`autoTriage: false`), and moves Testing/Verification and Documentation & Delivery out of the planner's implementation checklist into `in-review` gates: `steps → verification → documentation-delivery → code-review → completion-summary → merge-gate`. Both write-capable gates precede Code Review because `execute-workflow-graph.ts` refuses write-capable nodes once an APPROVE exists (`workspace-review-seal-required`); the readonly `completion-summary` runs after it. Remediation edges re-enter at `verification` so a REVISE replays documentation before re-review. `packages/engine/src/__tests__/coding-ideas-v2-review-seal.test.ts` runs the production `workflowNodeRequiresWorktree` classifier over the graph as a ratchet against re-introducing the ordering defect.
+- cc989a9: summary: Add direct-chat agent mentions and message quoting.
+  category: feature
+  dev: Removes the Direct/Rooms Chat UI toggle, New Chat dialog, and chatNewSessionMode control while retaining Rooms APIs, storage, useChatRooms, and CreateRoomModal for existing integrations.
+- 2cb071f: summary: The dashboard now always reloads when it detects a new build version; the opt-out toggle is gone.
+  category: feature
+  dev: Removes the `autoReloadOnVersionChange` global settings key, its Global General toggle and search entry, the `setAutoReloadEnabled` module guard, and the `/api/settings` bootstrap fetch in `installVersionCheck()`. Loop protection (`fusion:version-reload`, `fusion:version-reloaded-remote`, two-poll confirmation) is unchanged; a value still persisted in an older config is ignored because the key is no longer in `GLOBAL_SETTINGS_KEYS`.
+- 37124bb: summary: Replace duplicate Keep buttons with dismissible duplicate tags.
+  category: feature
+  dev: Removes five Keep i18n keys while retaining the dismissNearDuplicate seam.
+- 14a7008: summary: Open a new chat in an offset in-app window with Ctrl/Cmd-click.
+  category: feature
+  dev: Adds FloatingWindow cascadeOffsetIndex, per-project usePoppedOutChats cascade slots, and createSession keepActiveSession.
+- e25f890: summary: Add an opt-in coding workflow with review-owned verification gates.
+  category: feature
+  dev: Review rejection appends structured remediation steps without reopening completed implementation work.
+- 68c466a: summary: Make per-conversation chat memory focus an opt-in experimental feature.
+  category: feature
+  dev: Use experimentalFeatures.chatFocus to enable the composer chip, /focus command, and recall scoping.
+- 6fca424: summary: Ask once to star Fusion on GitHub after onboarding finishes, and never again if dismissed.
+  category: feature
+  dev: New global setting `githubStarPromptDismissedAt` is stamped on either answer; the ask is skipped on the non-interactive auto-launch path and on `fn onboard --force` once answered.
+- 8b64b88: summary: Coding (Ideas) V2 review lane is now Code Review, Documentation, then merge.
+  category: feature
+  dev: Removes the separate deterministic `verification` optional group and the `completion-summary` node from `builtin:coding-ideas-v2`. Code Review runs lint/test/build itself via an appended prompt section (the shared reviewer prompt is untouched, so `builtin:coding` and `builtin:coding-ideas` keep their reviewer) and must quote command output as verdict evidence. Documentation moves after the review, becomes `gateMode: "advisory"` and `toolMode: "readonly"`, no longer writes repository files, and absorbs the card summary via `fn_task_done(summary=...)`. Repository documentation is the executor's judgement during implementation, where it is reviewed with the code it documents. Net effect: two fewer model calls per card and one blocking gate instead of four.
+- 8fcf4bd: summary: Add the Stash memory backend with complete-chat-session and per-task capture.
+  category: feature
+  dev: Adds the Stash memory backend (memory.backendType=stash), memory.stashUrl / memory.stashApiKey settings (global secrets-store "stash-api-key" + per-project override), complete-chat-session capture keyed by ChatSession id, per-conversation memory-focus read-time scoping via the new 0059_chat_session_memory_focus.sql migration (SCHEMA_BASELINE_VERSION -> 0059), and per-task task_completion capture. Best-effort/fail-closed/non-blocking; no run-audit content.
+- 8fcf4bd: summary: Stash memory sessions are now classified into per-project folders and deleted with their chat.
+  category: feature
+  dev: Stash captures carry session_folder_id (get-or-create, external_key fusion-<projectId>, 1h per-process cache); DELETE /api/chat/sessions/:id soft-deletes the matching Stash session best-effort; inert &topic= search param removed from the Stash search URL (MemorySearchOptions.topic remains for qmd/file/readonly backends) and recall queries normalized to single-keyword / explicit-OR ASCII (<=100 chars); event metadata enriched with project/project_name/chat_title. Shared normalizer export for RUFU-120. Per-session delete sync resolves the row via the single-shot by-id lookup (no recent-window residual; RUFU-130).
+- 8fcf4bd: summary: Finished or failed tasks now upload their executor transcript (agent-log.jsonl) to Stash as a task session.
+  category: feature
+  dev: On task terminalization (done, or failed/parked), the engine uploads the per-task agent-log.jsonl to Stash session fusion-task-<taskId> in log order, alongside the existing task_completion/task_failure anchor event. Text runs merge into one assistant_message; tool/tool_result/tool_error map 1:1 (errors prefixed "ERROR: "); status entries only when executorSessionCaptureIncludeStatus is on; every event is capped at 4000 chars and carries {taskId, status, line, project, project_name}. Uploads chunk at the verified 100-event batch cap, stop at the first failed chunk, and never block terminalization. New project settings: executorSessionCaptureEnabled (default on; off = anchor event only), executorSessionCaptureMaxEvents (default 20000, most recent kept), executorSessionCaptureIncludeStatus (default off, schema-only — no UI row). Stash backend only; respects memoryEnabled=false; once-per-task gate spans the complete and terminal-failure seams. Settings UI: Memory section toggle + max-events number row (stash backend only, disabled-not-hidden when memory is off).
+- 8fcf4bd: summary: Add opt-in semantic (vector) recall for Stash memory via a new stashVectorSearch setting.
+  category: feature
+  dev: StashMemoryBackend.search tries GET /api/v1/me/sessions/events/semantic-search first for multi-word (>=2 token) queries when the per-project stashVectorSearch setting is true (default false — zero behavior change until enabled). Any vector failure (network, non-2xx, malformed, empty) falls back byte-identically to the existing RUFU-121 keyword path, and definitive 404/405/501/503 responses are negatively cached per process (1h TTL). Vector scores are cosine similarity (0..1), a different scale than keyword positional scores. Requires a patched Stash server (local upstream branch fusion-rufu-126-sessions-semantic-search: new endpoint + sentence-transformers + embedding backfill task); unpatched servers are transparently bypassed after the first 404.
+- b723c35: summary: Testing returns to the plan; the reviewer judges tests instead of pretending to run them.
+  category: feature
+  dev: Removes the `planning-implementation-only` seam and the `requireImplementationOnlySteps` Plan Review criterion from `builtin:coding-ideas-v2`, restoring the default triage prompt's `Testing & Verification` step region (real automated tests only, per-step test authoring, a final lint/tests/typecheck/build pass ordered before delivery). The Code Review prompt no longer instructs a `toolMode: "readonly"` session to run commands it cannot access — `bash` is denied and `fn_run_verification` is not in the readonly allowlist — and instead rules on test existence, realness, behaviour-not-comments, and invariant coverage. Deletes `builtin:review-gated-coding` outright rather than leaving it deprecated: it shared the documentation-delivery node with V2, so it was a silent second consumer of every change made for V2.
+- 61f26ca: summary: Press [Shift+V] in the TUI Logs panel for a chrome-free view you can select and copy with the mouse.
+  category: feature
+  dev: The Logs panel keeps a border, title and filter row and sits between a header and a status bar, so a rectangular terminal drag captures box-drawing characters and neighbouring rows; mouse reporting is also enabled there for wheel scrolling and swallows the drag entirely. New `logsRawMode` (controller + state) renders only plain log lines starting at column 0, replaces the whole frame above the narrow/grid layout choice — so it works on wide terminals, where the grid layout is used — keeps one trailing hint row, and is excluded from `wantsMouse` so native click-drag works. Bound to `Shift+V` because the Utilities panel already advertises `[v] Auto-Kill Vitest` on the same screen; Esc clears raw mode ahead of the expanded-entry escape. Line shape matches the existing `[c]` single-line copy so mouse and keyboard copies produce identical text. Covered by `raw-logs-mode.test.ts`, which pins the above-layout escape, the mouse release, the binding, and the exit hint.
+
+### Patch Changes
+
+- ca624f0: summary: A blocking review gate no longer approves when the reviewer never returned a usable verdict.
+  category: fix
+  dev: Restores FN-6582's blocking-gate rule, reversing the later relaxation that treated malformed gate output as a non-blocking advisory. `executeWorkflowStep` already restarts cleanly twice on malformed output (fallback-model retry, or a self-retry on the primary when no fallback is configured), so `malformed` reaching the graph decision means the reviewer failed across every attempt — the LLM-class condition an operator accepts as a legitimate stop, and never grounds to record approval. Measured cost of the relaxation: a reviewer reported in prose that the deliverables were absent, carried no verdict JSON, and the gate recorded success, merging unreviewed work on a rejection nobody could see. A prose classifier cannot close this — that text contained no rejection marker at all — so only the absence of a verdict is detectable and absence must not approve. Advisory gates keep the relaxation: a step that was never allowed to hold a card does not start holding one. `runGraphCustomNode` now maps `success || (!blocking && verdict !== "UNAVAILABLE")`, and the malformed→block assertion the relaxation deleted is restored.
+- c82e420: summary: Fix Chat opening an imported link into a hidden composer and re-anchoring a thread on open.
+  category: fix
+  dev: ChatView's composer-prefill seed now sets `detailOpen`, and the thread anchor effect depends on `detailOpen` so `.chat-messages` is anchored when the list-first pane mounts.
+- 87a3700: summary: Keep sharp native binaries out of the CLI plugin bundle so packaging succeeds on 0.35.
+  category: fix
+  dev: Externalize `sharp` and `@img/sharp-*` in tsup/esbuild; sharp 0.35 ships platform `.node` addons that esbuild cannot load.
+- bf147d6: summary: A rejected code review is proven to produce named fix-it steps that run and merge.
+  category: internal
+  dev: Adds `pipeline-remediation.pipeline.test.ts`, a dedicated turn-by-turn drive asserting that a Code Review REVISE appends a step carrying `remediation` metadata, that no step is left pending, and that the card reaches `mergeDetails.mergeConfirmed`. It is deliberately separate from S05, which asserts a different property (no merge without a current approval) and reaches it by racing the background auto-merge — the source of that scenario's intermittency. Also reverts the `workflow-graph-foreach` pinned-count relaxation: with it removed the full lane passes 89/89 including this drive, so the engine change was unjustified.
+- d061081: summary: Retire the Coding (review-gated) workflow, superseded by Coding (Ideas) V2.
+  category: internal
+  dev: Adds `builtin:review-gated-coding` to `DEPRECATED_BUILTIN_WORKFLOW_IDS`, the registry's official retirement mechanism: it disappears from new selection and from `toggleEligibleBuiltinWorkflowIds()` while `getBuiltinWorkflow` still resolves it, so tasks that already selected it keep working. It shipped with a success path that could never complete (`code-review -> documentation-delivery` places a write-capable node after a passed review, refused as `workspace-review-seal-required`).
+- 9a54fe3: summary: The Documentation step now really writes the card summary and can propose follow-ups in the Recommendations tab.
+  category: fix
+  dev: The Documentation milestone runs `toolMode: "readonly"`, whose allowlist is read/grep/find/ls, `fn_web_fetch` and a few read-only task reads; `fn_task_create` is explicitly denied. Its prompt asked for `fn_task_done(summary=…)`, `fn_task_document_write`, `fn_artifact_register` and task creation — it could make none of those calls, so it produced a report every run and persisted nothing, and because it had replaced `completion-summary` (which used the working projection contract) cards silently lost their agent-authored summary. Both durable outputs now travel by projection: `summaryTarget: "task"` persists its prose as the card summary, and new `recommendationsTarget: "task"` parses a trailing `{"recommendations":[…]}` payload, normalizes it through the shared store-boundary rules (relocated to `tasks/recommendation-validation.ts`: unique ids, category enum, no secrets or shell syntax, capped by `maxRecommendationsPerTask`), and projects it to `task.recommendations` for the operator's Recommendations tab — an in-review agent proposes, it never creates board rows. `summaryTarget` also removes this node's verdict requirement, so a reporter can no longer emit the REVISE that used to bounce a card. The `builtin-workflows` summary guard asserted the prompt string `fn_task_done(summary=` and stayed green through the regression; it now asserts the projection contract, including inside optional-group templates.
+- 38edc23: summary: Match executor workflow guidance to the task-creation tools available in each session.
+  category: fix
+  dev: Built-in executor variants render created-task workflow guidance only on creator-capable tool surfaces.
+- a6a3e5f: summary: Fixes a task's Feed showing "(no activity)" when it was opened directly on the activity view.
+  category: fix
+  dev: Two mechanisms combined, each harmless alone. `stripTaskListHeavyFields` empties `log` and keeps every other field including `prompt`, so an SSE `task:updated` payload for a task with a spec carries `prompt` with `log: []`. The detail mount effect treats `"prompt" in task` as proof the prop is a complete `TaskDetail` and returns without requesting the detail — a false proxy, because `prompt` and `log` are stripped by different paths. The card then adopts a log-less snapshot as complete, and the only rescue, `refreshEmptyActivityFeed`, was bound to a segment CHANGE, so a card opening straight onto Feed (`initialTab: "logs"`, how deep links and the board activity affordance land) never triggered it and displayed "(no activity)" for the whole visit. The rescue now runs whenever an empty Feed is visible; its existing emptiness guard keeps a populated feed request-free, and a genuinely empty task asks once because the callback identity is stable while it stays empty. Covered by three regression tests: the stripped-snapshot open, an honestly empty journal that must not spin, and a prop-carried journal that must not re-request.
+- 87e7369: summary: Keep JIRA settings available in every dashboard locale.
+  category: fix
+  dev: Add the JIRA settings keys to all secondary app catalogs so locale parity remains exact.
+- febe375: summary: Preserve project review lanes when finalizing confirmed merges.
+  category: fix
+  dev: Forwards resolved review columns and required pre-merge step IDs through finalization.
+- 8fcf4bd: summary: Keep Stash chat backfill complete when message timestamps tie.
+  category: fix
+  dev: getChatMessages now orders by (created_at, id), making the backfill route's offset pagination a total order — equal created_at values can no longer duplicate or drop messages across page boundaries (PR #3494 review, Greptile P1).
+- 8fcf4bd: summary: Fix Stash chat backfill naming the first project session folder bare "Fusion" instead of "Fusion — <project name>".
+  category: fix
+  dev: The manual store-chat-to-Stash backfill route omitted projectName from the capture metadata, so the first session-folder get-or-create (keyed by external_key fusion-<projectId>) locked in the bare fallback name and never renamed it. The route now resolves the central registry project name (best-effort) and forwards it, matching the live capture seam.
+- 00b7078: summary: Preserve task branches when Fusion reclaims an existing task worktree.
+  category: fix
+  dev: Supplies engine branch-write provenance during branch-conflict reclamation.
+- a070848: summary: Open Direct chat pop-outs in front on their selected conversation.
+  category: fix
+  dev: Adds FloatingWindow raiseToFrontSignal and initializes popped-out ChatView detail state.
+- 2ae32e4: summary: Make chat Stop and Force send interrupt active model turns before teardown.
+  category: fix
+  dev: `ChatManager.cancelGeneration` now makes a duck-typed, bounded native-interrupt request before disposal, mirroring the engine abort-then-dispose seam; `beginGeneration` remains controller-only.
+- 1e805ee: summary: Make chat thinking traces readable and add a raw transcript view.
+  category: fix
+  dev: Fold body-less parseThinkingSections headings inline; parseThinkingTrace exposes inlinedHeadingCount for the raw-toggle gate, removes the empty-message span, and adds thinking.showRaw and thinking.showSections.
+- 95ea06b: summary: Make workspace acquisition waits recoverable and visible.
+  category: fix
+  dev: Durable acquire-lease authority, lifecycle release, and a defensive acquire-cache sweep prevent stale claims; two persisted contention-wait fields drive the Waiting badge, preparation avoids the task mutex, startup replays live tasks only, and executor retries planning-lock transport failures.
+- db25424: summary: Prevent merges during live execution or without a current code-review approval.
+  category: fix
+  dev: Resolves required gates only from workflow-aware stores, requires explicit Code Review approval, reconciles confirmed-merge checklists, and removes lexical remediation-step reopening.
+- cb16f41: summary: Ensure project registration creates or adopts a usable local integration branch.
+  category: fix
+  dev: Registration now reconciles local and origin remote-tracking branch refs before merge workflows use them.
+- 5990ebb: summary: Fix merges never completing — an in-flight merge no longer aborts itself every 15 seconds.
+  category: fix
+  dev: The FN-180 in-flight revoke watcher in `ProjectEngine.wireTaskPauseMergeInterruption` read `runAiMerge`'s own `status:"merging"` stamp as a blocking pre-merge verdict, because `merging`/`merging-pr` are in `HARD_BLOCKING_TASK_STATUSES` and the CLI entry points wire the unoptioned `getTaskMergeBlocker`. The abort spent no `mergeRetries`, so the drain catch cleared the stamp and the sweep re-admitted the task every `pollIntervalMs` indefinitely. The blocker is now evaluated against a verdict view that neutralizes `isMergeActiveStatus` for the task this engine already owns; genuine verdicts, `paused`, `queued`, and merge-active stamps on other tasks are unaffected.
+- 9d1bd39: summary: Unify dashboard notices with consistent banner styling.
+  category: feature
+  dev: Adds the shared Banner component and removes left accent borders.
+- 0d11f8d: summary: Restore full-size mailbox Inbox icons on mobile.
+  category: fix
+  dev: Pins `.mailbox-tab` and `.mailbox-agent-subtab` icons and badges against flex shrinking.
+- 64cb17c: summary: Fix the built-in Fusion memory MCP server being skipped in agent sessions.
+  category: fix
+  dev: MemoryMcpHandler now emits the serverInfo.version required by the SDK InitializeResultSchema.
+- d028005: summary: Keep Chat memory Focus popovers usable on mobile and narrow chat surfaces.
+  category: fix
+  dev: Re-anchor the popover to each composer row and bound its scrollable height.
+- ccf7ff1: summary: Chat memory-focus button is icon-only until a topic is set.
+  category: feature
+  dev: ChatFocusSelector no longer renders the cleared chat.focusNone label.
+- 922e93c: summary: Keep reverted tasks labelled in their own workflow column.
+  category: fix
+  dev: Removes board, list, and dock reverted sections; threads Column.onReviseTask and adds the List context-menu revise action.
+- 08f8c26: summary: Stop re-dispatching a task whose workflow role pool is unroutable; the hold now waits as intended.
+  category: fix
+  dev: Restores the principal-hold cooldown guard in `executeCore` ahead of the graphRouting claim (dropped by the #3317 executor peel, which re-inlined the read inside `executeWorkflowGraph` behind `!opts?.alreadyClaimed` — a flag its only caller always sets). The ladder is now a primitive with one exported writer (`recordPrincipalHoldBackoff`) and one exported reader (`getActivePrincipalHoldCooldown` / `isPrincipalHoldCoolingDown`), and its test-mode zero is read at record time so the cooldown is testable.
+- 828be76: summary: The task journal no longer announces aborts that never happened or repeats the merge approval twice.
+  category: fix
+  dev: Three journal defects and the coverage gap that hid them. (1) `awaitAbortInFlightTaskWork` wrote its `Pause abort marked` breadcrumb before inspecting any surface, so every newly created task announced an interruption seconds after creation — creation moves the card out of the planning lane and that move is user-sourced, producing a `hard-cancel` label on a card nobody withdrew. The in-memory marker is still claimed synchronously (the graph-failure classifiers depend on it, and it must precede any await); only the operator-facing line now waits for evidence. (2) Landing requires two consecutive clean approvals of the same candidate, and both wrote the identical sentence, so a safety feature read as a duplicated invocation; the line now carries its pass number. (3) That same line is a contract: `SelfHealingManager.getApprovedAiMergeReviewShas` parses it with `/AI merge review \(pass \d+\): approved …/`, a parenthetical no emitter ever wrote, so `hasApprovedAiMergeReview` always answered false and the recovery it guards was dead. Emitter and parser now agree and are pinned against each other. New pipeline-smoke scenario S20 asserts the journal itself across all three coding built-ins — no abort claimed on an uninterrupted card, no line written twice in a row, no approval that records it verified nothing — and reproduced the duplicate deterministically on the first run.
+- cdef6ad: summary: Restores the stale no-op merge cleanup that stopped running when a refusal message was reworded.
+  category: fix
+  dev: `merge-confirmed-finalize.ts` selects one case — a no-op merge confirmation with no landed commit whose steps are unfinished must fall through to stale-merge cleanup and reverification instead of consuming the run — and selected it by comparing the merge blocker reason with `===` against the exact string "task has incomplete steps". The merge-authority work (FN-180 / "make the workflow graph the only merge authority") made refusals more informative, so a card in an error state now reports `task is marked 'failed': … task has incomplete steps`: same meaning, different sentence, and the carve-out silently stopped applying. New exported `hasNonTerminalSteps` in `merge/task-merge.ts` states the rule the blocker message describes, is defined from the same `NON_TERMINAL_STEP_STATUSES` set so it cannot drift from `getTaskMergeBlocker`, and replaces the string comparison. Covered by a core test that pins the two apart — the sentence may be reworded, the rule may not disagree with the door — and by `ce-workflow-step-executor.test.ts`, which was red on main and is green again.
+- 4d2b42b: summary: A successful merge no longer aborts itself, duplicates no longer end as errors, and merge checks get their test runner.
+  category: fix
+  dev: Three root causes reported from one live multi-repository board. (1) `wireAutoMerge`'s in-flight fence aborted an active merge whenever its card left the resolved review lane — including the move to the complete lane that a SUCCESSFUL merge performs itself, producing `Aborting active merge (left-review-lane-during-merge)` after both repositories had landed and a doubled `Workflow node merge requested merge` in the journal. This is the column half of the defect FN-184 fixed for the status half in the same file; the fence now exempts the resolved complete lane (with a `done` fallback for an unresolvable workflow) while still firing for a card the graph pulled back. (2) `workflow-merge-boundary` demanded a pre-merge node result from a task whose accepted outcome is that no work happens — a verified duplicate closure — terminalizing it with `merge-boundary-unproven — operator action required`; tasks carrying `noCommitsExpected` with no unfinished steps (via the shared `hasNonTerminalSteps` rule) are now exempt from that structural proof only, with pre-merge approval and the FN-8141 no-op finalize guard still applying. (3) `installWorktreeDependencies` forwarded the ambient environment, so an inherited `NODE_ENV=production` made `npm install` skip every devDependency and left the clean room without the runner its verification needs (`tests could not run: vitest is unavailable`); the install now pins a development environment and clears the npm production/omit variables, matching what `scripts/test-changed.mjs` already does for the project's own tests.
+- 9838f42: summary: Database maintenance now covers every project table, including plan-evidence and lifecycle tables.
+  category: fix
+  dev: 17 tables declared with `projectSchema.table(...)` were missing from `projectTableNames`, so health compaction skipped them and the PostgreSQL test harness never reset them between tests. `project-table-registry.test.ts` now fails when the schema and the registry drift apart.
+- caae574: summary: Internal test-harness fix — the restart-recovery pipeline scenario no longer fails under load.
+  category: internal
+  dev: `restartPostMergeFinalization` read the task once immediately after restarting the engine and treated "recovery has not finished yet" as "recovery will never finish", falling through to `admitAndMerge`. That fallback cannot succeed by construction: staging deliberately replaces the row's step results with a single pending `code-review` row and its steps with a pending stale step, so merge admission is correctly refused and S17 failed with "post-merge restart parked finalization". The outcome therefore depended on whether startup recovery beat one read — green in isolation (19/19 over 8 runs), intermittently red under full-lane load, surfacing on `builtin:coding-ideas-v2` because its extra in-review milestone lands the restart in the racy window more often. New `settleRestartFinalization` performs a bounded event-loop drain until the card reaches its complete column, mirroring `settleActiveMerge` and the earlier `driveToManualMergeHold` fix: it costs nothing when recovery has already finished and still falls through to the fallback when the budget is exhausted, so a genuine hang is never masked. Also adds `workflow-prompt-tool-availability.test.ts`, a structural guard rejecting any built-in prompt that instructs a `toolMode: "readonly"` node to CALL a tool its policy denies — the defect class behind both the Code Review "run the tests" prompt and the Documentation milestone that could persist nothing.
+- f082398: summary: Preserve dirty or unverifiable worktrees during automatic cleanup.
+  category: fix
+  dev: Automatic cleanup now fails closed for unverified content and revalidates cleanliness without force at removal time.
+- c501ec9: summary: Fix Start in the task composer doing nothing on a duplicated Ideas workflow.
+  category: fix
+  dev: `resolveQuickAddStartInitialColumn` no longer keys on the literal `builtin:coding-ideas` id — a manual-intake workflow now resolves its create-time Planning lane from traits (first declared `hold` column immediately after the intake), mirroring `resolveWorkflowIntakeFacts`'s unplanned-Start classification in `packages/core/src/task-store/task-creation.ts`. `resolveQuickAddStartTargetColumn` promotes exactly one legal forward step (hold lanes included) instead of skipping holds into the WIP lane, which column adjacency always rejected (`intake -> hold | archived`). Covers both Start surfaces: QuickEntryBox and NewTaskModal.
+- c9f3f11: summary: Let worktree agents read skills installed under ~/.agents/skills.
+  category: fix
+  dev: Keeps writes, edits, Bash, sibling ~/.agents files, and symlink escapes outside the worktree boundary.
+- b956a7c: summary: Fixes chat failing with "column memory_focus does not exist" — the missing column is now repaired at startup.
+  category: fix
+  dev: A ledger row asserts that a migration with a given NUMBER ran, which is not the same claim as "this column exists" once a migration has been renumbered. `0066_chat_session_memory_focus.sql` was renumbered four times (0059 → 0060 → 0061 → 0065 → 0066) as upstream batches claimed each sequence, so a database can carry a row from one numbering while a different migration owned that number on the boot that recorded it. The applier then trusts the ledger, skips the migration, and reports a successful startup over a schema that does not match it; every `chat_sessions` read then fails with `column "memory_focus" does not exist`, because Drizzle's `select()` emits the binary's full column list. Both migrations renumbered on this branch (0066 memory focus, 0067 session contention wait state) now verify their materialized columns in addition to the marker and replay their idempotent `ADD COLUMN IF NOT EXISTS` when a column is absent — the same defence `0047` task recommendations already carried. Covered by two PostgreSQL regression tests that reproduce the drifted state exactly.
+- 56ee162: summary: Documentation now only documents — it can no longer hold a merge or send a card back with nothing to do.
+  category: fix
+  dev: Observed on a live card: the Documentation milestone returned an advisory REVISE, which recorded `advisory_failure`. `resolveRequiredPreMergeStepIds` included the group, so `evaluatePreMergeApprovals` read it as "not-approved" and held the merge door; the same REVISE also reached `requestPreMergeOptionalStepFix`, which bounced the card to `in-progress` where `sendTaskBackForFix` reopens nothing under the named-remediation policy — no pending step, foreach `already-expanded`, Code Review replayed over an unchanged tree, and the card merged when the second Documentation pass happened to pass. New opt-in `WorkflowOptionalGroupConfig.reportingOnly`, surfaced on `ResolvedWorkflowOptionalStep` and set only on `documentationDeliveryOptionalGroupNode`, excludes a reporting group from the required pre-merge approval set and refuses executor remediation for it. A general guard now also refuses any `stepReopenPolicy: "none"` bounce that appended no named steps, logging it on the card instead of looping. Code Review REVISE and the deterministic verification failure keep producing named fix steps; advisory gates that own remediation (browser verification) are untouched.
+- e71ccb9: summary: In-review cards show the running gate as a badge instead of a step list.
+  category: feature
+  dev: Reverts the review-lane progress section in `TaskCard` and `ListView` added earlier in this series. `showProgressSection` and `shouldShowTaskProgress` no longer include the review column, so an in-review card renders its stage through `getRunningOptionalGateBadge` (Code Review → Documentation → Merging) with no bar, counter, or expandable list. This also removes a defect for free: the list is built from `task.enabledWorkflowSteps`, frozen on the card at planning time, so a card planned before a workflow changed rendered a removed milestone as permanently `pending`.
+- ca17150: summary: Task rows now show Verification and Documentation & Delivery progress while a card sits in review.
+  category: fix
+  dev: `ListView` resolved progress with `scope: "implementation"` unconditionally while `TaskCard` already switched to the full pipeline in the review lane, so review-column gates were invisible in list view and `shouldShowTaskProgress` suppressed the column entirely. Both now resolve the lane through `isReviewColumnRole` (trait-based, not the hardcoded `in-review` id). This matters for review-column workflows such as `builtin:coding-ideas-v2`, which promote Verification and Documentation & Delivery from hidden checklist entries into first-class review-lane gates.
+- 94f660e: summary: A failed merge no longer strands review-column tasks on their verification and delivery gates.
+  category: fix
+  dev: Two seal fixes in `execute-workflow-graph.ts`. (1) A `workflowAction: "deterministic-verification"` gate is no longer treated as write-capable: it needs a worktree to run the project's test/build commands but only reads the tree, and `workflowNodeRequiresWorktree` conflates the two via a name match on `/review|verification/i`. (2) A gate whose result is already `passed` or `skipped` resolves as satisfied instead of being refused, because a post-approval requeue (merge conflict, transient merge failure) replays the pre-review chain and re-running those gates would rewrite the very tree the review approved. Both turned a retryable merge into a terminal wedge, measured by pipeline-smoke S13.
+- 7b9f839: summary: Reviewers are now asked for their verdict in a way that covers the case that made one answer in prose.
+  category: fix
+  dev: Audit of the `verdictBlock` in `execute-workflow-step.ts`, the last block of a review step's system prompt. Three defects, no behaviour outside the prompt text. (1) Its closing sentence read "Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION" — the final words of the whole prompt granted permission to skip the format, and the premise is false since emitting JSON is always possible; the path still exists in the parser but is now stated as degraded rather than alternative. (2) It forbade markdown fences while `parseWorkflowStepVerdict` scans fenced blocks first, making "compliant" narrower than "parseable"; fenced output is now explicitly accepted. (3) It offered APPROVE / APPROVE_WITH_NOTES / REVISE with no legal way to say "I cannot see the change" — the measured multi-repo case, where a reviewer given an empty scope found nothing, had no truthful option and wrote prose instead. That case now maps explicitly onto REVISE with the search stated in notes. A dedicated UNAVAILABLE member would model it better but `WorkflowStepVerdict` has none, and adding one reaches the parser, step results, merge admission and the dashboard — out of proportion to a prompt repair.
+- 8fcf4bd: summary: Archived task-planner chats now soft-delete their Stash sessions on bulk archival.
+  category: fix
+  dev: New best-effort batched Stash sync (deleteStashChatSessions / bulkDeleteStashChatSessions in @fusion/core) wired into the dashboard and engine task-moved archive listeners; paged lookup bounded to 2000 rows — rows older than the lookback window may remain and are debug-logged.
+- 23b152f: summary: Make workflow steps compatible with callback-only plugin runtimes.
+  category: fix
+  dev: Adds the missing `AgentSession.subscribe` compatibility at the shared runtime boundary, preserves native subscriptions, and relays events across deferred cross-runtime swaps.
+- 4750b68: summary: Workflow gates are classified by what they are, not by what they are called.
+  category: fix
+  dev: Three name/id-coupling defects removed. `workflowNodeRequiresWorktree` matched `/review|verification/i` against `config.name`, so a deterministic verification gate was classified write-capable purely because of its label and the review seal refused it on every post-approval replay; it now keys on `reviewKind`, `workflowAction` and the optional-group id. The review seal's `isCodeReview` likewise matched `/code review/i`, which would have silently unrecognised a gate renamed to "Final Review". `getRunningOptionalGateBadge` replaced a closed three-id allowlist with `isNonImplementationWorkflowStepId`, so review-lane gates added by a workflow surface a running badge instead of leaving the card apparently idle until "Merging". Lifecycle-column ratchet ceilings lowered to measured counts (todo 64→12, in-progress 197→72, in-review 213→28).
+- 1c26a4b: summary: A failed database query now says what went wrong instead of printing the whole SQL statement.
+  category: fix
+  dev: Drizzle wraps a query failure in an error whose `message` is `Failed query: <full statement> params: …` and whose `cause` is the `PostgresError` carrying the real reason (`column "x" does not exist`, `permission denied`, `connection terminated`). `rethrowAsApiError` reported `error.message` alone, so operator-facing surfaces showed a wall of column names with no reason — reported from the task chat and undiagnosable from the report itself. `startup-factory` had already grown a private chain walker for the same reason; it is now shared as `describeErrorChain` / `summarizeErrorForOperator` in `process/error-message.ts`. The inversion is keyed narrowly on the `Failed query:` wrapper: an application-authored message still leads (the API boundary contract and its tests are unchanged), and only the machine-generated frame is demoted to truncated context behind its cause.
+- 0c2f204: summary: Task cards now show Verification, Documentation & Delivery and Code Review progress in review.
+  category: fix
+  dev: `TaskCard` resolved the full pipeline once a card reached its review lane but `showProgressSection` still gated rendering on `task.status === "executing" || isWipColumn`, so the breakdown it had just computed was suppressed. FN-7676 hid it in Planning because enumerated steps are a premature planning artifact there; that reasoning does not extend to in-review, where a review-column workflow runs those gates as real advancing work. Both the scope switch and the render gate now resolve the lane via `isReviewColumnRole` instead of the hardcoded `in-review` id.
+- bc82d8e: summary: Honor custom review lanes across live merge-readiness checks.
+  category: fix
+  dev: Threads resolved review lanes through ProjectEngine admission and preserves the empty-set legacy fallback.
+- 3cfb511: summary: Coding (Ideas) V2 no longer plans a Documentation step — the review milestone owns delivery.
+  category: fix
+  dev: Restoring the default planning prompt to bring `Testing & Verification` back also restored `### Step {N}: Documentation & Delivery`, because the abandoned `planning-implementation-only` seam stripped both in one anchored block. The result was duplicated work: the executor and the in-review Documentation milestone each wrote a delivery note, registered artifacts, and created follow-up tasks, and both wrote task document `docs`, so the review pass silently overwrote the executor's. New `stripDocumentationDeliveryStep` in `builtin-workflow-prompts.ts` removes ONLY the documentation block (keeping `Testing & Verification`) and degrades to an appended prohibition if the anchors stop matching; `builtin-coding-ideas-v2-workflow-ir.ts` applies it to its own copy of the planning prompt. Repository documentation stays implementation work — the executor updates a doc its change made wrong inside the step that made it, so Code Review sees it in the diff. `builtin:coding` and `builtin:coding-ideas` keep the shared template untouched.
+- 8328b45: summary: A failed final check or review now shows named fix steps on the card; per-step failures stay in their step.
+  category: fix
+  dev: Adds `fix-steps-from-failed-gates.test.ts`, driving the real `requestPreMergeOptionalStepFix` and `appendReviewRemediationSteps` against the real built-in registry and asserting on `task.steps`: a `verification` failure and a `code-review` REVISE each append pending named steps with remediation provenance, a review failure with no REVISE verdict appends nothing, no other node id can reach the appender (so a per-step test failure is fixed inside its step), and `builtin:coding-ideas` keeps reopen-trailing. Also repairs three leftovers from the V2 rework: the missing `builtin:coding-ideas-v2` entry in `builtin-workflows-lifecycle.test.ts` EXPECTATIONS (catalog-coverage assertion was red on main), the registry description and layout (ghost `verification`/`verification-remediation`/`completion-summary`/`post-merge-verification` keys removed, `documentation-delivery` repositioned after `code-review` so the editor diagram matches the graph), and the `implementation-only-leakage` audit, which no longer flags `testing|verification` now that the planner emits that step deliberately.
+- 0c3fe18: summary: A failing test or build now creates named fix steps instead of bouncing the task with nothing to do.
+  category: fix
+  dev: The FN-3345 deterministic verification gate (`run-implementation.ts`, runs `testCommand`/`buildCommand` after every planned step and before the in-review handoff) routed BOTH its bounces through `sendTaskBackForFix` regardless of the workflow's `stepReopenPolicy`. Under `none` — declared by `parse.implementationOnlySteps` + `preserveRemediationSteps`, selected today only by `builtin:coding-ideas-v2` — that call reopens nothing, so the card returned to implementation with zero pending steps, the foreach answered `already-expanded`, and it advanced to Code Review with the failing command unaddressed. The bounce shape now lives in `executor/bounce-verification-failure.ts`: `none` routes to `appendReviewRemediationSteps` (one named step per file in the failing output, PROMPT.md File Scope widened, executor re-dispatched, bounded at 3 waves then parked for a human), while `reopen-trailing` keeps its exact prior call. This revives the `Verification` branch of `appendReviewRemediationSteps`, which had been caller-less since the graph's `verification` node was removed. `builtin:coding` and `builtin:coding-ideas` are unaffected.
+- 28a8205: summary: Fix a Verification gate that reported PASS without running your tests.
+  category: fix
+  dev: `GateNodeRunner` recognised only `prompt` and `scriptName` as executable shapes, so a gate carrying `workflowAction` fell through to a silent `return { outcome: "success" }` — deterministic Verification completed in ~46ms and recorded a pass without executing anything, supplying merge evidence for a check that never ran. `verification-gate.ts` now delegates to `runExecutorDeterministicVerification`, the same primitive the in-progress executor gate has always used, instead of re-deriving the command list. Wiring is covered by a differential test that fails when the routing is removed. FN-189 tracks the remaining case where no command is configured at all.
+- ab9789f: summary: Fix local-only workspace merges failing after a repo landed, and repair the workspace review-approval fence.
+  category: fix
+  dev: `computeReviewDiffFingerprint` takes an optional `headRef`; `captureWorkspaceReviewEvidence` passes the resolved task branch so the fingerprint measures the same range as the file list it accompanies. `landWorkspaceTask` now resolves a workspace land intent only for remote targets, matching where `landOneRepo` records one.
+- 24adc4b: summary: Multi-repository code review no longer reports delivered files as missing.
+  category: fix
+  dev: A workspace Code Review invokes the review step once per sub-repository worktree, but `executeWorkflowStep` always captured the reviewer's scope with the singular `task.baseCommitSha`. That base does not resolve inside a sub-repository, so `captureModifiedFiles` returned `[]` and the prompt told the reviewer "(no modified files detected for this task)" — after the executor had committed in each repository. Measured on a real multi-repo card: the reviewer searched, could not see the committed fixtures inside its own scope, and reported them as never delivered. `executeWorkflowStep` now accepts `diffBaseCommitSha` and prefers it over the task field; `run-graph-custom-node` supplies `workspaceWorktrees[repo].baseCommitSha`, the per-repo value already recorded and already used by the evidence capture in `workspace-review-per-repo.ts`. Singular tasks are unaffected — with no override the task base is still used.
+
 ## 0.77.0-beta.8
 
 ### Minor Changes

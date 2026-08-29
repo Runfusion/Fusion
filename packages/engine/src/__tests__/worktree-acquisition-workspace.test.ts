@@ -328,6 +328,38 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(registry.isPathActive(repoAbs)).toBe(false);
   });
 
+  it("replaces a same-kind live registry cache after durable lease admission", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoAbs = fixture.repoPath("repo-a");
+    const registry = new ActiveSessionRegistry();
+    registry.registerPath(repoAbs, { taskId: "FN-stale", kind: "workspace-repo-acquire", ownerKey: "workspace-repo-acquire" });
+    const { store, current } = makeFakeStore(makeTask("FN-authority"));
+    const events: Array<{ mutationType?: string; metadata?: Record<string, unknown> }> = [];
+    const lease = {
+      leaseKey: "repo:repo-a",
+      owner: { taskId: "FN-authority", nodeId: "node", incarnationId: "incarnation" },
+      fenceToken: 1n,
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    };
+    Object.assign(store as object, {
+      acquireWorkspaceLease: async () => ({ outcome: "reclaimed-expired", handle: lease }),
+      renewWorkspaceLease: async () => lease,
+      releaseWorkspaceLease: async () => true,
+      recordRunAuditEvent: async (event: { mutationType?: string; metadata?: Record<string, unknown> }) => { events.push(event); },
+    });
+
+    await expect(acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store, settings: SETTINGS, registry,
+      holderLiveProbe: () => true,
+    })).resolves.toMatchObject({ alreadyAcquired: false });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      mutationType: "worktree:workspace-repo-acquire-reclaimed",
+      metadata: expect.objectContaining({ holderTaskId: "FN-stale", outcome: "lease-authority" }),
+    }));
+    expect(registry.lookupByPath(repoAbs)).toBeNull();
+  });
+
   it("is idempotent across (taskId, repo): re-acquire returns the existing entry without re-capture", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const { store, current, patches } = makeFakeStore(makeTask("FN-4"));

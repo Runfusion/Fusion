@@ -386,6 +386,20 @@ export function updateTaskRepositoryScope(
   });
 }
 
+export interface TaskOverlapBlockerReport {
+  taskId: string;
+  blockerId: string | null;
+  blockerColumn: string | null;
+  reason: "ok" | "no-overlap-blocker" | "blocker-not-found" | "no-overlap";
+  taskScopeCount: number;
+  blockerScopeCount: number;
+  overlaps: Array<{ path: string; blockerPath: string }>;
+}
+
+export function fetchOverlapBlockerReport(id: string, projectId?: string): Promise<TaskOverlapBlockerReport> {
+  return api<TaskOverlapBlockerReport>(withProjectId(`/tasks/${encodeURIComponent(id)}/overlap-blocker`, projectId));
+}
+
 export interface RepairOverlapBlockerResult {
   taskId: string;
   dryRun: boolean;

@@ -94,7 +94,7 @@ Near-duplicate flagging now keeps the task in its normal flow column (`todo` / a
 - `source.sourceMetadata.nearDuplicateOf = <canonicalTaskId>`
 - `source.sourceMetadata.nearDuplicateScore = <number>`
 - `source.sourceMetadata.nearDuplicateSharedTokens = <string[]>`
-- optional `source.sourceMetadata.nearDuplicateDismissed = true` after user chooses Keep
+- optional `source.sourceMetadata.nearDuplicateDismissed = true` after the operator clears the duplicate flag
 - activity event `task:near-duplicate-flagged`
 
 A near-duplicate flag is only actionable while the canonical task is active. The triage backstop does not persist `nearDuplicateOf` for archived, soft-deleted, done, or missing canonicals; when a canonical later becomes inactive through archive, soft-delete, or move-to-done, the store clears `nearDuplicateOf`, `nearDuplicateScore`, `nearDuplicateSharedTokens`, and `nearDuplicateDismissed` from active referrers and records an informational log entry without pausing or failing those tasks.
@@ -102,7 +102,7 @@ A near-duplicate flag is only actionable while the canonical task is active. The
 Dashboard surfaces this as a yellow Duplicate chip plus modal actions only while the canonical exists and is active:
 
 - **Archive** (user-initiated archive path)
-- **Keep** (dismisses the warning by setting `nearDuplicateDismissed: true`)
+- **Clear the duplicate flag** (dismisses the warning by setting `nearDuplicateDismissed: true`)
 
 This layer complements, rather than replaces, FN-4829 similarity detection, FN-4918 deterministic deduplication, and FN-4892 same-agent intake heuristics.
 
@@ -144,7 +144,7 @@ Layer behavior:
 - **Triage planning loop** — after triage reads the generated `PROMPT.md`, an exact redirect marker short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
 - **Self-healing sweep** — maintenance Batch 2 runs `resolveExplicitDuplicateMarkerTasks()` across `triage`/`todo` tasks to clean up older stuck marker tasks. The sweep is best-effort, capped at 50 marker tasks per cycle, and can be disabled with the internal setting `resolveExplicitDuplicateMarkerEnabled: false` (default `true`).
 
-An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the marker-only prompt and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
+An operator's decision is durable for a task and its active canonical pair. **Clearing the duplicate flag** records the acknowledgement, retires the marker source, clears the triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
 
 All three layers fail open: parse errors, task lookup failures, file-read failures, activity-recording errors, or other unexpected exceptions log a warning and continue normal intake/triage/self-healing flow instead of blocking task creation or recovery.
 
@@ -162,7 +162,7 @@ Fusion applies two conservative intake heuristics that may auto-archive newly fi
 
 - **Ghost-bug preflight** (triage finalize path): for bug-fix-shaped specs that cite concrete constructs/commands, Fusion probes current `main`. If all definitive probes show the cited bug does not reproduce, the task is archived as `auto-resolved-ghost-bug`.
 - **Same-agent duplicate intake** (all task-create backends): if the same `source.sourceAgentId` (or `source.sourceParentTaskId`) filed a highly similar task within 24h (threshold `0.75`), Fusion still detects the near-duplicate — but what happens next depends on the `autoArchiveDuplicateTasksEnabled` project/global setting (default **`false`**, FN-7658/FN-8401):
-  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with Keep/Archive actions surfaces it for a human decision. Neither the new task nor its live siblings are moved to `archived` or deleted automatically.
+  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with a clear-the-flag control and Archive action surfaces it for a human decision. Neither the new task nor its live siblings are moved to `archived` or deleted automatically.
   - **`true`** (legacy behavior, opt-in): only the later/new task is archived as `auto-resolved-duplicate`; its live siblings remain intact.
 
 Ghost-bug preflight is unaffected by `autoArchiveDuplicateTasksEnabled` — it is a distinct heuristic and always auto-archives on a definitive non-repro.
@@ -362,13 +362,13 @@ Board ordering behavior:
 - The `done` column is recency-ordered by completion time (newest first), using `columnMovedAt` as primary and falling back to `updatedAt` then `createdAt` for legacy tasks.
 - The dashboard **list view default ordering matches these same per-column semantics** until a user clicks a sortable header (manual list sorting still overrides defaults).
 
-<!-- FNXC:TaskCardMovement 2026-08-21-16:09: FN-109 separates desktop/tablet Board viewport panning from contextual task movement so card-body drags cannot restore native relocation. -->
+<!-- FNXC:TaskCardMovement 2026-08-27-12:01: FN-198 makes workflow automation the sole owner of dashboard task placement; Board gestures and menus must not offer relocation. -->
 
-### Moving tasks on Board and List
+### Task placement on Board and List
 
-Use a task card or List row's context menu (**right-click**, **Shift+F10** / Context Menu key, the visible overflow control, or touch long-press), then choose **Move to**. When more than one legal destination is available, **Move to** opens one submenu containing each destination; a single destination remains a direct action. This changes task movement only.
+Tasks cannot be relocated manually from Board, List, or Task Detail. The workflow and its automated recovery paths decide placement. Use **Reset** or **Respecify** to replan from the original description, **Delete** to remove a task, and the remaining Actions controls for their documented purposes. A manual-intake card can still show **Start**, which admits a new idea into its workflow rather than relocating active work.
 
-On desktop and tablet Boards, dragging a task card's noninteractive body or text pans the Board viewport without moving the task. Controls and editing remain native; **Move to** remains the only task-relocation path.
+On desktop and tablet Boards, dragging a task card's noninteractive body or text pans the Board viewport without moving the task. Controls and editing remain native.
 
 ### Lifecycle commands
 

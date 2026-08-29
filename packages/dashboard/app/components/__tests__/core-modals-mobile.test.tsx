@@ -470,13 +470,9 @@ describe("core modals mobile css coverage", () => {
     const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
-    // Verify dropdown menu selectors are in mobile block (selectors share the same line)
-    expect(mobileBlock).toContain(".detail-actions-menu,");
-    expect(mobileBlock).toContain(".detail-move-menu {");
-
-    // Extract the dropdown menu rule block and verify constraints
+    // Extract the retained Actions dropdown rule and verify constraints.
     const menuBlockMatch = mobileBlock.match(
-      /\.detail-actions-menu,\s*\.detail-move-menu\s*\{[^}]+\}/s,
+      /\.detail-actions-menu\s*\{[^}]+\}/s,
     );
     expect(menuBlockMatch).not.toBeNull();
     const menuBlock = menuBlockMatch![0];
@@ -498,13 +494,12 @@ describe("core modals mobile css coverage", () => {
     expect(backControlMatch![0]).toContain("min-width: calc(var(--space-2xl) + var(--space-xs))");
   });
 
-  it("TaskDetailModal: footer dropdown menus anchor toward available horizontal space", () => {
+  it("TaskDetailModal: Actions dropdown anchors toward available horizontal space", () => {
     const css = loadAllAppCss();
 
-    const actionsMenuAnchorMatch = css.match(/^\.detail-actions-menu\s*\{\s*left: 0;\s*\}/m);
-    const moveMenuAnchorMatch = css.match(/^\.detail-move-menu\s*\{\s*right: 0;\s*\}/m);
+    const actionsMenuAnchorMatch = css.match(/^\.detail-actions-menu\s*\{[\s\S]*?left: 0;/m);
     expect(actionsMenuAnchorMatch).not.toBeNull();
-    expect(moveMenuAnchorMatch).not.toBeNull();
+    expect(css).not.toContain(".detail-move-");
   });
 
   it("TaskForm / TaskEditModal: description textarea capped at 200px height with scroll on mobile", () => {

@@ -76,10 +76,9 @@ function renderIn(column: string, payload: unknown) {
   vi.spyOn(api, "fetchBoardWorkflows").mockResolvedValue(payload as never);
   return render(
     <TaskDetailModal
-      initialTab="definition"
+      initialTab="details"
       task={makeTask({ column })}
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}

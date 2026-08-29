@@ -22,10 +22,9 @@ const projectIssue = {
 function renderModal(task = makeTask({ column: "todo", gitlabTracking: { item: projectIssue } }), onTaskUpdated = vi.fn()) {
   return render(
     <TaskDetailModal
-      initialTab="definition"
+      initialTab="details"
       task={task}
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -83,7 +82,7 @@ describe("TaskDetailModal GitLab tracking", () => {
 
     rerender(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         /*
         FNXC:TaskDetailStateStability 2026-08-15-22:25:
         FN-8796 (1320265455) made mergeTaskSnapshot clock-arbitrated: an equal-clock sparse
@@ -92,7 +91,6 @@ describe("TaskDetailModal GitLab tracking", () => {
         */
         task={makeTask({ column: "todo", updatedAt: "2026-01-01T00:00:01Z", gitlabTracking: { item: { ...projectIssue, kind: "merge_request", iid: 5, url: "https://gitlab.com/acme/app/-/merge_requests/5", title: "MR" } } })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}

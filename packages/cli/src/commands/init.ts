@@ -39,6 +39,25 @@ export interface InitOptions {
   git?: boolean;
 }
 
+/*
+FNXC:IntegrationBranchReadiness 2026-08-24-00:57:
+FN-183 makes registration reconcile a local integration ref. Show the one-repository result in
+CLI output, including an unavailable materialization, so operators can see whether Fusion adopted
+or created the branch without pretending workspace-member results describe the project root.
+*/
+function logIntegrationBranchReconciliation(integrationBranches: unknown, indentation = "  "): void {
+  if (!Array.isArray(integrationBranches) || integrationBranches.length !== 1) return;
+  const [entry] = integrationBranches as Array<{ repoRelPath?: unknown; branch?: unknown; action?: unknown }>;
+  if (
+    entry?.repoRelPath !== "."
+    || typeof entry.branch !== "string"
+    || entry.branch.trim().length === 0
+    || typeof entry.action !== "string"
+    || entry.action.trim().length === 0
+  ) return;
+  console.log(`${indentation}✓ Integration branch: ${entry.branch} (${entry.action})`);
+}
+
 /**
  * Run the init command.
  *
@@ -66,11 +85,12 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     const existing = await central.getProjectByPath(cwd);
     if (existing) {
       // Repair Git readiness even when the project was already registered.
-      await central.ensureProjectForPath({
+      const ensured = await central.ensureProjectForPath({
         path: cwd,
         identity: readProjectIdentity(fusionDir) ?? undefined,
         name: existing.name,
       });
+      logIntegrationBranchReconciliation(ensured.integrationBranches);
       try {
         writeProjectIdentity(join(cwd, ".fusion"), {
           id: existing.id,
@@ -137,11 +157,12 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     const existing = await central.getProjectByPath(cwd);
     if (existing) {
       // Repair Git readiness before reporting an already-registered project as ready.
-      await central.ensureProjectForPath({
+      const ensured = await central.ensureProjectForPath({
         path: cwd,
         identity: readProjectIdentity(fusionDir) ?? undefined,
         name: existing.name,
       });
+      logIntegrationBranchReconciliation(ensured.integrationBranches);
       /*
       FNXC:ProjectIdentityMarker 2026-07-14-22:25:
       A project already registered in PostgreSQL can still reach this branch when its local `.fusion/project.json` marker is missing. Repair the marker before returning so subsequent startup and init checks use the same durable identity as a newly registered project.
@@ -191,6 +212,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     if (ensured.gitRepository === "initialized") {
       console.log(`  ✓ Initialized git repository`);
     }
+    logIntegrationBranchReconciliation(ensured.integrationBranches);
     console.log(`  ✓ Registered in central database`);
     console.log(`\n✓ Project "${project.name}" initialized successfully!`);
     console.log(`\n  Next steps:`);

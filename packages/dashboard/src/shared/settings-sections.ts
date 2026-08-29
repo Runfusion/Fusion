@@ -152,9 +152,6 @@ const SETTINGS_SECTION_DEFINITIONS: readonly SettingsSectionDefinition[] = [
     searchableKeys: [
       "settings.projectModels.chatHeading",
       "settings.projectModels.chatDescription",
-      "settings.projectModels.chatNewSessionMode",
-      "settings.projectModels.chatNewSessionModePrompt",
-      "settings.projectModels.chatNewSessionModeAlwaysDefault",
       "settings.projectModels.chatDefaultKind",
       "settings.projectModels.chatDefaultModel",
       "settings.projectModels.chatDefaultAgent",

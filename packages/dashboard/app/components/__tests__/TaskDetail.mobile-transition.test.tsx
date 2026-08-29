@@ -83,7 +83,6 @@ describe("TaskDetailModal wrapper — mobile transition class gating (modal/list
       <TaskDetailModal
         task={makeTask({ id: "FN-300" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -103,7 +102,6 @@ describe("TaskDetailModal wrapper — mobile transition class gating (modal/list
       <TaskDetailModal
         task={makeTask({ id: "FN-301" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -124,7 +122,6 @@ describe("TaskDetailModal wrapper — mobile transition class gating (modal/list
       <TaskDetailModal
         task={makeTask({ id: "FN-302" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -141,7 +138,6 @@ describe("TaskDetailModal wrapper — mobile transition class gating (modal/list
       <TaskDetailModal
         task={makeTask({ id: "FN-302" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}

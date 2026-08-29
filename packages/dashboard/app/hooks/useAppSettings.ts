@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchConfig, fetchSettings, updateSettings, updateGlobalSettings } from "../api";
+import { fetchConfig, fetchSettings, updateSettings } from "../api";
 import { DEFAULT_PROJECT_SETTINGS, type GlobalSettings, type ProjectSettings } from "@fusion/core";
 import { resolveMobileNavPrimaryItems } from "../../../core/src/board/mobile-nav-primary-items";
 import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
-import { setAutoReloadEnabled } from "../versionCheck";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 
 export type QuickChatButtonMode = "floating" | "footer" | "off";
@@ -62,7 +61,6 @@ export interface UseAppSettingsResult {
   memoryEnabled: boolean;
   devServerEnabled: boolean;
   goalsEnabled: boolean;
-  autoReloadOnVersionChange: boolean;
   toggleAutoMerge: () => Promise<void>;
   togglePlanAutoApprove: () => Promise<void>;
   toggleGlobalPause: () => Promise<void>;
@@ -76,7 +74,6 @@ export interface UseAppSettingsResult {
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
   setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
-  toggleAutoReloadOnVersionChange: () => Promise<void>;
   /** Re-fetches settings from the backend to pick up changes made externally (e.g., by SettingsModal). */
   refresh: () => Promise<void>;
 }
@@ -131,7 +128,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [devServerEnabled, setDevServerEnabled] = useState(false);
   const [goalsEnabled, setGoalsEnabled] = useState(true);
-  const [autoReloadOnVersionChange, setAutoReloadOnVersionChangeState] = useState(true);
   const autoMergeRef = useRef(autoMerge);
   const planApprovalModeRef = useRef<PlanApprovalMode>(planApprovalMode);
   const settingsProjectIdRef = useRef(projectId);
@@ -226,10 +222,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setMemoryEnabled(true);
       setDevServerEnabled(features.devServerView === true || features.devServer === true);
       setGoalsEnabled(true);
-      // Sync the module-level auto-reload guard with the persisted setting
-      const autoReload = settings.autoReloadOnVersionChange !== false;
-      setAutoReloadOnVersionChangeState(autoReload);
-      setAutoReloadEnabled(autoReload);
     }
 
     setSettingsLoaded(true);
@@ -382,19 +374,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setMobileNavPrimaryItems(resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: items }).primaryItems);
   }, []);
 
-  const toggleAutoReloadOnVersionChange = useCallback(async () => {
-    const next = !autoReloadOnVersionChange;
-    setAutoReloadOnVersionChangeState(next);
-    setAutoReloadEnabled(next);
-
-    try {
-      await updateGlobalSettings({ autoReloadOnVersionChange: next });
-    } catch {
-      setAutoReloadOnVersionChangeState(!next);
-      setAutoReloadEnabled(!next);
-    }
-  }, [autoReloadOnVersionChange]);
-
   return {
     maxConcurrent,
     effectiveMaxConcurrent,
@@ -435,7 +414,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     memoryEnabled,
     devServerEnabled,
     goalsEnabled,
-    autoReloadOnVersionChange,
     toggleAutoMerge,
     togglePlanAutoApprove,
     toggleGlobalPause,
@@ -449,7 +427,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailChatFirstImmediate,
     setMobileNavPrimaryItemsImmediate,
-    toggleAutoReloadOnVersionChange,
     refresh,
   };
 }

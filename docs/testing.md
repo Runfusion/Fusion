@@ -81,6 +81,7 @@ Use the narrowest command that exercises the behavior you changed, then broaden 
 pnpm test              # gate suite + changed-only affected tests (bounded; never full-suite)
 pnpm test:gate         # the merge gate: curated engine-core suite + CI-shape test
 pnpm smoke:boot        # boot smoke: CLI --help + init marker + real serve /api/health
+pnpm smoke:pipeline    # opt-in, non-blocking real Git/PostgreSQL Coding pipeline smoke
 pnpm verify:fast       # TEST-FREE: static check:* gates + bootstrap + scoped typecheck/build + CLI build + boot smoke
 pnpm test:full         # full workspace suite — explicit opt-in only
 pnpm lint              # lint all packages
@@ -443,6 +444,93 @@ The capture spec (which packages/projects to enumerate) lives in
 a renamed file shows up as a remove (old path) + add (new path), so the rename is
 reviewable. New test ids never fail the diff.
 
+## Pipeline smoke lane (opt-in, non-blocking)
+
+<!-- FNXC:PipelineSmoke 2026-08-23-15:18: FN-182 documents the opt-in deterministic end-to-end lane separately from engine-slow so real store/Git workflow coverage stays visible without becoming a PR merge requirement. -->
+
+`pnpm smoke:pipeline` runs the `engine-pipeline-smoke` Vitest project through
+`scripts/run-pipeline-smoke.mjs`. It is the AI-free, network-free regression net for
+the FN-175/FN-177 class: merge admission before a Code Review verdict, a failed card
+whose branch has already landed, and cleanup that removes a live executor worktree.
+It drives disposable local Git repositories, a throwaway PostgreSQL store, the real
+built-in Coding (Ideas) and Coding workflow definitions, real merger admission, and
+deterministic mock-provider scripts under `testMode: true`.
+
+Prerequisites are Git and reachable test PostgreSQL. Start the latter with
+`pnpm pg:test:up`; the wrapper fails with that actionable instruction when either
+prerequisite is absent (or accepts `--allow-skip` only for an explicit local
+non-execution). The workflow project is intentionally excluded from `engine-default`
+and `engine-core` so it cannot expand `pnpm test` or the merge gate. The non-blocking
+`Pipeline smoke tier` job in `.github/workflows/full-suite.yml` runs after merge with
+`fetch-depth: 0` and a PostgreSQL service; never add it to `pr-checks.yml`, branch
+protection, or the engine-core allow-list.
+
+<!-- FNXC:PipelineSmoke 2026-08-23-20:49: The completed production-chain drivers measured 53,378ms and 60,459ms, so the declared budget is rounded to 70 seconds from current observed execution rather than the earlier seeded-row measurement. -->
+<!--
+FNXC:PipelineSmoke 2026-08-24-04:10:
+Re-baselined 70s -> 90s at landing, and the distinction matters because the budget rule exists to
+stop a DEGRADING harness from being masked. This harness did not degrade: the identical branch
+measured 61,808ms / 62,176ms / 64,064ms against the pre-integration main, then 73,224ms /
+76,480ms / 73,866ms / 80,162ms against the same main after it absorbed 65 upstream commits, on a
+healthy PostgreSQL at load 2.37/24 cores. The cost grew in every phase the lane does not own
+(transform 14.85s -> 18.37s, import 22.01s -> 26.30s, tests 164.25s -> 209.64s) because the lane
+imports the real engine and the real engine got bigger. The budget was calibrated against a
+smaller tree and had gone stale.
+If a FUTURE overrun is not explained by a comparable measured upstream growth, it is a real
+regression: fix the lane, do not repeat this bump. The standing lever is the per-file cost — four
+of the five files each provision their own disposable PostgreSQL database and re-pay module import,
+so consolidating files is the optimization to reach for before the budget is ever touched again.
+-->
+
+<!--
+FNXC:PipelineSmoke 2026-08-24-16:20:
+Re-baselined 90s -> 150s because the WORKLOAD grew, deliberately and measurably: `builtin:coding-ideas-v2`
+was added to 17 of the 19 scenarios (previously 1), and a multi-repository workspace file was added.
+That is 17 additional full scenario executions plus a second project shape, measured at 124.95s
+against the previous 76.9s for the smaller matrix. This is the "comparable measured growth" case the
+previous note allowed for, and it is attributable line by line rather than mysterious.
+The standing rule is unchanged and now has two precedents: an overrun with NO such explanation is a
+regression to fix in the lane, not a budget to raise. The optimization to reach for first is still
+per-file cost — each file re-pays module import and provisions its own disposable PostgreSQL
+database, so consolidating files is worth more than touching any assertion.
+
+FNXC:PipelineSmoke 2026-08-25-06:55:
+Re-baselined 150s -> 175s, again for attributable growth: a 7th file (the dedicated Code Review
+remediation drive) plus S05 extended to `builtin:coding-ideas-v2`, one of the longest scenarios in
+the matrix. Five consecutive runs measured 140.1s, 143.8s, 146.7s, 147.0s and 148.4s — green against
+the old 150s ceiling, but with under 2s of headroom, which is a flake waiting to happen rather than
+a passing lane. Third precedent for the same rule: growth must be nameable, or it is a regression.
+-->
+The declared budget is **175 seconds**, rounded up from a measured 148,434ms slowest full-matrix
+run (7 files, 90 tests) after the Code Review remediation drive was added and S05 was extended to
+`builtin:coding-ideas-v2`. The wrapper enforces it for every run; an overrun is a result
+to investigate, never a reason to hide a regression behind unbounded timeouts. Use
+`--repeat=10` for the reproducibility proof, `--json` for machine output, and
+`--budget-ms=<n>` only for loud diagnostic measurement. The normalized report lists
+scenario, variant, workflow, expected terminal, observed terminal, verdict, and duration.
+
+Each scenario declares one closed terminal state: `merged-done`, `inert-intake`,
+`parked`, `manual-hold`, or `no-op-merge`. The harness fails on an undeclared terminal
+(including an unexpected merge), and treats these as unconditional wedges: **W1**
+contradictory park, **W2** repeated finalization/work-item loop, **W3** severed live
+session, **W4** unreachable held/runnable work item, and **W5** bounded quiescence
+without progress. A parked or manual-hold scenario must also prove its declared
+recovery reaches `merged-done`.
+
+### Adding a pipeline scenario
+
+1. Add exactly one `SNN` entry to `PIPELINE_SCENARIOS` with its terminal state,
+   trait-resolved workflow coverage, executable `arrange`/`act` drivers (and recovery when
+   needed), and a hard persisted-state/Git invariant.
+2. Implement those drivers in `_pipeline-drivers.ts` through `PipelineSmokeHarness`; keep
+   the nominal/review, concurrency/merge, and resilience test files as scenario-to-report adapters.
+3. If its terminal is `parked` or `manual-hold`, implement and assert a recovery to
+   `merged-done`; never convert it into an implicit success.
+4. Extend `CODING_NON_REGRESSION_FLOOR` when the scenario also applies to
+   `builtin:coding`; document any Ideas-only exemption in the table.
+5. Run `pnpm smoke:pipeline` and preserve the measured report. Do not add the file
+   to default, slow, or gate projects.
+
 ## Engine slow tier (non-blocking CI)
 
 The `engine-slow` vitest project (`packages/engine/src/**/*.slow.test.ts`) holds the
@@ -780,6 +868,7 @@ The baseline document is generated; never hand-edit it. Attach a durable measure
 pnpm --filter @fusion/core test
 pnpm --filter @fusion/engine test
 pnpm --filter @runfusion/fusion test
+pnpm smoke:pipeline
 pnpm test:scripts
 node --test scripts/__tests__/*.test.mjs
 ```
@@ -919,6 +1008,11 @@ In this pnpm workspace, one dependency version can resolve to several peer-hashe
 Copy this checklist into a bug-fix or UI-affordance add/remove task's `## Surface Enumeration` section and make the implementation tests prove the invariant across every checked surface. This checklist applies to bug-fix tasks and UI-affordance add/remove tasks that add, remove, or restructure icons, buttons, chevrons/arrows, toggles, badges, menu entries, or click targets. See `AGENTS.md` → **Standing Rule: Fix the Invariant, Not the Repro (FN-5893)** for the enforced planning/review contract.
 
 - [ ] Providers / bridges / execution paths touched by the invariant
+- [ ] For merge fixes: every merge-admission door, including periodic feeds, merge workers, direct/manual doors, and workspace landing
+- [ ] For content-bound merge gates: singular diff fingerprints, workspace per-repository evidence, unavailable/empty descriptors, disabled review groups, renamed review lanes, and workflow-selection provenance (reader absent, no selection, and read failure)
+- [ ] For merge finalization: confirmed-merge reconciliation, non-checklist blockers, and no failed park after a landed merge
+- [ ] For execution/merge exclusion: live executor refusal with and without approval, reciprocal executor dispatch refusal during merge, in-flight review revocation, and final ref-advance recheck
+- [ ] For worktree cleanup: active-session, successor-session after abort, raw/canonical path spellings, and workspace sub-repository worktrees
 - [ ] Long-running subprocess or verification-active surfaces when the invariant involves engine liveness, stuck detection, or command execution (`fn_run_verification`, configured commands, timeout/deadline behavior)
 - [ ] Desktop + mobile breakpoints / platforms that exercise the behavior
 - [ ] Empty / undefined / duplicate / populated data states

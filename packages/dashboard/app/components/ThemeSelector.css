@@ -334,6 +334,14 @@
   --swatch-sample-4: var(--iceberg-swatch-sample-4);
 }
 
+/* FNXC:DashboardTheming 2026-08-27-04:23: Flexoki maps only global mode-specific preview variables so its chip remains accurate while any other persisted theme is active. */
+.theme-swatch-flexoki {
+  --swatch-sample-1: var(--flexoki-swatch-sample-1);
+  --swatch-sample-2: var(--flexoki-swatch-sample-2);
+  --swatch-sample-3: var(--flexoki-swatch-sample-3);
+  --swatch-sample-4: var(--flexoki-swatch-sample-4);
+}
+
 .theme-swatch-aurora {
   --swatch-sample-1: var(--aurora-swatch-sample-1);
   --swatch-sample-2: var(--aurora-swatch-sample-2);
@@ -1229,6 +1237,13 @@
   --swatch-sample-2: var(--iceberg-swatch-sample-2);
   --swatch-sample-3: var(--iceberg-swatch-sample-3);
   --swatch-sample-4: var(--iceberg-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-flexoki {
+  --swatch-sample-1: var(--flexoki-swatch-sample-1);
+  --swatch-sample-2: var(--flexoki-swatch-sample-2);
+  --swatch-sample-3: var(--flexoki-swatch-sample-3);
+  --swatch-sample-4: var(--flexoki-swatch-sample-4);
 }
 
 [data-theme="light"] .theme-swatch-aurora {

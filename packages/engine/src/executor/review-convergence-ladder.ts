@@ -8,6 +8,8 @@ import {
   hasPreMergeRemediationAutoMergeHold,
   isOpenWorkflowReviewFinding,
   resolveReviewConvergenceEscalationTarget,
+  resolveStepReopenPolicy,
+  resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { moveTaskToReplanColumn } from "../execution/replan-target.js";
@@ -34,6 +36,7 @@ export type ReviewConvergenceLadderDeps = {
     task: Task, worktreePath: string, failureFeedback: string, stepName: string, reason: string,
     preserveResumeState: boolean, mergeVerificationFailure: boolean,
     retryPresentation?: { attempt: number; max?: number }, findings?: WorkflowReviewFinding[],
+    persistWorktreePath?: boolean, stepReopenPolicy?: "reopen-trailing" | "none",
   ) => Promise<void>;
 };
 
@@ -180,6 +183,7 @@ export async function routeReviewConvergenceLadder(
   let mode: "alternate-model" | "replan";
   try {
     if (escalationTarget?.enabled) {
+      const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
       mode = "alternate-model";
       await deps.sendTaskBackForFix(
         claimedTask,
@@ -191,6 +195,8 @@ export async function routeReviewConvergenceLadder(
         false,
         { attempt: stop.attempt + 1, max: stop.max },
         stop.findings,
+        undefined,
+        resolveStepReopenPolicy(workflowIr),
       );
     } else {
       /*

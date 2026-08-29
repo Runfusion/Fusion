@@ -263,7 +263,13 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
       const limit = Math.min(Math.max(1, parseInt(limitStr, 10) || 20), 100);
       const query = typeof req.query.q === "string" ? req.query.q : undefined;
 
-      const result = await skillsAdapter.fetchCatalog({ limit, query });
+      const scopedStore = await getScopedStore(req);
+      const result = await skillsAdapter.fetchCatalog({
+        limit,
+        query,
+        rootDir: scopedStore.getRootDir(),
+        projectStore: scopedStore,
+      });
 
       // Check if result is an upstream error
       if ("code" in result) {

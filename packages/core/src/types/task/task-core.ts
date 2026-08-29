@@ -1167,6 +1167,10 @@ export interface Task {
    *  recovery-policy module on each recoverable failure; cleared when work restarts
    *  cleanly or reaches a terminal column (in-review, done, archived). */
   recoveryRetryCount?: number;
+  /** FNXC:WorkspaceContention 2026-08-23-06:40: Durable owner-local retry budget for holdForSessionContention; manual retry, clean completion, and exhausted waits reset it. */
+  sessionContentionHoldCount?: number;
+  /** Operator-visible bounded reason owned only while holdForSessionContention schedules a retry. */
+  sessionContentionWaitReason?: string;
   /** Number of times this task has been requeued after the agent exited without
    *  calling `task_done`. Incremented by the executor for immediate `todo`
    *  requeues and by self-healing for deferred recovery of partial-progress

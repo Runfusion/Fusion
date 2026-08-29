@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   ensureGitRepositoryForProjectPath,
+  ensureProjectGitReadiness,
   GitRepositoryInitializationError,
   detectWorkspaceRepos,
   type GitRepositoryCommandRunner,
@@ -20,6 +21,15 @@ async function git(cwd: string, args: string[]): Promise<string> {
     encoding: "utf-8",
   });
   return stdout.trim();
+}
+
+async function createCommittedRepository(repoPath: string, branch: string, fileName = "README.md"): Promise<void> {
+  await git(repoPath, ["init", "-b", branch]);
+  await git(repoPath, ["config", "user.name", "Test User"]);
+  await git(repoPath, ["config", "user.email", "test@example.com"]);
+  writeFileSync(join(repoPath, fileName), `${branch}\n`);
+  await git(repoPath, ["add", fileName]);
+  await git(repoPath, ["commit", "-m", "initial"]);
 }
 
 describe("ensureGitRepositoryForProjectPath", () => {
@@ -130,6 +140,186 @@ describe("ensureGitRepositoryForProjectPath", () => {
     for (const rule of [".fusion/", ".pi/", ".worktrees/", "fusion.db", "fusion.db-wal", "fusion.db-shm"]) {
       expect(firstIgnore).toContain(rule);
     }
+  });
+
+  it("reconciles a master-only repository to its existing local branch", async () => {
+    const projectPath = tempDir("fusion-git-master-only-");
+    await createCommittedRepository(projectPath, "master");
+
+    const readiness = await ensureProjectGitReadiness(projectPath);
+
+    expect(readiness.integrationBranches).toEqual([{
+      repoRelPath: ".",
+      branch: "master",
+      source: "well-known-local",
+      action: "existing",
+    }]);
+    await expect(git(projectPath, ["rev-parse", "--verify", "refs/heads/master"])).resolves.toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("materializes a configured remote-only integration branch", async () => {
+    const projectPath = tempDir("fusion-git-configured-remote-");
+    await createCommittedRepository(projectPath, "main");
+    await git(projectPath, ["update-ref", "refs/remotes/origin/develop", "HEAD"]);
+    mkdirSync(join(projectPath, ".fusion"), { recursive: true });
+    writeFileSync(
+      join(projectPath, ".fusion", "config.json"),
+      JSON.stringify({ settings: { integrationBranch: "develop" } }),
+    );
+
+    const readiness = await ensureProjectGitReadiness(projectPath);
+
+    expect(readiness.integrationBranches).toEqual([{
+      repoRelPath: ".",
+      branch: "develop",
+      source: "configured",
+      action: "created-from-remote",
+    }]);
+    await expect(git(projectPath, ["rev-parse", "refs/heads/develop"])).resolves.toBe(
+      await git(projectPath, ["rev-parse", "refs/remotes/origin/develop"]),
+    );
+  });
+
+  it("materializes the remote branch declared by origin HEAD", async () => {
+    const projectPath = tempDir("fusion-git-origin-head-");
+    await createCommittedRepository(projectPath, "main");
+    await git(projectPath, ["update-ref", "refs/remotes/origin/develop", "HEAD"]);
+    await git(projectPath, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"]);
+
+    const readiness = await ensureProjectGitReadiness(projectPath);
+
+    expect(readiness.integrationBranches).toEqual([{
+      repoRelPath: ".",
+      branch: "develop",
+      source: "origin-head",
+      action: "created-from-remote",
+    }]);
+    await expect(git(projectPath, ["rev-parse", "refs/heads/develop"])).resolves.toBe(
+      await git(projectPath, ["rev-parse", "refs/remotes/origin/develop"]),
+    );
+  });
+
+  it("materializes an unambiguous remote-only branch without moving detached HEAD", async () => {
+    const upstreamPath = tempDir("fusion-git-remote-only-upstream-");
+    const cloneParent = tempDir("fusion-git-remote-only-clone-");
+    const clonePath = join(cloneParent, "clone");
+    await createCommittedRepository(upstreamPath, "develop");
+    await git(cloneParent, ["clone", "--branch", "develop", "--single-branch", upstreamPath, clonePath]);
+    /*
+    FNXC:IntegrationBranchReadiness 2026-08-24-00:41:
+    This Git build creates origin/HEAD for a local single-branch clone. Remove it explicitly
+    so the fixture exercises the remote-tracking tier rather than the higher origin-head tier.
+    */
+    await git(clonePath, ["symbolic-ref", "-d", "refs/remotes/origin/HEAD"]);
+    await git(clonePath, ["checkout", "--detach", "HEAD"]);
+    await git(clonePath, ["branch", "-D", "develop"]);
+
+    const readiness = await ensureProjectGitReadiness(clonePath);
+
+    expect(readiness.integrationBranches).toEqual([{
+      repoRelPath: ".",
+      branch: "develop",
+      source: "remote-tracking",
+      action: "created-from-remote",
+    }]);
+    await expect(git(clonePath, ["rev-parse", "refs/heads/develop"])).resolves.toBe(
+      await git(clonePath, ["rev-parse", "refs/remotes/origin/develop"]),
+    );
+    await expect(git(clonePath, ["symbolic-ref", "--quiet", "--short", "HEAD"])).rejects.toThrow();
+  });
+
+  it("keeps a detached repository's existing local branch resolvable", async () => {
+    const projectPath = tempDir("fusion-git-detached-local-");
+    await createCommittedRepository(projectPath, "release/1.0");
+    await git(projectPath, ["checkout", "--detach", "HEAD"]);
+
+    const readiness = await ensureProjectGitReadiness(projectPath);
+
+    expect(readiness.integrationBranches).toEqual([{
+      repoRelPath: ".",
+      branch: "release/1.0",
+      source: "sole-local",
+      action: "existing",
+    }]);
+    await expect(git(projectPath, ["rev-parse", "--verify", "refs/heads/release/1.0"])).resolves.toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("keeps the baseline branch for an unborn repository with fetched refs", async () => {
+    const upstreamPath = tempDir("fusion-git-unborn-upstream-");
+    const projectPath = tempDir("fusion-git-unborn-fetched-");
+    await createCommittedRepository(upstreamPath, "mainline");
+    await git(projectPath, ["init", "-b", "main"]);
+    await git(projectPath, ["remote", "add", "origin", upstreamPath]);
+    await git(projectPath, ["fetch", "origin"]);
+    await expect(git(projectPath, ["rev-parse", "--verify", "HEAD^{commit}"])).rejects.toThrow();
+
+    const readiness = await ensureProjectGitReadiness(projectPath);
+
+    /*
+    FNXC:IntegrationBranchReadiness 2026-08-24-00:41:
+    R4 intentionally proves the baseline-first boundary: an unborn repository keeps its
+    symbolic main branch instead of adopting fetched upstream history into a new commit.
+    */
+    expect(readiness.integrationBranches).toEqual([{
+      repoRelPath: ".",
+      branch: "main",
+      source: "well-known-local",
+      action: "existing",
+    }]);
+    await expect(git(projectPath, ["rev-parse", "--verify", "refs/heads/main"])).resolves.toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("reconciles each workspace member against its own local branch", async () => {
+    const projectPath = tempDir("fusion-git-workspace-integration-branches-");
+    const firstRepo = join(projectPath, "repo-a");
+    const secondRepo = join(projectPath, "repo-b");
+    mkdirSync(firstRepo, { recursive: true });
+    mkdirSync(secondRepo, { recursive: true });
+    await createCommittedRepository(firstRepo, "master");
+    await createCommittedRepository(secondRepo, "develop");
+    mkdirSync(join(projectPath, ".fusion"), { recursive: true });
+    writeFileSync(join(projectPath, ".fusion", "workspace.json"), JSON.stringify({ repos: ["repo-a", "repo-b"] }));
+
+    const readiness = await ensureProjectGitReadiness(projectPath);
+
+    expect(readiness).toMatchObject({ outcome: "existing" });
+    expect(readiness.integrationBranches).toEqual([
+      { repoRelPath: "repo-a", branch: "master", source: "well-known-local", action: "existing" },
+      { repoRelPath: "repo-b", branch: "develop", source: "well-known-local", action: "existing" },
+    ]);
+  });
+
+  it("reports unavailable when a selected integration branch cannot be created", async () => {
+    const projectPath = tempDir("fusion-git-integration-branch-write-failure-");
+    await createCommittedRepository(projectPath, "main");
+    mkdirSync(join(projectPath, ".fusion"), { recursive: true });
+    writeFileSync(
+      join(projectPath, ".fusion", "config.json"),
+      JSON.stringify({ settings: { integrationBranch: "release/1.0" } }),
+    );
+    const runner: GitRepositoryCommandRunner = async (command, args, options) => {
+      if (args[2] === "branch") {
+        throw new Error("test branch write failure");
+      }
+      const result = await execFileAsync(command, args, {
+        cwd: options.cwd,
+        timeout: options.timeout,
+        env: options.env,
+        encoding: "utf-8",
+      });
+      return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+    };
+
+    await expect(ensureProjectGitReadiness(projectPath, { runner })).resolves.toMatchObject({
+      outcome: "existing",
+      integrationBranches: [{
+        repoRelPath: ".",
+        branch: "release/1.0",
+        source: "configured",
+        action: "unavailable",
+        reason: "test branch write failure",
+      }],
+    });
   });
 
   it("merges equivalent managed rules without duplicates and converges concurrent calls", async () => {

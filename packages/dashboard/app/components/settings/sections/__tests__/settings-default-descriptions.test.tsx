@@ -96,7 +96,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   fnBinaryCheckEnabled: "globalGeneral.disableThisIfYourLocalDevProcessIs",
   updateCheckEnabled: "globalGeneral.andShowsUpdateNoticesInTheCLIAnd",
   updateCheckFrequency: "globalGeneral.controlsHowOftenTheDashboardReFetchesThe",
-  autoReloadOnVersionChange: "globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen",
   updateChannel: "globalGeneral.releaseChannelHelp",
   autoUpdateAndRestart: "globalGeneral.autoUpdateAndRestartHelp",
   autoUpdateEnabled: "globalGeneral.autoUpdateEnabledHelp",
@@ -658,7 +657,7 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   prerebaseDivergenceThreshold: "internal pre-rebase tuning constant, no UI field",
   // FNXC:Round10 2026-07-13: FN-7907/FN-7908 added chat default model/agent/session settings.
   // These are configured via the chat New Session defaults picker, not plain description fields.
-  chatNewSessionMode: "chat new-session default mode, configured via the chat defaults picker, not a plain description field",
+  chatNewSessionMode: "control removed with the New Chat dialog; persisted for settings parity only",
   chatDefaultKind: "chat default agent kind, configured via the chat defaults picker, not a plain description field",
   chatDefaultAgentId: "chat default agent id, configured via the chat defaults picker, not a plain description field",
   chatDefaultModelProvider: "chat default model provider, configured via the chat defaults picker, not a plain description field",

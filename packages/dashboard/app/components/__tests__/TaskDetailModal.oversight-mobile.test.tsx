@@ -97,7 +97,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-8263-mobile-project-default", column: "todo", plannerOversightLevel: undefined, sessionAdvisorEnabled: undefined })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -148,7 +147,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={nextTask}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -180,7 +178,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-200", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -206,7 +203,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-201", column: "todo", plannerOversightLevel: "off" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -245,7 +241,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-212", column: "todo", plannerOversightLevel: undefined })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -265,7 +260,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-202", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -296,7 +290,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-203", column: "todo", plannerOversightLevel: "autonomous" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -316,7 +309,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-204", column: "in-progress", plannerOversightLevel: "off" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -342,7 +334,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-205", column: "in-progress", plannerOversightLevel: "observe" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -369,7 +360,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-206", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -399,7 +389,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-207", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -426,7 +415,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-208", column: "in-progress", plannerOversightLevel: "observe", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -452,7 +440,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-209", column: "in-progress", plannerOversightLevel: "steer" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -477,7 +464,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-210", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -521,7 +507,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-213", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -553,7 +538,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-214", column: "todo", plannerOversightLevel: "off" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -584,7 +568,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-215", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -614,7 +597,6 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
         <TaskDetailModal
           task={makeTask({ id: "FN-211", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}

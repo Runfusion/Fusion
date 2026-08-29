@@ -31,16 +31,6 @@ export const projectModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "project-models",
-    key: "chatNewSessionMode",
-    labelKey: "settings.projectModels.chatNewSessionMode",
-    labelFallback: "New Chat behavior",
-    helpKey: "settings.projectModels.chatNewSessionModeHelp",
-    helpFallback:
-      "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
-    keywords: ["direct chat", "skip dialog"],
-  },
-  {
-    sectionId: "project-models",
     key: "autoSelectModelPreset",
     labelKey: "settings.projectModels.autoSelectPresetBasedOnTaskSize",
     labelFallback: " Auto-select preset based on task size ",

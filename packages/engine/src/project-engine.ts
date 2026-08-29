@@ -33,15 +33,14 @@ import {
   emitOverseerRecoveryAttempt,
   emitOverseerRetry,
   emitOverseerSteering,
-  getMergeConfirmedFinalizationBlocker,
-  getUnfinishedStepTitles,
+  getPostMergeFinalizeBlocker,
+  planConfirmedMergeChecklistReconciliation,
   PreMergeStepsNotRunError,
   PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
   classifyMergeSweepAdmission,
   classifyWorkflowNodeMergeRegion,
   isActiveMergeStatus,
   resolveRequiredPreMergeStepIds,
-  getTaskMergeBlocker,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   type MergeRegionPosition,
   type MergeSweepAdmission,
@@ -56,15 +55,21 @@ import {
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
   resolveWipTargetForTask,
-  resolveReboundTargetForTask, REVIEW_ELIGIBLE_SENTINEL_COLUMN,
+  resolveReboundTargetForTask,
   clearMergeConfirmedTransientStatus,
   classifyGhError,
   createRecallCaptureWriter,
   resolveEngineIncarnationId,
   resolveEngineNodeId,
   type WorkspaceLeaseHandle,
+  getTaskMergeBlocker,
+  resolvePreMergeGateForTask,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
+import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
+import { isTaskExecutionLive } from "./merge/merge-execution-exclusion.js";
+import { isMergeActiveStatus } from "./merge/merge-active-status.js";
+import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -83,7 +88,6 @@ import {
 } from "./overseer/overseer-advisor-service.js";
 import { extractAdvisorAssistantText } from "./overseer/overseer-advise-tool.js";
 import { createResolvedAgentSession } from "./agents/agent-session-helpers.js";
-import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import type { PrNodeGithubOps } from "./merge/pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./merge/pr-reconcile.js";
 import { PrCommentHandler } from "./merge/pr-comment-handler.js";
@@ -1155,7 +1159,13 @@ export class ProjectEngine {
     store.on("task:created", this.specDriftTaskMutationHandler);
     store.on("task:updated", this.specDriftTaskMutationHandler);
     store.on("task:moved", this.specDriftTaskMutationHandler);
-    for (const task of await store.listTasks({ includeArchived: true, slim: true })) {
+    /*
+    FNXC:SpecDrift 2026-08-23-06:25:
+    Startup replay is live-task-only. Archived cards cannot act on drift, and
+    replaying them consumes planning-lock sessions during restart; unarchive emits
+    task:updated, so a returning card still enters through the subscriptions above.
+    */
+    for (const task of await store.listTasks({ slim: true })) {
       this.specDriftReconciler.enqueue(task.id);
     }
     const cwd = this.config.workingDirectory;
@@ -3163,7 +3173,7 @@ export class ProjectEngine {
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
-  }, maxAutoMergeRetries: number, reviewColumns?: ReadonlySet<string>, enforcePrRetryBackoff = false): boolean {
+  }, maxAutoMergeRetries: number, reviewColumns?: ReadonlySet<string>, enforcePrRetryBackoff = false, resolvedMergeBlocker?: string | null): boolean {
     // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
@@ -3171,12 +3181,17 @@ export class ProjectEngine {
       return true;
     }
     /*
+    FNXC:MergeExecutionExclusion 2026-08-23-06:52:
+    FN-180 closes the review-independent FN-175 race at the shared admission
+    point. A live executor defers every queue feed; it is never turned into a
+    failed task and merge-confirmed finalization remains above this guard.
+
     FNXC:MergeReadiness 2026-08-23-18:49:
-    This shared admission predicate serves both the periodic sweep and the final queue dispatch. Forward
-    their resolved lane set into the injected core blocker so neither production path reverts to the
-    legacy `in-review` literal after its surrounding column check accepted a renamed merge lane.
+    Forward resolved review lanes into the fallback blocker so custom workflow columns do not
+    regress to the literal `in-review` after surrounding admission accepted the card.
     */
-    if (this.options.getTaskMergeBlocker?.(task as Task, { reviewColumns })) return false;
+    if (task.id && isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return false;
+    if (resolvedMergeBlocker ?? this.options.getTaskMergeBlocker?.(task as Task, { reviewColumns })) return false;
     // Terminal failure: don't let the cooldown sweep re-attempt a merge that
     // already gave up (verification cap, conflict-bounce cap, or non-conflict
     // error). The task is parked for human/follow-up intervention.
@@ -3201,6 +3216,38 @@ export class ProjectEngine {
       ) ||
       this.isRetryCooldownElapsed(task)
     );
+  }
+
+  /*
+  FNXC:MergeGateAuthority 2026-08-23-08:16:
+  FN-180 requires queue admission to use the same selected-workflow, content-bound
+  proof as direct merge doors. Capture is asynchronous because workspace evidence
+  probes each repository; a failure becomes an unprovable descriptor and defers.
+  */
+  private async resolveMergeGateBlocker(store: TaskStore, task: Task, settings: Settings): Promise<string | undefined> {
+    // Confirmed work takes the reconciliation fast path and must not be stranded
+    // behind a review capture while its executor session winds down.
+    if (task.mergeDetails?.mergeConfirmed) return undefined;
+    const injected = this.options.getTaskMergeBlocker?.(task);
+    if (injected || !Array.isArray(task.steps)) return injected ?? undefined;
+    let mergeGate;
+    try {
+      mergeGate = await resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps);
+    } catch {
+      return "merge gate could not resolve the task workflow";
+    }
+    if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
+      return "merge gate could not resolve the task workflow";
+    }
+    const mergeContent = await captureMergeContentDescriptor(task, {
+      workspaceRootDir: this.config.workingDirectory,
+      settings,
+    });
+    return getTaskMergeBlocker(task, {
+      reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
+      requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+      mergeContent,
+    });
   }
 
   /**
@@ -3467,6 +3514,10 @@ export class ProjectEngine {
         (await resolveTaskLifecycleColumns(this.runtime.getTaskStore(), t.id, reviewLaneIrCache).catch(() => undefined))?.review,
       );
     }
+    const mergeBlockerByTaskId = new Map<string, string | undefined>();
+    for (const task of unpaused) {
+      mergeBlockerByTaskId.set(task.id, await this.resolveMergeGateBlocker(this.runtime.getTaskStore(), task, settings as Settings));
+    }
     const candidates = unpaused.filter((t) => {
       const reviewLane = reviewLaneByTaskId.get(t.id);
       return this.canMergeTask(
@@ -3474,6 +3525,7 @@ export class ProjectEngine {
         maxAutoMergeRetries,
         reviewLane === undefined ? undefined : new Set([reviewLane]),
         enforcePrRetryBackoff,
+        mergeBlockerByTaskId.get(t.id),
       );
     }) as Task[];
     const allowFlags = await Promise.all(candidates.map((t) => this.allowInReviewMergeProcessing(t, settings, this.runtime.getTaskStore())));
@@ -4153,11 +4205,13 @@ export class ProjectEngine {
             */
             const mergeLoopReviewLane = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.review;
             const pullRequestMerge = (this.options.getMergeStrategy?.(settings) ?? "direct") === "pull-request";
+            const mergeBlocker = await this.resolveMergeGateBlocker(store, task, settings);
             if (!this.canMergeTask(
               task as any,
               maxAutoMergeRetries,
               mergeLoopReviewLane === undefined ? undefined : new Set([mergeLoopReviewLane]),
               pullRequestMerge,
+              mergeBlocker,
             )) {
               // A queued retry can be rejected after an engine restart or a racing
               // task update. Reinstall the single-flight wake instead of dropping it.
@@ -4383,57 +4437,33 @@ export class ProjectEngine {
                 continue;
               }
               } // end !isWorkspaceTask reachability gate (B2): workspace tasks skip the root-cwd commitSha check
-              const blockerReason = getMergeConfirmedFinalizationBlocker({
-                ...(task as Task),
-                /*
-                FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (this parked ALREADY-MERGED work as failed):
-                The spread carries the task's REAL column, and no `reviewColumns` was supplied, so
-                getTaskHardMergeBlocker's identity check ran against the literal `in-review`. On a board
-                whose review lane is renamed that returned `task is in 'signoff', must be in 'in-review'`
-                and the branch below parked the card FAILED with "Merge confirmed but finalization
-                blocked" — for work that had already landed.
-
-                Fixed the way the sibling recovery path in auto-merge-finalization.ts already does it,
-                and for the reason recorded there: `"in-review"` is the review-eligible SENTINEL for this
-                helper, not a lifecycle column, so a merge-confirmed card evaluates the same blocker set
-                on a custom workflow as on the builtin one. The column identity of an already-landed card
-                is not what this check is for.
-
-                FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193): incomplete steps NO LONGER
-                apply here. The fast path above already proved this merge landed, and holding a landed
-                card out of `done` for unfinished steps is what left FN-9193 permanently unfinalizable —
-                a restart then replanned fresh pending steps and re-created the very block it was meant
-                to clear. Paused/error/pre-merge-step blockers still apply.
-                */
-                column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
-                // Merge-confirmed tasks have already landed. Treat stale merge
-                // in-flight statuses as soft state to clear during finalization,
-                // not hard blockers that park an otherwise confirmed merge as failed.
-                paused: false,
+              /*
+              FNXC:ConfirmedMergeFinalization 2026-08-23-07:32:
+              FN-180 makes durable merge proof terminal: stale execution steps and
+              review results are reconciled rather than allowed to park landed work.
+              Only independent status blockers defer this fast path.
+              */
+              const blockerReason = getPostMergeFinalizeBlocker({
                 status: clearMergeConfirmedTransientStatus(task.status),
                 error: undefined,
               });
-              const unfinishedFastPathSteps = getUnfinishedStepTitles(task as Task);
-              if (unfinishedFastPathSteps.length > 0) {
-                await store.logEntry(
-                  taskId,
-                  `Finalizing proven merge with ${unfinishedFastPathSteps.length} unfinished step(s) — the branch already landed, so these did not run: ${unfinishedFastPathSteps.slice(0, 8).join("; ")}`,
-                  "MergeConfirmedFinalizeUnfinishedSteps",
-                ).catch(() => undefined);
-              }
               if (blockerReason) {
-                await store.updateTask(taskId, {
-                  status: "failed",
-                  error: `Merge confirmed but finalization blocked: ${blockerReason}`,
-                });
-                await store.logEntry(
-                  taskId,
-                  `Merge confirmed finalization blocked — ${blockerReason}. Task parked in in-review for manual completion.`,
-                );
-                runtimeLog.warn(
-                  `Auto-merge: ${taskId} merge-confirmed finalize blocked — ${blockerReason}`,
-                );
+                await store.logEntry(taskId, `Merge-confirmed finalization deferred — ${blockerReason}.`);
+                runtimeLog.warn(`Auto-merge: ${taskId} merge-confirmed finalization deferred — ${blockerReason}`);
                 continue;
+              }
+              const checklist = planConfirmedMergeChecklistReconciliation(task as Task);
+              if (checklist.skippedStepIndexes.length > 0 || checklist.reconciledWorkflowStepIds.length > 0) {
+                const steps = task.steps.map((step, index) => checklist.skippedStepIndexes.includes(index)
+                  ? { ...step, status: "skipped" as const }
+                  : step);
+                const workflowStepResults = (task.workflowStepResults ?? []).map((result) =>
+                  checklist.reconciledWorkflowStepIds.includes(result.workflowStepId)
+                    ? { ...result, status: "skipped" as const }
+                    : result);
+                await store.updateTask(taskId, { steps, workflowStepResults });
+                task.steps = steps;
+                task.workflowStepResults = workflowStepResults;
               }
 
               if (routedFastPathTarget && (
@@ -5080,6 +5110,20 @@ export class ProjectEngine {
             if (hasManualResolver) {
               this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
             }
+            continue;
+          }
+
+          if (err instanceof Error && err.name === "MergeGateRevokedError") {
+            /*
+            FNXC:MergeInFlightRevoke 2026-08-23-08:20:
+            FN-180 treats a last-moment review-gate loss as a review deferral.
+            Do not spend merge retries or park an unchanged branch as failed; a
+            fresh graph review is the only exit that can reopen this fence.
+            */
+            runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge gate revoked for ${taskId}: ${errorMsg}`);
+            this.mergeAbortController = null;
+            await this.clearAbortedMergeStamp(taskId);
+            if (hasManualResolver) this.rejectMergeResolvers(taskId, err);
             continue;
           }
 
@@ -6110,13 +6154,48 @@ export class ProjectEngine {
 
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
+      const handoffLifecycleColumns = await resolveTaskLifecycleColumns(store, task.id);
+      const handoffReviewColumn = handoffLifecycleColumns?.review ?? "in-review";
+      /*
+      FNXC:MergeInFlightRevoke 2026-08-26-13:05:
+      A SUCCESSFUL merge moves its own card to the complete lane, and that move must not read as the
+      card abandoning the merge.
+
+      This is the column half of the defect FN-184 fixed for the status half, in this same file:
+      "this fence re-reads the task from the store, so by construction it observes the `status:
+      \"merging\"` stamp `runAiMerge` wrote for THIS merge — without neutralization the fence revokes
+      the very merge it is guarding". The status was neutralized; the column was not.
+
+      Measured on a live multi-repository card: `all 2 sub-repo(s) landed — task → done` at
+      19:58:00.762 was immediately followed by `Aborting active merge (left-review-lane-during-merge)`.
+      Both repositories were already on the integration branch, so the abort cancelled nothing — but
+      it tore down the merge primitive after the fact, which is why the card's journal carried
+      `Workflow node merge requested merge` twice, 132ms apart, for one merge. The same fence firing a
+      few hundred milliseconds earlier would abort a merge that is genuinely mid-flight.
+
+      The guard's real subject is a card the GRAPH pulled BACK — a REVISE returning it to
+      implementation — which must take ownership away from an in-flight merge. Reaching the terminal
+      lane is the opposite: it is the merge's own completion.
+      */
+      const handoffCompleteColumns = new Set<string>(["done"]);
+      if (handoffLifecycleColumns?.complete) handoffCompleteColumns.add(handoffLifecycleColumns.complete);
+      /*
+      FNXC:MergeInFlightRevoke 2026-08-23-07:24:
+      FN-180 requires an active merge to lose ownership as soon as its card leaves
+      the resolved review lane. This is a cancellation, not a failure: preserve the
+      branch and worktree so the graph can route the task through its current gate.
+      */
+      if (this.activeMergeTaskId === task.id && to !== handoffReviewColumn && !handoffCompleteColumns.has(to)) {
+        this.mergeQueue = this.mergeQueue.filter((queuedTaskId) => queuedTaskId !== task.id);
+        this.abortActiveMerge(task.id, "left-review-lane-during-merge");
+        return;
+      }
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-01-19:20 (fleet): ONE snapshot for the handoff and its
       post-grace recheck below. The two are halves of one decision — "did this card just enter the merge
       lane, and is it still there?" — and with the literal neither half fired on a renamed board, so
       auto-merge was never handed a card at all.
       */
-      const handoffReviewColumn = (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review";
       if (to !== handoffReviewColumn) return;
       if (task.paused) return;
       if (this.options.getTaskMergeBlocker?.(task, { reviewColumns: new Set([handoffReviewColumn]) })) return;
@@ -6270,6 +6349,38 @@ export class ProjectEngine {
       const taskReviewColumn = (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review";
       if (task.column !== taskReviewColumn) {
         this.pausedReviewTaskIds.delete(task.id);
+        return;
+      }
+
+      /*
+      FNXC:MergeInFlightRevoke 2026-08-24-04:35:
+      FN-184: read the blocker against a VERDICT view, not the raw row. `runAiMerge` stamps
+      `status:"merging"` on the task it is merging (merger.ts), that write emits `task:updated`,
+      and `merging`/`merging-pr` are members of HARD_BLOCKING_TASK_STATUSES — so the unoptioned
+      `getTaskMergeBlocker` the CLI entry points wire (daemon/dashboard/serve) reported the merge's
+      OWN execution bookkeeping as a blocking verdict. The merge aborted itself within the same
+      second, the drain catch cleared the stamp, and the periodic sweep re-admitted the task every
+      `pollIntervalMs` forever. The abort branch deliberately spends no `mergeRetries` (a lost gate
+      is a deferral, not a failure), which removed the only bound on that loop: nothing merged, on
+      any project, and the card was never parked.
+      This engine OWNS the merge it is asking about, so a merge-active stamp on that task is by
+      definition its own writing and can never be a reviewer verdict. Neutralize only that field,
+      only for the owned task. Genuine verdicts still abort: failed/pending pre-merge step results,
+      `paused`, and non-merge blocking statuses (`needs-replan`, `queued`, ...) all survive the view
+      untouched, and a merge-active stamp on a DIFFERENT task is never reached by this branch.
+      Do NOT widen this to MERGE_CONFIRMED_TRANSIENT_STATUSES: that set also clears `queued`, a
+      scheduler status this handler must keep honoring.
+      */
+      const mergeVerdictView: Task = isMergeActiveStatus(task.status) ? { ...task, status: undefined } : task;
+      if (this.activeMergeTaskId === task.id && this.options.getTaskMergeBlocker?.(mergeVerdictView)) {
+        /*
+        FNXC:MergeInFlightRevoke 2026-08-23-07:24:
+        A persisted blocking review result closes a merge already in flight. The
+        worker's later ref-advance fence remains authoritative; this prompt abort
+        releases the single-flight lane without parking the card as failed.
+        */
+        this.mergeQueue = this.mergeQueue.filter((queuedTaskId) => queuedTaskId !== task.id);
+        this.abortActiveMerge(task.id, "blocking-pre-merge-verdict-during-merge");
         return;
       }
 

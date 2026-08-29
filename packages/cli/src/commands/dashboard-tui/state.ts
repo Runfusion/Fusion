@@ -363,6 +363,8 @@ export interface DashboardState {
   logsSeverityFilter: "all" | LogEntry["level"];
   logsWrapEnabled: boolean;
   logsExpandedMode: boolean;
+  /* FNXC:TuiRawLogs 2026-08-26-14:10: chrome-free, mouse-released logs view for native text selection. */
+  logsRawMode: boolean;
   selectedLogIndex: number;
   logsViewportStart: number;
   // When the narrow single-pane main view is split horizontally to show a
@@ -412,6 +414,7 @@ export function createInitialState(): DashboardState {
     logsSeverityFilter: "all",
     logsWrapEnabled: false,
     logsExpandedMode: false,
+    logsRawMode: false,
     selectedLogIndex: 0,
     logsViewportStart: 0,
     narrowLogSplitFocused: false,

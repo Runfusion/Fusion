@@ -654,11 +654,6 @@ export interface GlobalSettings {
   */
   autoUpdateEnabled?: boolean;
   autoRestartAfterUpdate?: boolean;
-  /** When true (default), the dashboard automatically reloads when a new build
-   *  version is detected via /version.json polling or service worker activation.
-   *  Set to false to suppress automatic reloads — the user must manually
-   *  refresh to pick up updates. */
-  autoReloadOnVersionChange?: boolean;
   /** When true, indicates the user has completed the AI model onboarding flow
    *  (connected at least one provider and selected a default model). When
    *  false/undefined, the dashboard will auto-open the onboarding modal.

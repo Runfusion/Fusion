@@ -3465,6 +3465,177 @@ describe("ChatManager.sendMessage", () => {
     }
   });
 
+  describe("native runtime interruption", () => {
+    it("interrupts a streaming runtime before disposal and durably persists its visible prefix", async () => {
+      let rejectPrompt: ((reason?: unknown) => void) | undefined;
+      const abort = vi.fn().mockImplementation(async () => {
+        rejectPrompt?.(new Error("Runtime interrupted"));
+      });
+      const dispose = vi.fn();
+      __setCreateFnAgent(async (options: any) => ({
+        session: {
+          prompt: vi.fn().mockImplementation(() => {
+            options.onText("Distinct interrupted prefix");
+            return new Promise<void>((_resolve, reject) => {
+              rejectPrompt = reject;
+            });
+          }),
+          abort,
+          dispose,
+          state: { messages: [] },
+        },
+      }));
+      mockChatStore.addMessage.mockImplementation(async (_sessionId: string, input: any) => ({
+        id: input.role === "assistant" ? "assistant-interrupted-1" : "user-1",
+        sessionId: "chat-001",
+        role: input.role,
+        content: input.content,
+        metadata: input.metadata ?? null,
+        createdAt: "2026-08-23T00:00:00.000Z",
+      }));
+
+      const events: Array<{ type: string; data: any }> = [];
+      const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
+      const chatManager = createChatManager();
+      const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      let sentinel: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const cancellation = await Promise.race([
+          chatManager.cancelGeneration("chat-001"),
+          new Promise<never>((_resolve, reject) => {
+            sentinel = setTimeout(() => reject(new Error("Cancellation did not settle")), 250);
+          }),
+        ]);
+        await sendPromise;
+
+        expect(cancellation).toEqual({
+          success: true,
+          interrupted: true,
+          message: expect.objectContaining({ content: "Distinct interrupted prefix" }),
+        });
+        expect(abort).toHaveBeenCalledTimes(1);
+        expect(abort.mock.invocationCallOrder[0]).toBeLessThan(dispose.mock.invocationCallOrder[0]!);
+        const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+        expect(assistantCalls).toHaveLength(1);
+        expect(assistantCalls[0][1]).toEqual(expect.objectContaining({
+          content: "Distinct interrupted prefix",
+          metadata: expect.objectContaining({ interrupted: true }),
+        }));
+        const doneEvents = events.filter((event) => event.type === "done");
+        expect(doneEvents).toHaveLength(1);
+        expect(doneEvents[0].data).toEqual(expect.objectContaining({ interrupted: true }));
+      } finally {
+        if (sentinel !== undefined) clearTimeout(sentinel);
+        unsubscribe();
+      }
+    });
+
+    it("requests the native interrupt before disposing a pre-seeded generation", async () => {
+      const chatManager = createChatManager();
+      const abortController = new AbortController();
+      const abort = vi.fn().mockResolvedValue(undefined);
+      const dispose = vi.fn();
+      (chatManager as any).activeGenerations.set("chat-001", {
+        abortController,
+        agentResult: { session: { abort, dispose } },
+        generationId: 1,
+        cancellationRequested: false,
+      });
+
+      await expect(chatManager.cancelGeneration("chat-001")).resolves.toEqual({ success: true, interrupted: false });
+      expect(abortController.signal.aborted).toBe(true);
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(abort.mock.invocationCallOrder[0]).toBeLessThan(dispose.mock.invocationCallOrder[0]!);
+    });
+
+    it("keeps dispose-only cancellation for ACP/Grok-style sessions without abort", async () => {
+      // FNXC:ChatCancellation 2026-08-23-02:53: ACP/Grok adapters expose dispose but no abort, so Force send must retain this fail-soft path.
+      const chatManager = createChatManager();
+      const abortController = new AbortController();
+      const dispose = vi.fn().mockImplementation(() => {
+        throw new Error("dispose-only runtime");
+      });
+      (chatManager as any).activeGenerations.set("chat-001", {
+        abortController,
+        agentResult: { session: { dispose } },
+        generationId: 1,
+        cancellationRequested: false,
+      });
+
+      await expect(chatManager.cancelGeneration("chat-001")).resolves.toEqual({ success: true, interrupted: false });
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("bounds a hanging native interrupt before disposal", async () => {
+      vi.useFakeTimers();
+      const chatManager = createChatManager();
+      const dispose = vi.fn();
+      (chatManager as any).activeGenerations.set("chat-001", {
+        abortController: new AbortController(),
+        agentResult: { session: { abort: vi.fn(() => new Promise<void>(() => {})), dispose } },
+        generationId: 1,
+        cancellationRequested: false,
+      });
+
+      const cancellation = chatManager.cancelGeneration("chat-001");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(cancellation).resolves.toEqual({ success: true, interrupted: false });
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs a rejecting native interrupt and still disposes", async () => {
+      const error = vi.fn();
+      __setChatDiagnostics({ log: vi.fn(), warn: vi.fn(), error });
+      const chatManager = createChatManager();
+      const dispose = vi.fn();
+      (chatManager as any).activeGenerations.set("chat-001", {
+        abortController: new AbortController(),
+        agentResult: { session: { abort: vi.fn().mockRejectedValue(new Error("abort failed")), dispose } },
+        generationId: 1,
+        cancellationRequested: false,
+      });
+
+      await expect(chatManager.cancelGeneration("chat-001")).resolves.toEqual({ success: true, interrupted: false });
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(
+        "Failed to request runtime session interrupt during chat cancellation:",
+        expect.any(Error),
+      );
+    });
+
+    it("requests the native interrupt at most once across duplicate cancellation", async () => {
+      const chatManager = createChatManager();
+      const abort = vi.fn().mockResolvedValue(undefined);
+      (chatManager as any).activeGenerations.set("chat-001", {
+        abortController: new AbortController(),
+        agentResult: { session: { abort, dispose: vi.fn() } },
+        generationId: 1,
+        cancellationRequested: false,
+      });
+
+      await chatManager.cancelGeneration("chat-001");
+      await chatManager.cancelGeneration("chat-001");
+      expect(abort).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not natively interrupt or dispose a pre-empted generation", () => {
+      const chatManager = createChatManager();
+      const previous = chatManager.beginGeneration("chat-001");
+      const abort = vi.fn();
+      const dispose = vi.fn();
+      (chatManager as any).activeGenerations.get("chat-001").agentResult = { session: { abort, dispose } };
+
+      chatManager.beginGeneration("chat-001");
+
+      expect(previous.abortController.signal.aborted).toBe(true);
+      expect(abort).not.toHaveBeenCalled();
+      expect(dispose).not.toHaveBeenCalled();
+    });
+  });
+
   it("treats an idle cancellation as a successful no-op without durable side effects", async () => {
     const chatManager = createChatManager();
     const events: Array<{ type: string; data: unknown }> = [];

@@ -91,6 +91,8 @@ function buildResetTask(task: Task, intakeColumn: ColumnId): Task {
     postReviewFixCount: 0,
     planReviewReplanCount: 0,
     recoveryRetryCount: undefined,
+    sessionContentionHoldCount: 0,
+    sessionContentionWaitReason: undefined,
     taskDoneRetryCount: 0,
     bulkCompletionRefusalAt: undefined,
     worktreeSessionRetryCount: 0,

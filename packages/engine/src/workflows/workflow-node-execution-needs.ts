@@ -25,14 +25,28 @@ export function workflowNodeRequiresWorktree(
   const rawCliCommand = executorKind === "cli" && typeof cfg.cliCommand === "string" && cfg.cliCommand.trim()
     ? cfg.cliCommand
     : undefined;
-  const nodeName = typeof cfg.name === "string" && cfg.name.trim() ? cfg.name.trim() : node.id;
-  const isPlanReview = node.id === "plan-review-step" || nodeName === "Plan Review" || optionalGroupId === "plan-review";
+  /*
+  FNXC:WorkflowNodeNeeds 2026-08-25-02:10:
+  Classify by STRUCTURE, never by display name. The old test matched
+  `/(?:^|\b)(?:review|verification)(?:\b|$)/i` against `config.name`, which made behaviour hostage to
+  a label: a DETERMINISTIC verification gate — exit codes only, no mutation path whatsoever — was
+  classified write-capable purely because it is called "Verification", and the review seal then
+  refused it on every post-approval replay. It also silently blocked renaming a gate, since
+  "Final Review" and "Code Review" would classify differently for no structural reason.
+  `reviewKind`, `workflowAction` and the optional-group id are the real signals and are already
+  carried by every built-in node; a hand-authored node opts in explicitly with `reviewCanFixInline`.
+  */
+  const isPlanReview = node.id === "plan-review-step"
+    || optionalGroupId === "plan-review"
+    || cfg.reviewKind === "plan";
+  const isDeterministicGate = cfg.workflowAction === "deterministic-verification";
   const isInlineFixReview = reviewerInlineFixes !== false
     && executorKind !== "cli"
     && !isPlanReview
+    && !isDeterministicGate
     && (
       cfg.reviewCanFixInline === true
-      || /(?:^|\b)(?:review|verification)(?:\b|$)/i.test(nodeName)
+      || cfg.reviewKind === "code"
       || optionalGroupId === "code-review"
       || optionalGroupId === "browser-verification"
     );

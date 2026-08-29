@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../tasks/in-review-stall.js";
 import { CHAT_FOCUS_FLAG, isExperimentalFeatureEnabled } from "../config/experimental-features.js";
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey, isProjectSettingsKey } from "../config/settings-schema.js";
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey, isGlobalSettingsKey, isProjectSettingsKey } from "../config/settings-schema.js";
 import {
   __resetLegacyCwdMainWarningForTests,
   normalizeMergeIntegrationWorktreeMode,
@@ -45,6 +45,13 @@ describe("settings defaults invariants", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.embeddedPostgresMaxConnections).toBeUndefined();
     expect(GLOBAL_SETTINGS_KEYS).toContain("embeddedPostgresMaxConnections");
     expect(PROJECT_SETTINGS_KEYS).not.toContain("embeddedPostgresMaxConnections");
+  });
+
+  it("rejects the retired auto-reload opt-out key", () => {
+    // FNXC:VersionAutoReload 2026-08-23-04:03: FN-171 makes version-change reload mandatory, so re-adding this key would resurrect an opt-out.
+    expect(isGlobalSettingsKey("autoReloadOnVersionChange")).toBe(false);
+    expect(GLOBAL_SETTINGS_KEYS).not.toContain("autoReloadOnVersionChange");
+    expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, "autoReloadOnVersionChange")).toBe(false);
   });
 
   it("defaults dashboard keyboard shortcuts globally", () => {

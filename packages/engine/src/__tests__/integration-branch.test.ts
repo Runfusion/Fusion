@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { selectIntegrationBranch } from "@fusion/core";
 
 const { execMock, execSyncMock } = vi.hoisted(() => ({
   execMock: vi.fn(),
@@ -94,6 +95,10 @@ describe("integration-branch resolver", () => {
         cb(new Error("no symbolic ref"), { stdout: "" });
         return {};
       }
+      if (command.includes("for-each-ref") || command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(null, { stdout: "" });
+        return {};
+      }
       cb(null, { stdout: "gitlab\n" });
       return {};
     });
@@ -115,6 +120,10 @@ describe("integration-branch resolver", () => {
         cb(new Error("no symbolic ref"), { stdout: "" });
         return {};
       }
+      if (command.includes("for-each-ref") || command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(null, { stdout: "" });
+        return {};
+      }
       cb(null, { stdout: "origin\ngitlab\norigin\n" });
       return {};
     });
@@ -126,6 +135,132 @@ describe("integration-branch resolver", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain("origin/HEAD is unset");
     expect(warn.mock.calls[0]?.[0]).toContain("found remote origin, gitlab");
+  });
+
+  it("adopts the only local master branch instead of naming main", async () => {
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("origin/HEAD")) {
+        cb(new Error("no symbolic ref"), { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/heads/")) {
+        cb(null, { stdout: "master\n" });
+        return {};
+      }
+      if (command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(null, { stdout: "master\n" });
+        return {};
+      }
+      cb(null, { stdout: "" });
+      return {};
+    });
+    const warn = vi.fn();
+
+    await expect(resolveIntegrationBranch("/master-only", undefined, { logger: { warn } })).resolves.toBe("master");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("'master'"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("well-known-local"));
+  });
+
+  it("prefers a well-known local branch when multiple local branches exist", async () => {
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("origin/HEAD")) {
+        cb(new Error("no symbolic ref"), { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/heads/")) {
+        cb(null, { stdout: "develop\nmain\n" });
+        return {};
+      }
+      if (command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(null, { stdout: "develop\n" });
+        return {};
+      }
+      cb(null, { stdout: "" });
+      return {};
+    });
+
+    await expect(resolveIntegrationBranch("/multiple-local", undefined, { logger: { warn: vi.fn() } })).resolves.toBe("main");
+  });
+
+  it("adopts an unambiguous remote-only branch", async () => {
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("origin/HEAD") || command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(new Error("no symbolic ref"), { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/heads/")) {
+        cb(null, { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/remotes/origin/")) {
+        cb(null, { stdout: "origin/develop\n" });
+        return {};
+      }
+      cb(null, { stdout: "" });
+      return {};
+    });
+
+    await expect(resolveIntegrationBranch("/remote-only", undefined, { logger: { warn: vi.fn() } })).resolves.toBe("develop");
+  });
+
+  it("falls back when every inferred branch is a Fusion sibling", async () => {
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("origin/HEAD") || command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(new Error("no symbolic ref"), { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/heads/")) {
+        cb(null, { stdout: "fusion/fn-123\n" });
+        return {};
+      }
+      if (command.includes("refs/remotes/origin/")) {
+        cb(null, { stdout: "origin/fusion/fn-456\n" });
+        return {};
+      }
+      cb(null, { stdout: "" });
+      return {};
+    });
+
+    await expect(resolveIntegrationBranch("/fusion-only", undefined, { logger: { warn: vi.fn() } })).resolves.toBe(INTEGRATION_BRANCH_FALLBACK);
+  });
+
+  it("keeps sync and async inference aligned with the shared selector", async () => {
+    const respondAsync = (command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("origin/HEAD") || command.includes("symbolic-ref --quiet --short HEAD")) {
+        cb(new Error("no symbolic ref"), { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/heads/")) {
+        cb(null, { stdout: "" });
+        return {};
+      }
+      if (command.includes("refs/remotes/origin/")) {
+        cb(null, { stdout: "origin/develop\n" });
+        return {};
+      }
+      cb(null, { stdout: "" });
+      return {};
+    };
+    execMock.mockImplementation(respondAsync);
+    execSyncMock.mockImplementation((command: string) => {
+      if (command.includes("origin/HEAD") || command.includes("symbolic-ref --quiet --short HEAD")) {
+        throw new Error("no symbolic ref");
+      }
+      if (command.includes("refs/remotes/origin/")) return "origin/develop\n";
+      return "";
+    });
+    const expected = selectIntegrationBranch({
+      localBranches: [],
+      currentBranch: "",
+      remoteBranches: ["develop"],
+    });
+
+    const asyncResolved = await resolveIntegrationBranch("/parity", undefined, { logger: { warn: vi.fn() } });
+    const syncResolved = resolveIntegrationBranchSync("/parity-sync", undefined, { logger: { warn: vi.fn() } });
+
+    expect(expected).toEqual({ branch: "develop", source: "remote-tracking" });
+    expect(asyncResolved).toBe(expected?.branch);
+    expect(syncResolved).toBe(expected?.branch);
   });
 
   it("sync and async variants match", async () => {

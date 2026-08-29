@@ -16,6 +16,14 @@ export function loadComponentCss(name: string): string {
   return readAppFile(join("components", name));
 }
 
+export function listComponentFiles(directory = COMPONENTS_DIR, prefix = ""): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = `${prefix}${entry.name}`;
+    if (entry.isDirectory()) return listComponentFiles(join(directory, entry.name), `${relativePath}/`);
+    return entry.isFile() && entry.name.endsWith(".tsx") ? [relativePath] : [];
+  }).sort();
+}
+
 let cached: string | null = null;
 let stylesCached: string | null = null;
 let themeDataCached: string | null = null;

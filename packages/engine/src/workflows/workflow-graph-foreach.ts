@@ -416,7 +416,18 @@ export async function runForeach(
     return runForeachWorktree(foreachNode, env, config, plan, pinnedStepCount, visitedNodeIds);
   }
 
-  // ── shared isolation (default sequential) — UNCHANGED U3 behavior ──────────
+  /*
+  FNXC:WorkflowForeachGrowth 2026-08-25-03:10:
+  The pin STAYS. A previous revision let this region grow to cover steps appended after expansion,
+  on the theory that named remediation (`review-remediation-steps`) could not otherwise execute its
+  appended work. That measurement came from a configuration that has since been fixed elsewhere, and
+  it no longer reproduces: with the growth removed, the full pipeline-smoke lane passes 89/89,
+  including the dedicated remediation drive that asserts a rejected Code Review produces named steps,
+  runs them, and merges.
+  An engine change to a core execution primitive that no failing test requires is dead weight on a
+  hot path, so it was reverted rather than kept "just in case". If a future case genuinely needs
+  growth, it must arrive with a test that fails without it.
+  */
   for (let stepIndex = 0; stepIndex < pinnedStepCount; stepIndex++) {
     if (env.signal?.aborted) {
       return { outcome: "failure", value: "aborted", visitedNodeIds };

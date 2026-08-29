@@ -7,6 +7,12 @@ import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
 import type { Task, Column as ColumnType } from "@fusion/core";
 
+const { rebuildTaskSpecMock } = vi.hoisted(() => ({ rebuildTaskSpecMock: vi.fn() }));
+vi.mock("../../api", async (importOriginal) => ({
+  ...(await importOriginal()),
+  rebuildTaskSpec: rebuildTaskSpecMock,
+}));
+
 // Mock child components to keep tests focused on the Column badge behavior
 const taskCardRenderSpy = vi.fn();
 
@@ -98,6 +104,7 @@ function makeTask(id: string): Task {
 }
 
 beforeEach(() => {
+  rebuildTaskSpecMock.mockReset();
   taskCardRenderSpy.mockClear();
   mockConfirm.mockReset();
   mockConfirm.mockResolvedValue(true);
@@ -880,7 +887,7 @@ describe("Column QuickEntryBox", () => {
 });
 
 describe("Column in-progress/in-review bulk actions", () => {
-  it.each(["in-progress", "in-review"] as const)("renders Stop All and Move All to Todo actions for %s", async (column) => {
+  it.each(["in-progress", "in-review"] as const)("renders Stop All without manual move actions for %s", async (column) => {
     const user = userEvent.setup();
     render(
       <Column
@@ -900,7 +907,7 @@ describe("Column in-progress/in-review bulk actions", () => {
     expect(menuButton).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("menu")).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Stop All/i })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: /Move All to Todo/i })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /Move All/i })).toBeNull();
   });
 
   it.each(["in-progress", "in-review"] as const)("Stop All pauses only manually-pausable tasks in %s", async (column) => {
@@ -975,37 +982,6 @@ describe("Column in-progress/in-review bulk actions", () => {
     expect(screen.getByText("No manually pausable tasks")).toBeTruthy();
   });
 
-  it.each(["in-progress", "in-review"] as const)("Move All to Todo moves every task in %s", async (column) => {
-    const user = userEvent.setup();
-    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-
-    render(
-      <Column
-        {...defaultProps}
-        column={column}
-        onMoveTask={onMoveTask}
-        tasks={[
-          { ...makeTask("FN-001"), column },
-          { ...makeTask("FN-002"), column },
-        ]}
-        onPauseTask={vi.fn().mockResolvedValue({} as Task)}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: `${column === "in-progress" ? "In Progress" : "In Review"} column actions` }));
-    await user.click(screen.getByRole("menuitem", { name: /Move All to Todo/i }));
-
-    await waitFor(() => {
-      expect(onMoveTask).toHaveBeenCalledTimes(2);
-    });
-    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo", undefined);
-    expect(onMoveTask).toHaveBeenCalledWith("FN-002", "todo", undefined);
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Move All to Todo",
-      message: `Move all 2 ${column === "in-progress" ? "in progress" : "in review"} tasks to Todo?`,
-    });
-  });
 });
 
 describe("Column plan auto-approval action", () => {
@@ -1052,6 +1028,21 @@ describe("Column plan auto-approval action", () => {
 
     expect(onTogglePlanAutoApprove).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("replans each task through the server and never moves cards client-side", async () => {
+    const user = userEvent.setup();
+    const onMoveTask = vi.fn();
+    rebuildTaskSpecMock.mockResolvedValue({});
+    render(<Column {...defaultProps} column="todo" projectId="project-1" onMoveTask={onMoveTask} tasks={[makeTask("FN-001"), makeTask("FN-002")]} />);
+
+    await user.click(screen.getByRole("button", { name: "Todo column actions" }));
+    await user.click(screen.getByRole("menuitem", { name: /Replan All/i }));
+
+    await waitFor(() => expect(rebuildTaskSpecMock).toHaveBeenCalledTimes(2));
+    expect(rebuildTaskSpecMock).toHaveBeenCalledWith("FN-001", "project-1");
+    expect(rebuildTaskSpecMock).toHaveBeenCalledWith("FN-002", "project-1");
+    expect(onMoveTask).not.toHaveBeenCalled();
   });
 
   it("coexists with workflow intake replan actions", async () => {

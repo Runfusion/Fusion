@@ -12,9 +12,8 @@ import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from 
 import {assertNotWorkspaceTaskMerge} from "../types.js";
 import "../builtin-traits.js";
 import {getTaskMergeBlocker, isPreMergeStepsNotRunBlocker, PreMergeStepsNotRunError, resolveTaskMergeTarget} from "../merge/task-merge.js";
-import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
-import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
-import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
+import {resolvePreMergeGateForTask} from "../merge/required-pre-merge-steps.js";
+import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
@@ -408,37 +407,24 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-00:45 (unwired-parameter class, cf. #2803):
-      `getTaskMergeBlocker` has taken an optional RESOLVED `reviewColumns` since its own conversion, and
-      this caller omitted it — so the identity check fell back to the literal `in-review` and threw
-      `Cannot merge <id>: task is not in 'in-review'` for a card sitting correctly in ITS OWN board's
-      review lane. A hard, operator-visible merge failure on every renamed board.
-
-      A resolved seam nobody wired is indistinguishable from no seam at all.
-
-      MEMBERSHIP, not first-per-role: `resolveReviewColumns` unions mergeOrchestration, mergeBlocker and
-      humanReview, so a workflow splitting those across columns has all of them accepted. Unioned with
-      the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+      FNXC:PreMergeGateResolution 2026-08-23-07:58:
+      Queue admission resolves the selected workflow with provenance. A selected workflow that
+      falls back to the builtin graph is not evidence about its review lanes, so it defers rather
+      than silently using the legacy result-only gate. An absent selection still uses builtin:coding.
       */
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
-      THE LEGACY ID IS A FALLBACK, NOT A MEMBER. My first version pre-seeded `in-review` into the set and
-      unioned the resolved lanes on top. That admits a board which declares `in-review` as its WIP column:
-      a card mid-implementation would pass the merge-identity check and merge prematurely.
-
-      The legacy id is only correct when the board tells us NOTHING — an empty resolved set, or a
-      resolution that threw. A non-empty resolved answer replaces it outright; that is the same
-      "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
-      */
-      let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
-      let requiredPreMergeStepIds: ReadonlySet<string> | undefined;
+      let mergeGate;
       try {
-        const ir = await resolveWorkflowIrForTask(store, id);
-        const resolved = ir ? resolveReviewColumns(ir) : [];
-        if (resolved.length > 0) reviewColumns = new Set(resolved);
-        if (ir) requiredPreMergeStepIds = resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps);
-      } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
-      const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds });
+        mergeGate = await resolvePreMergeGateForTask(store, id, task.enabledWorkflowSteps);
+      } catch {
+        throw new Error(`Cannot merge ${id}: merge gate could not resolve the task workflow`);
+      }
+      if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
+        throw new Error(`Cannot merge ${id}: merge gate could not resolve the task workflow`);
+      }
+      const mergeBlocker = getTaskMergeBlocker(task, {
+        reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
+        requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+      });
       if (mergeBlocker) {
         /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure. */
         if (isPreMergeStepsNotRunBlocker(mergeBlocker)) throw new PreMergeStepsNotRunError(id);

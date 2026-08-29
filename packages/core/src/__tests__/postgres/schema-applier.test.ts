@@ -109,6 +109,7 @@ import {
   TASK_REPOSITORY_SCOPE_VERSION,
   REVIEW_CONVERGENCE_STAGE_VERSION,
   CHAT_SESSION_MEMORY_FOCUS_VERSION,
+  SESSION_CONTENTION_WAIT_STATE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -157,7 +158,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_REPOSITORY_SCOPE_VERSION).toBe("0064");
     expect(REVIEW_CONVERGENCE_STAGE_VERSION).toBe("0065");
     expect(CHAT_SESSION_MEMORY_FOCUS_VERSION).toBe("0066");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0066");
+    expect(SESSION_CONTENTION_WAIT_STATE_VERSION).toBe("0067");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -777,6 +779,80 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     await expect(applySchemaBaseline(ctx.db, { pluginHooks: [] })).resolves.toEqual({ applied: true, pluginHooksRun: 0 });
     expect(await getAppliedMigrations(ctx.db)).toContain(TASK_LIFECYCLE_OUTBOX_VERSION);
     await assertTaskLifecycleOutboxOwnershipContract(ctx);
+  });
+
+  /*
+  FNXC:MemoryFocus 2026-08-26-08:31:
+  THE LEDGER CAN LIE ABOUT A RENUMBERED MIGRATION.
+
+  A ledger row asserts "a migration with this NUMBER ran". The memory-focus migration was renumbered
+  four times (0059 → 0060 → 0061 → 0065 → 0066), each time because an upstream batch claimed the
+  sequence first, so a database can carry a row for one numbering while a different migration owned
+  that number on the boot that recorded it. The applier then trusts the ledger absolutely, skips the
+  migration, and reports a successful startup over a schema that does not match it.
+
+  Reproduced from a real dev database: `column "memory_focus" does not exist` on every chat-session
+  read — `select()` emits the binary's full column list — so every chat query 500s and the task
+  planner chat never opens, with nothing wrong at startup.
+
+  The repair is the same one `recommendations` already carries: verify the materialized column, not
+  only the marker, and replay the idempotent `ADD COLUMN IF NOT EXISTS`.
+  */
+  it("repairs a database whose ledger claims memory focus but whose column is missing", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+
+    // The exact drifted state: marker present, column absent.
+    await ctx.db.execute(sql.raw(`ALTER TABLE project.chat_sessions DROP COLUMN memory_focus;`));
+    expect(await getAppliedMigrations(ctx.db)).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_sessions' AND column_name = 'memory_focus'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns, "the replay must materialize the column the ledger already claimed").toHaveLength(1);
+    expect(await getAppliedMigrations(ctx.db)).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+
+    // Idempotent: a second pass over a healthy schema changes nothing and still succeeds.
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    const afterSecondPass = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_sessions' AND column_name = 'memory_focus'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(afterSecondPass).toHaveLength(1);
+  });
+
+  /*
+  FNXC:WorkspaceContention 2026-08-26-08:31:
+  The other migration renumbered on this branch (0066 → 0067, because released chat memory focus owns
+  0066) carries the identical hazard and therefore the identical defence.
+  */
+  it("repairs a database whose ledger claims session contention wait state but whose columns are missing", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.tasks
+        DROP COLUMN session_contention_hold_count,
+        DROP COLUMN session_contention_wait_reason;
+    `));
+    expect(await getAppliedMigrations(ctx.db)).toContain(SESSION_CONTENTION_WAIT_STATE_VERSION);
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks'
+        AND column_name IN ('session_contention_hold_count', 'session_contention_wait_reason')
+      ORDER BY column_name
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns.map((row) => row.column_name))
+      .toEqual(["session_contention_hold_count", "session_contention_wait_reason"]);
   });
 
   /*
@@ -1782,6 +1858,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1873,6 +1951,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
     ]);
   });
 
@@ -2097,6 +2177,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
     ]);
   });
 
@@ -2202,6 +2284,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
     ]);
   });
 
@@ -2307,6 +2391,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
     ]);
   });
 });

@@ -9,6 +9,7 @@
  * FN-7261 exposed stale no-op proof as a re-execution blocker: a reopened task with incomplete implementation steps and only no-op merge proof must fall through to merge-state cleanup/reverification, not consume execute() by repeatedly trying blocked finalization.
  */
 import type { MergeResult, TaskStore } from "@fusion/core";
+import { hasNonTerminalSteps } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
 import { executorLog } from "../logger.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
@@ -67,7 +68,22 @@ export async function finalizeMergeConfirmedWorkflowGraphTask(
       undefined,
       deps.getRunContextFor(taskId),
     );
-    if (finalization.reason === "task has incomplete steps" && live.mergeDetails?.noOpMerge === true && !live.mergeDetails?.commitSha) {
+    /*
+    FNXC:MergeBlockerReasons 2026-08-26-11:40:
+    Ask the CONDITION, not the sentence.
+
+    This carve-out exists because a no-op merge confirmation with no landed commit is not proof that
+    the work was done: when the steps are still unfinished the run must fall through to stale-merge
+    cleanup and reverification instead of being consumed here. It selected that case by comparing the
+    blocker reason with `===` against the exact string "task has incomplete steps".
+
+    The merge-authority work then made refusals more informative, so a card in an error state now
+    reports `task is marked 'failed': … task has incomplete steps`. Same meaning, different sentence —
+    and this stopped matching, silently, so the fall-through never happened again. A blocker message is
+    written for an operator and will be reworded again; `hasNonTerminalSteps` is the rule underneath it
+    and cannot drift from `getTaskMergeBlocker`, which is defined from the same set.
+    */
+    if (hasNonTerminalSteps(live) && live.mergeDetails?.noOpMerge === true && !live.mergeDetails?.commitSha) {
       return false;
     }
     return true;

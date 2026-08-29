@@ -5080,6 +5080,36 @@ describe("QuickEntryBox", () => {
       await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-hold", "working"));
     });
 
+    /*
+    FNXC:QuickAddStart 2026-08-26-19:19:
+    Reported symptom: on a DUPLICATED Ideas workflow ("Coding ideas V2") the composer's Start button
+    created the card but never started it. Start keyed its atomic destination on the literal
+    `builtin:coding-ideas` id, so a copy fell through to a promotion that skipped the Planning hold
+    lane and moved into the WIP lane — a transition the server always rejects. Assert the composer
+    surface creates in the duplicate's own Planning lane and issues no move at all.
+    */
+    it("creates a duplicated Ideas workflow's Start in its own Planning lane", async () => {
+      const duplicatedIdeasWorkflow = {
+        id: "WF-014",
+        name: "Coding ideas V2",
+        columns: [
+          { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
+          { id: "todo", name: "Planning", flags: { hold: true } },
+          { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+          { id: "done", name: "Done", flags: { complete: true } },
+        ],
+      };
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-clone", column: "todo", workflowId: duplicatedIdeasWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      renderQuickEntryBox({ onCreate, onMoveTask, workflowId: duplicatedIdeasWorkflow.id, workflowOptions: [duplicatedIdeasWorkflow] });
+      enterDescription();
+
+      clickStart();
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: duplicatedIdeasWorkflow.id, column: "todo" })));
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
     it("disables Start until a description is entered and never hides it mid-typing", () => {
       renderQuickEntryBox({ onMoveTask: vi.fn(), workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
 

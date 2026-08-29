@@ -1262,7 +1262,6 @@ Basic Settings mode also removes low-frequency controls inside otherwise common 
   .form-group:has(#persistAgentThinkingLogPermanent),
   .form-group:has(#fnBinaryCheckEnabled),
   .form-group:has(#updateCheckFrequency),
-  .form-group:has(#autoReloadOnVersionChange),
   .form-group:has(#taskDetailChatFirst),
   .form-group:has(#sessionBannersHidden),
   .form-group:has(#failureNotificationDelayMs),

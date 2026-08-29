@@ -161,9 +161,15 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
   assert.match(gate, /wait \$pg_pid \|\| status=1/);
   assert.match(gate, /wait \$unit_pid \|\| status=1/);
   assert.match(gate, /&& pnpm --filter @runfusion\/fusion test:ci-shape$/);
+  /*
+  FNXC:MergeGatePolicy 2026-08-23-18:16:
+  The core unit gate includes migration-wiring integrity alongside the lifecycle columns and
+  workflow-IR allow-list checks. Keep this exact command mirror current so a policy test detects
+  real gate drift instead of remaining red after a deliberate gate admission.
+  */
   assert.equal(
     core.scripts?.["test:unit-gate"],
-    "vitest run src/__tests__/task-merge.test.ts src/__tests__/legacy-adoption.test.ts src/__tests__/no-hardcoded-lifecycle-columns.test.ts src/__tests__/sync-workflow-ir-callsite-allowlist.test.ts --silent=passed-only --reporter=dot",
+    "vitest run src/__tests__/task-merge.test.ts src/__tests__/legacy-adoption.test.ts src/__tests__/no-hardcoded-lifecycle-columns.test.ts src/__tests__/sync-workflow-ir-callsite-allowlist.test.ts src/__tests__/migration-wiring-integrity.test.ts --silent=passed-only --reporter=dot",
   );
   assert.doesNotMatch(gate, /NODE_NO_WARNINGS/);
   assert.doesNotMatch(root.scripts?.["test"] ?? "", /NODE_NO_WARNINGS/);
