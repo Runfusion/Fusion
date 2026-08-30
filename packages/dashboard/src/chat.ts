@@ -40,6 +40,8 @@ import {
   createLogger,
   resolvePermanentAgentEffectiveModel,
   resolvePermanentAgentEffectiveThinkingLevel,
+  isExperimentalFeatureEnabled,
+  CHAT_FOCUS_FLAG,
 } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -172,6 +174,44 @@ const diagnostics: DiagnosticsLogger = {
 };
 
 const SKILL_COMMAND_PATTERN = /(^|\s)\/skill:([^\s]+)/gi;
+const CHAT_RUNTIME_INTERRUPT_TIMEOUT_MS = 5_000;
+
+/**
+ * FNXC:ChatCancellation 2026-08-23-02:53:
+ * Force send and Stop must ask a running runtime to interrupt through its own API,
+ * not only a local AbortController that the runtime never receives. Plugin sessions
+ * such as ACP and Grok expose no interrupt, so this guard is duck-typed; a stalled or
+ * rejecting runtime is bounded so existing disposal and durable reconciliation proceed.
+ */
+async function requestRuntimeSessionInterrupt(session: unknown): Promise<void> {
+  const sessionWithAbort = session as { abort?: () => Promise<void> | void } | undefined;
+  if (typeof sessionWithAbort?.abort !== "function") {
+    return;
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      Promise.resolve()
+        .then(() => sessionWithAbort.abort!())
+        .then(() => "completed" as const, (err) => ({ error: err })),
+      new Promise<"timed-out">((resolve) => {
+        timeout = setTimeout(() => resolve("timed-out"), CHAT_RUNTIME_INTERRUPT_TIMEOUT_MS);
+      }),
+    ]);
+    if (outcome === "timed-out") {
+      diagnostics.error("Timed out requesting runtime session interrupt during chat cancellation");
+    } else if (typeof outcome === "object" && "error" in outcome) {
+      diagnostics.error("Failed to request runtime session interrupt during chat cancellation:", outcome.error);
+    }
+  } catch (err) {
+    diagnostics.error("Failed to request runtime session interrupt during chat cancellation:", err);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 function bareChatSkillCommandName(name: string): string {
   return name
@@ -472,14 +512,10 @@ export interface ChatFusionToolsetOptions {
   /** Required for command-execution requests; status remains safely readable without it. */
   actionGateContext?: AgentActionGateContext;
   /*
-  FNXC:ChatMemoryFocus 2026-08-13:
-  Per-conversation memory focus (RUFU-068). When the enclosing chat session carries an active
-  topic (chat_sessions.memory_focus, set via /focus or the per-chat selector), thread it into
-  createMemoryTools so fn_memory_search scopes project recall to that topic. This is a
-  WITHIN-project read filter only: the topic reaches backend.search (the SQL enforcement point)
-  and is never a client-side post-query filter. undefined/'all'/empty/'*' → whole-project scope.
-  Rooms have no per-room focus field yet, so room-responder tool sites pass undefined and recall
-  stays whole-project; only direct chat (sendMessage) carries session.memoryFocus today.
+  FNXC:ChatMemoryFocus 2026-08-24-04:21:
+  Per-conversation memory focus storage remains available, but every reader is gated by
+  experimentalFeatures.chatFocus. A persisted topic is inert and recall stays whole-project
+  until operators opt in; enabled sessions still scope fn_memory_search at the backend.
   */
   focus?: string;
 }
@@ -683,7 +719,11 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),
       /* FNXC:ChatAgentTools 2026-07-15-00:00: Chat exposes memory retrieval only and respects the workspace memory-enabled setting; prompt-triggered persistent writes stay excluded without an action-gate context. */
-      ...createMemoryTools(rootDir, settings, focus ? { focus } : undefined).filter((tool) => tool.name !== "fn_memory_append"),
+      ...createMemoryTools(
+        rootDir,
+        settings,
+        focus && isExperimentalFeatureEnabled(settings, CHAT_FOCUS_FLAG) ? { focus } : undefined,
+      ).filter((tool) => tool.name !== "fn_memory_append"),
       ...createResearchTools({ store: taskStore, rootDir, getSettings: () => taskStore.getSettings() }),
     );
   }
@@ -1139,6 +1179,25 @@ export type ChatStreamEvent =
         };
         attachments?: ChatAttachment[];
         interrupted?: boolean;
+        dispatch?: "agents";
+        failedAgentNames?: string[];
+      };
+    }
+  | {
+      type: "agent_message";
+      data: {
+        message: {
+          id: string;
+          sessionId: string;
+          role: "assistant";
+          content: string;
+          thinkingOutput: string | null;
+          metadata: Record<string, unknown> | null;
+          attachments?: ChatAttachment[];
+          createdAt: string;
+        };
+        senderAgentId: string;
+        senderAgentName: string;
       };
     }
   | { type: "error"; data: string | ChatFailureInfo };
@@ -1826,10 +1885,10 @@ export class ChatManager {
     // controller so it stops issuing further prompts/tool calls that would
     // race against the new generation for the same CLI session file.
     //
-    // We deliberately do NOT dispose its agent here — the previous generation
-    // owns its own dispose in its `finally`. Calling dispose pre-emptively can
-    // yank the underlying CLI process out from under the new generation's
-    // freshly-opened SessionManager pointing at the same session file.
+    // We deliberately do NOT request the runtime-native interrupt or dispose its agent here —
+    // the previous generation owns both in its own teardown. Calling dispose pre-emptively can
+    // yank the underlying CLI process out from under the new generation's freshly-opened
+    // SessionManager pointing at the same session file.
     const existing = this.activeGenerations.get(sessionId);
     if (existing) {
       existing.abortController.abort();
@@ -2429,6 +2488,128 @@ export class ChatManager {
     }
   }
 
+  /*
+  FNXC:ChatMentionDispatch 2026-08-23-02:31:
+  Direct-chat mentions summon permanent agents for that message instead of depending on room membership.
+  Each responder resolves its own model and thinking configuration; unmentioned turns keep the direct model loop.
+  */
+  private async dispatchMentionedAgentReplies(input: {
+    session: ChatSession;
+    sessionId: string;
+    content: string;
+    attachments?: ChatAttachment[];
+    mentions: ChatMention[];
+    latestUserMessageId: string;
+    generationId: number;
+  }): Promise<void> {
+    const failedAgentNames: string[] = [];
+    let replies = 0;
+    for (const mention of input.mentions) {
+      const responder = await this.getAgentById(mention.agentId);
+      if (!responder) continue;
+      try {
+        const response = await this.generateMentionedAgentReply({ ...input, responder });
+        if (isRoomSkipSentinel(response.content)) continue;
+        const message = await this.chatStore.addMessage(input.sessionId, {
+          role: "assistant", content: response.content, thinkingOutput: response.thinkingOutput ?? undefined,
+          metadata: { senderAgentId: responder.id, senderAgentName: responder.name, ...(response.fallback ? { fallback: response.fallback } : {}) },
+        });
+        if (response.tokenUsage) {
+          await this.chatStore.recordTokenUsage({ sourceKind: "chat", chatSessionId: input.sessionId, messageId: message.id, projectId: input.session.projectId ?? null, agentId: responder.id, createdAt: message.createdAt, ...response.tokenUsage });
+        }
+        replies++;
+        chatStreamManager.broadcast(input.sessionId, {
+          type: "agent_message",
+          data: { message: { id: message.id, sessionId: message.sessionId, role: "assistant", content: message.content, thinkingOutput: message.thinkingOutput ?? null, metadata: message.metadata ?? null, attachments: message.attachments, createdAt: message.createdAt }, senderAgentId: responder.id, senderAgentName: responder.name },
+        }, { generationId: input.generationId });
+      } catch (error) {
+        diagnostics.error(`Mentioned chat responder ${responder.id} failed in ${input.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        failedAgentNames.push(responder.name);
+      }
+    }
+    await this.flushInFlightGenerationPersist(input.sessionId, null, input.generationId);
+    if (replies === 0 && failedAgentNames.length > 0) {
+      chatStreamManager.broadcast(input.sessionId, { type: "error", data: { summary: `Failed to generate replies from ${failedAgentNames.join(", ")}` } }, { generationId: input.generationId });
+      return;
+    }
+    chatStreamManager.broadcast(input.sessionId, { type: "done", data: { messageId: "", dispatch: "agents", ...(failedAgentNames.length > 0 ? { failedAgentNames } : {}) } }, { generationId: input.generationId });
+  }
+
+  private async generateMentionedAgentReply(input: {
+    session: ChatSession;
+    sessionId: string;
+    content: string;
+    attachments?: ChatAttachment[];
+    mentions: ChatMention[];
+    latestUserMessageId: string;
+    generationId: number;
+    responder: Agent;
+  }): Promise<{ content: string; thinkingOutput: string | null; fallback?: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }; tokenUsage?: ChatTokenDelta & { modelProvider: string | null; modelId: string | null } }> {
+    await ensureEngineReady();
+    let systemPrompt = CHAT_SYSTEM_PROMPT;
+    if (buildAgentChatPromptFn) {
+      try { systemPrompt = await buildAgentChatPromptFn({ agent: input.responder, rootDir: this.rootDir, agentStore: this.agentStore, basePrompt: CHAT_SYSTEM_PROMPT, includeProjectMemory: true }); }
+      catch (error) { diagnostics.warn(`Failed to build mentioned chat prompt for ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    const mentionContext = await this.buildMentionContext(input.mentions);
+    systemPrompt = `${systemPrompt}${mentionContext ? `\n\n${mentionContext}` : ""}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}\n\n${CHAT_CODEBASE_ACCURACY_GUIDANCE}`;
+    const limits = await this.getRoomCompactionSettings();
+    const history = await this.chatStore.getMessages(input.sessionId, { limit: limits.fetchLimit, order: "desc" });
+    const transcript = buildCompactedRoomTranscript([...history].reverse().map((message) => ({ id: message.id, role: message.role, content: message.content, createdAt: message.createdAt, senderAgentId: typeof message.metadata?.senderAgentId === "string" ? message.metadata.senderAgentId : null })), input.latestUserMessageId, limits);
+    const { attachmentContents, imageContents } = await readChatAttachmentContents(this.rootDir, { kind: "session", sessionId: input.sessionId }, input.attachments, diagnostics);
+    const skills = parseSkillCommands(input.content);
+    const prompt = [`You are replying as ${input.responder.name} in direct chat after being explicitly mentioned.`, "Direct-chat transcript (oldest to newest, bounded):", transcript, "Latest user message to answer:", skills.strippedContent, formatChatAttachmentContents(attachmentContents), formatChatImageAttachmentHints(imageContents)].filter(Boolean).join("\n\n");
+    const settings = await this.getChatModelSettings();
+    const runtimeModel = extractRuntimeModel(input.responder.runtimeConfig);
+    const inheritedModel = resolvePermanentAgentEffectiveModel(input.responder, settings);
+    const hasRuntimeModel = !!runtimeModel.provider && !!runtimeModel.modelId;
+    const skillContext = buildSessionSkillContextSync(input.responder, "heartbeat", this.rootDir, this.getPluginRunnerForSkillSelection());
+    const skillSelection = mergeTypedSkillCommands(skillContext.skillSelectionContext, skills.requestedSkillNames, this.rootDir, "heartbeat");
+    const workflowTools = createChatWorkflowAuthoringTools(this.taskStore, input.session.projectId ?? null);
+    const gates = await createChatMissionGateContexts(this.taskStore, this.agentStore, input.responder);
+    const fusionTools = await createChatFusionToolset({ taskStore: this.taskStore, agentStore: this.agentStore, rootDir: this.rootDir, agentId: input.responder.id, missionMutationGated: gates.missionMutationGated, actionGateContext: gates.actionGateContext });
+    let fallback: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" } | undefined;
+    const resolved = await createResolvedAgentSession({
+      sessionPurpose: "heartbeat", pluginRunner: this.pluginRunner, runtimeHint: extractRuntimeHint(input.responder.runtimeConfig), cwd: this.rootDir, systemPrompt, tools: CHAT_CODING_TOOLS,
+      ...(skillSelection ? { skillSelection } : {}), ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
+      ...(workflowTools.length + fusionTools.length > 0 ? { customTools: dedupeChatTools([...workflowTools, ...fusionTools]) } : {}),
+      ...((hasRuntimeModel ? runtimeModel.provider : inheritedModel.provider) && (hasRuntimeModel ? runtimeModel.modelId : inheritedModel.modelId) ? { defaultProvider: hasRuntimeModel ? runtimeModel.provider : inheritedModel.provider, defaultModelId: hasRuntimeModel ? runtimeModel.modelId : inheritedModel.modelId } : {}),
+      ...(resolvePermanentAgentEffectiveThinkingLevel(input.responder, settings) ? { defaultThinkingLevel: resolvePermanentAgentEffectiveThinkingLevel(input.responder, settings) } : {}),
+      ...(settings.fallbackProvider && settings.fallbackModelId ? { fallbackProvider: settings.fallbackProvider, fallbackModelId: settings.fallbackModelId } : {}),
+      ...(gates.actionGateContext ? { actionGateContext: gates.actionGateContext } : {}), ...(gates.permanentAgentGating ? { permanentAgentGating: gates.permanentAgentGating } : {}),
+      onFallbackModelUsed: (payload: typeof fallback) => { fallback = payload; },
+    });
+    const generationEntry = this.activeGenerations.get(input.sessionId);
+    if (!generationEntry || generationEntry.generationId !== input.generationId) {
+      resolved.session.dispose?.();
+      throw new Error("Generation cancelled");
+    }
+    /*
+    FNXC:ChatCancellation 2026-08-23-03:29:
+    Explicitly mentioned-agent replies share the chat generation cancellation barrier. Register
+    the resolved runtime session before prompting so Stop/Force can interrupt and dispose the
+    actual responder rather than an unused controller slot.
+    */
+    generationEntry.agentResult = resolved;
+    if (generationEntry.abortController.signal.aborted) {
+      resolved.session.dispose?.();
+      throw new Error("Generation cancelled");
+    }
+    try {
+      await enginePromptWithFallback(resolved.session, prompt, imageContents.length > 0 ? { images: imageContents } : undefined);
+      type AgentMessage = { role?: string; type?: string; content?: string | Array<{ type?: string; text?: string }> };
+      const state = resolved.session.state as { messages?: AgentMessage[]; errorMessage?: string } | undefined;
+      if (state?.errorMessage?.trim()) throw new Error(state.errorMessage.trim());
+      const messages = state?.messages ?? (resolved.session as { messages?: AgentMessage[] }).messages ?? [];
+      const answer = [...messages].reverse().find((message) => message.role === "assistant" || message.type === "assistant");
+      const content = typeof answer?.content === "string" ? answer.content : Array.isArray(answer?.content) ? answer.content.map((part) => part?.type === "text" ? part.text ?? "" : "").join("") : "";
+      if (!content.trim()) throw new Error("Mentioned responder returned an empty reply");
+      const { tokens } = await readChatSessionUsageSnapshot(resolved.session);
+      const model = modelSnapshotForTokenUsage(resolved.session, fallback);
+      return { content: content.trim(), thinkingOutput: null, ...(fallback ? { fallback } : {}), ...(tokens ? { tokenUsage: { ...tokens, modelProvider: model.provider, modelId: model.modelId } } : {}) };
+    } finally { resolved.session.dispose?.(); }
+  }
+
   /**
    * Preserve the newest room turns verbatim while compacting older history into
    * a deterministic summary block so long-running rooms keep continuity.
@@ -2643,6 +2824,19 @@ export class ChatManager {
           type: "error",
           data: `Failed to save message: ${err instanceof Error ? err.message : "Unknown error"}`,
         }, broadcastOptions);
+        return;
+      }
+
+      if (mentions.length > 0 && this.activeGenerations.get(sessionId)?.generationId === generationId) {
+        await this.dispatchMentionedAgentReplies({
+          session,
+          sessionId,
+          content,
+          attachments,
+          mentions,
+          latestUserMessageId: persistedUserMessageId!,
+          generationId,
+        });
         return;
       }
 
@@ -2939,12 +3133,10 @@ export class ChatManager {
         missionMutationGated: missionGateContexts.missionMutationGated,
         actionGateContext: missionGateContexts.actionGateContext,
         /*
-        FNXC:ChatMemoryFocus 2026-08-13:
-        Direct-chat recall scopes fn_memory_search to the session's persisted topic
-        (chat_sessions.memory_focus). This is the production path that makes the /focus
-        command's persisted value actually reach the tool's search options — without it the
-        operator would see the chip but receive whole-project recall. Rooms have no focus
-        field yet, so the room-responder toolset passes undefined (whole-project scope).
+        FNXC:ChatMemoryFocus 2026-08-24-04:21:
+        Direct-chat sessions retain their persisted topic for storage compatibility, but the
+        toolset applies it only while experimentalFeatures.chatFocus is enabled. Otherwise the
+        value is inert and both direct and room chat recall remain whole-project.
         */
         focus: session?.memoryFocus ?? undefined,
       });
@@ -3441,6 +3633,15 @@ export class ChatManager {
       entry.abortController.abort();
 
       if (entry.agentResult) {
+        /*
+         * FNXC:ChatCancellation 2026-08-23-02:53:
+         * Force send and Stop must request the runtime-native interrupt before disposal because
+         * the local controller is not passed to prompt(). ACP/Grok sessions lack abort(), and
+         * this bounded request must finish before the existing durable settled barrier can wait.
+         */
+        if (typeof (entry.agentResult.session as { abort?: unknown }).abort === "function") {
+          await requestRuntimeSessionInterrupt(entry.agentResult.session);
+        }
         try {
           entry.agentResult.session.dispose?.();
         } catch (err) {

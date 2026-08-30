@@ -85,30 +85,36 @@ function shouldRunWorkflowColumnScheduler(_settings: Settings): boolean {
  *
  * Exported for direct unit testing; used internally by {@link Scheduler}.
  */
-export function pathsOverlap(a: string[], b: string[]): boolean {
-  for (const pa of a) {
-    const prefixA = pa.endsWith("/*") ? pa.slice(0, -1) : null;
-    for (const pb of b) {
-      const prefixB = pb.endsWith("/*") ? pb.slice(0, -1) : null;
+export interface FileScopeOverlapMatch {
+  path: string;
+  blockerPath: string;
+}
 
-      // Exact match (ignoring glob suffix)
-      const cleanA = prefixA ? pa.slice(0, -2) : pa;
-      const cleanB = prefixB ? pb.slice(0, -2) : pb;
-      if (cleanA === cleanB) return true;
-
-      // Check prefix overlap
-      if (prefixA && pb.startsWith(prefixA)) return true;
-      if (prefixB && pa.startsWith(prefixB)) return true;
-      if (prefixA && prefixB) {
-        if (prefixA.startsWith(prefixB) || prefixB.startsWith(prefixA))
-          return true;
-      }
-
-      // Exact file path match
-      if (pa === pb) return true;
+/*
+FNXC:OverlapScheduling 2026-08-27-11:06:
+The scheduler's boolean admission predicate and the operator-facing overlap pairs must share one matcher. Returning every sorted, deduplicated match explains an existing blocker without changing whether work is serialized.
+*/
+export function findFileScopeOverlaps(a: string[], b: string[]): FileScopeOverlapMatch[] {
+  const matches = new Map<string, FileScopeOverlapMatch>();
+  for (const path of a) {
+    const prefixA = path.endsWith("/*") ? path.slice(0, -1) : null;
+    for (const blockerPath of b) {
+      const prefixB = blockerPath.endsWith("/*") ? blockerPath.slice(0, -1) : null;
+      const cleanA = prefixA ? path.slice(0, -2) : path;
+      const cleanB = prefixB ? blockerPath.slice(0, -2) : blockerPath;
+      const overlaps = cleanA === cleanB
+        || Boolean(prefixA && blockerPath.startsWith(prefixA))
+        || Boolean(prefixB && path.startsWith(prefixB))
+        || Boolean(prefixA && prefixB && (prefixA.startsWith(prefixB) || prefixB.startsWith(prefixA)))
+        || path === blockerPath;
+      if (overlaps) matches.set(`${path}\u0000${blockerPath}`, { path, blockerPath });
     }
   }
-  return false;
+  return [...matches.values()].sort((left, right) => left.path.localeCompare(right.path) || left.blockerPath.localeCompare(right.blockerPath));
+}
+
+export function pathsOverlap(a: string[], b: string[]): boolean {
+  return findFileScopeOverlaps(a, b).length > 0;
 }
 
 function normalizeOverlapPath(path: string): string {

@@ -645,25 +645,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
         <SettingsHelpTip settingKey="project-chat-defaults">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</SettingsHelpTip>
       </div>
-      {/*
-      FNXC:SettingsModels 2026-07-15-17:35:
-      Only the mode select migrates to a primitive. The target picker below it (Model/Agent segmented toggle + model dropdown or agent select + shared Reset) is one compound control over five form keys, not a row per key, so it stays bespoke.
-      "prompt" is the unset default rather than a stored value: anything that is not `always-default` writes `undefined` so the key is deleted rather than persisted at its default.
-      */}
-      <SettingsSelectRow
-        descriptor={{
-          key: "chatNewSessionMode",
-          label: t("settings.projectModels.chatNewSessionMode", "New Chat behavior"),
-          help: t("settings.projectModels.chatNewSessionModeHelp", "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete."),
-          scope: "project",
-          options: [
-            { value: "prompt", label: t("settings.projectModels.chatNewSessionModePrompt", "Prompt for model each time") },
-            { value: "always-default", label: t("settings.projectModels.chatNewSessionModeAlwaysDefault", "Always use configured default") },
-          ],
-        }}
-        value={form.chatNewSessionMode ?? "prompt"}
-        onChange={(v) => setForm((f) => ({ ...f, chatNewSessionMode: v === "always-default" ? "always-default" : undefined } as SettingsFormState))}
-      />
+      {/* FNXC:ChatDefaultTarget 2026-08-23-02:31: New Chat now always creates immediately from this target, so the former prompt-versus-default mode control is intentionally not exposed. */}
       <div className="form-group" data-testid="project-models-chat-kind">
         <label>{t("settings.projectModels.chatDefaultKind", "Chat default target")}</label>
         <div className="chat-new-dialog-mode-toggle" data-testid="project-models-chat-kind-toggle">

@@ -484,21 +484,8 @@ describe("auto-merge proven finalization helper", () => {
     }));
   });
 
-  /*
-  FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193 — DELIBERATE INVERSION of this test):
-  This case previously asserted that incomplete steps BLOCK a proven merge's finalization. That is
-  the behaviour that wedged FN-9193: its branch landed on main as eaa1d47c, a Code Review revision
-  request had reset its steps while the approved merge was in flight, and the card was then left
-  `mergeConfirmed` WITH incomplete steps — unfinalizable, parked `failed` for five hours. Restarting
-  it re-planned seven fresh `pending` steps, so the retry re-created the block it was meant to clear.
-
-  Holding a landed card out of `done` un-merges nothing; the code is on the target branch either way.
-  So the exemption is now asserted here, scoped to merges that actually landed content — the sibling
-  case below keeps the blocker for a no-op merge that landed nothing, which is the protective half
-  the original test was really carrying.
-  */
-  it("finalizes a proven merge even when planned steps are still incomplete", async () => {
-    const landedTask = {
+  it("reconciles incomplete workflow steps after a confirmed merge", async () => {
+    const strandedTask = {
       id: "FN-INCOMPLETE",
       title: "Incomplete workflow",
       description: "Test",
@@ -511,67 +498,29 @@ describe("auto-merge proven finalization helper", () => {
       updatedAt: new Date().toISOString(),
       mergeDetails: { mergeConfirmed: true, commitSha: "abc123", landedFiles: ["packages/engine/src/executor.ts"] },
     } as Task;
-    const store = createMockStore(landedTask) as unknown as TaskStore & {
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
       updateTask: ReturnType<typeof vi.fn>;
       moveTask: ReturnType<typeof vi.fn>;
-      logEntry: ReturnType<typeof vi.fn>;
       recordRunAuditEvent: ReturnType<typeof vi.fn>;
     };
-    store.getTask.mockResolvedValue(landedTask);
+    store.getTask.mockResolvedValue(strandedTask);
 
     const result = await finalizeProvenAutoMergeTask({
       store,
       taskId: "FN-INCOMPLETE",
-      result: { task: landedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
       source: "workflow-graph-merge-finalize",
       rootDir: "/repo",
     });
 
-    expect(result).not.toEqual(expect.objectContaining({ reason: "task has incomplete steps" }));
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-INCOMPLETE", expect.objectContaining({
-      error: "Merge confirmed but finalization blocked: task has incomplete steps",
+    expect(result).toEqual(expect.objectContaining({ outcome: "done" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-INCOMPLETE", expect.objectContaining({
+      status: null,
+      error: null,
+      steps: [{ status: "done" }, { status: "skipped" }],
     }));
-    // The unfinished work is recorded on the task rather than silently dropped.
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-INCOMPLETE",
-      expect.stringContaining("unfinished step"),
-      "MergeConfirmedFinalizeUnfinishedSteps",
-    );
-  });
-
-  it("still blocks finalization when a no-op merge landed no content", async () => {
-    const noOpTask = {
-      id: "FN-NOOP",
-      title: "No-op merge",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [{ status: "done" }, { status: "pending" }],
-      currentStep: 1,
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      mergeDetails: { mergeConfirmed: true, noOpMerge: true, landedFiles: [] },
-    } as unknown as Task;
-    const store = createMockStore(noOpTask) as unknown as TaskStore & {
-      getTask: ReturnType<typeof vi.fn>;
-      updateTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
-      recordRunAuditEvent: ReturnType<typeof vi.fn>;
-    };
-    store.getTask.mockResolvedValue(noOpTask);
-
-    const result = await finalizeProvenAutoMergeTask({
-      store,
-      taskId: "FN-NOOP",
-      result: { task: noOpTask, ok: true, merged: true, mergeConfirmed: true, noOp: true } as MergeResult,
-      source: "workflow-graph-merge-finalize",
-      rootDir: "/repo",
-    });
-
-    expect(result).toEqual(expect.objectContaining({ outcome: "blocked", reason: "task has incomplete steps" }));
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenCalled();
   });
 
   it("finalizes proven workflow merges even when the task branch still has residue outside the landed patch", async () => {

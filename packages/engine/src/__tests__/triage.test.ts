@@ -950,21 +950,35 @@ describe("FN-5893 invariant regression wording", () => {
     expect(FAST_PLANNING_PROMPT).not.toContain("## Proactive Subtask Breakdown");
   });
 
-  it("places Before → After Transformation at the top of the definition, ahead of Mission and Review Level (FN-7593)", () => {
+  it("places the product summary before Before → After, Mission, and Review Level", () => {
+    const standardOriginalIdx = STANDARD_PLANNING_PROMPT.indexOf("## Original Description");
+    const standardSummaryIdx = STANDARD_PLANNING_PROMPT.indexOf("## What This Delivers");
     const standardTransformationIdx = STANDARD_PLANNING_PROMPT.indexOf("## Before → After Transformation");
     const standardReviewLevelIdx = STANDARD_PLANNING_PROMPT.indexOf("## Review Level");
-    const standardMissionIdx = STANDARD_PLANNING_PROMPT.indexOf("## Mission");
+    const standardMissionIdx = STANDARD_PLANNING_PROMPT.indexOf("\n## Mission");
+    expect(standardOriginalIdx).toBeGreaterThan(-1);
+    expect(standardSummaryIdx).toBeGreaterThan(-1);
     expect(standardTransformationIdx).toBeGreaterThan(-1);
+    expect(standardOriginalIdx).toBeLessThan(standardSummaryIdx);
+    expect(standardSummaryIdx).toBeLessThan(standardTransformationIdx);
     expect(standardReviewLevelIdx).toBeGreaterThan(-1);
     expect(standardMissionIdx).toBeGreaterThan(-1);
     expect(standardTransformationIdx).toBeLessThan(standardReviewLevelIdx);
     expect(standardTransformationIdx).toBeLessThan(standardMissionIdx);
 
+    const fastOriginalIdx = FAST_PLANNING_PROMPT.indexOf("## Original Description");
+    const fastSummaryIdx = FAST_PLANNING_PROMPT.indexOf("## What This Delivers");
     const fastTransformationIdx = FAST_PLANNING_PROMPT.indexOf("## Before → After Transformation");
     const fastMissionIdx = FAST_PLANNING_PROMPT.indexOf("## Mission");
+    expect(fastOriginalIdx).toBeLessThan(fastSummaryIdx);
+    expect(fastSummaryIdx).toBeLessThan(fastTransformationIdx);
     expect(fastTransformationIdx).toBeGreaterThan(-1);
     expect(fastMissionIdx).toBeGreaterThan(-1);
     expect(fastTransformationIdx).toBeLessThan(fastMissionIdx);
+    for (const prompt of [TRIAGE_POLICY_PROMPT, STANDARD_PLANNING_PROMPT, FAST_PLANNING_PROMPT]) {
+      expect(prompt).toContain("plain product language");
+      expect(prompt).toContain("verify at a glance");
+    }
   });
 
   it("requires invariant-level regression coverage in standard, fast, and core triage prompts", () => {

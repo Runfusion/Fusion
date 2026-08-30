@@ -6,7 +6,7 @@ vi.mock("../../api", () => ({
 }));
 
 import { updateChatSession } from "../../api";
-import { CHAT_COMMANDS, filterChatCommands, matchChatCommand } from "../chat-commands";
+import { CHAT_COMMANDS, filterChatCommands, matchChatCommand, selectChatCommands } from "../chat-commands";
 
 const mockUpdateChatSession = vi.mocked(updateChatSession);
 
@@ -55,6 +55,17 @@ describe("focus slash command", () => {
     expect(steer.map((command) => command.name)).toEqual(["steer"]);
     // An empty filter returns every registered command.
     expect(filterChatCommands("")).toHaveLength(CHAT_COMMANDS.length);
+  });
+
+  it("withholds /focus from flag-off menus and dispatch while retaining /steer", () => {
+    const disabled = selectChatCommands({ chatFocusEnabled: false });
+    expect(disabled.map((command) => command.name)).toContain("steer");
+    expect(disabled.map((command) => command.name)).not.toContain("focus");
+    expect(matchChatCommand("/focus topic", disabled)).toBeNull();
+
+    const enabled = selectChatCommands({ chatFocusEnabled: true });
+    expect(enabled).toBe(CHAT_COMMANDS);
+    expect(matchChatCommand("/focus topic", enabled)?.command.name).toBe("focus");
   });
 
   it("persists the topic via updateChatSession with the session id, topic, and project id", async () => {

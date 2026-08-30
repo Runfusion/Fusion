@@ -5,7 +5,7 @@ vi.mock("../../api", () => ({
 }));
 
 import { addSteeringComment } from "../../api";
-import { CHAT_COMMANDS, matchChatCommand, filterChatCommands, type ChatCommand } from "../chat-commands";
+import { CHAT_COMMANDS, matchChatCommand, filterChatCommands, selectChatCommands, type ChatCommand } from "../chat-commands";
 
 const mockAddSteeringComment = vi.mocked(addSteeringComment);
 
@@ -25,6 +25,11 @@ describe("chat-commands registry", () => {
       name: "focus",
       requiresAgent: false,
     });
+  });
+
+  it("keeps the registry intact while selecting a flag-aware dispatch list", () => {
+    expect(selectChatCommands({ chatFocusEnabled: true })).toBe(CHAT_COMMANDS);
+    expect(selectChatCommands({ chatFocusEnabled: false }).map((command) => command.name)).toEqual(["steer"]);
   });
 
   describe("matchChatCommand", () => {

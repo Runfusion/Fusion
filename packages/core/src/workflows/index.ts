@@ -11,6 +11,8 @@ export * from "./builtin-completion-summary-node.js";
 export * from "./builtin-lead-generation-workflow-ir.js";
 export * from "./builtin-marketing-workflow-ir.js";
 export * from "./builtin-plan-review-group.js";
+export * from "./builtin-verification-gate-group.js";
+export * from "./builtin-documentation-delivery-group.js";
 export * from "./builtin-post-merge-group.js";
 export * from "./builtin-pr-workflow-ir.js";
 export * from "./builtin-stepwise-coding-workflow-ir.js";

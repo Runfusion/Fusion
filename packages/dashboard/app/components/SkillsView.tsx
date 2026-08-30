@@ -205,14 +205,14 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
     try {
       await installSkill(source, entry.slug || entry.name, projectId);
       addToast(t("skills.installSuccess", "Installed {{name}}", { name: entry.name }), "success");
-      await loadDiscoveredSkills();
+      await Promise.all([loadDiscoveredSkills(), loadCatalog(debouncedQuery)]);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("skills.installError", "Failed to install skill");
       addToast(t("skills.installFailed", "Failed to install {{name}}: {{message}}", { name: entry.name, message }), "error");
     } finally {
       setInstallingCatalogEntryId((current) => (current === entry.id ? null : current));
     }
-  }, [addToast, installingCatalogEntryId, loadDiscoveredSkills, projectId]);
+  }, [addToast, debouncedQuery, installingCatalogEntryId, loadCatalog, loadDiscoveredSkills, projectId]);
 
   const loadSkillContent = useCallback(async (skillId: string) => {
     setIsLoadingContent(true);
@@ -623,14 +623,16 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
             <div className="skills-view-grid">
               {catalogEntries.map((entry) => {
                 const source = entry.repo?.trim();
-                const canInstall = Boolean(source);
+                const canInstall = Boolean(source) && !entry.installation?.installed;
                 const isInstalling = installingCatalogEntryId === entry.id;
 
                 return (
                   <div key={entry.id} className="skills-view-card">
                     <div className="skills-view-card-header">
                       <h4 className="skills-view-card-title">{entry.name}</h4>
-                      {canInstall ? (
+                      {entry.installation?.installed ? (
+                        <span className="badge badge--sm">{t("skills.installed", "Installed")}</span>
+                      ) : canInstall ? (
                         <button
                           type="button"
                           className="btn btn-sm skills-view-card-install"

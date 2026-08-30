@@ -92,16 +92,94 @@ describe("quick add Start workflow guards", () => {
     expect(resolveQuickAddStartWorkflowTarget(noTarget)).toBeNull();
   });
 
-  it("only chooses a later visible working destination", () => {
+  /*
+  FNXC:QuickAddStart 2026-08-26-19:19:
+  Was "only chooses a later visible working destination", which asserted that the promotion skipped
+  `hold` lanes to reach the first working column. Column adjacency never permitted that jump, so the
+  move it described was rejected server-side. The promotion is one legal forward step.
+  */
+  it("promotes exactly one legal forward step, hold lanes included", () => {
     const valid = validateQuickAddStartWorkflow(workflow({ columns: [
-      { id: "ideas", name: "Ideas", flags: { hold: true } },
+      { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
       { id: "review", name: "Review", flags: { hold: true } },
       { id: "done", name: "Done", flags: { complete: true } },
       { id: "todo", name: "Todo", flags: {} },
     ] }));
     expect(valid).not.toBeNull();
-    expect(resolveQuickAddStartTargetColumn(valid!, "ideas")).toBe("todo");
+    expect(resolveQuickAddStartTargetColumn(valid!, "ideas")).toBe("review");
+    expect(resolveQuickAddStartTargetColumn(valid!, "review")).toBeNull();
     expect(resolveQuickAddStartTargetColumn(valid!, "todo")).toBeNull();
     expect(resolveQuickAddStartTargetColumn(valid!, "unknown")).toBeNull();
+  });
+
+  /*
+  FNXC:QuickAddStart 2026-08-26-19:19:
+  Regression: a duplicated Ideas workflow ("Coding ideas V2") reported as "Start does not start the
+  task". Start resolved its destination from the literal `builtin:coding-ideas` id, so a copy fell
+  through to a promotion that skipped the Planning hold lane and targeted the WIP lane — a move
+  `intake -> wip` that column adjacency always rejects. Surfaces: both Start callers share these
+  helpers (QuickEntryBox composer and NewTaskModal), so the invariant is asserted here once for the
+  built-in, its duplicate, and the metadata shapes that must fail closed.
+  */
+  describe("duplicated Ideas workflows", () => {
+    const clone = (overrides: Record<string, unknown> = {}) => validateQuickAddStartWorkflow(workflow({
+      id: "WF-014",
+      name: "Coding ideas V2",
+      columns: [
+        { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
+        { id: "todo", name: "Planning", flags: { hold: true } },
+        { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+        { id: "in-review", name: "In review", flags: { mergeBlocker: true, humanReview: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+        { id: "archived", name: "Archived", flags: { archived: true, hiddenFromBoard: true } },
+      ],
+      ...overrides,
+    }));
+
+    it("creates in its own Planning lane instead of jumping into the WIP lane", () => {
+      const duplicate = clone();
+      expect(duplicate).not.toBeNull();
+      expect(workflowSupportsQuickAddStart(duplicate)).toBe(true);
+      expect(resolveQuickAddStartInitialColumn(duplicate!)).toBe("todo");
+      expect(resolveQuickAddStartWorkflowTarget(duplicate)).toBe("todo");
+      // The rejected move that made Start a no-op must be unreachable from the intake lane.
+      expect(resolveQuickAddStartTargetColumn(duplicate!, "ideas")).not.toBe("in-progress");
+    });
+
+    it("fails closed to the promotion path when the planning lane is unprovable", () => {
+      // The server classifies a Start create by the FIRST DECLARED hold column, so an intake that
+      // also holds, or a hidden earlier hold lane, means our visible candidate is the wrong column.
+      const intakeAlsoHolds = clone({ columns: [
+        { id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } },
+        { id: "todo", name: "Planning", flags: { hold: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ] });
+      expect(resolveQuickAddStartInitialColumn(intakeAlsoHolds!)).toBeNull();
+      expect(resolveQuickAddStartWorkflowTarget(intakeAlsoHolds)).toBe("todo");
+
+      const hiddenEarlierHold = clone({ columns: [
+        { id: "parked", name: "Parked", flags: { hold: true, hiddenFromBoard: true } },
+        { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
+        { id: "todo", name: "Planning", flags: { hold: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ] });
+      expect(resolveQuickAddStartInitialColumn(hiddenEarlierHold!)).toBeNull();
+
+      const noPlanningLane = clone({ columns: [
+        { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
+        { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ] });
+      expect(resolveQuickAddStartInitialColumn(noPlanningLane!)).toBeNull();
+      expect(resolveQuickAddStartWorkflowTarget(noPlanningLane)).toBe("in-progress");
+
+      const autoTriagingIntake = clone({ columns: [
+        { id: "ideas", name: "Ideas", flags: { intake: true } },
+        { id: "todo", name: "Planning", flags: { hold: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ] });
+      expect(resolveQuickAddStartInitialColumn(autoTriagingIntake!)).toBeNull();
+      expect(resolveQuickAddStartWorkflowTarget(autoTriagingIntake)).toBeNull();
+    });
   });
 });

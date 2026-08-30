@@ -42,8 +42,13 @@ export function deriveWorkspaceReviewRemediation(
     .filter((outcome) => outcome.status === "REVIEWED" && (outcome.verdict === "REVISE" || outcome.verdict === "RETHINK"))
     .sort((left, right) => left.repository.localeCompare(right.repository))[0];
   if (!blocking) return undefined;
+  /*
+  FNXC:WorkspaceReviewConvergence 2026-08-27-12:05:
+  FN-201 makes workspace findings non-empty. Identifier-based signatures would let a model-assigned
+  ID change defeat the repeat-unchanged hold and turn bounded remediation into an unbounded loop.
+  */
   const findings = (blocking.findings ?? [])
-    .map((finding) => `${finding.id}:${normalize(finding.title)}:${normalize(finding.body)}`)
+    .map((finding) => `${normalize(finding.filePath)}:${finding.line ?? ""}:${normalize(finding.body)}`)
     .sort()
     .join("|");
   return {

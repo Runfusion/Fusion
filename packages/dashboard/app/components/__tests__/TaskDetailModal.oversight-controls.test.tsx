@@ -72,7 +72,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-8194", column: "in-progress", plannerOversightLevel: "observe" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -113,7 +112,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-8247-workflow", column: "in-progress", plannerOversightLevel: "off", sessionAdvisorEnabled: undefined })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -155,7 +153,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-8263-project-default", column: "todo", plannerOversightLevel: undefined, sessionAdvisorEnabled: undefined })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -210,7 +207,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={nextTask}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -277,7 +273,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={nextTask}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -323,7 +318,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={task}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -381,7 +375,7 @@ describe("TaskDetailModal oversight controls", () => {
     });
 
     let rerenderModal: (nextTask: typeof currentTask) => void;
-    const renderModal = (nextTask: typeof currentTask) => <TaskDetailModal task={nextTask} onClose={noop} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)} addToast={noop} />;
+    const renderModal = (nextTask: typeof currentTask) => <TaskDetailModal task={nextTask} onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)} addToast={noop} />;
     const rendered = render(renderModal(currentTask));
     rerenderModal = (nextTask) => rendered.rerender(renderModal(nextTask));
 
@@ -412,7 +406,7 @@ describe("TaskDetailModal oversight controls", () => {
     });
 
     let rerenderModal: (nextTask: typeof currentTask) => void;
-    const renderModal = (nextTask: typeof currentTask) => <TaskDetailModal task={nextTask} onClose={noop} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)} addToast={noop} />;
+    const renderModal = (nextTask: typeof currentTask) => <TaskDetailModal task={nextTask} onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)} addToast={noop} />;
     const rendered = render(renderModal(currentTask));
     rerenderModal = (nextTask) => rendered.rerender(renderModal(nextTask));
 
@@ -445,7 +439,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-100", column: "in-progress", plannerOversightLevel: "observe" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -473,7 +466,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-101", column: "in-progress", plannerOversightLevel: "steer" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -498,7 +490,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-102", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -521,7 +512,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-103", column: "todo", plannerOversightLevel: "autonomous" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -539,7 +529,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-111", column: "todo", plannerOversightLevel: "autonomous" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -568,7 +557,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-116", column: "in-progress", plannerOversightLevel: "autonomous" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -591,7 +579,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-117", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot, userPaused: true })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -614,7 +601,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-112", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -633,7 +619,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-104", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot, userPaused: true })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -651,7 +636,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-105", column: "done", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -672,7 +656,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-106", column: "in-progress", plannerOversightLevel: "steer" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -695,7 +678,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-107", column: "in-progress", plannerOversightLevel: "off" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -716,7 +698,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-108", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -744,7 +725,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-109", column: "in-progress", plannerOversightLevel: "observe", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -768,7 +748,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-113", column: "todo", plannerOversightLevel: "autonomous" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -794,7 +773,6 @@ describe("TaskDetailModal oversight controls", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-110", column: "todo", plannerOversightLevel: "off" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -872,7 +850,6 @@ describe("TaskDetailModal oversight controls — snapshot delivered via fetched 
       <TaskDetailModal
         task={makeSlimTaskWithoutSnapshot() as any}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -900,7 +877,6 @@ describe("TaskDetailModal oversight controls — snapshot delivered via fetched 
       <TaskDetailModal
         task={makeSlimTaskWithoutSnapshot({ id: "FN-221" }) as any}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -930,7 +906,6 @@ describe("TaskDetailModal oversight controls — snapshot delivered via fetched 
       <TaskDetailModal
         task={makeSlimTaskWithoutSnapshot({ id: "FN-222" }) as any}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1005,7 +980,6 @@ describe("TaskDetailModal oversight controls — narrow-viewport regression guar
       <TaskDetailModal
         task={makeTask({ id: "FN-201", column: "todo", plannerOversightLevel: "observe" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1029,7 +1003,6 @@ describe("TaskDetailModal oversight controls — narrow-viewport regression guar
       <TaskDetailModal
         task={makeTask({ id: "FN-202", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1049,7 +1022,6 @@ describe("TaskDetailModal oversight controls — narrow-viewport regression guar
       <TaskDetailModal
         task={makeTask({ id: "FN-216", column: "in-progress", plannerOversightLevel: "autonomous" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1072,7 +1044,6 @@ describe("TaskDetailModal oversight controls — narrow-viewport regression guar
       <TaskDetailModal
         task={makeTask({ id: "FN-203", column: "todo", plannerOversightLevel: "off" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1138,7 +1109,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-210", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1155,7 +1125,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-211", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1176,7 +1145,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-212", column: "in-progress", plannerOversightLevel: "off" })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1195,7 +1163,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-213", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1212,7 +1179,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-213", column: "in-progress", plannerOversightLevel: "off" })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1240,7 +1206,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-215", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1270,7 +1235,6 @@ describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)"
         <TaskDetailModal
           task={makeTask({ id: "FN-214", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}

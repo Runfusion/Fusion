@@ -13,9 +13,14 @@ empty -> null and bumps updatedAt) so it survives reconnect. Recall is then
 scoped to that topic as a WITHIN-project read filter
 (searchProjectMemory -> backend.search -> Stash REST topic param) NEVER a
 client-side / post-query in-memory filter, and cross-project A/B isolation is
-never weakened. A null/absent focus shows a cleared state (a "focus" chip to
-set one), never a dangling chip, and an empty value or "all"/"*" collapses to
-whole-project scope. Capture stays write-anywhere and topic-agnostic.
+never weakened. A null/absent focus shows an icon-only chip; its aria-label and title preserve an
+accessible name without consuming composer width. A set topic remains visible on the
+chip, and an empty value or "all"/"*" collapses to whole-project scope. Capture stays
+write-anywhere and topic-agnostic.
+
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:59:
+The cleared state must not render the redundant "Focus" word. It uses the button's
+aria-label and title as its accessible name while a selected topic remains visible.
 */
 
 export interface ChatFocusSelectorProps {
@@ -133,7 +138,7 @@ export function ChatFocusSelector({
     <div className="chat-focus-root" ref={rootRef} data-testid="chat-focus-root">
       <button
         type="button"
-        className={`chat-focus-chip${hasTopic ? " chat-focus-chip--active" : ""}`}
+        className={`chat-focus-chip${hasTopic ? " chat-focus-chip--active" : " chat-focus-chip--icon-only"}`}
         data-testid="chat-focus-chip"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -146,11 +151,7 @@ export function ChatFocusSelector({
         }}
       >
         <Target size={14} aria-hidden="true" />
-        {hasTopic ? (
-          <span className="chat-focus-chip-topic">{focusedTopic}</span>
-        ) : (
-          <span className="chat-focus-chip-label">{t("chat.focusNone", "Focus")}</span>
-        )}
+        {hasTopic ? <span className="chat-focus-chip-topic">{focusedTopic}</span> : null}
       </button>
 
       {open && sessionId ? (

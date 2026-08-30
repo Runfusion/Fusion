@@ -684,15 +684,85 @@ export async function executeWorkflowGraph(
           );
           if (principalAdmission) return principalAdmission;
           const live = await deps.store.getTask(nodeTask.id);
-          const name = typeof node.config?.name === "string" ? node.config.name : "";
-          const isCodeReview = node.id === "code-review" || node.config?.reviewKind === "code" || /code review/i.test(name);
-          const writeCapable = workflowNodeRequiresWorktree(node, { reviewerInlineFixes: settings.reviewerInlineFixes === false ? false : undefined }) || node.kind === "code";
+          /*
+          FNXC:WorkflowReviewSeal 2026-08-25-02:10:
+          Structural signals only. The old test also matched `/code review/i` against the display
+          name, which made the seal's central question — "is this THE review that seals the tree?" —
+          depend on a label an operator is free to change. Renaming the gate to "Final Review" would
+          have silently stopped it being recognised as the sealing review while every other gate kept
+          being sealed against it. `reviewKind: "code"` and the node/group id are carried by every
+          built-in and are what the rest of the merge path already keys on.
+          */
+          const isCodeReview = node.id === "code-review"
+            || node.id === "code-review-step"
+            || node.config?.reviewKind === "code";
+          /*
+          FNXC:WorkflowReviewSeal 2026-08-24-16:20:
+          A DETERMINISTIC verification gate is not a writer. It needs a worktree because it runs the
+          project's test/build commands there, but it only reads the tree and reports exit codes —
+          `verification-gate.ts` has no mutation path at all. It was nevertheless sealed, because
+          `workflowNodeRequiresWorktree` conflates "needs a worktree" with "writes", and its
+          inline-fix branch matches on the node NAME (`/review|verification/i`).
+          The consequence was a wedge, measured by pipeline-smoke S13: any post-approval requeue — a
+          merge conflict, a transient merge failure — replays `steps -> verification`, the seal
+          refuses the gate it should have welcomed, and the card terminates at
+          verification-remediation instead of retrying its merge. Re-running the tests after an
+          approval cannot invalidate that approval; it is the one thing worth doing again.
+          Narrow by construction: keyed on `workflowAction: "deterministic-verification"`, so a
+          prompt-driven review named "Verification" stays sealed.
+          */
+          const deterministicVerification = node.config?.workflowAction === "deterministic-verification"
+            || (node.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined)
+              ?.nodes?.every((inner) => inner.config?.workflowAction === "deterministic-verification") === true;
+          const writeCapable = !deterministicVerification
+            && (workflowNodeRequiresWorktree(node, { reviewerInlineFixes: settings.reviewerInlineFixes === false ? false : undefined }) || node.kind === "code");
           const hasCurrentCodeReviewApproval = live.workflowStepResults?.some((result) =>
             result.reviewKind === "code"
             && result.status === "passed"
             && result.verdict === "APPROVE"
             && (live.repositoryScope === undefined || result.repositoryScopeRevision === undefined || result.repositoryScopeRevision === live.repositoryScope.revision),
           ) === true;
+          /*
+          FNXC:WorkflowReviewSeal 2026-08-24-16:20:
+          A gate that ALREADY passed is not a new mutation. When a post-approval requeue replays the
+          pre-review chain — a merge conflict, a transient merge failure — the graph walks back
+          through gates whose output is already in the approved tree. Refusing them turns a
+          retryable merge into a terminal wedge: measured by pipeline-smoke S13, where a conflicting
+          merge left the card cycling on `documentation-delivery` with
+          `workspace-review-seal-required` instead of retrying the merge it was sent back for.
+          Skipping is the only coherent answer. Re-running the gate would rewrite the very tree the
+          review approved and invalidate that approval, so "already produced, already reviewed" must
+          resolve as satisfied. A gate with no passed result still hits the refusal below, which is
+          the case the seal exists for.
+          */
+          /*
+          FNXC:WorkflowReviewSeal 2026-08-24-20:40:
+          Match the OPTIONAL-GROUP id, not just this node's own id. A gate runs as the group's inner
+          template node (`documentation-delivery-step`) while its result is recorded under the group
+          (`documentation-delivery`), so an id-only comparison never matched and the carve-out below
+          was dead code for every optional group — exactly the shape it exists to protect. Measured
+          on S13: a conflicting merge replayed the already-`skipped` documentation gate, the seal
+          refused it, and the card cycled instead of retrying its merge.
+          */
+          /*
+          FNXC:WorkflowReviewSeal 2026-08-24-21:20:
+          Presence of a result row is the signal, not its status. Two facts make that exact rather
+          than lax: these gates run UPSTREAM of Code Review, so a current approval proves the gate
+          already ran in this episode; and the group writes a fresh `pending` row when it STARTS,
+          overwriting the terminal record before this check ever sees it — measured on S13, where the
+          replayed documentation gate showed `pending` with `priorAttempts=failed/failed/...` and its
+          earlier `passed` was simply gone. A status test is therefore unanswerable here, while a
+          gate that has genuinely never run has no row at all and is still refused below.
+          Matched on the OPTIONAL-GROUP id too: a gate executes as its inner template node
+          (`documentation-delivery-step`) while its result is recorded under the group.
+          */
+          const alreadySatisfied = live.workflowStepResults?.some((result) =>
+            (result.workflowStepId === node.id || node.id === `${result.workflowStepId}-step`)
+            && !result.remediationArchivedAt,
+          ) === true;
+          if (!isCodeReview && writeCapable && hasCurrentCodeReviewApproval && alreadySatisfied) {
+            return { outcome: "success", value: "already-satisfied-under-review-seal" };
+          }
           if (!isCodeReview && writeCapable && hasCurrentCodeReviewApproval) {
             /*
             FNXC:WorkflowReviewSeal 2026-08-21-20:11:
@@ -1006,8 +1076,8 @@ export async function executeWorkflowGraph(
           await deps.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
         }
         await deps.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
-        if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
-          await deps.store.updateTask(task.id, { graphResumeRetryCount: 0, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, deps.getRunContextFor(task.id));
+        if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.sessionContentionHoldCount ?? 0) !== 0 || live.sessionContentionWaitReason != null || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
+          await deps.store.updateTask(task.id, { graphResumeRetryCount: 0, sessionContentionHoldCount: 0, sessionContentionWaitReason: null, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, deps.getRunContextFor(task.id));
         }
       }
       return;

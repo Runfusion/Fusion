@@ -120,6 +120,8 @@ export const tasks = projectSchema.table("tasks", {
   executeRequeueLoopCount: integer("execute_requeue_loop_count").default(0),
   executeRequeueLoopSignature: text("execute_requeue_loop_signature"),
   recoveryRetryCount: integer("recovery_retry_count"),
+  sessionContentionHoldCount: integer("session_contention_hold_count").default(0),
+  sessionContentionWaitReason: text("session_contention_wait_reason"),
   taskDoneRetryCount: integer("task_done_retry_count").default(0),
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (nullable ISO timestamp).
   bulkCompletionRefusalAt: text("bulk_completion_refusal_at"),

@@ -26,6 +26,7 @@ import type { AgentReflectionService } from "./agents/agent-reflection.js";
 import { createLogger } from "./logger.js";
 // FNXC:PlanArtifactPersistence 2026-07-26-03:55: PROMPT.md is filesystem-only; mirror plan writes into the DB.
 import { mirrorPlanToProjectDb } from "./plan-artifact-writeback.js";
+import { isPlanningLifecycleLockTransportError } from "./planning-handoff-recovery.js";
 import { fetchWebContent, WebFetchError } from "./util/web-fetch.js";
 import type { RunAuditor } from "./util/run-audit.js";
 import { computeApprovalDedupeKey } from "./agents/agent-action-gate.js";
@@ -6707,6 +6708,8 @@ export function createAcquireRepoWorktreeTool(opts: {
           isError: true,
         };
       }
+      // FNXC:PlanningLifecycleLock 2026-08-23-07:00: active-worktree registration is idempotent and must precede the later planning-locked scope mutation, so a retryable transport error cannot hide a successful acquisition.
+      onAcquired?.(result.worktreePath);
       /*
       FNXC:RepositoryScope 2026-08-20-23:40:
       A successful pre-land acquisition outside explicit intent is an extension request, not evidence
@@ -6719,12 +6722,22 @@ export function createAcquireRepoWorktreeTool(opts: {
         Acquisition extends intent as a durable delta after the checkout succeeds. A fresh
         planning-locked read preserves a concurrent plan confirmation or operator decision.
         */
-        await store.mutateTaskRepositoryScope(task.id, {
-          action: "add",
-          repositories: [repo],
-          reason: params.reason ?? "Executor acquired a repository required for implementation.",
-          actor: runContext?.agentId ?? "executor",
-        });
+        try {
+          await store.mutateTaskRepositoryScope(task.id, {
+            action: "add",
+            repositories: [repo],
+            reason: params.reason ?? "Executor acquired a repository required for implementation.",
+            actor: runContext?.agentId ?? "executor",
+          });
+        } catch (err) {
+          if (isPlanningLifecycleLockTransportError(err)) {
+            return {
+              content: [{ type: "text" as const, text: "Worktree was acquired but repository-scope persistence is temporarily unavailable; retry fn_acquire_repo_worktree shortly." }],
+              details: {}, isError: true,
+            };
+          }
+          throw err;
+        }
       }
       // FNXC:Workspace 2026-06-21-22:30: F2 — register a freshly-acquired sub-repo worktree in the executor's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
       // FNXC:Workspace 2026-06-22-09:00: register UNCONDITIONALLY, including the
@@ -6733,7 +6746,6 @@ export function createAcquireRepoWorktreeTool(opts: {
       // the alreadyAcquired path, so skipping onAcquired left the sub-repo path unregistered
       // in-memory and conflict/liveness checks missed it. Set.add is idempotent, so re-firing
       // on a fresh acquire is a harmless no-op.
-      onAcquired?.(result.worktreePath);
       await store.logEntry(
         task.id,
         result.alreadyAcquired

@@ -82,7 +82,7 @@ function LaneComponent(props: LaneProps) {
   const contextMenuColumns = useMemo(
     () => workflow.columns
       .filter((col) => !col.flags.hiddenFromBoard)
-      .map((col) => ({ id: col.id, label: col.name, flags: col.flags, ...(col.moveTargets ? { moveTargets: col.moveTargets } : {}) })),
+      .map((col) => ({ id: col.id, label: col.name, flags: col.flags })),
     [workflow.columns],
   );
   const createColumnId = useMemo(() => (

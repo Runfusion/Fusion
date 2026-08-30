@@ -60,6 +60,18 @@ export type { IngestedCheckState, IngestedCheckStateValue, MergeablePrCheck } fr
  * selection. FN-7970 and FN-7969 preserve direct resolution for pre-existing
  * Brainstorming and Coding (Ideas) task selections while hiding them elsewhere.
  */
+/*
+FNXC:WorkflowDeprecation 2026-08-25-14:40:
+builtin:review-gated-coding is DELETED, not deprecated. It shipped with a success path that could
+never complete: `code-review -> documentation-delivery` put a write-capable node after a passed
+review, which `execute-workflow-graph` refuses with `workspace-review-seal-required`, and its plan
+node declared a seam `resolveSeamName` throws on. builtin:coding-ideas-v2 replaces it.
+It was briefly kept as a deprecated id so an existing selection still resolved. That is no longer
+worth its cost: it SHARED the documentation-delivery node with V2, so changing that node for V2
+silently changed this workflow too — a second consumer nobody was maintaining. A task that selected
+it now falls back to the project default workflow, which is the same outcome its own graph could
+never reach.
+*/
 export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
   "builtin:brainstorming",
 ]);
@@ -1552,6 +1564,13 @@ export { PROMPT_KEY_CATALOG } from "./tasks/prompt-overrides.js";
 // Re-exported here so the dashboard's `@fusion/core` → types.ts alias resolves
 // client-side consumers (see packages/dashboard/vite.config.ts).
 export { getErrorMessage } from "./process/error-message.js";
+
+/*
+FNXC:ChatMemoryFocus 2026-08-24-04:21:
+Dashboard client imports resolve @fusion/core to this browser-safe leaf, so expose the pure
+experimental flag reader here. Its Settings dependency is type-only and introduces no browser runtime cycle.
+*/
+export { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "./config/experimental-features.js";
 export {
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,

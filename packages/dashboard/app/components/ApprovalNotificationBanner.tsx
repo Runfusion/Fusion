@@ -18,7 +18,7 @@ export function ApprovalNotificationBanner({
   const noun = pendingCount === 1 ? t("approval.requestSingular", "request") : t("approval.requestPlural", "requests");
 
   return (
-    <Banner as="section" className="approval-notification-banner" tone="warning" layout="chrome" role="region" aria-live="polite" aria-label={t("approval.requests", "Approval requests")}> 
+    <Banner as="section" className="approval-notification-banner" tone="warning" layout="chrome" role="region" aria-live="polite" aria-label={t("approval.requests", "Approval requests")}>
       <div className="approval-notification-banner__content">
         <div className="approval-notification-banner__headline">
           <span className="status-dot" aria-hidden="true" />

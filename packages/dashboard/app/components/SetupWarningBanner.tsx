@@ -39,7 +39,7 @@ export function SetupWarningBanner({
 
   if (compact) {
     return (
-      <Banner className={`setup-warning-banner setup-warning-banner--compact${onDismiss ? " setup-warning-banner--dismissible" : ""}`} tone="warning" density="compact" role="status" aria-live="polite" onDismiss={onDismiss} dismissLabel={t("setup.dismissWarning", "Dismiss setup warning")}> 
+      <Banner className={`setup-warning-banner setup-warning-banner--compact${onDismiss ? " setup-warning-banner--dismissible" : ""}`} tone="warning" density="compact" role="status" aria-live="polite" onDismiss={onDismiss} dismissLabel={t("setup.dismissWarning", "Dismiss setup warning")}>
         <p className="setup-warning-banner__compact-text">
           {t("setup.compactWarning", "⚠ Setup incomplete — AI and/or GitHub features will be limited.")}
         </p>
@@ -66,7 +66,7 @@ export function SetupWarningBanner({
   }
 
   return (
-    <Banner className={`setup-warning-banner${onDismiss ? " setup-warning-banner--dismissible" : ""}`} tone="warning" role="status" aria-live="polite" onDismiss={onDismiss} dismissLabel={t("setup.dismissWarning", "Dismiss setup warning")}> 
+    <Banner className={`setup-warning-banner${onDismiss ? " setup-warning-banner--dismissible" : ""}`} tone="warning" role="status" aria-live="polite" onDismiss={onDismiss} dismissLabel={t("setup.dismissWarning", "Dismiss setup warning")}>
       {warningItems.map((warning) => (
         <div key={warning.key} className="setup-warning-banner__item">
           <strong className="setup-warning-banner__title">{warning.title}</strong>

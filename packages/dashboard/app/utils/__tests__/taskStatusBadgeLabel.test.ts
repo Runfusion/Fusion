@@ -45,6 +45,13 @@ describe("isTaskPlanningActive", () => {
 });
 
 describe("getTaskStatusBadgeLabel", () => {
+  it("renders an operator-facing workspace contention wait rather than its engine token", () => {
+    expect(getTaskStatusBadgeLabel("contention-hold", t, undefined, {
+      sessionContentionWaitReason: "repository Merge held by MRG-050",
+    })).toBe("Waiting on {{reason}}");
+    expect(getTaskStatusBadgeLabel("contention-hold", t)).toBe("Waiting");
+  });
+
   it("maps the full AI merge pipeline to Merging…", () => {
     for (const status of ["merging", "merging-pr", "reviewing", "landing"]) {
       expect(getTaskStatusBadgeLabel(status, t)).toBe("Merging…");

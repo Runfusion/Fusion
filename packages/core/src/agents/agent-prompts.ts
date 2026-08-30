@@ -275,6 +275,10 @@ Per FN-7593, the transformation summary must sit at the top of the PROMPT.md (be
 
 FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
 Fast planning also requires \`## Original Description\` (verbatim operator text) immediately after title/metadata and before the transformation summary, same as standard planning.
+
+FNXC:FastPlanning 2026-08-27-10:22:
+Fast plans need the same plain-language product summary as standard plans so operators can
+verify at a glance that the task intent survived the compressed planning path.
 */
 const FAST_TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn". This task is running in **fast mode**.
 
@@ -291,7 +295,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with \`includeDone: false\` and \`includeArchived: false\` for 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. Do not search completed or archived work for duplicate candidates. When an active match is a duplicate, do not write a spec — but still write PROMPT.md, with its entire contents being the single line \`DUPLICATE: {existing-task-id}\` and nothing else. That file is how the duplicate is recorded; announcing it only in your reply leaves no plan behind and re-plans the task in a loop.
 
 ## Required PROMPT.md shape
-Write PROMPT.md with Original Description, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
+Write PROMPT.md with Original Description, What This Delivers, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Immediately after it, write \`## What This Delivers\` in plain product language so anyone can verify at a glance what the operator will gain; do not use file paths, symbols, or framework terms. Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
 
 ## Surface Enumeration
 For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.
@@ -358,6 +362,10 @@ Follow this structure exactly:
 ## Original Description
 
 {Verbatim copy of the operator's original task description — do not paraphrase or summarize}
+
+## What This Delivers
+
+{2-4 sentences or bullets in plain product language that a complete beginner in code can read: what the operator will be able to do, see, or stop suffering once this ships. No file paths, no symbol names, no package/framework/database terms — those belong in \`## Mission\`.}
 
 ## Before → After Transformation
 
@@ -514,7 +522,16 @@ near the top (after title/metadata) so executors always see the source request.
 Deterministic post-write injection also enforces this; the planner still writes it so
 the on-disk draft is correct before finalize.
 -->
-Every generated PROMPT.md MUST include \`## Original Description\` immediately after the \`# Task\` title and \`Created\`/\`Size\` metadata, before \`## Before → After Transformation\`, \`## Review Level\`, and \`## Mission\`. Copy the operator's original task description **verbatim** — do not paraphrase, summarize, or omit details.
+Every generated PROMPT.md MUST include \`## Original Description\` immediately after the \`# Task\` title and \`Created\`/\`Size\` metadata, before \`## What This Delivers\`, \`## Before → After Transformation\`, \`## Review Level\`, and \`## Mission\`. Copy the operator's original task description **verbatim** — do not paraphrase, summarize, or omit details.
+
+## Product summary requirement
+
+<!--
+FNXC:TriagePromptStructure 2026-08-27-10:22:
+A plain-language product summary is separate from the technical Mission so any operator can
+verify at a glance that planning understood the request before reading implementation detail.
+-->
+Every generated PROMPT.md MUST include \`## What This Delivers\` immediately after \`## Original Description\` and before \`## Before → After Transformation\`, \`## Review Level\`, and \`## Mission\`. Write it in plain product language, not technical language, so anyone can verify at a glance that the planner understood the operator's intent.
 
 ## Transformation summary requirement
 
@@ -796,6 +813,7 @@ Concrete examples:
 
 ### Criteria Assessment
 - **Mission clarity:** [Clear, unambiguous mission statement?]
+- **Product summary:** [Is \`## What This Delivers\` present, written in plain product language without file paths, symbols, or framework terms, and aligned with \`## Original Description\`? A missing, empty, jargon-only, or contradictory summary is a blocking REVISE.]
 - **Step specificity:** [Steps have verifiable, concrete outcomes?]
 - **File scope accuracy:** [All affected files listed? No extras?]
 - **Dependency correctness:** [Dependencies exist and are appropriate?]
@@ -1123,6 +1141,7 @@ submissions to a high bar for correctness, security, and maintainability.
 
 ### Criteria Assessment
 - **Mission clarity:** [Clear, unambiguous mission statement?]
+- **Product summary:** [Is \`## What This Delivers\` present, written in plain product language without file paths, symbols, or framework terms, and aligned with \`## Original Description\`? A missing, empty, jargon-only, or contradictory summary is a blocking REVISE.]
 - **Step specificity:** [Steps have verifiable, concrete outcomes?]
 - **File scope accuracy:** [All affected files listed? No extras?]
 - **Dependency correctness:** [Dependencies exist and are appropriate?]
@@ -1158,6 +1177,9 @@ Write a PROMPT.md specification to the given path. Be brief and precise — avoi
 
 ## Original Description
 {Verbatim operator description — do not paraphrase}
+
+## What This Delivers
+{One plain-language line describing what the operator gains — no file paths or symbol names}
 
 ## Review Level: {0-3} ({description})
 

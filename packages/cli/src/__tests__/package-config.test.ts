@@ -321,6 +321,16 @@ describe("CLI package.json publishing config", () => {
         "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
       "qrcode-terminal":
         "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      /*
+       * FNXC:CliTests 2026-08-24-02:16:
+       * sharp 0.35 native addons (img-sharp platform .node files) cannot be esbuild-bundled.
+       * Externalized for CLI bin + plugin packaging; desktop generate-icons and optional
+       * Baileys media helpers own the runtime, so it is not a @runfusion/fusion published dep.
+       */
+      sharp:
+        "native image codec (desktop generate-icons + optional Baileys media); 0.35 ships img-sharp platform .node addons esbuild cannot bundle — see tsup.config.ts",
+      "@img/sharp-*":
+        "esbuild glob for sharp 0.35 platform native addons; not a published CLI runtime dep",
       // FNXC:BuildConfig 2026-07-13-12:00: FN-7936 aliased @fusion/core to a runtime shim in bundled plugin outputs; it's no longer a tsup external, so this allowlist entry is stale.
       // "@fusion/core": REMOVED — was "plugin-entry bundling external only; not a runtime dep of the CLI bin",
       "@fusion/engine": "plugin-entry bundling external only; not a runtime dep of the CLI bin",
@@ -329,6 +339,11 @@ describe("CLI package.json publishing config", () => {
     it("parses externals from tsup.config.ts", () => {
       expect(externals.length).toBeGreaterThan(0);
       expect(externals).toContain("dockerode");
+    });
+
+    it("externalizes sharp and @img/sharp-* native addons", () => {
+      expect(externals).toContain("sharp");
+      expect(externals).toContain("@img/sharp-*");
     });
 
     it.each(externals.filter(

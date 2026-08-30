@@ -20,6 +20,11 @@ corrupting PROMPT.md. Section bounds use HTML markers when present, else only kn
 structural PROMPT headings (Mission, File Scope, Steps, …), so embedded H2s stay inside
 the Original Description body.
 
+FNXC:OriginalDescriptionInPrompt 2026-08-27-10:22:
+The product summary now sits between Original Description and Before → After Transformation.
+On an unmarked, unaligned fallback it must be the highest-priority terminator, otherwise
+hygiene rewrites Original Description through the summary and destroys the operator's intent check.
+
 FNXC:OriginalDescriptionInPrompt 2026-08-01-05:18:
 Custom workflow plan-node sections are first-class: hygiene must neither swallow nor reorder them.
 For an unmarked section, precedence is: (1) an empty description ends at the first following H2;
@@ -48,6 +53,7 @@ export const ORIGINAL_DESCRIPTION_END_MARKER = "<!-- fusion-original-description
  * when those exist (standard/concise templates). Unknown H2s never end the section.
  */
 const PREFERRED_SECTION_TERMINATORS: RegExp[] = [
+  /^##\s+What This Delivers\s*$/im,
   /^##\s+Before\s*→\s*After Transformation\s*$/im,
   /^##\s+Review Level(?:\s*:.*)?\s*$/im,
   /^##\s+Mission\s*$/im,

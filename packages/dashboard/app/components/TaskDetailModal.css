@@ -753,12 +753,10 @@ than a one-off style.
 
 /*
 FNXC:PlannerOversight 2026-07-04-19:00:
-FN-7545 — overflow menu for the oversight action controls. Reuses the same
-`.detail-move-dropdown` / `.detail-move-menu` popover tokens/pattern
-(position/border/radius/shadow) so the two overflow menus in this modal look
-and behave consistently. The popover opens DOWNWARD (`top: calc(100% + ...)`)
-since the trigger lives in the header cluster rather than the footer, unlike
-`.detail-move-menu` which opens upward from the footer.
+FN-7545 — overflow menu for the oversight action controls. It uses its own
+header-anchored popover treatment because FN-198 removes the footer relocation
+menu. The popover opens DOWNWARD (`top: calc(100% + ...)`) from the header
+cluster.
 
 FNXC:PlannerOversight 2026-07-05-00:00:
 FN-7604 — this overflow menu is now the single universal surface at every
@@ -1727,50 +1725,15 @@ Planner Chat should not open expanded by default. When the user expands it, the 
   flex: 1;
 }
 
-/* Detail modal split-menu dropdowns */
-.detail-actions-dropdown,
-.detail-move-dropdown {
+/* Detail modal footer Actions dropdown. */
+.detail-actions-dropdown {
   position: relative;
 }
 
-.detail-move-actions-in-review {
-  display: flex;
-  gap: var(--space-md);
-  align-items: center;
-}
-
-.detail-move-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.detail-move-btn__label {
-  flex: 1;
-}
-
-.detail-move-btn__arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-xs);
-  margin-right: calc(-1 * var(--space-xs));
-  margin-block: calc(-1 * var(--space-xs));
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .detail-move-btn:hover .detail-move-btn__arrow {
-    background: color-mix(in srgb, var(--text) 12%, transparent);
-  }
-}
-
-.detail-actions-menu,
-.detail-move-menu {
+.detail-actions-menu {
   position: absolute;
   bottom: calc(100% + var(--space-xs));
+  left: 0;
   z-index: 50;
   min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
   background: var(--surface);
@@ -1780,16 +1743,7 @@ Planner Chat should not open expanded by default. When the user expands it, the 
   overflow: hidden;
 }
 
-.detail-actions-menu {
-  left: 0;
-}
-
-.detail-move-menu {
-  right: 0;
-}
-
-.detail-actions-menu-item,
-.detail-move-menu-item {
+.detail-actions-menu-item {
   display: block;
   width: 100%;
   padding: var(--space-sm) var(--space-md);
@@ -1804,12 +1758,7 @@ Planner Chat should not open expanded by default. When the user expands it, the 
 }
 
 .detail-actions-menu-item:hover,
-.detail-move-menu-item:hover {
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
-
-.detail-actions-menu-item:focus,
-.detail-move-menu-item:focus {
+.detail-actions-menu-item:focus {
   outline: none;
   background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
 }
@@ -1852,10 +1801,6 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
 }
 
 @media (max-width: 768px) {
-  .detail-move-btn__arrow {
-    padding: var(--space-xs);
-  }
-
   /* Full-screen sheet on mobile. Desktop `min-width: 480px` would otherwise
      push the modal off narrow viewports; overlay padding-top leaves awkward
      gaps. Resize is disabled (touchscreens can't drag the grip). */
@@ -2044,12 +1989,8 @@ FNXC:TaskDetail 2026-06-22-18:40:
   background: var(--card-hover);
 }
 
-/*
-FNXC:TaskDetail 2026-06-22-20:15:
-The footer Actions/Move dropdown buttons sit at the BOTTOM of the embedded panel, so the menus must open UPWARD (above the button). The earlier embedded rule opened them downward (top:100%), which dropped the menu off the panel bottom where the body's overflow clipped it — the popups appeared to vanish. Anchor to bottom:100% so they always open above the trigger and stay on-screen.
-*/
-.task-detail-content--embedded .detail-actions-menu,
-.task-detail-content--embedded .detail-move-menu {
+/* Embedded footer Actions menus open upward to remain inside the panel. */
+.task-detail-content--embedded .detail-actions-menu {
   bottom: calc(100% + var(--space-xs));
   top: auto;
 }
@@ -2787,6 +2728,17 @@ The original operator prompt is now rendered as Markdown (shared PROMPT.md rende
   overflow-wrap: anywhere;
 }
 
+/*
+FNXC:TaskDetailPlan 2026-08-27-10:22:
+The summary-first Definition view keeps its disclosure aligned to the plan content on desktop and
+stretches it on touch layouts, preserving a clear tap target without creating a separate button system.
+*/
+.detail-section--plan-prompt .detail-plan-details-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  gap: var(--space-xs);
+}
+
 .task-detail-content--embedded .detail-section--plan-prompt {
   width: 100%;
   min-width: 0;
@@ -2987,6 +2939,11 @@ The original operator prompt is now rendered as Markdown (shared PROMPT.md rende
   .detail-section--original-prompt .markdown-body {
     min-width: 0;
     max-width: 100%;
+  }
+
+  .detail-section--plan-prompt .detail-plan-details-toggle {
+    align-self: stretch;
+    width: 100%;
   }
 
   .detail-section--plan-prompt .detail-spec-edit-trigger,
@@ -3593,29 +3550,9 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     min-width: 0;
   }
 
-  .task-detail-content .detail-actions-dropdown,
-  .task-detail-content .detail-move-dropdown {
+  .task-detail-content .detail-actions-dropdown {
     min-width: 0;
     flex-shrink: 1;
-  }
-
-  .task-detail-content .detail-move-dropdown {
-    flex: 0 1 auto;
-  }
-
-  .task-detail-content .detail-move-actions-in-review {
-    display: flex;
-    flex: 1 1 auto;
-    flex-wrap: nowrap;
-    align-items: center;
-    min-width: 0;
-    gap: var(--space-xs);
-  }
-
-  .task-detail-content .detail-move-actions-in-review > div,
-  .task-detail-content .detail-move-actions-in-review > .btn {
-    flex: 1 1 0;
-    min-width: 0;
   }
 
   .task-detail-content .modal-actions .btn {
@@ -3628,14 +3565,7 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     text-overflow: ellipsis;
   }
 
-  .task-detail-content .detail-move-btn {
-    display: flex;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .task-detail-content .detail-footer-button-label,
-  .task-detail-content .detail-move-btn__label {
+  .task-detail-content .detail-footer-button-label {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -3643,14 +3573,12 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     white-space: nowrap;
   }
 
-  .task-detail-content .detail-move-btn__arrow,
   .task-detail-content .modal-actions .btn > svg {
     flex-shrink: 0;
   }
 
   /* Mobile dropdown menus — position above action bar, constrained to viewport */
-  .detail-actions-menu,
-  .detail-move-menu {
+  .detail-actions-menu {
     bottom: calc(100% + var(--space-xs));
     max-width: calc(100vw - calc(var(--space-lg) + var(--space-md)));
     max-height: calc(100dvh - 120px);
@@ -3864,6 +3792,29 @@ Reuse the near-duplicate banner layout; replan-cap escalations use a stronger wa
   color: var(--text);
 }
 
+.detail-near-duplicate-banner__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: var(--space-xs);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-warning);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.detail-near-duplicate-banner__dismiss:hover {
+  background: var(--card-hover);
+}
+
+.detail-near-duplicate-banner__dismiss:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
 .detail-near-duplicate-banner__copy {
   margin: 0;
   color: var(--text);
@@ -4065,4 +4016,45 @@ operator recovery without treating acquisition count as task intent.
 .workspace-repository-scope-history {
   margin: var(--space-sm) 0;
   padding-inline-start: var(--space-lg);
+}
+
+/*
+FNXC:TaskDetailOverlapFiles 2026-08-27-11:06:
+Operators need the scheduler's matching file pairs directly beside an overlap blocker. Keep this compact, tokenized list readable in the dependency tab without changing the existing blocker action row.
+*/
+.detail-overlap-files {
+  margin-block: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--text-muted);
+}
+
+.detail-overlap-files__list {
+  display: grid;
+  gap: var(--space-xs);
+  margin: var(--space-xs) 0 0;
+  padding-inline-start: var(--space-lg);
+}
+
+.detail-overlap-files__list code {
+  font-family: var(--font-mono);
+}
+
+.detail-overlap-files__loading {
+  color: var(--color-warning);
+}
+
+.detail-overlap-files__error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .detail-overlap-files {
+    overflow-wrap: anywhere;
+  }
+
+  .detail-overlap-files__list {
+    padding-inline-start: var(--space-md);
+  }
 }

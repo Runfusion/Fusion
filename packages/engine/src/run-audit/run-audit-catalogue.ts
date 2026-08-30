@@ -44,6 +44,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "task:empty-merge-finalize-blocked-no-landed-proof",
   "task:finalize-unproven-blocked",
   "task:merge-boundary-unproven-parked",
+  "task:merge-admission-deferred-live-execution",
+  "task:reconcile-confirmed-merge-checklist",
   "task:finalize-lost-work-blocked",
   "task:auto-recover-stale-merger-status",
 
@@ -56,6 +58,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   FN-9186's bounded zero-progress requeue pair. docs/run-audit.md carried both rows while the catalogue
   did not, and the lock-step guard is the only thing that reports that direction of drift.
   */
+
   "task:no-progress-no-task-done-requeue",
   "task:no-progress-no-task-done-requeue-exhausted",
   "task:reclaim-phantom-executor-binding",
@@ -120,6 +123,10 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Finalize is blocked because finalization has not been proven against the landing truth.",
   "task:merge-boundary-unproven-parked":
     "A terminal merge-boundary proof failure is parked with bounded best-effort audit telemetry.",
+  "task:merge-admission-deferred-live-execution":
+    "Merge admission deferred because a live execution signal still owns the task.",
+  "task:reconcile-confirmed-merge-checklist":
+    "Confirmed-merge finalization reconciled stale checklist state using counts-only telemetry.",
   "task:finalize-lost-work-blocked":
     "Finalize is blocked because it would discard work (lost-work guard).",
   "task:auto-recover-stale-merger-status":
@@ -136,6 +143,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "A zero-progress no-task-done failure consumes one bounded self-healing retry and records its backoff.",
   "task:no-progress-no-task-done-requeue-exhausted":
     "The bounded no-progress requeue budget parks a task once, without gating the park on the emission.",
+
   "task:reclaim-phantom-executor-binding":
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
   "task:reconcile-orphaned-pending-step-results":

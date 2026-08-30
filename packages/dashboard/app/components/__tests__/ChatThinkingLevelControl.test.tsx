@@ -7,16 +7,34 @@ import { FN_AGENT_ID } from "../../hooks/useChat";
 import { ChatThinkingLevelControl } from "../ChatThinkingLevelControl";
 
 vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled?: boolean }) => (
-    <button
-      type="button"
-      data-testid="mock-model-dropdown"
-      data-value={value}
-      disabled={disabled}
-      onClick={() => onChange("openai/gpt-4o")}
-    >
-      {value || "Select a model"}
-    </button>
+  CustomModelDropdown: ({
+    value,
+    onChange,
+    disabled,
+    label,
+    defaultOptionLabel,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    disabled?: boolean;
+    label: string;
+    defaultOptionLabel?: string;
+  }) => (
+    <div>
+      <button
+        type="button"
+        data-testid="mock-model-dropdown"
+        data-value={value}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => onChange("openai/gpt-4o")}
+      >
+        {value || "Select a model"}
+      </button>
+      <button type="button" data-testid="mock-model-default" disabled={disabled} onClick={() => onChange("")}>{defaultOptionLabel ?? "Use default"}</button>
+      <button type="button" data-testid="mock-model-malformed-provider" disabled={disabled} onClick={() => onChange("openai")}>Malformed provider</button>
+      <button type="button" data-testid="mock-model-malformed-trailing" disabled={disabled} onClick={() => onChange("openai/")}>Malformed trailing slash</button>
+    </div>
   ),
 }));
 
@@ -91,6 +109,51 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.queryByTestId("chat-thinking-option-xhigh")).toBeNull();
     fireEvent.click(screen.getByTestId("chat-thinking-option-max"));
     expect(onChange).toHaveBeenCalledWith("max");
+  });
+
+  it("renders model-only targeting without any agent controls", () => {
+    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={vi.fn()} showAgentTarget={false} models={models} agents={agents} />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+
+    expect(screen.getByRole("listbox")).toBeDefined();
+    expect(screen.getByText("Model")).toBeDefined();
+    expect(screen.getByTestId("chat-thinking-model-picker")).toBeDefined();
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-agent-list")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-agent-empty")).toBeNull();
+  });
+
+  it("forwards model picker labels and default selection to the host", () => {
+    const onChangeModel = vi.fn();
+    render(
+      <ChatThinkingLevelControl
+        level={null}
+        onChange={vi.fn()}
+        onChangeModel={onChangeModel}
+        models={models}
+        modelPickerLabel="Chat model"
+        modelDefaultOptionLabel="Use project default"
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByLabelText("Chat model")).toBeDefined();
+    expect(screen.getByTestId("mock-model-default")).toHaveTextContent("Use project default");
+
+    fireEvent.click(screen.getByTestId("mock-model-default"));
+    expect(onChangeModel).toHaveBeenCalledWith({ modelProvider: null, modelId: null });
+  });
+
+  it("ignores malformed non-empty model values", () => {
+    const onChangeModel = vi.fn();
+    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-malformed-provider"));
+    fireEvent.click(screen.getByTestId("mock-model-malformed-trailing"));
+
+    expect(onChangeModel).not.toHaveBeenCalled();
   });
 
   it("renders only thinking-level options in level-only mode and persists selections", () => {
@@ -183,7 +246,7 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.getByTestId("chat-thinking-model-picker")).toBeDefined();
   });
 
-  it("selecting a model calls onChangeModel with the provider/model pair and closes", () => {
+  it("selecting a model calls onChangeModel and keeps the popover available for thinking", () => {
     const onChangeModel = vi.fn();
     render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} />);
 
@@ -191,10 +254,10 @@ describe("ChatThinkingLevelControl", () => {
     fireEvent.click(screen.getByTestId("mock-model-dropdown"));
 
     expect(onChangeModel).toHaveBeenCalledWith({ modelProvider: "openai", modelId: "gpt-4o" });
-    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(screen.getByRole("listbox")).toBeDefined();
   });
 
-  it("selecting an agent calls onChangeModel with agentId and closes", () => {
+  it("selecting an agent calls onChangeModel and keeps the popover available for thinking", () => {
     const onChangeModel = vi.fn();
     render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} agents={agents} />);
 
@@ -203,7 +266,84 @@ describe("ChatThinkingLevelControl", () => {
     fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
 
     expect(onChangeModel).toHaveBeenCalledWith({ agentId: "agent-002" });
-    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(screen.getByRole("listbox")).toBeDefined();
+  });
+
+  it("keeps a matched model echo open and then closes on a thinking-level selection", () => {
+    const onChangeModel = vi.fn();
+    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-dropdown"));
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="openai" modelId="gpt-4o" />);
+
+    expect(screen.getByTestId("chat-thinking-popover")).toBeDefined();
+    fireEvent.click(screen.getByTestId("chat-thinking-option-high"));
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+  });
+
+  it("keeps matched agent and default target echoes open", () => {
+    const onChangeModel = vi.fn();
+    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} agents={agents} targetKey="session-a" />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
+    fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} agents={agents} targetKey="session-a" agentId="agent-002" />);
+    expect(screen.getByTestId("chat-thinking-popover")).toBeDefined();
+
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" defaultModelValue="openai/gpt-4o" />);
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-default"));
+    rerender(<ChatThinkingLevelControl level="medium" onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="openai" modelId="gpt-4o" defaultModelValue="openai/gpt-4o" />);
+    expect(screen.getByTestId("chat-thinking-popover")).toBeDefined();
+  });
+
+  it("closes for conversation identity changes before matching a pending target", () => {
+    const onChangeModel = vi.fn();
+    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-dropdown"));
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-b" modelProvider="openai" modelId="gpt-4o" />);
+
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+  });
+
+  it("closes for unmatched target, rollback, level-only, and consumed echo changes", () => {
+    const onChangeModel = vi.fn();
+    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-dropdown"));
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="anthropic" modelId="claude-sonnet-4-5" />);
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    rerender(<ChatThinkingLevelControl level="high" onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="anthropic" modelId="claude-sonnet-4-5" />);
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-dropdown"));
+    rerender(<ChatThinkingLevelControl level="high" onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="openai" modelId="gpt-4o" />);
+    expect(screen.getByTestId("chat-thinking-popover")).toBeDefined();
+    rerender(<ChatThinkingLevelControl level="high" onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="anthropic" modelId="claude-sonnet-4-5" />);
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+  });
+
+  it("preserves legacy omitted targetKey matching while no-host picker remains disabled", () => {
+    const onChangeModel = vi.fn();
+    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} />);
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("mock-model-dropdown"));
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} modelProvider="openai" modelId="gpt-4o" />);
+    expect(screen.getByTestId("chat-thinking-popover")).toBeDefined();
+
+    rerender(<ChatThinkingLevelControl level="high" onChange={vi.fn()} models={models} modelProvider="openai" modelId="gpt-4o" />);
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByTestId("mock-model-dropdown")).toBeDisabled();
   });
 
   it("reflects the active model and active agent selection", () => {

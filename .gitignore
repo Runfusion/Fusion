@@ -117,6 +117,9 @@ packages/desktop/deploy/
 # comment (scripts/build-engine-core-gate-bundle.mjs) for the full repro.
 packages/core/.gate-bundle/
 
+# FNXC:PipelineSmoke 2026-08-23-14:52: FN-182 writes local Vitest and normalized smoke reports on every opt-in run; CI uploads them instead of committing run-specific evidence.
+packages/engine/.pipeline-smoke-*.json
+
 # FNXC:KnowledgeGraph 2026-08-10-18:32:
 # `fn knowledge-graph build` output (FN-8920 memory epic). Deterministic and fully
 # regenerable from source, with SHA-256 fingerprints in the manifest driving
@@ -140,4 +143,3 @@ packages/core/src/postgres/pg_hba_trust.conf
 # recovery can't accidentally `git add` a multi-GB dump into history.
 fusion-pg-*.sql
 fusion-pg-*.dump
-

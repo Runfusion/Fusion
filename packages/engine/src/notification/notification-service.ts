@@ -1001,7 +1001,8 @@ export class NotificationService {
       const content = [
         `**${formatTaskIdentifier(task)} needs your decision**`,
         "",
-        `It was flagged as a duplicate of ${canonicalTaskId}. Keep it to continue planning, or delete it if the work is already covered.`,
+        /* FNXC:NearDuplicateDetection 2026-08-23-04:10: FN-173 removed Keep, so operator prompts name the clear-the-flag action. */
+        `It was flagged as a duplicate of ${canonicalTaskId}. Clear the duplicate flag to continue planning, or delete the task if the work is already covered.`,
         ...(link ? ["", `[Open ${task.id}](${link})`] : []),
       ].join("\n");
       await messageStore.sendMessageOnce({

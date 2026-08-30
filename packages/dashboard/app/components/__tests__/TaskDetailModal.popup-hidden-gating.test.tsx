@@ -25,7 +25,6 @@ setupTaskDetailModalHooks();
 function renderContent(active: boolean, task = makeTask({ id: "FN-9001" })) {
   const props = {
     task,
-    onMoveTask: noopMove,
     onDeleteTask: noopDelete,
     onMergeTask: noopMerge,
     onOpenDetail: noopOpenDetail,

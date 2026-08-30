@@ -12,6 +12,21 @@ export interface TaskStep {
   name: string;
   status: StepStatus;
   /**
+   * FNXC:ReviewGatedCoding 2026-08-23-04:52:
+   * JSONB task steps need no migration for this additive provenance. Review-gated consumers use
+   * this durable field—not a human-readable name—to identify appended remediation work.
+   */
+  remediation?: {
+    wave: number;
+    gate: string;
+    gateStepId: string;
+    findingId?: string;
+    filePath?: string;
+    line?: number;
+    detail?: string;
+    declaredFiles?: string[];
+  };
+  /**
    * Step-inversion (KTD-11): 0-indexed indices of steps this step depends on,
    * parsed from the PROMPT.md `### Step N (depends: 1,2): Title` annotation
    * or structured parser output (1-indexed step numbers in authored content →

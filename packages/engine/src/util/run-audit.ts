@@ -150,6 +150,8 @@ export type GitMutationType =
   // -failed: a sub-repo worktree acquisition threw; surfaced + audited, never swallowed.
   | "worktree:workspace-repo-acquire-busy"
   | "worktree:workspace-repo-acquire-failed"
+  /** Metadata: { taskId, repoRelPath, holderTaskId, ageMs, outcome: "lease-authority" }; durable lease admission replaced a stale same-kind local cache entry. */
+  | "worktree:workspace-repo-acquire-reclaimed"
   /*
   FNXC:Workspace 2026-08-20-00:56:
   Per-repo base decisions carry only { taskId, repoRelPath, stage, source, outcome,
@@ -671,6 +673,8 @@ export type DatabaseMutationType =
   | "task:reconcile-workspace-partial-land-no-action"
   /** Metadata: { taskId, path, kind: "workspace-repo-land", registeredAt, ageMs, staleBindingAgeFloorMs, ownerColumn, ownerTerminalReason: "missing" | "complete" | "archived" | "deleted" | "failed" } */
   | "task:reclaim-phantom-workspace-land-lease"
+  /** Metadata: { taskId, path, kind: "workspace-repo-acquire", registeredAt, ageMs, staleBindingAgeFloorMs, ownerColumn, ownerTerminalReason }. */
+  | "task:reclaim-phantom-workspace-acquire-lease"
   /*
   FNXC:Workspace 2026-08-15-05:13:
   Metadata: { taskId, repo, worktreePath, success, reason, lane, worktreeOutcome, pruned, branch,
@@ -891,6 +895,10 @@ export type DatabaseMutationType =
    * stall the terminal park.
    */
   | "task:merge-boundary-unproven-parked"
+  /** FNXC:MergeExecutionExclusion 2026-08-23-08:25: FN-180 records live-execution admission deferrals with ids and fixed signal/source/outcome enums only. */
+  | "task:merge-admission-deferred-live-execution"
+  /** FNXC:ConfirmedMergeFinalization 2026-08-23-08:25: FN-180 records counts-only reconciliation of stale checklist state after durable merge proof. */
+  | "task:reconcile-confirmed-merge-checklist"
   /**
    * FN-5490/FN-5517/FN-5526/FN-5540 lost-work guard: the merger or self-heal
    * sweep refused to finalize a task as no-op because its record claimed

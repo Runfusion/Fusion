@@ -879,16 +879,35 @@ describe("TaskForm", () => {
 
 describe("TaskForm description-adjacent actions layout (FN-781)", () => {
 
-  it("does not render description-actions in edit mode", () => {
+  it("renders Start only for create hosts that supply a callback", () => {
+    const { unmount } = renderTaskForm({
+      onStartSubmit: vi.fn(),
+      startSubmitLabel: "Starting...",
+      startSubmitDisabled: true,
+    });
+
+    expect(screen.getByTestId("task-form-inline-start")).toBeDisabled();
+    expect(screen.getByTestId("task-form-inline-start")).toHaveAccessibleName("Starting...");
+
+    unmount();
+    renderTaskForm({});
+    expect(screen.queryByTestId("task-form-inline-start")).toBeNull();
+    expect(screen.getByTestId("task-form-description-actions").querySelector("button:empty")).toBeNull();
+  });
+
+  it("does not render description-actions or Start in edit mode", () => {
     renderTaskForm({
       mode: "edit",
       title: "My task",
       onTitleChange: vi.fn(),
       description: "Some task",
       onPlanningMode: vi.fn(),
+      onStartSubmit: vi.fn(),
+      startSubmitLabel: "Start",
     });
 
     expect(screen.queryByTestId("task-form-description-actions")).toBeNull();
+    expect(screen.queryByTestId("task-form-inline-start")).toBeNull();
     expect(screen.queryByTestId("task-form-inline-optional-steps")).toBeNull();
   });
 

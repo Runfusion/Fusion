@@ -57,6 +57,7 @@ import { promptForPort } from "./port-prompt.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getPackageManagerAgentDir } from "./auth-paths.js";
+import { createProjectScopedPackageManagerFactory } from "./skills-package-manager.js";
 import { resolveProject } from "../project-context.js";
 import { startMigrationHoldingServer } from "./migration-holding-server.js";
 import {
@@ -981,6 +982,7 @@ export async function runServe(
     ? createSkillsAdapter({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
+        getPackageManager: createProjectScopedPackageManagerFactory(getPackageManagerAgentDir()),
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
         /*
          * FNXC:PluginSkills 2026-07-10-00:00:

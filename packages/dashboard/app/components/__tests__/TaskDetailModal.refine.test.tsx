@@ -31,7 +31,6 @@ const renderDoneTaskDetail = (options: {
       initialAction={options.initialAction}
       onClose={options.onClose ?? noop}
       onRefinementCreated={options.onRefinementCreated}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}

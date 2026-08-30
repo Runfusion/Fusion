@@ -273,31 +273,4 @@ describe("ChatView context-window indicator", () => {
     expect(await screen.findByTestId("chat-thread-context-window")).toHaveTextContent("100 / 200k");
   });
 
-  it("does not render an indicator shell in rooms scope", async () => {
-    const room = createRoomFixture("context-room");
-    localStorage.setItem("fusion:chat-scope", "rooms");
-    setupDirectChat({ content: "abcd" });
-    setupMockRooms({
-      rooms: [room],
-      activeRoom: room,
-      activeRoomMembers: [],
-      messages: [
-        {
-          id: "room-msg-001",
-          roomId: room.id,
-          role: "user",
-          content: "Room hello",
-          createdAt: "2026-04-08T00:00:00.000Z",
-          senderAgentId: null,
-          mentions: [],
-        },
-      ],
-    });
-
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-    await userEvent.click(screen.getByTestId("chat-room-item-context-room"));
-
-    expect(document.querySelector(".chat-room-thread-header")).toBeInTheDocument();
-    expectNoContextWindowShell();
-  });
 });

@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { SecretsStore, Settings, TaskStore, WorktrunkSettings, WorkspaceWorktreeContext } from "@fusion/core";
@@ -18,7 +18,6 @@ import {
   removeWorktree as removeWorktreeViaBackend,
   resolveWorktreeBackend as resolveWorktreeBackendViaSettings,
 } from "./worktree-backend.js";
-import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import type { RunAuditor } from "../util/run-audit.js";
@@ -1026,22 +1025,6 @@ export async function cleanupOrphanedWorktrees(
   for (const worktreePath of candidates) {
     try {
       if (registeredWorktrees.has(resolve(worktreePath))) {
-        const orphanTaskId = `orphan:${basename(worktreePath)}`;
-        try {
-          await cleanupSecretsEnvFile({
-            worktreePath,
-            taskId: orphanTaskId,
-            expectedFingerprint: null,
-            filename: ".env",
-            audit: undefined,
-            logger: worktreePoolLog,
-          });
-        } catch (error) {
-          worktreePoolLog.warn(
-            `secrets-env cleanup failed for registered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-
         await removeWorktreeViaBackend({
           rootDir,
           worktreePath,
@@ -1052,7 +1035,9 @@ export async function cleanupOrphanedWorktrees(
         if (!isInsideWorktreesDir(rootDir, worktreePath, settings)) {
           throw new Error(`Refusing to remove path outside .worktrees: ${worktreePath}`);
         }
-        rmSync(worktreePath, { recursive: true, force: true });
+        // FNXC:WorktreeCleanup: rmdir is deliberately non-recursive. Any content
+        // makes it fail closed and preserves the unregistered checkout.
+        rmdirSync(worktreePath);
         await pruneWorktreeAdminEntries({
           rootDir,
           reason: "pool-cleanup-orphan",
@@ -1199,36 +1184,26 @@ export async function reapOrphanWorktrees(
         continue;
       }
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
-      // fall through to removal
+      // fall through to the non-recursive removal below; `.git` makes it fail closed.
     }
 
     // This directory is on disk but has no valid .git entry and is not a registered
     // worktree — it is a half-initialized / leaked orphan.  Remove it.
     try {
-      try {
-        await cleanupSecretsEnvFile({
-          worktreePath: resolvedFull,
-          taskId: `orphan:${name}`,
-          expectedFingerprint: null,
-          filename: ".env",
-          logger: worktreePoolLog,
-        });
-      } catch (error) {
-        worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      rmSync(resolvedFull, { recursive: true, force: true });
-      await pruneWorktreeAdminEntries({
-        rootDir: projectRoot,
-        reason: "pool-reap-orphan",
-        target: resolvedFull,
-        logger: worktreePoolLog,
-      }).catch(() => undefined);
-      worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
-      removed++;
+      rmdirSync(resolvedFull);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       worktreePoolLog.warn(`reapOrphanWorktrees: failed to remove ${name} — ${msg}`);
+      continue;
     }
+    await pruneWorktreeAdminEntries({
+      rootDir: projectRoot,
+      reason: "pool-reap-orphan",
+      target: resolvedFull,
+      logger: worktreePoolLog,
+    }).catch(() => undefined);
+    worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
+    removed++;
   }
 
   return removed;

@@ -211,37 +211,21 @@ FNXC:TaskDetailPlannerChat 2026-07-07-00:00:
 The Planner Chat streaming Stop button must occupy the same width footprint as the Send button it replaces (no shift/shrink on swap) and mirror the regular Chat view's stop-button sizing (`.chat-input-row`'s `--chat-input-control-size` in ChatView.css). The shared `.chat-input-send` / `.chat-input-stop` classes read that custom property from `.chat-input-row`, which the Planner composer never renders inside of, so the property was undefined here and `width` fell back to `auto`, sizing each button from its own content only. Declare the same control-size formula scoped to `.task-planner-chat-composer` and give `.task-planner-chat-send` (present on both the send and stop button variants) a matching `min-inline-size` floor so neither button can render narrower than the other on desktop, without touching ChatView.css's own token.
 */
 /*
-FNXC:TaskChatDefaultModel 2026-08-19-12:12:
-Task Chat keeps model and thinking controls reachable beside the composer, reusing the Direct Chat primitives instead of adding a task-only selector style. The compact control row wraps on narrow layouts so the task transcript and send affordance remain usable.
+FNXC:TaskChatDefaultModel 2026-08-27-12:03:
+Task Chat reuses the shared brain popover for model-only targeting and thinking level, so the
+composer has one control without an agent-impersonation lane. Its positioned full-width ancestor
+keeps the wider shared popover inside the narrower task panel at every breakpoint.
 */
-.task-planner-chat-target-controls {
-  display: flex;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: var(--space-xs);
-  min-width: 0;
-}
-
-.task-planner-chat-target-controls .model-combobox {
-  min-width: 0;
-  max-width: calc(var(--space-2xl) * 8);
-}
-
-.task-planner-chat-target-controls .model-combobox-trigger {
-  max-width: 100%;
-}
-
-.task-planner-chat-target-controls .chat-thinking-level-root {
-  flex: 0 0 auto;
-}
 
 /*
-FNXC:ChatMemoryFocus 2026-08-13:
-Spacing row holding the per-conversation memory focus chip above the planner
-composer. The chip inherits its control-size token from the composer below so
-it aligns with the send/stop buttons.
+FNXC:ChatMemoryFocusSelector 2026-08-24-03:40:
+The planner focus popover must be contained by this full-width composer row, never the
+chip or the full chat pane. The chip-anchored mobile override collapsed the popover into
+a sliver; a future ChatFocusSelector host must likewise provide a positioned full-width
+composer ancestor. The chip inherits its control-size token from the composer below.
 */
 .task-planner-chat-focus-row {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -254,11 +238,24 @@ it aligns with the send/stop buttons.
   /* FN-7634: same formula as ChatView.css's `.chat-input-row { --chat-input-control-size: … }` so the Planner stop/send buttons share the regular Chat view's control-size floor. */
   --chat-input-control-size: calc(var(--space-lg) * 2.5);
 
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   flex-wrap: wrap;
   align-items: stretch;
   gap: var(--space-sm);
+}
+
+.task-planner-chat-composer .chat-thinking-level-root {
+  position: static;
+}
+
+.task-planner-chat-composer .chat-thinking-popover {
+  left: var(--space-md);
+  right: var(--space-md);
+  width: auto;
+  max-width: none;
+  max-inline-size: none;
 }
 
 /*
@@ -313,17 +310,6 @@ height rather than relying on the global button minimum.
     flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--space-xs);
-  }
-
-  .task-planner-chat-target-controls {
-    flex: 1 1 100%;
-    order: 0;
-    justify-content: flex-end;
-  }
-
-  .task-planner-chat-target-controls .model-combobox {
-    flex: 1 1 auto;
-    max-width: none;
   }
 
   .task-planner-chat-input {

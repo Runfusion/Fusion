@@ -184,6 +184,11 @@ export interface TaskFormProps {
    * Start is supplied only by a host that has validated server-derived manual-intake metadata and
    * a safe destination. Keeping this optional prevents an ineligible workflow from leaving an
    * empty button shell in either the desktop modal or mobile sheet.
+   *
+   * FNXC:NewTaskWorkflowStart 2026-08-27-10:50:
+   * FN-196 requires an eligible host to pass this callback even before description entry. The
+   * visible disabled button matches Quick Add's discoverable Start contract; only ineligible
+   * metadata omits the callback and leaves no action-row shell.
    */
   onStartSubmit?: () => void;
   startSubmitLabel?: string;

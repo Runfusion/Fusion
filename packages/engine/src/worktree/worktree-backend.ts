@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
@@ -27,6 +27,7 @@ import {
 import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree-stale-registration.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const NATIVE_TIMEOUT_MS = 120_000;
 const REMOVE_TIMEOUT_MS = 60_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
@@ -216,6 +217,7 @@ export interface WorktreeRemoveInput {
   worktreePath: string;
   branch?: string;
   taskId?: string;
+  force?: boolean;
 }
 
 export interface WorktreeSyncInput {
@@ -679,7 +681,7 @@ export class NativeWorktreeBackend implements WorktreeBackend {
 
   async remove(input: WorktreeRemoveInput): Promise<void> {
     try {
-      await execAsync(`git worktree remove --force ${quoteShellArg(input.worktreePath)}`, {
+      await execAsync(`git worktree remove${input.force === false ? "" : " --force"} ${quoteShellArg(input.worktreePath)}`, {
         cwd: input.rootDir,
         encoding: "utf-8",
         timeout: REMOVE_TIMEOUT_MS,
@@ -687,6 +689,22 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       });
       return;
     } catch (error) {
+      // Defensive callers rely on Git's deletion-boundary dirty check. Never turn
+      // that refusal into the recursive filesystem fallback below.
+      if (input.force === false) {
+        const missingPathError = /is not a working tree|no such file or directory|does not exist/i.test(getErrorMessageWithStderr(error));
+        if (!existsSync(input.worktreePath) && missingPathError) {
+          await pruneWorktreeAdminEntries({
+            rootDir: input.rootDir,
+            auditor: this.deps.audit,
+            reason: "remove-missing-fallback",
+            target: input.worktreePath,
+            logger: this.deps.logger,
+          });
+          return;
+        }
+        throw error;
+      }
       if (!isRecoverableNativeWorktreeRemoveError(error)) {
         throw error;
       }
@@ -951,7 +969,7 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
   async remove(input: WorktreeRemoveInput): Promise<void> {
     const target = input.branch ?? input.worktreePath;
     try {
-      await this.runWorktrunk(["remove", "--foreground", target], {
+      await this.runWorktrunk(["remove", "--foreground", ...(input.force === true ? ["--force"] : []), target], {
         cwd: input.rootDir,
         operation: "remove",
       });
@@ -1072,6 +1090,17 @@ const ALLOWED_FORCE_REASONS = new Set<RemovalReason>([
   RemovalReason.WorkspaceAcquireRollback,
 ]);
 
+const DEFENSIVE_REMOVAL_REASONS = new Set<RemovalReason>([
+  RemovalReason.MergerCleanup,
+  RemovalReason.MergerPostMerge,
+  RemovalReason.PoolPrune,
+  RemovalReason.SelfHealingBranchConflict,
+  RemovalReason.SelfHealingIdleSweep,
+  RemovalReason.SelfHealingReclaim,
+  RemovalReason.SelfHealingStaleActiveBranch,
+  RemovalReason.StepSessionCleanup,
+]);
+
 export class InvalidForceUsageError extends Error {
   constructor(reason: RemovalReason) {
     super(`force=true is not allowed for removal reason '${reason}'`);
@@ -1089,6 +1118,28 @@ export class ActiveSessionWorktreeRemovalError extends Error {
   }) {
     super(`cannot remove active-session worktree ${details.worktreePath} (${details.taskId}/${details.kind})`);
     this.name = "ActiveSessionWorktreeRemovalError";
+  }
+}
+
+/** Fail closed when an automatic sweep cannot prove the checkout is empty of user content. */
+async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<void> {
+  // Nothing on disk means nothing to preserve — stale registrations prune normally below.
+  if (!existsSync(worktreePath)) {
+    return;
+  }
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("git", ["status", "--porcelain", "--ignored", "--untracked-files=all"], {
+      cwd: worktreePath,
+      encoding: "utf-8",
+      timeout: 15_000,
+      maxBuffer: MAX_BUFFER,
+    }));
+  } catch (error) {
+    throw new Error(`preserving ${worktreePath}: status probe failed (${error instanceof Error ? error.message : String(error)})`);
+  }
+  if (stdout.trim().length > 0) {
+    throw new Error(`preserving ${worktreePath}: uncommitted or ignored content present`);
   }
 }
 
@@ -1118,6 +1169,15 @@ export async function removeWorktree(input: {
 
   if (input.force === true && !ALLOWED_FORCE_REASONS.has(input.reason)) {
     throw new InvalidForceUsageError(input.reason);
+  }
+
+  const requiresCleanWorktree = DEFENSIVE_REMOVAL_REASONS.has(input.reason);
+
+  // FNXC:WorktreeCleanup:
+  // Defensive sweeps must prove cleanliness before destroying anything. Dirty or
+  // unverifiable content is preserved (fail closed) — callers treat the throw as "kept".
+  if (requiresCleanWorktree) {
+    await assertCleanForDefensiveRemoval(input.worktreePath);
   }
 
   if (input.expectedOwnerTaskId && input.liveOwnerProbe) {
@@ -1169,6 +1229,7 @@ export async function removeWorktree(input: {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,
     taskId: input.taskId,
+    force: requiresCleanWorktree ? false : input.force,
   };
 
   if (input.force === false || typeof input.timeout === "number") {

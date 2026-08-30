@@ -57,6 +57,7 @@ import {
   resolvePersistAgentThinkingLog,
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
+  resolveStepReopenPolicy,
   resolveAgentActivityAttribution,
   serializeRetryStormError,
   isLegacyWorkspaceWorktreeLayout,
@@ -126,10 +127,13 @@ import { createFallbackModelObserver } from "../auth/fallback-model-observer.js"
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import { dropPreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
+// FNXC:VerificationRemediation 2026-08-26-04:58: the FN-3345 gate's bounce shape lives in its own seam so it is testable without a real session.
+import { bounceVerificationFailure as bounceVerificationFailureSeam } from "./bounce-verification-failure.js";
 import { isContextLimitError } from "../errors/context-limit-detector.js";
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { recordRetry } from "../errors/retry-burned-logger.js";
-import { isSilentTransientError, isTransientError } from "../errors/transient-error-detector.js";
+import { isSessionContentionError, isSilentTransientError, isTransientError } from "../errors/transient-error-detector.js";
+import { isPlanningLifecycleLockTransportFailure } from "../planning-handoff-recovery.js";
 import { checkSessionError, isUsageLimitError } from "../errors/usage-limit-detector.js";
 import { TokenCapDetector } from "../errors/token-cap-detector.js";
 import {
@@ -190,6 +194,7 @@ import { resolveAndEmitGoalContext } from "../goals/goal-injection-diagnostics.j
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
 import { executorLog, formatError } from "../logger.js";
 import { classifyOrphanOurAdvance, rehomeOrphanOntoIntegration } from "../merge/merger-orphan-rehome.js";
+import { isTaskMergeInFlight } from "../merge/merge-execution-exclusion.js";
 import { compactSessionContext, describeModel, formatModelMarkerDetails, promptWithFallback } from "../pi.js";
 import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolution.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
@@ -251,6 +256,7 @@ export type RunImplementationDeps = {
   MAX_AUTO_RECOVERY_ATTEMPTS: number;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   addActiveWorktree: AnyFn;
+  appendReviewRemediationSteps: AnyFn;
   attemptExecutorVerificationFix: AnyFn;
   buildActionGateContext: AnyFn;
   buildInjectedRuntimeEnv: AnyFn;
@@ -325,12 +331,44 @@ export type RunImplementationDeps = {
   unregisterConfiguredCommandController: AnyFn;
 };
 
+export async function retryPlanningLifecycleLockTransportFailure(
+  deps: Pick<RunImplementationDeps, "store" | "getRunContextFor" | "markGraphExecuteSelfRequeued">,
+  task: Task,
+  errorMessage: string,
+  resolveReboundColumnFor: (store: TaskStore, taskId: string) => Promise<string>,
+): Promise<boolean> {
+  const decision = computeRecoveryDecision({ recoveryRetryCount: task.recoveryRetryCount, nextRecoveryAt: task.nextRecoveryAt });
+  if (!decision.shouldRetry) return false;
+  const attempt = decision.nextState.recoveryRetryCount;
+  const delay = formatDelay(decision.delayMs);
+  await deps.store.logEntry(task.id, `Planning lifecycle lock transport failure (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+  await deps.store.updateTask(task.id, { recoveryRetryCount: attempt, nextRecoveryAt: decision.nextState.nextRecoveryAt });
+  deps.markGraphExecuteSelfRequeued(task.id);
+  await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
+  return true;
+}
+
 export async function runImplementation(
   deps: RunImplementationDeps,
   task: Task,
   graphCompletion: GraphCompletionCallback,
   reportImplementationExit?: ImplementationExitReporter,
 ): Promise<void> {
+
+    /*
+    FNXC:MergeExecutionExclusion 2026-08-23-08:51:
+    FN-180 requires the reciprocal of merge admission's live-executor fence: execution must not
+    claim a task while its durable merge-active stamp says a merger owns the branch. This is a
+    deferral, not a park; the next dispatch may claim after the merge clears its stamp.
+    */
+    if (isTaskMergeInFlight(task.id, {
+      activeMergeTaskId: ["merging", "merging-pr", "merging-fix", "reviewing", "landing"].includes(task.status ?? "")
+        ? task.id
+        : null,
+    })) {
+      if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
+      return;
+    }
 
     // FN-4811 follow-up (FN-4814/FN-4809/FN-4811 production failure): claim a
     // PROCESS-WIDE lock synchronously before any other work. Per-instance
@@ -549,9 +587,11 @@ export async function runImplementation(
 
     if (task.column === preflightWipLane && task.mergeDetails) {
       executorLog.warn(`${task.id}: stale mergeDetails found while executing in-progress task — resetting merge state before continuing`);
+      const ir = await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined);
       task = await deps.cleanupMergeStateForReverification(
         task,
         "Executor detected stale merge state while task was in-progress — reset verification steps and merge metadata before resuming",
+        { stepReopenPolicy: resolveStepReopenPolicy(ir) },
       );
     }
 
@@ -1460,16 +1500,32 @@ export async function runImplementation(
                   );
 
                   const maxFixRetries = Math.min(settings.verificationFixRetries ?? 3, 3);
+                  const stepReopenPolicy = resolveStepReopenPolicy(
+                    await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined),
+                  );
+
+                  /*
+                  FNXC:VerificationRemediation 2026-08-26-04:58:
+                  A red deterministic verification hands the executor NAMED work, never a bare bounce. Which
+                  shape that takes is `stepReopenPolicy`'s call, and getting it wrong silently discards the
+                  measurement — see the rationale in bounce-verification-failure.ts.
+                  */
+                  const bounceVerificationFailure = (failureFeedback: string, reason: string) =>
+                    bounceVerificationFailureSeam(
+                      {
+                        store: deps.store,
+                        appendReviewRemediationSteps: deps.appendReviewRemediationSteps,
+                        sendTaskBackForFix: deps.sendTaskBackForFix,
+                        clearCompletedTaskWatchdog: deps.clearCompletedTaskWatchdog,
+                      },
+                      { task, worktreePath, failedType, feedback: failureFeedback, reason, stepReopenPolicy },
+                    );
 
                   if (maxFixRetries === 0) {
                     executorLog.log(`${task.id}: [verification] fix retries set to 0 — sending task back immediately`);
-                    await deps.sendTaskBackForFix(
-                      task, worktreePath,
+                    await bounceVerificationFailure(
                       `${failedType} command \`${failedCommand}\` failed (exit ${failedResult.exitCode}):\n${summary}`,
-                      `Verification (${failedType})`,
                       `Deterministic verification failed (${failedType})`,
-                      true,
-                      true,
                     );
                     return;
                   }
@@ -1511,13 +1567,9 @@ export async function runImplementation(
 
                   if (!fixSucceeded) {
                     executorLog.log(`${task.id}: [verification] all fix attempts exhausted (${maxFixRetries}/${maxFixRetries}) — sending task back`);
-                    await deps.sendTaskBackForFix(
-                      task, worktreePath,
+                    await bounceVerificationFailure(
                       `${failedType} command \`${failedCommand}\` failed (exit ${failedResult.exitCode}) after ${maxFixRetries} fix attempts:\n${summary}`,
-                      `Verification (${failedType})`,
                       `Deterministic verification failed after ${maxFixRetries} fix attempts`,
-                      true,
-                      true,
                     );
                     return;
                   }
@@ -1596,6 +1648,13 @@ export async function runImplementation(
             deps.stuckAborted.delete(task.id);
           } else if (deps.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
             await deps.options.usageLimitPauser.onUsageLimitHit("executor", task.id, errorMessage);
+          } else if (isSessionContentionError(errorMessage)) {
+            // FNXC:WorkspaceContention 2026-08-23-06:45: a live repository holder is a scheduling wait, not a transient infrastructure failure that should delete prepared work.
+            await deps.store.logEntry(task.id, `Waiting for shared workspace resource: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+            throw err;
+          } else if (isPlanningLifecycleLockTransportFailure(err, errorMessage)) {
+            if (await retryPlanningLifecycleLockTransportFailure(deps, task, errorMessage, resolveReboundColumnFor)) return;
+            throw err;
           } else if (isTransientError(errorMessage)) {
             const decision = computeRecoveryDecision({
               recoveryRetryCount: task.recoveryRetryCount,
@@ -3769,6 +3828,13 @@ export async function runImplementation(
           return;
         } else if (deps.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
           await deps.options.usageLimitPauser.onUsageLimitHit("executor", task.id, errorMessage);
+        } else if (isSessionContentionError(errorMessage)) {
+          // FNXC:WorkspaceContention 2026-08-23-06:45: do not churn a prepared worktree while a live holder serializes this resource.
+          await deps.store.logEntry(task.id, `Waiting for shared workspace resource: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+          throw err;
+        } else if (isPlanningLifecycleLockTransportFailure(err, errorMessage)) {
+          if (await retryPlanningLifecycleLockTransportFailure(deps, task, errorMessage, resolveReboundColumnFor)) return;
+          // Exhaustion falls through to the terminal failure path below.
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy
           const decision = computeRecoveryDecision({

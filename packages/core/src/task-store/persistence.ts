@@ -67,6 +67,8 @@ export interface TaskRow {
   postReviewFixCount: number | null;
   planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
+  sessionContentionHoldCount: number | null;
+  sessionContentionWaitReason: string | null;
   taskDoneRetryCount: number | null;
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (ISO timestamp / null).
   bulkCompletionRefusalAt: string | null;
@@ -311,6 +313,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("postReviewFixCount", (task) => task.postReviewFixCount ?? 0),
   defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
+  defineTaskColumn("sessionContentionHoldCount", (task) => task.sessionContentionHoldCount ?? 0),
+  defineTaskColumn("sessionContentionWaitReason", (task) => task.sessionContentionWaitReason ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker persisted as nullable ISO timestamp.
   defineTaskColumn("bulkCompletionRefusalAt", (task) => task.bulkCompletionRefusalAt ?? null),

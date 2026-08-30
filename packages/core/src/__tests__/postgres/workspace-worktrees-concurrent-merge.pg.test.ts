@@ -206,6 +206,41 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
     const updated = await store.mergeWorkspaceWorktreeEntry(task.id, "repo-a", { worktreePath: "/tmp/repo-a", branch: "fusion/a" });
     expect(updated.workspaceWorktrees).toEqual({ "repo-a": { worktreePath: "/tmp/repo-a", branch: "fusion/a" } });
   });
+
+  it("does not pin a planning lifecycle lock while callback preparation is pending", async () => {
+    const preparingStore = h.store();
+    const planningStore = h.store();
+    const task = await preparingStore.createTask({ description: "slow workspace preparation" });
+    let entered!: () => void;
+    let release!: () => void;
+    const preparationEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const preparationRelease = new Promise<void>((resolve) => { release = resolve; });
+
+    const preparation = preparingStore.mergeWorkspaceWorktreeEntry(task.id, "repo-a", async () => {
+      entered();
+      await preparationRelease;
+      return { worktreePath: "/tmp/repo-a", branch: "fusion/a" };
+    });
+    await preparationEntered;
+
+    // FNXC:WorkspaceWorktree 2026-08-23-06:25:
+    // FN-179 requires filesystem preparation to run outside the task mutex, so a
+    // planning-lock holder can complete before slow git/init work is released.
+    // Hold preparation past the production advisory-lock timeout. If preparation
+    // still held the task mutex, either planning-lock caller would time out here.
+    const lifecycleWaiter = planningStore.withPlanningLifecycleLock(task.id, async () => "acquired");
+    const scopeWaiter = planningStore.updateTaskRepositoryScope(task.id, {
+      repositories: ["repo-a"], confirmedBy: "operator",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5_100));
+    await expect(lifecycleWaiter).resolves.toBe("acquired");
+    await expect(scopeWaiter).resolves.toMatchObject({ repositoryScope: { repositories: ["repo-a"] } });
+
+    release();
+    await expect(preparation).resolves.toMatchObject({
+      workspaceWorktrees: { "repo-a": { worktreePath: "/tmp/repo-a", branch: "fusion/a" } },
+    });
+  });
 });
 
 void describe;

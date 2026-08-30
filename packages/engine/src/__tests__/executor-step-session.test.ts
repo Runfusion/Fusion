@@ -827,8 +827,8 @@ describe("Workflow Steps Execution", () => {
     // workflow-step Promise.race used a frozen 360 s setTimeout, and the
     // rejection from the mock prompt never reached the catch block in time.
     // The behavior we actually need to lock down is:
-    //   1. sendTaskBackForFix re-opens the actionable implementation step plus
-    //      any trailing verification/delivery step, not just a trivial last step.
+    //   1. sendTaskBackForFix re-opens exactly the workflow-selected trailing step;
+    //      it must not infer additional work from step titles.
     //   2. The rerun bounce uses preserveResumeState so step progress and
     //      the worktree survive the in-progress → todo hop.
     //   3. PROMPT.md gains the Workflow Step Failure section with the
@@ -931,10 +931,9 @@ describe("Workflow Steps Execution", () => {
       "Workflow step failed",
     );
 
-    // (1) failure comment + the implementation-bearing step is re-opened with the trailing delivery step.
-    // Before FN-7162, reopenLastStepForRevision returned only [1] here, so a
-    // Code Review / Browser Verification REVISE could re-run Documentation &
-    // Delivery against unchanged implementation work and loop until budget exhaustion.
+    // (1) failure comment + only the policy-selected trailing step is reopened.
+    // FN-180 removed title-based suffix reopening because it was a second replay
+    // authority that reopened unrelated completed checklist work after review.
     expect(store.addTaskComment).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Workflow step failed"),
@@ -943,7 +942,7 @@ describe("Workflow Steps Execution", () => {
     const reopenedStepIndexes = store.updateStep.mock.calls
       .filter((call: any[]) => call[0] === "FN-001" && call[2] === "pending")
       .map((call: any[]) => call[1]);
-    expect(reopenedStepIndexes).toEqual([0, 1]);
+    expect(reopenedStepIndexes).toEqual([1]);
 
     // FNXC:ExecutorMoveTask 2026-07-07-08:38: Await the captured rerun-bounce promise instead of flushing a fixed number of microtasks. 3167dbc83 inserted clearTerminalStepFailuresForRetry (an extra awaited hop) between the todo and in-progress moves inside performWorkflowRerunBounce, so a fixed microtask count no longer deterministically drains the bounce to the final in-progress moveTask. Awaiting the promise is exact and survives future awaited hops; the bounce still performs the todo→in-progress hop (executor.ts:3650 then 3674).
     await bouncePromise;
@@ -986,8 +985,8 @@ describe("Workflow Steps Execution", () => {
           { name: "Implementation", status: "done" as const },
           { name: "Documentation & Delivery", status: "done" as const },
         ],
-        expectedIndexes: [0, 1],
-        expectedCurrent: 0,
+        expectedIndexes: [1],
+        expectedCurrent: 1,
       },
       {
         id: "mixed-terminal-pending",
@@ -1041,7 +1040,7 @@ describe("Workflow Steps Execution", () => {
     }
   });
 
-  it("reopens terminal verification and delivery suffix with the implementation step", async () => {
+  it("does not infer verification or delivery suffixes from step names", async () => {
     const store = createMockStore();
     const mutableTask = {
       id: "FN-7162-SUFFIX",
@@ -1072,9 +1071,9 @@ describe("Workflow Steps Execution", () => {
       ) => Promise<{ index: number; name: string; indexes: number[] } | null>;
     }).reopenLastStepForRevision(mutableTask.id, mutableTask);
 
-    expect(reopened).toEqual({ index: 0, name: "Implementation", indexes: [0, 1, 2] });
-    expect(store.updateStep.mock.calls.map((call: any[]) => call[1])).toEqual([0, 1, 2]);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7162-SUFFIX", { currentStep: 0 });
+    expect(reopened).toEqual({ index: 2, name: "Documentation & Delivery", indexes: [2] });
+    expect(store.updateStep.mock.calls.map((call: any[]) => call[1])).toEqual([2]);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7162-SUFFIX", { currentStep: 2 });
   });
 
   // FNXC:WorkflowOptionalStepFix 2026-06-27-13:30:
@@ -1137,6 +1136,7 @@ describe("Workflow Steps Execution", () => {
       preserveWorktree: true,
       workflowMoveSource: "workflow-remediation",
     });
+
     expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "in-progress");
     expect(onError).not.toHaveBeenCalled();
   });

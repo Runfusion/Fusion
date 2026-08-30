@@ -130,8 +130,28 @@ export async function executeWorkflowStep(
   worktreePath: string,
   settings: Settings,
   taskEnv?: NodeJS.ProcessEnv,
-  stepOptions?: { unattended?: boolean; principalAgentId?: string; outputLanguage?: ResolvedTaskOutputLanguage; sessionBoundary?: SessionBoundaryDescriptor },
+  /*
+  FNXC:WorkspaceReviewScope 2026-08-26-09:12:
+  `diffBaseCommitSha` overrides the SINGULAR `task.baseCommitSha` when a caller runs this step against
+  a checkout that does not share it. A workspace Code Review does exactly that: it invokes the step
+  once per SUB-REPOSITORY worktree, each with its own base recorded in
+  `task.workspaceWorktrees[repo].baseCommitSha`.
+
+  Without the override the scope capture resolved the singular base inside a sub-repo, found nothing,
+  and told the reviewer "(no modified files detected for this task)". Measured on a real multi-repo
+  card whose executor had COMMITTED in both repositories: the reviewer went looking, could not see the
+  committed fixtures inside its own scope, and reported them as never delivered — a factual, confident
+  rejection produced entirely by a wrong diff base.
+  */
+  stepOptions?: {
+    unattended?: boolean;
+    principalAgentId?: string;
+    outputLanguage?: ResolvedTaskOutputLanguage;
+    sessionBoundary?: SessionBoundaryDescriptor;
+    diffBaseCommitSha?: string;
+  },
 ): Promise<WorkflowStepOutcome> {
+  const diffBaseCommitSha = stepOptions?.diffBaseCommitSha ?? task.baseCommitSha;
     let toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
     // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
     // assumptions and proceed instead of parking on a question. Explicit opt-in
@@ -256,11 +276,11 @@ export async function executeWorkflowStep(
     // open-ended review prompts (e.g. "verify visual polish") have been
     // observed to spend the entire timeout budget reading pre-existing files
     // that match the task description's keywords. See FN-3327 post-mortem.
-    const scopedFiles = await deps.captureModifiedFiles(worktreePath, task.baseCommitSha, task.id, undefined, "workflow-step-handler");
+    const scopedFiles = await deps.captureModifiedFiles(worktreePath, diffBaseCommitSha, task.id, undefined, "workflow-step-handler");
     let diffShortstat: string | undefined;
     let reviewInputFingerprint: string | undefined;
     try {
-      const baseRef = await resolveDiffBaseRef(worktreePath, task.baseCommitSha);
+      const baseRef = await resolveDiffBaseRef(worktreePath, diffBaseCommitSha);
       if (baseRef) {
         const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
           cwd: worktreePath,
@@ -393,12 +413,38 @@ CRITICAL SCOPING RULES — read before doing anything else:
       : reviewBlockingSeverity === "critical"
         ? "\n  - REVISE requires at least one `critical` (P0) finding. A REVISE without one is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer without another review round."
         : "\n  - REVISE requires at least one `critical` (P0) or `high` (P1) finding. A REVISE without one is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer without another review round.";
+    /*
+    FNXC:ReviewVerdictContract 2026-08-26-11:04:
+    Three defects in how the verdict was ASKED FOR, all found by auditing a real off-format review.
+    This block is the last thing in the system prompt, which is the strongest position — so what it
+    says last matters most.
+
+    1. Its final sentence used to read "Backward compat fallback: if JSON is unavailable, you may
+       still begin output with REQUEST REVISION". The closing words of the entire prompt granted
+       permission to skip the format, and "if JSON is unavailable" implied it sometimes is — it never
+       is. An imperative followed by a dispensation is a preference. The path still exists (the prose
+       parser matches a leading REQUEST REVISION) but is now stated as degraded, not alternative.
+
+    2. It forbade markdown fences while the parser scans fenced blocks FIRST. That made "compliant"
+       narrower than "parseable" for no benefit, and penalised a habit most models have.
+
+    3. It offered APPROVE / APPROVE_WITH_NOTES / REVISE and no legal way to say "I cannot see the
+       change". Measured on a real multi-repo card: the reviewer was told no files had changed (a
+       wrong diff base, fixed separately), found nothing, and NONE of the three values described its
+       situation — approving would have been a lie, so it wrote prose instead, which the gate then
+       swallowed. The model did not go off-format by accident; it was asked to choose from a list
+       that did not contain its answer. That case now maps explicitly onto REVISE.
+
+    A new UNAVAILABLE enum value would model it better, but `WorkflowStepVerdict` has no such member
+    and adding one reaches the parser, step results, merge admission and the dashboard — out of
+    proportion to a prompt repair, so the honest case is expressed with the values that already exist.
+    */
     const verdictBlock = requireVerdict
       ? `
 
   ## Feedback Format
 
-  When your review is complete, your final line MUST be a single JSON object (no markdown fences):
+  When your review is complete, your final line MUST be a single JSON object (a \`\`\`json fence around it is also accepted):
 
   ${reviewFindingsContract
     ? "{\"verdict\":\"APPROVE|APPROVE_WITH_NOTES|REVISE\",\"notes\":\"...\",\"findings\":[{\"id\":\"stable-id\",\"title\":\"concise issue\",\"body\":\"actionable detail\",\"filePath\":\"optional/path\",\"line\":1,\"severity\":\"low|medium|high|critical\",\"resolution\":\"open|resolved-in-review|superseded\"}],\"supersededFindingSourceWorkflowStepId\":\"prior-review-step-id\",\"supersededFindingIds\":[\"prior-finding-id\"]}"
@@ -408,9 +454,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
   - Output exactly one trailing JSON object and stop.
   - verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
   - notes should be concise and actionable. Use an empty string when there are no notes.
-  - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block.\n  - Omit resolution (or use open) for work still needed; use resolved-in-review only for an issue you fixed in this session.\n  - supersededFindingIds may list only IDs from one named Prior Findings result that you re-verified no longer apply; include that result’s workflow step ID in supersededFindingSourceWorkflowStepId; never list your own findings." : ""}${blockingSeverityRule}
+  - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}
+  - If you CANNOT SEE the change you were asked to review — the described files appear absent, or the scope you were given looks empty when work was expected — that is NOT an approval and NOT out-of-scope. Return REVISE and state plainly in notes what you looked for and where. Never describe that situation in prose alone: a response with no verdict cannot be acted on and is treated as a failed review.${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block.\n  - Omit resolution (or use open) for work still needed; use resolved-in-review only for an issue you fixed in this session.\n  - supersededFindingIds may list only IDs from one named Prior Findings result that you re-verified no longer apply; include that result’s workflow step ID in supersededFindingSourceWorkflowStepId; never list your own findings." : ""}${blockingSeverityRule}
 
-  Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`
+  If you cannot produce the object above for any reason, begin your entire response with the line REQUEST REVISION so it can still be read as a revision request. This is a degraded path, not an alternative: every review is expected to end with the JSON object.`
       : `
 
   ## Output Format

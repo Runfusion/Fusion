@@ -153,6 +153,7 @@ export { resetStepsIfWorkLost as resetStepsIfWorkLostFree } from "./reset-steps-
 export { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixFree } from "./route-retryable-remediation.js";
 export { buildForeachWorktreeDeps as buildForeachWorktreeDepsFree } from "./build-foreach-worktree-deps.js";
 export { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixFree } from "./request-pre-merge-optional-step-fix.js";
+export { appendReviewRemediationSteps as appendReviewRemediationStepsFree } from "./append-review-remediation-steps.js";
 export { createSpawnAgentTool as createSpawnAgentToolFree, spawnAgentParams as spawnAgentParamsFree } from "./create-spawn-agent-tool.js";
 export { createTaskUpdateTool as createTaskUpdateToolFree } from "./create-task-update-tool.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixFree } from "./attempt-executor-verification-fix.js";

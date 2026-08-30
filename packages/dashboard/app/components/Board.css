@@ -45,10 +45,28 @@ The board needs a neutral first-paint shell whenever workflow lanes are enabled 
 }
 
 /*
+FNXC:BoardTextSelection 2026-08-27-10:06:
+FN-194 keeps the intentional `useBoardMousePan` drag while removing the browser's second horizontal-scroll system: selection-autoscroll begins before its 4px pan threshold when text is dragged. The operator explicitly chose non-selectable Board text to prevent that involuntary scroll.
+Anchor this at `.board`, rather than a workflow variant, so both live roots, the skeleton, every breakpoint, and every data state share the rule. The editable carve-out must remain more specific than suppression so inputs and inline card editing keep native text selection independently of CSS import order.
+*/
+.board,
+.board * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.board :is(input, textarea, select, [contenteditable="true"], .card-editing, .card-editing *) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/*
 FNXC:BoardNavigation 2026-08-21-16:03:
 FN-109 shows grab feedback only after a desktop/tablet pan crosses horizontal intent from a safe
 surface or noninteractive task-card body/text. Controls, editing cards, the unbound skeleton, and
-the disabled mobile path never activate it; this gesture pans the viewport and never relocates a task.
+the disabled mobile path never activate it; this gesture pans the viewport and never relocates a task. Selection suppression is unconditional and owned by the BoardTextSelection rule above.
 */
 .board.board-workflow-columns.is-mouse-panning {
   cursor: grabbing;

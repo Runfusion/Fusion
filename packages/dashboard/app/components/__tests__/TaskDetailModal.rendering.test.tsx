@@ -78,7 +78,7 @@ describe("TaskDetailModal", () => {
     const props = {
       initialTab: "definition" as const,
       onClose: noop,
-      onMoveTask: noopMove,
+
       onDeleteTask: noopDelete,
       onMergeTask: noopMerge,
       onOpenDetail: noopOpenDetail,
@@ -110,7 +110,7 @@ describe("TaskDetailModal", () => {
       promptFetch.mockResolvedValue({ id: "FN-POLL", prompt: "# Updated definition" });
       const fullFetch = vi.mocked(dashboardApi.fetchTaskDetail);
       const queued = makeTask({ id: "FN-POLL", column: "in-progress", status: "queued", prompt: "# Initial definition", workflowStepResults: [{ workflowStepId: "plan-review", status: "running", startedAt: "2026-08-05T00:00:00.000Z" }] });
-      render(<TaskDetailContent embedded active initialTab="definition" task={queued} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      render(<TaskDetailContent embedded active initialTab="definition" task={queued} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
 
       await act(async () => {});
       const badge = screen.getByTestId("task-detail-workflow-badge");
@@ -144,7 +144,7 @@ describe("TaskDetailModal", () => {
       });
       vi.mocked(dashboardApi.fetchTaskPrompt).mockResolvedValue({ id: "FN-DONE-POLL", prompt: "# Refreshed definition" });
       const done = makeTask({ id: "FN-DONE-POLL", column: "done", status: "done", prompt: "# Original definition", workflowStepResults: [{ workflowStepId: "plan-review", status: "running", startedAt: "2026-08-05T00:00:00.000Z" }] });
-      render(<TaskDetailContent embedded active initialTab="definition" task={done} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      render(<TaskDetailContent embedded active initialTab="definition" task={done} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
 
       await act(async () => {});
       const badge = screen.getByTestId("task-detail-workflow-badge");
@@ -175,18 +175,16 @@ describe("TaskDetailModal", () => {
       .mockResolvedValueOnce(payload)
       .mockImplementationOnce(() => new Promise<typeof payload>((resolve) => { settleColumnMove = resolve; }));
     const task = makeTask({ id: "FN-COLUMN-MOVE", column: "in-progress", status: "queued" });
-    const props = { embedded: true, active: true, initialTab: "definition" as const, onMoveTask: noopMove, onDeleteTask: noopDelete, onMergeTask: noopMerge, onOpenDetail: noopOpenDetail, addToast: noop };
+    const props = { embedded: true, active: true, initialTab: "definition" as const, onDeleteTask: noopDelete, onMergeTask: noopMerge, onOpenDetail: noopOpenDetail, addToast: noop };
     const { rerender } = render(<TaskDetailContent {...props} task={task} />);
 
     const badge = await screen.findByTestId("task-detail-workflow-badge");
     const actions = screen.getByRole("button", { name: "Actions" });
-    const initialMoveLabel = document.querySelector<HTMLButtonElement>(".detail-move-btn")?.getAttribute("aria-label");
     rerender(<TaskDetailContent {...props} task={{ ...task, column: "done", status: "done" }} />);
 
     expect(screen.getByTestId("task-detail-workflow-badge")).toBe(badge);
     expect(screen.getByRole("button", { name: "Actions" })).toBe(actions);
     await act(async () => { settleColumnMove(payload); });
-    await waitFor(() => expect(document.querySelector<HTMLButtonElement>(".detail-move-btn")?.getAttribute("aria-label")).not.toBe(initialMoveLabel));
   });
 
   it("keeps a prompt-only response when slim initial detail resolves later", async () => {
@@ -197,7 +195,7 @@ describe("TaskDetailModal", () => {
     vi.mocked(dashboardApi.fetchTaskPrompt).mockResolvedValueOnce({ id: "FN-slim-prompt", prompt: "# Newer narrow prompt" });
     const slimTask = makeTask({ id: "FN-slim-prompt", prompt: undefined }) as Task;
 
-    render(<TaskDetailContent embedded active initialTab="definition" task={slimTask} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+    render(<TaskDetailContent embedded active initialTab="definition" task={slimTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
     await waitFor(() => expect(dashboardApi.fetchTaskPrompt).toHaveBeenCalledWith("FN-slim-prompt", undefined));
 
     await act(async () => {
@@ -218,7 +216,7 @@ describe("TaskDetailModal", () => {
     vi.mocked(dashboardApi.fetchBoardWorkflows).mockImplementationOnce(() => new Promise((resolve) => {
       resolveRevalidation = resolve;
     }));
-    render(<TaskDetailContent embedded active task={makeTask({ id: "FN-workflow-revision", column: "todo" })} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+    render(<TaskDetailContent embedded active task={makeTask({ id: "FN-workflow-revision", column: "todo" })} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
 
     expect(await screen.findByText("Coding")).toBeInTheDocument();
     const badge = screen.getByTestId("task-detail-workflow-badge");
@@ -268,7 +266,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={task}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -320,7 +318,7 @@ describe("TaskDetailModal", () => {
       const props = {
         initialTab: "definition" as const,
         task: makeTask({ id: "FN-101", column: "todo", title: "Docs task" }),
-        onMoveTask: noopMove,
+
         onDeleteTask: noopDelete,
         onMergeTask: noopMerge,
         onOpenDetail: noopOpenDetail,
@@ -344,7 +342,7 @@ describe("TaskDetailModal", () => {
       const props = {
         initialTab: "definition" as const,
         task: makeTask({ id: "FN-101", column: "todo", title: "Docs task" }),
-        onMoveTask: noopMove,
+
         onDeleteTask: noopDelete,
         onMergeTask: noopMerge,
         onOpenDetail: noopOpenDetail,
@@ -388,7 +386,7 @@ describe("TaskDetailModal", () => {
           mobileHeaderMode="back"
           task={makeTask({ id: "FN-101", column: "todo", title: "Docs task" })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -427,7 +425,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={initialDetail}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -485,7 +483,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ prompt })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -522,7 +520,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType, sourceAgentId })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -547,7 +545,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType, sourceParentTaskId: parentId })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -577,7 +575,7 @@ describe("TaskDetailModal", () => {
             sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42" },
           })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -607,7 +605,7 @@ describe("TaskDetailModal", () => {
             sourceMetadata: { issueUrl: "https://example.com/something" },
           })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -629,7 +627,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType: "github_import", sourceMetadata: undefined })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -650,7 +648,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType: "github_import", sourceMetadata: {} })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -672,7 +670,7 @@ describe("TaskDetailModal", () => {
             },
           })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -694,7 +692,7 @@ describe("TaskDetailModal", () => {
             sourceMetadata: { runId: "RR-456" },
           })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -713,7 +711,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -740,7 +738,7 @@ describe("TaskDetailModal", () => {
             initialTab="definition"
             task={makeTask({ id: "FN-200", sourceType: "recovery", sourceMetadata: { revertOf: "FN-100" } })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -763,7 +761,7 @@ describe("TaskDetailModal", () => {
             initialTab="definition"
             task={makeTask({ id: "FN-200", sourceType: "recovery", sourceMetadata: {} })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -780,7 +778,7 @@ describe("TaskDetailModal", () => {
             initialTab="definition"
             task={makeTask({ id: "FN-200", sourceMetadata: { revertOf: 999 as any } })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -801,7 +799,7 @@ describe("TaskDetailModal", () => {
             task={sourceTask}
             tasks={[sourceTask, undoTask]}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -828,7 +826,7 @@ describe("TaskDetailModal", () => {
             task={sourceTask}
             tasks={[sourceTask, doneUndoTask, archivedUndoTask]}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -849,7 +847,7 @@ describe("TaskDetailModal", () => {
             task={sourceTask}
             tasks={[sourceTask]}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -871,7 +869,7 @@ describe("TaskDetailModal", () => {
             task={sourceTask}
             tasks={[sourceTask, olderUndo, newerUndo]}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -890,7 +888,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType: "dashboard_ui" })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -912,7 +910,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ sourceType: "task_refine", sourceParentTaskId: "FN-001" })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -940,7 +938,7 @@ describe("TaskDetailModal", () => {
             prInfo: { number: 42, url: "https://github.com/owner/repo/pull/42" },
           })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -981,7 +979,7 @@ describe("TaskDetailModal", () => {
               updatedAt: "2026-05-11T09:00:00.000Z",
             })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -1013,7 +1011,7 @@ describe("TaskDetailModal", () => {
               updatedAt: "2026-05-11T11:55:00.000Z",
             })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -1034,7 +1032,7 @@ describe("TaskDetailModal", () => {
               updatedAt: "2026-05-11T12:00:01.000Z",
             })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -1055,7 +1053,7 @@ describe("TaskDetailModal", () => {
               updatedAt: "2026-05-02T12:00:00.000Z",
             })}
             onClose={noop}
-            onMoveTask={noopMove}
+
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -1073,14 +1071,14 @@ describe("TaskDetailModal", () => {
   it("shows active file scope overlap blocker in Dependencies section", () => {
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER" })}
         tasks={[
           makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER" }),
           makeTask({ id: "FN-OVER", column: "in-progress" }),
         ]}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1095,10 +1093,10 @@ describe("TaskDetailModal", () => {
   it("keeps clear overlap blocker button when slim live task omits overlapBlockedBy", () => {
     const { rerender } = render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1110,10 +1108,10 @@ describe("TaskDetailModal", () => {
 
     rerender(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: undefined })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1138,10 +1136,10 @@ describe("TaskDetailModal", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER", status: "queued" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1178,10 +1176,10 @@ describe("TaskDetailModal", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OLD", status: "queued" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1202,10 +1200,10 @@ describe("TaskDetailModal", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER", status: "queued" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1241,12 +1239,12 @@ describe("TaskDetailModal", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-B", column: "building" })}
         tasks={tasks}
         columnFlagsByTaskId={columnFlagsByTaskId}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1260,7 +1258,7 @@ describe("TaskDetailModal", () => {
   it("shows overlap blockedBy summary in Blocking section", () => {
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="dependencies"
         task={makeTask({ id: "FN-B", column: "in-progress" })}
         tasks={[
           makeTask({ id: "FN-B", column: "in-progress" }),
@@ -1268,7 +1266,7 @@ describe("TaskDetailModal", () => {
           makeTask({ id: "FN-2", column: "todo", blockedBy: "FN-B" }),
         ]}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1285,7 +1283,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask()}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1317,7 +1315,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask()}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1334,7 +1332,7 @@ describe("TaskDetailModal", () => {
     const { container } = render(
       <TaskDetailContent
         task={makeTask()}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1353,7 +1351,7 @@ describe("TaskDetailModal", () => {
     render(
       <TaskDetailContent
         task={makeTask()}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1387,7 +1385,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={task}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1436,7 +1434,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailContent
           task={makeTask({ column: "in-review", branch: null, worktree: null })}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1479,7 +1477,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ prompt: "# Hello\n\nSome **bold** text" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1502,7 +1500,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ prompt: undefined })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1522,7 +1520,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask()}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1540,7 +1538,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ reviewState: { source: "reviewer-agent", items: [], addressing: [] } })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1589,7 +1587,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ reviewState: { source: "pull-request", summary: { reviewDecision: "REVIEW_REQUIRED", reviewers: [], blockingReasons: [], checks: [] }, items: [], addressing: [] } })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1628,7 +1626,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ reviewState: { source: "pull-request", summary: { reviewDecision: "CHANGES_REQUESTED", reviewers: [{ login: "octocat", state: "CHANGES_REQUESTED" }], blockingReasons: ["changes requested review is active"], checks: [] }, items: [], addressing: [] } })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1643,7 +1641,7 @@ describe("TaskDetailModal", () => {
 
   describe("inline action row icon-only controls", () => {
     it("renders priority and Fast controls as accessible icon-only Quick Add buttons", () => {
-      render(<TaskDetailModal initialTab="definition" task={makeTask({ column: "todo", priority: "high", executionMode: "fast" })} onClose={noop} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      render(<TaskDetailModal initialTab="definition" task={makeTask({ column: "todo", priority: "high", executionMode: "fast" })} onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
       const priority = screen.getByTestId("detail-priority-trigger");
       const fast = screen.getByRole("button", { name: "Execution mode: fast" });
       expect(priority).toHaveClass("btn", "btn-icon", "btn-sm");
@@ -1696,7 +1694,7 @@ describe("TaskDetailModal", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="attachments"
         task={makeTask({
           attachments: [
             {
@@ -1709,7 +1707,7 @@ describe("TaskDetailModal", () => {
           ],
         })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1731,7 +1729,7 @@ describe("TaskDetailModal", () => {
   it("leaves attachment href/src URLs unchanged when no daemon token is present", () => {
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="attachments"
         task={makeTask({
           attachments: [
             {
@@ -1744,7 +1742,7 @@ describe("TaskDetailModal", () => {
           ],
         })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1765,7 +1763,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ status: "failed" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1787,7 +1785,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ status: "executing" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1808,7 +1806,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ status: "failed" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1830,7 +1828,7 @@ describe("TaskDetailModal", () => {
           nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
         })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1856,7 +1854,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ column: "in-review", status })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1879,7 +1877,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ column: "triage", status: "planning", stuckKillCount: 6 })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1904,7 +1902,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ column: "in-review", status: "failed" })}
           onClose={onClose}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1940,7 +1938,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ column: "in-review", status: "failed" })}
           onClose={onClose}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1980,7 +1978,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ column: "in-review", status: "failed" })}
           onClose={onClose}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2008,147 +2006,6 @@ describe("TaskDetailModal", () => {
       expect(addToast).toHaveBeenCalledWith("Server error", "error");
     });
 
-    it("shows in-review split button with primary action and secondary move option", () => {
-      const { container } = render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "in-review" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      const moveBtn = screen.getByRole("button", { name: "Move to Todo" });
-      expect(moveBtn).toBeTruthy();
-      const chevronZone = document.querySelector(".detail-move-btn__arrow");
-      expect(chevronZone).toBeTruthy();
-
-      fireEvent.keyDown(moveBtn, { key: "ArrowDown" });
-      expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
-      expect(screen.queryByRole("menuitem", { name: "Move to Todo" })).toBeNull();
-
-      const actionsBtn = screen.getByRole("button", { name: "Actions" });
-      fireEvent.click(actionsBtn);
-      expect(screen.queryByRole("menuitem", { name: "Retry" })).toBeNull();
-    });
-
-    it("in-review failed task shows both Retry action and secondary move option", async () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "in-review", status: "failed" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          onRetryTask={noopRetry}
-          addToast={noop}
-        />,
-      );
-
-      const actionsBtn = screen.getByRole("button", { name: "Actions" });
-      await act(async () => {
-        fireEvent.click(actionsBtn);
-      });
-      expect(screen.getByRole("menuitem", { name: "Retry" })).toBeTruthy();
-      expect(screen.getAllByRole("menuitem", { name: "Retry" })).toHaveLength(1);
-
-      const chevronZone = document.querySelector(".detail-move-btn__arrow");
-      await act(async () => {
-        fireEvent.click(chevronZone!);
-      });
-      expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
-      expect(screen.queryByRole("menuitem", { name: "Move to Todo" })).toBeNull();
-    });
-
-    it("split-button renders with chevron when multiple transitions exist", async () => {
-      const { container } = render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "in-progress" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      const moveBtn = screen.getByRole("button", { name: "Move to In Review" });
-      expect(moveBtn).toBeTruthy();
-      const chevronZone = document.querySelector(".detail-move-btn__arrow");
-      expect(chevronZone).toBeTruthy();
-
-      await act(async () => {
-        fireEvent.click(chevronZone!);
-      });
-      expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
-      expect(screen.queryByRole("menuitem", { name: "Move to In Review" })).toBeNull();
-    });
-
-    // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the "renders without chevron
-    // when only one transition" case was a `expect(true).toBe(true)` stub (triage currently
-    // has multiple transitions, so the scenario is unreachable). Deleted rather than kept as
-    // dead weight; restore real assertions from git history once a single-transition column exists.
-
-    it("clicking main button executes primary transition immediately", async () => {
-      const onMoveTask = vi.fn().mockResolvedValue(undefined);
-
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "in-progress" })}
-          onClose={noop}
-          onMoveTask={onMoveTask}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "Move to In Review" }));
-      });
-
-      expect(onMoveTask).toHaveBeenCalledWith("FN-099", "in-review", undefined);
-      expect(screen.queryByRole("menu")).toBeNull();
-    });
-
-    it("chevron dropdown includes only secondary transitions", async () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "in-progress" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      const moveBtn = screen.getByRole("button", { name: "Move to In Review" });
-      fireEvent.keyDown(moveBtn, { key: "ArrowDown" });
-
-      expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
-      expect(screen.queryByRole("menuitem", { name: "Move to In Review" })).toBeNull();
-
-      fireEvent.keyDown(screen.getByRole("menuitem", { name: "Move to Todo" }), { key: "Escape" });
-      expect(screen.queryByRole("menuitem", { name: "Move to Todo" })).toBeNull();
-      expect(document.activeElement).toBe(moveBtn);
-    });
   });
 
   it("shows description exactly once for a task without title", () => {
@@ -2161,7 +2018,7 @@ describe("TaskDetailModal", () => {
           prompt: "# KB-099\n\nFix the login bug\n",
         })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2190,7 +2047,7 @@ describe("TaskDetailModal", () => {
           description: "Add dark mode toggle to the settings page",
         })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2220,7 +2077,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask(taskOverrides)}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -2371,7 +2228,7 @@ describe("TaskDetailModal", () => {
         embedded: true,
         active: true,
         initialTab: "definition" as const,
-        onMoveTask: noopMove,
+
         onDeleteTask: noopDelete,
         onMergeTask: noopMerge,
         onOpenDetail: noopOpenDetail,
@@ -2414,7 +2271,7 @@ describe("TaskDetailModal", () => {
         embedded: true,
         active: true,
         initialTab: "definition" as const,
-        onMoveTask: noopMove,
+
         onDeleteTask: noopDelete,
         onMergeTask: noopMerge,
         onOpenDetail: noopOpenDetail,
@@ -2534,7 +2391,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ id: "FN-TODO", column: "todo", title: undefined, description: todoDescription })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2550,7 +2407,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ id: "FN-TRIAGE", column: "triage", title: undefined, description: triageDescription })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2602,7 +2459,7 @@ describe("TaskDetailModal", () => {
             title: "Chat expanded title ".repeat(25),
             description: "Description",
           })}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2639,7 +2496,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ title: "Some title" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2656,7 +2513,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={makeTask({ title: undefined, description: "A description" })}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2692,7 +2549,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({ prompt: "# Restored default prompt" })}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2736,7 +2593,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={task}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2782,7 +2639,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={task}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2817,7 +2674,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={detail}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2840,7 +2697,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={detail}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -2874,7 +2731,7 @@ describe("TaskDetailModal", () => {
           embedded: true,
           initialTab: "definition" as const,
           task: makeTask({ id: "FN-lifecycle", status: "planning", prompt: "# Initial prompt" }),
-          onMoveTask: noopMove,
+
           onDeleteTask: noopDelete,
           onMergeTask: noopMerge,
           onOpenDetail: noopOpenDetail,
@@ -2919,7 +2776,7 @@ describe("TaskDetailModal", () => {
       const sharedProps = {
         embedded: true,
         initialTab: "definition" as const,
-        onMoveTask: noopMove,
+
         onDeleteTask: noopDelete,
         onMergeTask: noopMerge,
         onOpenDetail: noopOpenDetail,
@@ -2969,7 +2826,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={task}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -3045,7 +2902,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={task}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -3120,7 +2977,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={strippedTask}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -3171,7 +3028,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={task}
           onClose={noop}
-          onMoveTask={noopMove}
+
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -3191,7 +3048,7 @@ describe("TaskDetailModal", () => {
     });
   });
 
-  it("shows near-duplicate banner and keeps warning on Keep click", async () => {
+  it("clears the duplicate flag from the near-duplicate banner", async () => {
     const { updateTask } = await import("../../api");
     const mockUpdateTask = vi.mocked(updateTask);
     mockUpdateTask.mockResolvedValueOnce(makeTask({
@@ -3205,7 +3062,7 @@ describe("TaskDetailModal", () => {
         task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
         tasks={[makeTask({ id: "FN-1234" })]}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -3214,11 +3071,32 @@ describe("TaskDetailModal", () => {
     );
 
     expect(screen.getByText("Potential duplicate detected")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
+    await userEvent.click(screen.getByRole("button", { name: "Mark the duplicate flag for FN-1234 as read" }));
 
     await waitFor(() => {
       expect(mockUpdateTask).toHaveBeenCalledWith("FN-099", { dismissNearDuplicate: true }, undefined);
     });
+  });
+
+  it("omits an empty near-duplicate actions row without archive support", () => {
+    const { container } = render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
+        tasks={[makeTask({ id: "FN-1234" })]}
+        onClose={noop}
+
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Potential duplicate detected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark the duplicate flag for FN-1234 as read" })).toBeInTheDocument();
+    expect(container.querySelector(".detail-near-duplicate-banner__actions")).toBeNull();
+    expect(screen.queryByRole("button", { name: /keep/i })).toBeNull();
   });
 
   it("hides near-duplicate banner once dismissed", () => {
@@ -3228,7 +3106,7 @@ describe("TaskDetailModal", () => {
         task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234", nearDuplicateDismissed: true } })}
         tasks={[makeTask({ id: "FN-1234" })]}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -3250,7 +3128,7 @@ describe("TaskDetailModal", () => {
         task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
         tasks={canonical ? [canonical] : []}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -3260,7 +3138,8 @@ describe("TaskDetailModal", () => {
 
     expect(screen.queryByText("Potential duplicate detected")).toBeNull();
     expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Keep" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /keep/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark the duplicate flag for FN-1234 as read" })).toBeNull();
   });
 
   it("archives from near-duplicate banner when confirmed", async () => {
@@ -3273,7 +3152,7 @@ describe("TaskDetailModal", () => {
         task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
         tasks={[makeTask({ id: "FN-1234" })]}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -3299,7 +3178,7 @@ describe("TaskDetailModal", () => {
         task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234", duplicateSource: "triage-marker" } })}
         tasks={[makeTask({ id: "FN-1234" })]}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -3307,7 +3186,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent("Choose Delete to remove this duplicate, or Keep to continue anyway.");
+    expect(screen.getByRole("status")).toHaveTextContent("This task stays paused until you clear this flag or delete it.");
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
@@ -3353,7 +3232,7 @@ describe("TaskDetailModal", () => {
         initialTab="definition"
         task={task}
         onClose={noop}
-        onMoveTask={noopMove}
+
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -3373,83 +3252,5 @@ describe("TaskDetailModal", () => {
     });
   });
 
-  describe("Coding (Ideas) workflow detail moves", () => {
-    const ideasWorkflowPayload = {
-      flagEnabled: true,
-      defaultWorkflowId: "builtin:coding-ideas",
-      workflows: [{
-        id: "builtin:coding-ideas",
-        name: "Coding (Ideas)",
-        columns: [
-          { id: "ideas", name: "Ideas", flags: { intake: true } },
-          { id: "todo", name: "Todo", flags: {} },
-        ],
-      }],
-      taskWorkflowIds: { "FN-ideas": "builtin:coding-ideas" },
-    };
-    const ideasTask = () => makeTask({ id: "FN-ideas", column: "ideas", title: "Parked coding idea" });
-    const setViewport = (width: number) => {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
-      window.dispatchEvent(new Event("resize"));
-    };
-
-    beforeEach(() => {
-      vi.mocked(dashboardApi.fetchBoardWorkflows).mockReset();
-      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValue(ideasWorkflowPayload);
-    });
-
-    afterEach(() => {
-      setViewport(1024);
-    });
-
-    async function expectIdeasMove(renderDetail: () => void, onMoveTask: ReturnType<typeof vi.fn>) {
-      renderDetail();
-      const moveButton = await screen.findByRole("button", { name: "Move to Todo" });
-      expect(moveButton).toBeEnabled();
-      await userEvent.click(moveButton);
-      expect(onMoveTask).toHaveBeenCalledWith("FN-ideas", "todo", undefined);
-    }
-
-    // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the modal/embedded x
-    // desktop/375px matrix is deliberate surface enumeration (Standing Rule: fix the
-    // invariant across all surfaces) — all four cases are KEPT, condensed to it.each.
-    it.each([
-      ["the modal at desktop width", "modal", 1024],
-      ["the modal at 375px", "modal", 375],
-      ["embedded detail at desktop width", "embedded", 1024],
-      ["embedded detail at 375px", "embedded", 375],
-    ] as const)("moves an Ideas task to Todo from %s", async (_label, surface, width) => {
-      setViewport(width);
-      const onMoveTask = vi.fn(async () => ideasTask());
-      await expectIdeasMove(() => {
-        if (surface === "modal") {
-          render(<TaskDetailModal initialTab="definition" task={ideasTask()} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
-        } else {
-          render(<TaskDetailContent embedded initialTab="definition" task={ideasTask()} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
-        }
-      }, onMoveTask);
-    });
-
-    it("keeps supplied fields while independently resolving and clearing Ideas move metadata", async () => {
-      const onMoveTask = vi.fn(async () => ideasTask());
-      const workflowFieldDefs = [{ id: "owner", name: "Owner", type: "string" as const, render: { placement: "detail" as const } }];
-      const { rerender } = render(
-        <TaskDetailModal initialTab="definition" task={ideasTask()} workflowFieldDefs={workflowFieldDefs} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />,
-      );
-
-      expect(await screen.findByLabelText("Owner")).toBeInTheDocument();
-      const moveButton = await screen.findByRole("button", { name: "Move to Todo" });
-      await userEvent.click(moveButton);
-      expect(onMoveTask).toHaveBeenCalledWith("FN-ideas", "todo", undefined);
-      expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1);
-
-      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} });
-      rerender(
-        <TaskDetailModal initialTab="definition" task={makeTask({ id: "FN-unresolved", column: "ideas" })} workflowFieldDefs={workflowFieldDefs} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />,
-      );
-      await waitFor(() => expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(2));
-      expect(screen.queryByRole("button", { name: "Move to Todo" })).toBeNull();
-    });
-  });
 
 });

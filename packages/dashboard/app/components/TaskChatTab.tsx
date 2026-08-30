@@ -604,7 +604,7 @@ function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
   const combinedThinkingText = entries.map((entry) => entry.text).join("");
   const handleBodyClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (isInteractiveDisclosureTarget(event.target)) return;
-    // FNXC:ThinkingTrace 2026-08-22-16:56: A titled trace owns body clicks per section; do not also close Task Activity's host disclosure.
+    // FNXC:ThinkingTrace 2026-08-22-16:56: Titled bodies own collapse clicks; the shared interactive-target guard also preserves Task Activity while its folded-title Raw trace button is used.
     if (event.target instanceof Element && event.target.closest(".thinking-trace-section-body")) return;
     setOpen(false);
   }, []);

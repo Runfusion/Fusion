@@ -119,7 +119,6 @@ const qualityAppComponentTests = [
   "ChatView.default-model-icon",
   "ChatView.draft",
   "ChatView.hash-mention",
-  "ChatView.rooms",
   "ChatView.scroll-to-top",
   "ChatView.swipe-back",
   "Column",

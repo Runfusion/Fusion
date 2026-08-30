@@ -10,7 +10,9 @@ FNXC:WorkflowGates 2026-06-17-18:27:
 FN-6582 requires malformed workflow-step verdicts to remain explicit failures for blocking gates while advisory gates may record a non-blocking advisory failure. These tests pin the shared imperative parser seam and the graph handler path so malformed output cannot be mistaken for APPROVE.
 
 FNXC:ReviewLeniency 2026-07-02-00:30:
-POLICY CHANGE (operator request): malformed gate output (no parseable verdict, even after the executeWorkflowStep fallback-model retry) is now treated as a NON-BLOCKING advisory, relaxing the FN-6582 hard block. The real mapping lives in runGraphCustomNode (`outcome: success || !blocking || malformed ? "success" : "failure"`). A genuine PARSED non-pass verdict (REVISE) still blocks. The parser seam still classifies unparseable text as `malformed` (it is NOT silently promoted to APPROVE) — only the downstream blocking decision was relaxed. These handler/executor tests mock the node result to pin the graph PLUMBING for a genuine-failure verdict; they intentionally do not re-assert a malformed→block mapping that no longer exists.
+POLICY CHANGE (operator request): malformed gate output was treated as a NON-BLOCKING advisory, relaxing the FN-6582 hard block, and the malformed→block assertion was removed with it.
+
+POLICY CHANGE REVERSED (operator request, 2026-08-26): a BLOCKING gate no longer approves on malformed output, and the assertion is restored below. The stated rule is that the only legitimate stop is an LLM problem; since `executeWorkflowStep` already retries a malformed response (fallback model, or a self-retry on the primary when none is configured), reaching this decision means the reviewer failed across every attempt — which is that LLM-class condition, and is never grounds to record approval. Advisory gates keep the relaxation, because a step that was never allowed to hold a card must not start holding one. The real mapping lives in runGraphCustomNode (`outcome: success || (!blocking && verdict !== "UNAVAILABLE") ? "success" : "failure"`).
 */
 
 const task = { id: "FN-6582" } as TaskDetail;
@@ -112,6 +114,47 @@ describe("workflow malformed-verdict gate", () => {
     expect(result.outcome).toBe("success");
     expect(result.value).toBe("advisory_failure");
     expect(result.contextPatch).toEqual({ "workflow:gate:malformed": true, "workflow:gate:advisory": true });
+  });
+
+  /*
+  FNXC:ReviewLeniency 2026-08-26-09:34:
+  FN-6582's blocking-gate rule is RESTORED, and this is the test the relaxation deliberately removed.
+
+  Operator decision, with the reason the first reversal lacked: "the only valid reason a task can be
+  blocked is an LLM problem (429, 503); everything else is fixed at the source, or the AI is made
+  unable to return anything other than what is expected — and if it does anyway, restart cleanly".
+
+  Restarting cleanly already happens twice inside `executeWorkflowStep` (fallback-model retry, or a
+  self-retry on the primary when no fallback is configured), so `malformed` reaching this decision
+  means the reviewer failed across every attempt — exactly the LLM-class condition an operator accepts
+  as a legitimate stop, and never a reason to record approval.
+
+  Measured cost of the relaxation: a reviewer reported in prose that the deliverables were absent,
+  carried no verdict JSON, and the gate recorded success — unreviewed work merged on a rejection
+  nobody could see. A prose classifier cannot close this; that text held no rejection marker at all,
+  because it was a factual statement of absence. Only the ABSENCE of a verdict is detectable.
+  */
+  it("keeps a blocking gate from passing on malformed output", async () => {
+    const malformed = parseWorkflowStepOutput(
+      "The requested repo1.txt and repo2.txt files are not present in the worktree. No modified files were detected.",
+    );
+    // The reviewer's text carries no rejection marker at all — absence of a verdict is the only signal.
+    expect(malformed.malformed).toBe(true);
+    expect(malformed.verdict).toBeUndefined();
+
+    const handlers = createDefaultNodeHandlers(noopSeams(), async () => ({
+      outcome: "failure",
+      value: "advisory_failure",
+      contextPatch: { "workflow:gate:malformed": true },
+    }));
+
+    const result = await handlers.gate(
+      { id: "code-review-step", kind: "gate", config: { prompt: "Return APPROVE or REVISE", gateMode: "gate" } },
+      { task, settings: undefined, context: {} },
+    );
+
+    expect(result.outcome, "a blocking gate must not approve without a usable verdict").toBe("failure");
+    expect(result.value).toBe("advisory_failure");
   });
 
   it("terminates a graph run as failed when a blocking gate returns REVISE", async () => {

@@ -1173,6 +1173,27 @@ describe("runAiMerge", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
+  it("materializes a remote-only target branch before merging", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const remoteTargetSha = git(dir, "rev-parse main");
+    git(dir, `update-ref refs/remotes/origin/release/9.9 ${remoteTargetSha}`);
+    const { store } = makeStore(dir, { baseBranch: "release/9.9" });
+    let targetShaAtMerge = "";
+    const mergeAgent = vi.fn(async (cwd: string) => {
+      targetShaAtMerge = git(cwd, "rev-parse refs/heads/release/9.9");
+      await realMergeAgent("fusion/fn-1")(cwd);
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent,
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(true);
+    expect(git(dir, "rev-parse --verify refs/heads/release/9.9")).toMatch(/^[0-9a-f]+$/);
+    expect(targetShaAtMerge).toBe(remoteTargetSha);
+  });
+
   it("throws a clear error when the task's target branch has no local ref", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const { store } = makeStore(dir, { baseBranch: "release/9.9" }); // never created locally
