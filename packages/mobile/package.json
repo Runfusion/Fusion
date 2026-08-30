@@ -34,7 +34,7 @@
     "@capacitor/share": "^7.0.4"
   },
   "devDependencies": {
-    "@capacitor/android": "^7.0.0",
+    "@capacitor/android": "^8.5.0",
     "@capacitor/cli": "^7.0.0",
     "@capacitor/ios": "^8.4.2",
     "@types/node": "^22.0.0",
