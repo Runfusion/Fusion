@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +37,13 @@ describe("default worktree location migration", () => {
     addWorktree(root, primary, "fusion/fn-primary");
     addWorktree(root, legacy, "fusion/fn-legacy");
 
-    await expect(scanIdleWorktrees(root, emptyStore)).resolves.toEqual(expect.arrayContaining([primary, legacy]));
+    /*
+    FNXC:WorktreePathTests 2026-08-30-20:16:
+    Real Git worktree paths are compared with Node's native realpath result so this regression remains independent of Fusion's canonicalization implementation.
+    */
+    await expect(scanIdleWorktrees(root, emptyStore)).resolves.toEqual(
+      expect.arrayContaining([realpathSync.native(primary), realpathSync.native(legacy)]),
+    );
     await expect(cleanupOrphanedWorktrees(root, emptyStore)).resolves.toBe(2);
 
     expect(existsSync(primary)).toBe(false);

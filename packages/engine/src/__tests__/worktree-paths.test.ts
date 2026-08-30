@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { homedir, tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
@@ -18,7 +19,7 @@ import {
 } from "../worktree/worktree-paths.js";
 
 describe("worktree-paths", () => {
-  const rootDir = "/tmp/repo-name";
+  const rootDir = join(tmpdir(), "repo-name");
 
   it("defaults to <rootDir>/.fusion/worktrees when unset", () => {
     expect(resolveWorktreesDir(rootDir, undefined)).toBe(join(rootDir, ".fusion", "worktrees"));
@@ -105,7 +106,15 @@ describe("worktree-paths", () => {
   it("accepts both default and legacy roots while unset", () => {
     const primary = join(rootDir, ".fusion", "worktrees");
     const legacy = join(rootDir, ".worktrees");
-    expect(resolveWorktreesDirScanRoots(rootDir, undefined)).toEqual([primary, legacy]);
+    /*
+    FNXC:WorktreePathTests 2026-08-30-20:16:
+    Scan-root expectations use Node's filesystem resolution as an independent oracle. Importing the production canonicalizer would let the implementation and test regress together.
+    */
+    const canonicalRootDir = join(realpathSync.native(tmpdir()), "repo-name");
+    expect(resolveWorktreesDirScanRoots(rootDir, undefined)).toEqual([
+      join(canonicalRootDir, ".fusion", "worktrees"),
+      join(canonicalRootDir, ".worktrees"),
+    ]);
     expect(isInsideConfiguredWorktreesDir(rootDir, undefined, join(primary, "fn-1"))).toBe(true);
     expect(isInsideConfiguredWorktreesDir(rootDir, undefined, join(legacy, "fn-1"))).toBe(true);
     expect(isInsideConfiguredWorktreesDir(rootDir, undefined, primary)).toBe(false);
