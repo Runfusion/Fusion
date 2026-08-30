@@ -10,6 +10,11 @@
       "file": "packages/engine/src/__tests__/self-healing-pending-wedge-notification.test.ts",
       "reason": "SECOND sighting of a suite-only flake: 'reconcile pending wedge notifications > selects elapsed markers and audits the completion outcome verbatim' fails ONLY in a full engine-suite run (expected 1 selected marker, saw 2) and passes deterministically in isolation and in small multi-file runs. First sighting was recorded in docs/solutions/test-failures/suite-only-flakes-observed-register.md at ea48af7ab5; observed again on the full run at a97aa84a20. Reads as cross-test state bleed into the reconciler's marker selection, not a timing wait — no timeout, retry, or assertion was changed. Per AGENTS.md the second sighting is an on-sight quarantine with no further discretion.",
       "quarantinedAt": "2026-08-23"
+    },
+    {
+      "file": "packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts",
+      "reason": "SECOND sighting of the sequence-only reliability failure recorded in docs/solutions/test-failures/suite-only-flakes-observed-register.md entry 14. FN-249's selected engine-reliability file run failed 13 sibling recovery assertions after prior cases, while the exact benign merge-abort subject passed immediately in isolation. The user-cancellation path is not enabled by this fixture; no timeout, retry, or assertion was changed. Quarantined under AGENTS.md's mandatory deletion ratchet until a root-cause repair proves the file's recovery coverage can be rescued.",
+      "quarantinedAt": "2026-08-29"
     }
   ]
 }

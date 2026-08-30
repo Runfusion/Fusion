@@ -147,7 +147,10 @@
     "toolEntriesHidden_other": "{{count}} tool entries hidden",
     "toolsOff": "Tools: Off",
     "toolsOn": "Tools: On",
-    "usingDefault": "Using default"
+    "usingDefault": "Using default",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "Members of #{{roomName}}",
@@ -1210,7 +1213,7 @@
       "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
       "guardRejected": "This move is not allowed by the workflow.",
       "mergeBlocked": "This task is blocked from completing until its merge step finishes.",
-      "promoteRejected": "This card could not be promoted.",
+      "staleMovePrecondition": "This card already moved on. Refresh to see where it is now.",
       "unknownColumn": "That column doesn't exist in this task's workflow.",
       "unplannedForExecution": "This task isn't ready for execution yet — planning or plan review is still outstanding.",
       "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead."
@@ -1545,10 +1548,6 @@
     "pauseHint_one": "Pause {{count}} active unassigned task{{plural}}",
     "pauseHint_other": "Pause {{count}} active unassigned task{{plural}}",
     "preserveProgressTitle": "Preserve Progress?",
-    "promoteUnplannedCancel": "Keep Waiting",
-    "promoteUnplannedConfirm": "Start Anyway",
-    "promoteUnplannedMessage": "{{taskId}} is still waiting on planning or plan review. Promoting now starts execution with the current plan and cancels the pending replan.",
-    "promoteUnplannedTitle": "Start execution anyway?",
     "replanAll": "Replan All",
     "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
     "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
@@ -1959,6 +1958,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3739,7 +3739,11 @@
     "shortstatTitle": "Final commit shortstat; for the full landed diff across all task commits, see the Changes tab.",
     "smartPull": "Smart Pull",
     "status": "Status",
-    "title": "Merge Details"
+    "title": "Merge Details",
+    "targetBranch": "Target branch",
+    "strategy": "Strategy",
+    "method": "Method",
+    "noOpReason": "No-op reason"
   },
   "mesh": {
     "ariaLabel": "Node mesh topology visualization",
@@ -4221,6 +4225,7 @@
     "more": "More",
     "moreSheetTitle": "Navigate",
     "noScriptsAddOne": "No scripts — add one…",
+    "patchnode": "History",
     "planning": "Planning",
     "planningNeedsInputAriaLabel": "Planning needs your input",
     "primaryNavAriaLabel": "Primary navigation",
@@ -4710,6 +4715,24 @@
     "toggleExtension": "Toggle {{name}}",
     "updateFailed": "Failed to update extension: {{error}}",
     "updateSettingsFailed": "Failed to update settings: {{error}}"
+  },
+  "patchnode": {
+    "cancelled": "Cancelled",
+    "empty": "Completed work will appear here day by day.",
+    "entryCount_one": "{{count}} entry",
+    "entryCount_other": "{{count}} entries",
+    "error": "History could not be loaded.",
+    "loadMore": "Load more",
+    "loading": "Loading History…",
+    "loadingMore": "Loading…",
+    "noResults": "No deliveries match this search.",
+    "retry": "Retry",
+    "reverted": "Reverted",
+    "searchAriaLabel": "Search History",
+    "searchPlaceholder": "Search deliveries",
+    "title": "History",
+    "today": "Today",
+    "yesterday": "Yesterday"
   },
   "planning": {
     "additionalComments": "Additional comments (optional)",
@@ -6227,7 +6250,7 @@
       "enableProactiveTaskChatHint": " When enabled, Task chat reports step progress, failures, reviews, and rollbacks in real time. Default: disabled. ",
       "updates": "Updates",
       "weekly": "Weekly",
-      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": " When enabled, Fusion checks npm for new versions of",
       "whenEnabledTheDashboardProbesForAGlobally": " When enabled, the dashboard probes for a globally-installed",
       "gitLabEnabledHint": "Global GitLab URL and token fallbacks apply to projects that do not set their own values. No default — unset (unset behaves as enabled until explicitly disabled).",
@@ -6304,7 +6327,9 @@
       "openRouterRoutingOnlyHint": "No default — unset (no provider restriction).",
       "openRouterAllowFallbacksHint": "No default — unset (OpenRouter's own default fallback behavior applies).",
       "openRouterRoutingSortHint": "No default — unset (OpenRouter's own default sort applies).",
-      "requireParametersHint": "Default: disabled."
+      "requireParametersHint": "Default: disabled.",
+      "fastAndCheapModel": "Fast & Cheap Model",
+      "fastAndCheapModelHelp": "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task."
     },
     "header": {
       "discord": "Discord",
@@ -7047,28 +7072,21 @@
       "maxWorktrees": "Max Worktrees",
       "worktreeLimitEnabled": "Limit concurrent worktrees",
       "worktreeLimitEnabledHelp": "When on, Max Worktrees caps how many tasks may hold a worktree at once. When off, Max Concurrent Tasks is the only limit. Tasks always run in their own git worktree either way — this does not change where work executes. Default: on.",
-      "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming.",
-      "recycleNotApplicableWithTaskIdNaming": "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.",
       "openApprovals": "Open Approvals",
       "optionalLeaveBlankToAutoResolveFusionWill": "Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.",
       "optionalSupports": " Optional. Supports ",
       "pnpmInstallFrozenLockfile": "pnpm install --frozen-lockfile",
-      "randomNamesEGSwiftFalcon": "Random names (e.g., swift-falcon)",
       "rebaseFromRemoteBeforeMerge": " Rebase from remote before merge ",
       "rebaseRemote": "Rebase Remote",
-      "recycleWorktrees": " Recycle worktrees ",
       "selectWorktreesDir": "Select worktrees directory",
       "shellCommandToRunInEachNewWorktree": "Shell command to run in each new worktree after creation. No default — unset.",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": " stops on worktrunk errors for explicit operator recovery; ",
-      "taskIDEGFN042": "Task ID (e.g., FN-042)",
-      "taskTitleEGFixLoginBug": "Task title (e.g., fix-login-bug)",
       "tryAgain": "Try again",
       "useGitDefault": "Use git default",
       "whenEnabledTheMergerFetchesFromTheConfigured": "When enabled, the merger fetches from the configured remote and rebases the task branch onto the latest default-branch tip before merging — catching concurrent pushes from other collaborators or fusion workers. Any conflicts the rebase surfaces flow into the existing smart/AI resolve pipeline. Default: enabled.",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": " when unset. Only affects newly-created worktrees. ",
       "whichRemoteToFetchForThePreMerge": " Which remote to fetch for the pre-merge rebase. \"Use git default\" falls back to the remote configured for the default branch (typically ",
       "worktreeInitCommand": "Worktree Init Command",
-      "worktreeNamingStyle": "Worktree Naming Style",
       "worktrees": "Worktrees",
       "worktreesDirectory": "Worktrees Directory",
       "worktrunk": " worktrunk ",
@@ -7077,9 +7095,7 @@
       "worktrunkIntegration": "Worktrunk integration",
       "worktreesPickerNote": "Navigate to the folder where Fusion should create task worktrees, then select the current directory.",
       "showWorktreeGroupingHelp": "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.",
-      "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).",
-      "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.",
-      "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random."
+      "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied)."
     },
     "fileBrowser": {
       "currentDirectory": "Current directory:",
@@ -7966,9 +7982,10 @@
     },
     "duplicate": {
       "btn": "Duplicate",
-      "message": "Duplicate {{id}}? This will create a new task in Triage with the same description and prompt.",
+      "message": "Duplicate {{id}}? This will create a new task with the same description and prompt.",
       "success": "Duplicated {{id}} → {{newId}}",
-      "title": "Duplicate Task"
+      "title": "Duplicate Task",
+      "workflowLabel": "Workflow for the copy"
     },
     "edit": {
       "autosaveHint": "Changes autosave as you edit",
@@ -8198,12 +8215,12 @@
     "recoveryState": "Recovery state",
     "refine": {
       "btn": "Refine",
-      "charCount_one": "{{count}}/2000 characters",
-      "charCount_other": "{{count}}/2000 characters",
+      "charCount_one": "{{count}}/{{max}} characters",
+      "charCount_other": "{{count}}/{{max}} characters",
       "createBtn": "Create Refinement Task",
       "creating": "Creating...",
       "feedbackRequired": "Please enter feedback describing what needs refinement",
-      "feedbackTooLong": "Feedback must be 2000 characters or less",
+      "feedbackTooLong": "Feedback must be {{max}} characters or less",
       "help": "Describe what needs to be refined or improved...",
       "modalTitle": "Refine",
       "placeholder": "Enter your feedback here...",
@@ -8211,11 +8228,13 @@
     },
     "reset": {
       "btn": "Reset",
-      "confirmMessage": "This will erase all progress for {{id}} and start the task from scratch. Continue?",
-      "resetSuccess": "Reset {{id}} — fresh run will be allocated"
-    },
-    "respecify": {
-      "btn": "Respecify"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "Edit the request Fusion will re-plan from, then confirm.",
+      "descriptionLabel": "Original description",
+      "descriptionRequired": "A description is required.",
+      "resetSuccess": "Reset {{id}} — fresh run will be allocated",
+      "submitting": "Resetting…"
     },
     "retries": {
       "branchConflict": "Branch conflict recovery",
@@ -8246,7 +8265,18 @@
     "retriesLabel": "Retries (recovery / workflow / merge / task_done)",
     "retry": {
       "btn": "Retry",
-      "retried": "Retried {{id}}"
+      "retried": "Retried {{id}}",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "Runtime links",
     "runtimeStatus": "Runtime status",
@@ -8295,30 +8325,7 @@
       "heading": "Summary"
     },
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "tabs": {
       "changes": "Changes",
@@ -8336,10 +8343,8 @@
       "terminal": "Session",
       "worktreeTerminal": "Terminal",
       "workflow": "Workflow",
-      "cost": "Cost",
       "recommendations": "Recommendations",
       "dependencies": "Dependencies",
-      "attachments": "Attachments",
       "details": "Details",
       "debug": "Debug"
     },
@@ -8430,6 +8435,56 @@
     },
     "debug": {
       "none": "No debug details available."
+    },
+    "details": {
+      "expandRouting": "Expand routing details",
+      "collapseRouting": "Collapse routing details",
+      "expandDebug": "Expand debug details",
+      "collapseDebug": "Collapse debug details"
+    }
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "Plan",
+      "code": "Code",
+      "review": "Review"
+    },
+    "empty": {
+      "plan": "No planning reports recorded.",
+      "code": "No implementation summaries recorded. Summaries appear when implementation steps report what they delivered.",
+      "review": "No review reports recorded."
+    },
+    "entry": {
+      "noBody": "No report body was recorded.",
+      "verdictNoNotes": "The reviewer recorded no notes for this verdict.",
+      "completionSummary": "Completion summary",
+      "stepReport": "Step {{index}}: {{name}}",
+      "duration": "Took {{duration}}",
+      "merged": "Merged",
+      "noOpMerge": "No-op merge"
+    },
+    "meta": {
+      "commit": "Commit",
+      "targetBranch": "Target branch",
+      "strategy": "Strategy",
+      "method": "Method",
+      "files": "Files",
+      "insertions": "Insertions",
+      "deletions": "Deletions",
+      "pr": "Pull request",
+      "noOpReason": "No-op reason"
+    },
+    "loading": "Loading history…",
+    "verdict": {
+      "approve": "Approved",
+      "approve-with-notes": "Approved with notes",
+      "revise": "Revise",
+      "close-no-op": "Closed as no-op",
+      "passed": "Passed",
+      "failed": "Failed",
+      "advisory-failure": "Advisory failure",
+      "skipped": "Skipped",
+      "pending": "Pending"
     }
   },
   "taskDocuments": {
@@ -8666,7 +8721,24 @@
     "reviewBudgetExhausted": "Review budget exhausted",
     "awaitingApprovalTitle": "This plan needs your approval before implementation can start.",
     "baseBranch": "Base",
-    "blockedByTooltip": "Blocked by {{taskId}} (file overlap)",
+    "blockedByTooltip": "Waiting for {{taskId}} (file overlap)",
+    "externalBlock": {
+      "title": "Blocked",
+      "unknownCode": "UNCLASSIFIED",
+      "genericMessage": "External obstacle requires operator action",
+      "explain": "Explain this error",
+      "explainPrompt": "Explain this error {{error}} and how to resolve it.",
+      "resuming": "Resuming…",
+      "retry": "Retry"
+    },
+    "planApproval": {
+      "approve": "Approve",
+      "approveFailed": "Failed to approve plan: {{error}}",
+      "approving": "Approving...",
+      "copy": "Review the plan before implementation starts.",
+      "replanCapCopy": "Review the current plan, then approve it or request specific changes.",
+      "title": "Need Your Review"
+    },
     "branch": "Branch",
     "branchMetadata": "Branch metadata",
     "branchProgress": "{{done}}/{{total}} branches",
@@ -8791,9 +8863,6 @@
     "prNodeTitle": "PR {{state}} — open the PR view",
     "prNodeWithNumber": "PR #{{number}} · {{state}}",
     "projectDefaultLocal": "Project default / local",
-    "promote": "Promote",
-    "promoteTask": "Promote task",
-    "promoting": "Promoting…",
     "queued": "Queued",
     "refine": "Refine",
     "refineAddDetails": "Add details",
@@ -9118,7 +9187,15 @@
     "statusSkipped": "Skipped",
     "submitAndResume": "Submit & resume",
     "submitting": "Submitting…",
-    "waitingForOutput": "Waiting for agent output…"
+    "waitingForOutput": "Waiting for agent output…",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "Add column",
@@ -9571,7 +9648,8 @@
     "missingOutput": "Missing output",
     "missingOutputTimestamp": "Missing output timestamp",
     "statusUpdate": "Status update",
-    "statusUpdateTimestamp": "Status update timestamp"
+    "statusUpdateTimestamp": "Status update timestamp",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "report": {
     "roadmapMatch": {
@@ -9741,5 +9819,11 @@
     "close": "Close artifact preview",
     "loading": "Loading image artifact…",
     "retry": "Retry"
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

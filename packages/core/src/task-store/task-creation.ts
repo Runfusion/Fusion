@@ -9,7 +9,7 @@
 import {TaskStore, storeLog} from "../store.js";
 import {InvalidFileScopeError, SelfDefeatingDependencyError, detectSelfDefeatingDependency, TombstonedTaskResurrectionError} from "./errors.js";
 import {and, eq, inArray, isNull, sql} from "drizzle-orm";
-import {mkdir, readFile, rename, rm, writeFile} from "node:fs/promises";
+import {mkdir, readFile, rename, rm} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import {randomUUID} from "node:crypto";
@@ -43,6 +43,7 @@ import * as schema from "../postgres/schema/index.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 import { resolveTaskPrefix } from "./task-prefix.js";
 import {assertValidProviderInstanceId} from "../provider-instance.js";
+import {writePromptFileAtomic} from "./prompt-file.js";
 import {BranchWriteProvenanceError, validateTaskBranchName} from "../branch/branch-assignment.js";
 import {loadWorkspaceConfig} from "../git/git-repository.js";
 import {
@@ -78,28 +79,22 @@ function normalizeCreateBranchProvenance(input: TaskCreateInput): TaskCreateInpu
 }
 
 /*
-FNXC:RepositoryScope 2026-08-20-23:40:
-Workspace acquisition deliberately obtains every configured checkout after creation. Seed task intent
-before that acquisition so checkout membership cannot become review or landing authority. Explicit
-operator selection is confirmed; description/default evidence remains a planner-confirmable proposal.
+FNXC:RepositoryScope 2026-08-29-08:50:
+FN-258 gives every workspace task the complete configured repository set at creation. The workspace
+configuration, rather than a task description or caller input, confirms that scope so subsequent
+acquisition, review, and landing share one unambiguous membership snapshot.
 */
-async function resolveInitialRepositoryScope(store: TaskStore, input: TaskCreateInput, now: string): Promise<Task["repositoryScope"]> {
-  const configured = (await loadWorkspaceConfig(store.getRootDir()))?.repos ?? [];
-  if (configured.length === 0) return undefined;
-  const explicit = input.repositoryScope?.map((repo) => repo.trim()).filter(Boolean);
-  const unknown = explicit?.filter((repo) => !configured.includes(repo)) ?? [];
-  if (unknown.length > 0) throw new Error(`Unknown workspace repository scope: ${unknown.join(", ")}`);
-  const mentions = configured.filter((repo) => input.description.toLowerCase().includes(repo.toLowerCase()));
-  const repositories = explicit && explicit.length > 0
-    ? [...new Set(explicit)].sort()
-    : [mentions.length === 1 ? mentions[0] : configured[0]];
-  const explicitSelection = Boolean(explicit?.length);
+async function resolveInitialRepositoryScope(store: TaskStore, now: string): Promise<Task["repositoryScope"]> {
+  const repositories = [...new Set(((await loadWorkspaceConfig(store.getRootDir()))?.repos ?? [])
+    .map((repo) => repo.trim())
+    .filter(Boolean))].sort();
+  if (repositories.length === 0) return undefined;
   return {
     repositories,
-    state: explicitSelection ? "confirmed" : "proposed",
+    state: "confirmed",
     revision: 1,
-    confirmedBy: explicitSelection ? "operator" : "inferred",
-    ...(explicitSelection ? { confirmedAt: now } : {}),
+    confirmedAt: now,
+    confirmedBy: "workspace",
   };
 }
 
@@ -240,7 +235,7 @@ async function persistDeferredTaskTitleIfUntitled(
         ? `Task: ${updated.id} - ${updated.title}`
         : `${updated.id}: ${updated.title}`;
       const nextPrompt = rewriteHeadingLine(existingPrompt, heading);
-      if (nextPrompt !== existingPrompt) await writeFile(promptPath, nextPrompt);
+      if (nextPrompt !== existingPrompt) await writePromptFileAtomic(promptPath, nextPrompt);
     }
   } catch (err) {
     storeLog.warn(`[title-summarization] failed to sync PROMPT.md heading for ${taskId}`, {
@@ -713,7 +708,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       ? { manual: false as boolean, intake: undefined as string | undefined, hold: undefined as string | undefined }
       : await resolveWorkflowIntakeFacts(store, input.workflowId ?? undefined);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
-    const repositoryScope = await resolveInitialRepositoryScope(store, input, now);
+    const repositoryScope = await resolveInitialRepositoryScope(store, now);
     const task: Task = {
       id,
       lineageId: input.lineageId ?? generateTaskLineageId(),
@@ -913,7 +908,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
           throw new InvalidFileScopeError(id, validation.invalid);
         }
       }
-      await writeFile(join(stagingDir, "PROMPT.md"), prompt);
+      await writePromptFileAtomic(join(stagingDir, "PROMPT.md"), prompt);
     } catch (error) {
       await cleanupPreparedTaskFiles();
       if ((error as NodeJS.ErrnoException).code === "EEXIST") {
@@ -1266,7 +1261,7 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       ? { manual: false as boolean, intake: undefined as string | undefined, hold: undefined as string | undefined }
       : await resolveWorkflowIntakeFacts(store, input.workflowId ?? undefined);
     const declaredSymbols = resolveCreateDeclaredSymbols(input, options?.promptOverride);
-    const repositoryScope = await resolveInitialRepositoryScope(store, input, now);
+    const repositoryScope = await resolveInitialRepositoryScope(store, now);
     const task: Task = {
       id,
       lineageId: input.lineageId ?? generateTaskLineageId(),
@@ -1438,7 +1433,7 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       }
     }
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "PROMPT.md"), prompt);
+    await writePromptFileAtomic(join(dir, "PROMPT.md"), prompt);
 
     await store._maybeAutoArchiveSameAgentDuplicate(task, input);
 

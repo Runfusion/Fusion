@@ -2,6 +2,8 @@
 
 ## Essential rules
 
+- **Lifecycle containment (FN-207/FN-217):** Automatic work advances through intake, hold, WIP, review, and completion. Only a revision may move a card backward: Plan Review `REVISE` may move WIP to hold, while Code Review, verification, or merge-fix `REVISE` may move review to WIP only with named pending remediation. Timeouts, retries, graph routing, cleanup, dependency recovery, contamination recovery, worktree recovery, and merge failure repair stay in the current lifecycle role. Automatic moves may never target intake or move backward out of terminal lanes.
+
 ### Standing Rule: Prefer `main` For Direct Work; Use Worktrees For Branches
 
 Agents may implement and commit **directly on `main`** when the change belongs on main (docs/rules, small fixes the operator wants on main, operator explicitly said so, etc.).
@@ -352,7 +354,7 @@ canonical emitters remain explicit exclusions until their separately scoped hard
 - FN-7011/FN-7975: self-healing emits `task:reconcile-engine-downtime-active-timing` when startup recovery or a full Global/Engine unpause shifts active task segment anchors to exclude proven stopped-engine wall-clock, and `task:reconcile-engine-downtime-active-timing-no-action` when no active task qualifies.
 - FN-5419: git run-audit now includes `pull:fast-forward` and `stash:pop-conflict`; dashboard git surfaces now include the extended `POST /api/git/pull` integration-worktree path plus companion `POST /api/git/stash-resolve`, `POST /api/git/stash-drop`, and `POST /api/git/stash-apply` routes.
 - KB-002: divergent post-merge pushes emit `push:recovery-branch` for the remote `fusion/<task-id>-stranded` safety-ref lifecycle; metadata stays ids/outcomes-only (`taskId`, `remote`, `recoveryBranch`, `sha`, `outcome`). Aborted target pushes emit `push:origin` with `outcome:"aborted"` and remain non-fatal after task finalization.
-- Operator force-promote emits `task:promote-forced-unplanned` when `promoteHeldTask(..., { force: true })` waives the `unplanned-for-execution` gate (pending replan / pre-release Plan Review) and releases the card into a WIP column; metadata stays ids/outcomes-only (`fromColumn`, `toColumn`, `priorStatus`). Force is opt-in per explicit promote request only (dashboard promote confirm dialog, `POST /tasks/:id/promote` with `{ force: true }`, or `fn_task_promote` with `force: true`) — the hold-release sweep and the webhook event release cannot set it, so FN-7648's "no unplanned card enters a processing column" invariant still holds for every automatic surface. Force waives ONLY the plan gate: hold membership, capacity, and slot reservation still arbitrate. It also clears a `needs-replan`/`plan-review-unavailable` status so triage rediscovery cannot pull the card back into the waived replan.
+- FN-245 removes the `task:promote-forced-unplanned` audit event, the `force` option from every promote surface, and the `issueRelease` `allowUnplanned` waiver. Unplanned and approval-held cards are refused on every release surface, including explicit promote; only genuine planning and approval completion can release them into execution.
 - FN-6292: self-healing emits `task:reconcile-dependency-blocking-lease` when it rebounds an in-progress holder whose stale file-scope lease blocks an unmet dependency, and `task:reconcile-dependency-blocking-lease-no-action` when triple-proof blocks that backward move.
 - FN-6736: self-healing emits `task:reclaim-phantom-executor-binding` when it proves an in-memory executor-active binding is stale, clears the binding, and requeues the in-progress task with worktree/progress preserved.
 - FN-6783: task-store open and self-healing housekeeping emit `task:reconcile-orphaned-task-dir` when they non-destructively re-import a valid live `.fusion/tasks/{ID}/task.json` directory that has no task row anywhere, preserving soft-deleted/archived/tombstoned IDs.
@@ -360,8 +362,7 @@ canonical emitters remain explicit exclusions until their separately scoped hard
 - FN-7074: task creation emits `task:reservation-commit-rolled-back` when a distributed reservation was committed atomically with a `tasks` row but a later create materialization step failed; metadata includes `reservationId`, `nodeId`, `reason: "failed-create"`, and `error`, and the reservation is moved to aborted so the sequence remains burned.
 - FN-6782/FN-6796: self-healing emits `task:auto-recover-paused-abort-park` when it clears a benign pause-abort operator park, requeueing safe `todo`/`in-progress` rows or preserving a clean auto-merge-eligible `in-review` row for review progression.
 - FN-9187: self-healing emits `task:auto-archive-failure-budget-exhausted` once when a stale done-task archive exhausts `MAX_STARVATION_DROPS`; metadata remains ids/counts/fixed outcomes only (`taskId`, `attempts`, `maxAttempts`, `reason`), and the one-shot task log directs an operator to repair the archive guard.
-- FN-8908: self-healing reserves `task:auto-recover-terminal-failure` and `task:auto-recover-terminal-failure-exhausted` for generic terminal-failure budget recovery. Metadata must remain ids/counts/outcomes-only and never include failure prose or the rotating `wedgeNotification.autoRecovery.applyToken`; that durable budget is the backoff source, and its apply fence—not the grace heuristic—authorizes the single clear/requeue transition.
-- FN-6793/FN-6797: self-healing emits `task:reconcile-in-review-unmet-dependencies` when it rebounds an `in-review` task whose declared dependencies are still unmet, and `task:reconcile-in-review-unmet-dependencies-no-action` when pause/user-pause, `autoMerge:false`, live execution/checkout proof, or a failed rebound mutation blocks that backward move.
+- FN-6793/FN-6797: self-healing emits `task:reconcile-in-review-unmet-dependencies` when it records unmet dependency state on an `in-review` task without moving it backward, and `task:reconcile-in-review-unmet-dependencies-no-action` when pause/user-pause, `autoMerge:false`, or live execution/checkout proof suppresses that in-place repair.
 - Workspace (Phase D U1): self-healing emits `task:reconcile-workspace-partial-land` when it re-enqueues a partial/zero-landed workspace task's per-repo land (or parks it `failed` for proven branch absence or exhausted `evidence-unavailable` branch reads), and `task:reconcile-workspace-partial-land-no-action` when `autoMerge:false`, user-pause, a live sub-repo worktree (workspace-aware liveness), or `evidence-unavailable` blocks that backward move. The bounded evidence-exhaustion reason is `evidence-unavailable-exhausted`; audit metadata remains ids/counts/outcomes-only.
 - Workspace (Phase D U1): self-healing emits `task:reclaim-phantom-workspace-land-lease` when it clears a leaked `workspace-repo-land` lease whose owning task is terminal/dead and older than the FN-6736 staleness floor. Archived-role and soft-deleted owners are terminal; live merging, executing, or merge-pending owners are untouched.
 - FN-9164: `worktree:workspace-repo-base-branch` records per-repo base resolution with exactly `taskId`, `repoRelPath`, `stage`, `source`, `outcome`, and optional `fallbackReason`; branch/ref names are deliberately excluded from metadata and `target`, living only in the durable entry and task log.
@@ -421,7 +422,7 @@ canonical emitters remain explicit exclusions until their separately scoped hard
 
 ### Lazy-Loaded Heavy Views
 
-These 19 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
+These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
 Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`), plugin settings lazy imports (`PluginManager`, `PiExtensionsManager`), AgentsView lazy imports (`AgentDetailView`), and `packages/dashboard/app/__tests__/lazy-loaded-views-docs.test.ts`.
 
 - `AgentsView`
@@ -437,6 +438,7 @@ Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal i
 - `EvalsView`
 - `GoalsView`
 - `PullRequestView`
+- `PatchnodeView`
 - `SetupWizardModal`
 - `SettingsModal`
 - `WorkflowNodeEditor`
@@ -472,7 +474,7 @@ Note: the embedded main-content views Workflows (`_WorkflowEditorView`), Import 
 <!-- FNXC:RunAudit 2026-08-20-05:49: FN-9177 requires new core best-effort emitters to use the core-owned bounded seam. -->
 - FN-9177: New core best-effort emitters must use `packages/core/src/run-audit/emit-bounded-run-audit.ts`. It deliberately mirrors the engine seam because `@fusion/core` cannot import `@fusion/engine`; transactional and deliberately awaited durability writers remain unbounded.
 - FN-9178: Awaited core audit exclusions are classified with evidence in `docs/run-audit.md`: class A candidates, class B outcome-signalled candidates, and class C forensic/durability records. Transactional writers remain permanently unbounded because they share the mutation transaction.
-- FN-9186: self-healing emits `task:no-progress-no-task-done-requeue` for each bounded, backed-off zero-progress requeue and `task:no-progress-no-task-done-requeue-exhausted` once when its `taskDoneRetryCount` budget is spent. Metadata remains ids/counts/outcomes-only (`taskId`, column, attempt, maxAttempts, optional delayMs, outcome); the `NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED:` park is protected from generic terminal-failure and restart recovery, and audit emission is bounded best-effort.
 <!-- FNXC:ReviewConvergence 2026-08-22-17:20: FN-149 requires all five review-convergence emit sites to use the FN-9175 bounded seam, so telemetry never becomes a review lifecycle dependency. -->
 - FN-149: review convergence emits `task:review-finding-disputed`, `task:review-convergence-escalation`, `task:review-arbitration`, and `task:review-convergence-human-escalation` through `emitBoundedRunAudit`; metadata is ids/counts/fixed outcomes only and never rationale, finding prose, reviewer feedback, or arbiter output.
 - FN-179: acquire-cache recovery emits `worktree:workspace-repo-acquire-reclaimed` and `task:reclaim-phantom-workspace-acquire-lease`; contention emits `task:session-contention-hold` and `task:session-contention-hold-exhausted`. Metadata is ids/counts/fixed outcomes only; the holder/repository wait reason is persisted on the task row and never put in run-audit.
+- FN-209: `task:external-block-parked` and `task:external-block-cleared` record entry to and operator recovery from an outside-worktree freeze. Metadata is ids/fixed outcomes only (`taskId`, origin, code, source, column, resume node id); raw obstacle prose never enters run-audit, and bounded best-effort emission cannot become a lifecycle dependency.

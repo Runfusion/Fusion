@@ -30,11 +30,15 @@
  *
  * FNXC:RemediationVisibility 2026-07-26-19:20:
  * Unscheduled remediation (zero budget, non-REVISE hard fail) must log loudly, never silently park.
+ *
+ * FNXC:RemediationVisibility 2026-08-28-12:16:
+ * A blocking result that cannot become remediation must also explain the refusal on the card, including the gate identity, concrete budget or scope state, and the operator's retry or privileged-bypass remedies. Engine-only warnings are not visible where operators diagnose a frozen review.
  */
 import type { Task, TaskStore, WorkflowReviewFinding, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import {
   DEFAULT_MAX_POST_REVIEW_FIXES,
   DEFAULT_PLAN_REVIEW_REPLAN_CAP,
+  hasPendingRemediationWork,
   hasPreMergeRemediationAutoMergeHold,
   PLAN_REVIEW_GROUP_ID,
   resolveOptionalReviewRevisionBudget,
@@ -58,8 +62,18 @@ import {
 } from "../plan-review-feedback-history.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
-import { deriveWorkspaceReviewRemediation } from "./workspace-review-remediation.js";
+import {
+  deriveWorkspaceReviewRemediation,
+  hasDurableRepeatedWorkspaceReview,
+} from "./workspace-review-remediation.js";
 import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
+import type {
+  AppendReviewRemediationOptions,
+  AppendReviewRemediationOutcome,
+} from "./append-review-remediation-steps.js";
+import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
+import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
 
 function normalizeConvergenceText(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -92,8 +106,11 @@ export function reviewInputSignature(result: CoreWorkflowStepResult): string | u
       return `${outcome.repository}\u0000${outcome.fingerprint ?? ""}\u0000${outcome.verdict}\u0000${findings}`;
     })
     .sort();
-  if (blocking.length === 0 || result.repositoryScopeRevision === undefined) return undefined;
-  return `${result.workflowStepId}\u0000${result.repositoryScopeRevision}\u0000${blocking.join("\u0001")}`;
+  if (blocking.length === 0) return undefined;
+  const scopeRevision = result.repositoryScopeRevision === undefined
+    ? ""
+    : `\u0000${result.repositoryScopeRevision}`;
+  return `${result.workflowStepId}${scopeRevision}\u0000${blocking.join("\u0001")}`;
 }
 
 export function hasRepeatedUnchangedReview(task: Task, info: RequestPreMergeOptionalStepFixInfo): boolean {
@@ -122,6 +139,8 @@ export type RequestPreMergeOptionalStepFixInfo = {
   /** Raw graph node result when no reviewer verdict was produced. */
   failureValue?: string;
   nodeId?: string;
+  reviewKind?: CoreWorkflowStepResult["reviewKind"];
+  workflowAction?: string;
   maxRevisions?: unknown;
   /**
    * FNXC:ReviewSeverityGate 2026-08-10-17:33:
@@ -147,7 +166,11 @@ export type RequestPreMergeOptionalStepFixDeps = {
   ) => Promise<void>;
   clearPausedAborted: (taskId: string) => void;
   readTaskArtifact: (taskId: string, key: string) => Promise<string | undefined>;
-  appendReviewRemediationSteps: (task: Task, info: RequestPreMergeOptionalStepFixInfo) => Promise<boolean>;
+  appendReviewRemediationSteps: (
+    task: Task,
+    info: RequestPreMergeOptionalStepFixInfo,
+    options?: AppendReviewRemediationOptions,
+  ) => Promise<AppendReviewRemediationOutcome>;
   workflowLifecycleMovesInFlight: Set<string>;
   sendTaskBackForFix: (
     task: Task,
@@ -257,6 +280,12 @@ export async function requestPreMergeOptionalStepFix(
       executorLog.warn(
         `${taskId}: plan-review remediation NOT scheduled — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
       );
+      await deps.store.logEntry(
+        taskId,
+        "Plan Review remediation not scheduled — revision budget zero/invalid",
+        `Step/node: ${info.nodeId ?? info.stepName}\nMaximum revisions: ${String(budget.max)}\nIncrease the Plan Review revision budget and retry the task, or correct the plan manually before retrying.`,
+        deps.getRunContextFor(taskId),
+      );
       return false;
     }
     const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
@@ -350,18 +379,24 @@ export async function requestPreMergeOptionalStepFix(
     const replanColumn = await resolveReplanTargetColumn(deps.store, taskId);
     await deps.store.logEntry(
       taskId,
-      `Plan Review failed — moved to ${replanColumn} for automatic replan (attempt ${nextCount}/${budgetLabel})`,
+      liveTask.column === replanColumn
+        ? `Plan Review requested a plan revision — task stays in '${replanColumn}' (attempt ${nextCount}/${budgetLabel})`
+        : `Plan Review requested a plan revision — moved to '${replanColumn}' (attempt ${nextCount}/${budgetLabel})`,
       optionalStepRevisionLogOutcome(feedback, revisionKey),
       deps.getRunContextFor(taskId),
     );
     deps.workflowLifecycleMovesInFlight.add(taskId);
     try {
-      await moveTaskToReplanColumn(
+      const replanResult = await moveTaskToReplanColumn(
         deps.store,
         { id: taskId, column: liveTask.column },
+        "plan-review-revise-replan",
         replanColumn,
         { workflowMoveSource: "workflow-remediation" },
       );
+      if (typeof replanResult === "object" && replanResult.reason === "review-lane-source") {
+        return true;
+      }
     } finally {
       deps.workflowLifecycleMovesInFlight.delete(taskId);
     }
@@ -375,6 +410,35 @@ export async function requestPreMergeOptionalStepFix(
     return true;
   }
 
+  /*
+  FNXC:ReviewEmptyContent 2026-08-28-13:14:
+  A definite empty Code Review rejection closes before the review-gated appender and every Code
+  Review budget branch. The built-in budget is unbounded, and no revision count can create content;
+  return false after the park because no remediation was scheduled. A declined CAS falls through to
+  the existing path. The operator hold, artifact, and Plan Review routes intentionally remain first.
+  */
+  const emptyResult = liveTask.workflowStepResults?.find((result) =>
+    result.workflowStepId === info.nodeId && isDefiniteEmptyCodeReviewRevise(result));
+  if (emptyResult) {
+    const outcome = await routeReviewConvergenceLadder(deps, taskId, {
+      kind: "empty-review-input",
+      workflowStepId: emptyResult.workflowStepId,
+      stepName: emptyResult.workflowStepName || info.stepName,
+      feedback: info.feedback,
+      findings: emptyResult.findings,
+      attempt: 1,
+      emptyInputFence: {
+        workflowStepId: emptyResult.workflowStepId,
+        stepName: emptyResult.workflowStepName || info.stepName,
+        expectedStartedAt: emptyResult.startedAt,
+        expectedCompletedAt: emptyResult.completedAt,
+        expectedVerdict: emptyResult.verdict,
+        expectedReviewInputFingerprint: emptyResult.reviewInputFingerprint!,
+      },
+    });
+    if (outcome === "empty-content-terminalized") return false;
+  }
+
   const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
   /*
    * FNXC:ReviewGatedRemediation 2026-08-23-05:23:
@@ -382,11 +446,100 @@ export async function requestPreMergeOptionalStepFix(
    * guards above. A deterministic Verification failure has no reviewer verdict; Code Review still
    * requires a genuine REVISE so transport failures cannot manufacture remediation work.
    */
-  if (
-    resolveStepReopenPolicy(workflowIr) === "none"
-    && (info.nodeId === "verification" || (info.nodeId === "code-review" && info.verdict === "REVISE"))
-  ) {
-    return deps.appendReviewRemediationSteps(liveTask, info);
+  const remediationGate = resolveReviewRemediationGate(info);
+  if (remediationGate === "Verification") {
+    const remediationOutcome = await deps.appendReviewRemediationSteps(liveTask, info);
+    if (remediationOutcome === "appended") return true;
+    return false;
+  }
+
+  if (remediationGate === "Code Review" && info.verdict === "REVISE") {
+    /*
+    FNXC:ReviewGatedRemediation 2026-08-28-16:10:
+    Unbounded waves still require changed evidence: singular review uses its review-input fingerprint,
+    while workspace review compares the durable repository, scope revision, and input signature before
+    the appender can overwrite that state. An optional group's authored `maxRevisions` is the only
+    numeric bound, so every appended named-remediation wave writes the keyed attempt entry this route
+    previously omitted; without that write its resolved budget remained permanently at zero attempts.
+    */
+    const codeReviewSettings = await mergeEffectiveSettings(deps.store, liveTask, await deps.store.getSettings());
+    const maxRevisions = resolveOptionalReviewRevisionBudget({
+      optionalGroupId: info.nodeId ?? info.stepName,
+      workflowSettings: codeReviewSettings as Record<string, unknown>,
+      nodeMaxRevisions: info.maxRevisions,
+      fallbackMaxRevisions: codeReviewSettings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
+    });
+    const codeReviewBudget = resolveOptionalStepRevisionBudget(
+      maxRevisions,
+      codeReviewSettings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
+    );
+    const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
+    const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
+    const reviewResult = (liveTask.workflowStepResults ?? []).find((result) =>
+      (result.workflowStepId === info.nodeId || result.workflowStepName === info.stepName)
+      && result.verdict === "REVISE",
+    );
+    const workspaceRemediation = liveTask.workspaceWorktrees && reviewResult
+      ? deriveWorkspaceReviewRemediation(reviewResult)
+      : undefined;
+    const updateWorkspaceReviewState = (deps.store as Partial<Pick<TaskStore, "updateWorkspaceReviewState">>)
+      .updateWorkspaceReviewState;
+    const repeatedUnchanged = liveTask.workspaceWorktrees
+      ? workspaceRemediation && updateWorkspaceReviewState
+        ? hasDurableRepeatedWorkspaceReview(liveTask, workspaceRemediation)
+        : hasRepeatedUnchangedReview(liveTask, info)
+      : hasRepeatedUnchangedReview(liveTask, info);
+    const routeStop = async (stop: { kind: "repeat-unchanged" | "budget-exhausted"; attempt: number }): Promise<boolean> => {
+      const outcome = await routeReviewConvergenceLadder(deps, taskId, {
+        ...stop,
+        workflowStepId: info.nodeId,
+        stepName: info.stepName,
+        feedback: info.feedback,
+        findings: info.findings,
+        max: codeReviewBudget.unbounded ? undefined : codeReviewBudget.max,
+      });
+      if (outcome === "escalated" || outcome === "arbitrated") return true;
+      if (stop.kind === "repeat-unchanged") {
+        await deps.store.logEntry(
+          taskId,
+          "Code Review did not converge — released as non-blocking",
+          `The same Code Review revision was returned twice without a changed review input. Latest feedback:\n${info.feedback}`,
+          deps.getRunContextFor(taskId),
+        );
+      } else {
+        await deps.store.logEntry(
+          taskId,
+          "Pre-merge remediation not scheduled — revision budget exhausted",
+          `Step/node: ${info.nodeId ?? info.stepName}\nAttempts: ${stop.attempt}\nMaximum revisions: ${String(codeReviewBudget.max)}\nIncrease the revision budget and retry, or use the privileged review bypass only when the failed gate is known to be non-blocking.`,
+          deps.getRunContextFor(taskId),
+        );
+      }
+      return false;
+    };
+    const stop = repeatedUnchanged
+      ? { kind: "repeat-unchanged" as const, attempt: currentCount }
+      : !codeReviewBudget.unbounded && currentCount >= codeReviewBudget.max
+        ? { kind: "budget-exhausted" as const, attempt: currentCount }
+        : undefined;
+    if (stop) return routeStop(stop);
+
+    const remediationOutcome = await deps.appendReviewRemediationSteps(liveTask, info, {
+      attemptClaim: {
+        revisionKey,
+        stepName: info.stepName,
+        status: info.status,
+        maxRevisions: codeReviewBudget.unbounded ? "unbounded" : codeReviewBudget.max,
+        runContext: deps.getRunContextFor(taskId),
+      },
+    });
+    if (remediationOutcome === "budget-exhausted") {
+      const current = await deps.store.getTask(taskId);
+      return routeStop({
+        kind: "budget-exhausted",
+        attempt: countOptionalStepRevisionAttempts(current, revisionKey, info.stepName),
+      });
+    }
+    return remediationOutcome === "appended";
   }
 
   /*
@@ -441,6 +594,12 @@ export async function requestPreMergeOptionalStepFix(
     executorLog.warn(
       `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — status=${info.status}, verdict=${info.verdict ?? "none"}. Card left parked.`,
     );
+    await deps.store.logEntry(
+      taskId,
+      "Pre-merge remediation not scheduled — no REVISE verdict",
+      `Step/node: ${info.nodeId ?? info.stepName}\nStatus: ${info.status}\nVerdict: ${info.verdict ?? "none"}\nRetry the failed review to obtain a valid verdict, or use the privileged review bypass only when this failed gate is known to be non-blocking.`,
+      deps.getRunContextFor(taskId),
+    );
     return false;
   }
   const settings = await mergeEffectiveSettings(deps.store, liveTask, await deps.store.getSettings());
@@ -454,6 +613,12 @@ export async function requestPreMergeOptionalStepFix(
   if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
     executorLog.warn(
       `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
+    );
+    await deps.store.logEntry(
+      taskId,
+      "Pre-merge remediation not scheduled — revision budget zero/invalid",
+      `Step/node: ${info.nodeId ?? info.stepName}\nMaximum revisions: ${String(budget.max)}\nIncrease this workflow step's revision budget and retry the task, or use the privileged review bypass only when the failed gate is known to be non-blocking.`,
+      deps.getRunContextFor(taskId),
     );
     return false;
   }
@@ -473,31 +638,35 @@ export async function requestPreMergeOptionalStepFix(
   // FNXC:WorkspaceFinalization 2026-08-21-09:09: structured outcomes can exist on legacy
   // single-repository flows; only a durable workspace map activates scoped routing and persistence.
   const remediation = derivedRemediation && liveTask.workspaceWorktrees ? derivedRemediation : undefined;
-  const priorRemediation = liveTask.repositoryScope?.reviewRemediation;
-  const hasDurableRepeatedWorkspaceReview = remediation !== undefined
-    && priorRemediation?.scopeRevision === remediation.scopeRevision
-    && priorRemediation.repository === remediation.repository
-    && priorRemediation.inputSignature === remediation.inputSignature;
-  const updateWorkspaceReviewState = (deps.store as TaskStore & {
-    updateWorkspaceReviewState?: TaskStore["updateWorkspaceReviewState"];
-  }).updateWorkspaceReviewState;
-  if (remediation && !hasDurableRepeatedWorkspaceReview && updateWorkspaceReviewState) {
+  const repeatedWorkspaceReview = hasDurableRepeatedWorkspaceReview(liveTask, remediation);
+  const updateWorkspaceReviewState = (deps.store as Partial<Pick<TaskStore, "updateWorkspaceReviewState">>)
+    .updateWorkspaceReviewState;
+  if (remediation && !repeatedWorkspaceReview && updateWorkspaceReviewState) {
     const persisted = await updateWorkspaceReviewState.call(deps.store, taskId, remediation.scopeRevision, remediation);
     if (!persisted.updated) {
       executorLog.warn(`${taskId}: workspace Code Review remediation was superseded by a repository scope change.`);
+      await deps.store.logEntry(
+        taskId,
+        "Workspace Code Review remediation not scheduled — repository scope changed",
+        `Step/node: ${info.nodeId ?? info.stepName}\nExpected repository scope revision: ${remediation.scopeRevision}\nThe review no longer matches the live repository scope. Retry Code Review against the current scope before scheduling fixes.`,
+        deps.getRunContextFor(taskId),
+      );
       return false;
     }
   }
-  if (hasDurableRepeatedWorkspaceReview || ((!remediation || !updateWorkspaceReviewState) && hasRepeatedUnchangedCodeReview(liveTask, info))) {
+  if (repeatedWorkspaceReview || ((!remediation || !updateWorkspaceReviewState) && hasRepeatedUnchangedCodeReview(liveTask, info))) {
     const outcome = await routeReviewConvergenceLadder(deps, taskId, {
       kind: "repeat-unchanged", workflowStepId: info.nodeId, stepName: info.stepName,
       feedback: info.feedback, findings: info.findings, attempt: countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName),
       max: budget.unbounded ? undefined : budget.max,
     });
     if (outcome === "escalated" || outcome === "arbitrated") return true;
-    const runContext = deps.getRunContextFor(taskId);
-    await deps.store.logEntry(taskId, "Code Review did not converge — awaiting operator action", `The same Code Review revision was returned twice without a new review result. Latest feedback:\n${info.feedback}`, runContext);
-    await deps.store.updateTask(taskId, { status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence", error: null, nextRecoveryAt: null }, runContext);
+    await deps.store.logEntry(
+      taskId,
+      "Code Review did not converge — released as non-blocking",
+      `The same Code Review revision was returned twice without a changed review input. Latest feedback:\n${info.feedback}`,
+      deps.getRunContextFor(taskId),
+    );
     return false;
   }
   const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
@@ -508,6 +677,12 @@ export async function requestPreMergeOptionalStepFix(
     });
     if (outcome === "escalated" || outcome === "arbitrated") return true;
     executorLog.warn(`${taskId}: pre-merge remediation budget EXHAUSTED for step "${info.stepName}" (${currentCount}/${String(budget.max)}). Card left parked for operator action.`);
+    await deps.store.logEntry(
+      taskId,
+      "Pre-merge remediation not scheduled — revision budget exhausted",
+      `Step/node: ${info.nodeId ?? info.stepName}\nAttempts: ${currentCount}\nMaximum revisions: ${String(budget.max)}\nIncrease the revision budget and retry, or use the privileged review bypass only when the failed gate is known to be non-blocking.`,
+      deps.getRunContextFor(taskId),
+    );
     return false;
   }
 
@@ -521,20 +696,32 @@ export async function requestPreMergeOptionalStepFix(
     optionalStepRevisionLogOutcome(`Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`, revisionKey),
     deps.getRunContextFor(taskId),
   );
-  const remediationWorktreePath = remediation
-    ? liveTask.workspaceWorktrees?.[remediation.repository]?.worktreePath
-    : liveTask.worktree;
-  if (remediation && !remediationWorktreePath) {
-    await deps.store.updateTask(taskId, {
-      status: "awaiting-approval",
-      awaitingApprovalReason: "code-review-non-convergence",
-      error: `Workspace Code Review remediation target ${remediation.repository} has no acquired worktree.`,
-    });
+  const remediationCheckout = resolveRemediationCheckout(liveTask, reviewResult);
+  if (!remediationCheckout) {
+    await deps.store.logEntry(
+      taskId,
+      remediation
+        ? "Workspace Code Review remediation released as non-blocking"
+        : "Pre-merge remediation not scheduled — checkout unavailable",
+      remediation
+        ? `Remediation target ${remediation.repository} has no acquired worktree.`
+        : `Step/node: ${info.nodeId ?? info.stepName}\nNo singular worktree or acquired workspace repository worktree is available. Retry after restoring the task checkout, or use the privileged review bypass when the failed gate is known to be non-blocking.`,
+      deps.getRunContextFor(taskId),
+    );
+    return false;
+  }
+  if (!hasPendingRemediationWork(liveTask)) {
+    await deps.store.logEntry(
+      taskId,
+      "Review revision released — no pending remediation work",
+      "A review-to-WIP transition requires a named pending remediation step.",
+      deps.getRunContextFor(taskId),
+    );
     return false;
   }
   const sendArgs = [
     liveTask,
-    remediationWorktreePath ?? "",
+    remediationCheckout.path,
     info.feedback,
     info.stepName,
     `Pre-merge optional workflow step "${info.stepName}" requested revision`,
@@ -544,10 +731,6 @@ export async function requestPreMergeOptionalStepFix(
     info.findings,
   ] as const;
   const stepReopenPolicy = resolveStepReopenPolicy(workflowIr);
-  if (remediation) {
-    await deps.sendTaskBackForFix(...sendArgs, false, stepReopenPolicy);
-  } else {
-    await deps.sendTaskBackForFix(...sendArgs, undefined, stepReopenPolicy);
-  }
+  await deps.sendTaskBackForFix(...sendArgs, remediationCheckout.persist, stepReopenPolicy);
   return true;
 }

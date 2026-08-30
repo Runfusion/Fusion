@@ -427,8 +427,8 @@ export async function runServe(
   const engineManager: ProjectEngineManager = startupEngineManager = new ProjectEngineManager(sharedCentralCore, {
     cliPackageVersion,
     getMergeStrategy,
-    processPullRequestMerge: (s, wd, taskId, pool, signal) =>
-      processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
+    processPullRequestMerge: (s, wd, taskId, signal) =>
+      processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, signal),
     createGroupPr: createGroupPrCallback(githubClient),
     syncGroupPr: syncGroupPrCallback(githubClient),
     /*

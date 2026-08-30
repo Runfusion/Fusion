@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
 import * as worktreePoolModule from "../../worktree/worktree-pool.js";
+import { withBranchWriteProvenance } from "../branch-write-provenance-store-stub.js";
 
 function task(id: string, overrides: Partial<Task> = {}): Task {
   return {
@@ -27,10 +28,10 @@ function makeStore(tasks: Task[]): TaskStore & EventEmitter {
   return Object.assign(new EventEmitter(), {
     getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
     listTasks: vi.fn(async () => [...map.values()]),
-    updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
+    updateTask: vi.fn(withBranchWriteProvenance(async (id: string, patch: Partial<Task>) => {
       map.set(id, { ...(map.get(id) as Task), ...patch });
       return map.get(id);
-    }),
+    })),
     getTask: vi.fn(async (id: string) => map.get(id)),
     recordRunAuditEvent: vi.fn(async () => undefined),
     moveTask: vi.fn(async () => undefined),
@@ -71,6 +72,56 @@ describe("reliability interactions: worktree metadata reconcile", () => {
     executing = false;
     expect(await manager.reconcileTaskWorktreeMetadata()).toBe(1);
     expect((store as any).updateTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebinds a relocated checkout from the authoritative branch registry without touching branch metadata", async () => {
+    const original = task("FN-213", {
+      column: "todo",
+      worktree: "/missing/old",
+      branch: "fusion/fn-213",
+    });
+    const store = makeStore([original]);
+    vi.spyOn(worktreePoolModule, "getRegisteredWorktreeBranchMap").mockResolvedValue(new Map([
+      ["fusion/fn-213", "/registered/live"],
+    ]));
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    expect(await manager.reconcileTaskWorktreeMetadata()).toBe(1);
+
+    expect((store as any).updateTask).toHaveBeenCalledWith("FN-213", { worktree: "/registered/live" });
+    const patches = (store as any).updateTask.mock.calls.map((call: any[]) => call[1]);
+    expect(patches.every((patch: any) => !("branch" in patch))).toBe(true);
+    expect(patches.some((patch: any) => patch.worktree === null)).toBe(false);
+    expect((await (store as any).getTask("FN-213"))).toMatchObject({
+      branch: "fusion/fn-213",
+      worktree: "/registered/live",
+    });
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-recover-worktree-metadata-rebound",
+    }));
+    expect((store as any).recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-recover-worktree-metadata-cleared",
+    }));
+  });
+
+  it("keeps active-lane pointers when a stale checkout has no registry entry", async () => {
+    const store = makeStore([task("FN-214", {
+      column: "in-review",
+      worktree: "/missing/review",
+      branch: "fusion/fn-214",
+    })]);
+    vi.spyOn(worktreePoolModule, "getRegisteredWorktreeBranchMap").mockResolvedValue(new Map());
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    expect(await manager.reconcileTaskWorktreeMetadata()).toBe(0);
+
+    expect((store as any).updateTask).not.toHaveBeenCalled();
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-recover-worktree-metadata-skipped-active",
+    }));
+    expect((store as any).recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-recover-worktree-metadata-cleared",
+    }));
   });
 
   it("runs reconcile before reclaim-stale-active-branches in maintenance ordering", () => {

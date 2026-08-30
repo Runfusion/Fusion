@@ -78,6 +78,7 @@ import {
   createTaskListTool,
   createTaskShowTool,
   createTaskSearchTool,
+  createPatchnodeReadTool,
   createListAgentsTool,
   createDelegateTaskTool,
   createTaskAssignTool,
@@ -740,6 +741,7 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskListTool(taskStore),
       createTaskShowTool(taskStore),
       createTaskSearchTool(taskStore),
+      createPatchnodeReadTool(taskStore),
       ...createTaskVerificationTools(taskStore, options.actionGateContext),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
     );

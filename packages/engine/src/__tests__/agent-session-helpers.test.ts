@@ -66,6 +66,18 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveExecutorThinkingLevel(undefined, { defaultThinkingLevel: "low" })).toBe("low");
   });
 
+  it("resolves Fast thinking as task override → Fast lane → execution fallback", () => {
+    const settings = {
+      fastCheapThinkingLevel: "low",
+      fastCheapGlobalThinkingLevel: "medium",
+      executionThinkingLevel: "high",
+    } as const;
+    expect(resolveExecutorThinkingLevel("xhigh", settings, "fast")).toBe("xhigh");
+    expect(resolveExecutorThinkingLevel(undefined, settings, "fast")).toBe("low");
+    expect(resolveExecutorThinkingLevel(undefined, { fastCheapGlobalThinkingLevel: "medium", executionThinkingLevel: "high" }, "fast")).toBe("medium");
+    expect(resolveExecutorThinkingLevel(undefined, { executionThinkingLevel: "high" }, "fast")).toBe("high");
+  });
+
   it("resolves planning, reviewer, and summarization lane overrides before the global default", () => {
     expect(resolvePlanningThinkingLevel({ planningThinkingLevel: "low", planningGlobalThinkingLevel: "minimal", defaultThinkingLevel: "high" })).toBe("low");
     expect(resolvePlanningThinkingLevel({ planningThinkingLevel: "low", defaultThinkingLevel: "high" }, "xhigh")).toBe("xhigh");
@@ -257,6 +269,29 @@ describe("resolve session model parity", () => {
       provider: "anthropic",
       modelId: "claude-sonnet-4-5",
       credentialInstanceId: "work",
+    });
+  });
+
+  it("uses the Fast & Cheap lane only when Fast lacks an explicit task model", () => {
+    const fastSettings = {
+      ...settings,
+      fastCheapProvider: "openai",
+      fastCheapCredentialInstanceId: "cheap-credential",
+      fastCheapModelId: "gpt-4.1-mini",
+    };
+    expect(resolveExecutorSessionModel(undefined, undefined, fastSettings, undefined, undefined, "fast")).toEqual({
+      provider: "openai",
+      modelId: "gpt-4.1-mini",
+      credentialInstanceId: "cheap-credential",
+    });
+    expect(resolveExecutorSessionModel("task-provider", "task-model", fastSettings, undefined, "task-credential", "fast")).toEqual({
+      provider: "task-provider",
+      modelId: "task-model",
+      credentialInstanceId: "task-credential",
+    });
+    expect(resolveExecutorSessionModel(undefined, undefined, settings, undefined, undefined, "fast")).toEqual({
+      provider: "openai",
+      modelId: "gpt-4.1",
     });
   });
 

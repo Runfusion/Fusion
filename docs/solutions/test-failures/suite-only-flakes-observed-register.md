@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 1, 2, and 13): **2 active first sightings** and **1 reproduced-but-unattributed observation**. Entry 7 below is closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **8 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **4 active observation records** (entries 1, 2, 13, and 14): **2 active first sightings**, **1 reproduced-but-unattributed observation**, and **1 quarantined second sighting**. Entry 7 below is closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **8 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -238,6 +238,24 @@ Second sighting at sustained load average 15.22 (whole file 23.8s and 34.4s, iso
 This is the same mode already characterized by entry 6 and by entry 7's A02 lane: a 15s `beforeAll` abort on the DDL-heavy per-file schema-template setup that the one shared Postgres serializes. Two properties make this sighting narrower than the shapes those entries measured. It occurred under the CAPPED gate lane — `PG_MAX_WORKERS = 4` and only two selected files — which `FNXC:PgTestWorkerCap 2026-07-18-18:00` established as the DB-safe ceiling (measured: 6 forks all time out, 4 forks pass in ~42s). And it occurred on the first gate invocation after the cluster had been idle, with every later run in the same shell green, which points at cold-cluster startup cost landing inside the first file's setup budget rather than at fork oversubscription. That correlation is a HYPOTHESIS, not a measurement: reproducing it means stopping the embedded cluster, which was not done because this host also runs a live Fusion instance.
 
 Quarantine was not available as an alternative. Core PostgreSQL files cannot be quarantined inline — the gate-policy assertion requires `quarantinedCoreTests` to remain empty — and a merge-gate eviction of a transactional-invariant file is the owner-escalated decision described in the policy section below. The file carries only 4 tests, which is thin against the usual first-sighting coverage argument, but they are the atomicity invariant for handoff-to-review and one of just two files in the blocking PG lane; recording preserves that rather than trading it away over a single unreproduced cold-start abort. A **second sighting** follows normal escalation.
+
+
+### 14. Merge-node paused-abort retry sequence
+
+- **Status:** Quarantined 2026-08-29 after a second sequence-only sighting.
+- **File:** `packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts`
+- **Exact test:** `merge-node paused-abort retry classification (FN-6735) > re-enqueues benign paused merge graph failure at node %s without operator-action failure` (parameterized `it.each`; the observed case was `%s` = `merge`, plus 12 sibling sequence failures).
+- **Observed tree/SHA:** first sighting `f3e1e7d1f`; second sighting during FN-249 verification after `2ab621ac6`.
+- **Observed frequency:** Two file-sequence failures; the selected exact subject passed in isolation after each.
+
+| run | result |
+|---|---|
+| first file as `engine-reliability` | **13 failed / 44 passed**; paused-abort retry and implementation-incomplete sibling assertions missed their expected recovery writes |
+| first selected exact subject alone | passed (exit 0) |
+| second file as `engine-reliability` | **13 failed / 44 passed** with the same recovery-write misses |
+| second selected exact subject alone | passed (exit 0) |
+
+The failure remains sequence-only evidence, not an attribution to FN-249: its changed user-cancellation path is not enabled by this fixture, and the selected pre-existing engine-abort subject passes in isolation. Per the mandatory deletion ratchet, the second sighting is quarantined in `scripts/lib/test-quarantine.json` and the matching `engine-reliability` exclude; no timeout, retry, or assertion was changed. Rescue requires a root-cause fix that proves the file's recovery coverage is stable.
 
 
 ### Common shape and investigated result

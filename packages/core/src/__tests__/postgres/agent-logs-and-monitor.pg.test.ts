@@ -76,6 +76,55 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
     expect(entries.map((e) => e.text)).toEqual(["a", "b"]);
   });
 
+  it("keeps batch tool detail and timing identical in durable and live rows", async () => {
+    const store = h.store();
+    await store.createTaskWithReservedId(
+      { description: "batch detail target", column: "todo" },
+      { taskId: "FN-LOG-BATCH-DETAIL", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", applyDefaultWorkflowSteps: false },
+    );
+
+    const emitted: Array<{ detail?: string; durationMs?: number; timeToFirstTokenMs?: number }> = [];
+    const onAgentLog = (entry: { detail?: string; durationMs?: number; timeToFirstTokenMs?: number }) => emitted.push(entry);
+    store.on("agent:log", onAgentLog);
+    try {
+      await store.appendAgentLogBatch([
+        {
+          taskId: "FN-LOG-BATCH-DETAIL",
+          text: "fn_run_verification",
+          type: "tool",
+          detail: "command=pnpm lint, allowFullSuite=false",
+          agent: "executor",
+          timeToFirstTokenMs: 7,
+        },
+        {
+          taskId: "FN-LOG-BATCH-DETAIL",
+          text: "fn_run_verification",
+          type: "tool_result",
+          detail: "ok",
+          agent: "executor",
+          durationMs: 42,
+        },
+      ]);
+    } finally {
+      store.off("agent:log", onAgentLog);
+    }
+
+    const entries = await store.getAgentLogs("FN-LOG-BATCH-DETAIL");
+    expect(entries).toEqual([
+      expect.objectContaining({
+        type: "tool",
+        detail: "command=pnpm lint, allowFullSuite=false",
+        timeToFirstTokenMs: 7,
+      }),
+      expect.objectContaining({ type: "tool_result", detail: "ok", durationMs: 42 }),
+    ]);
+    expect(emitted).toHaveLength(2);
+    expect(emitted[0]?.detail).toBe(entries[0]?.detail);
+    expect(emitted[1]?.detail).toBe(entries[1]?.detail);
+    expect(emitted[0]?.timeToFirstTokenMs).toBe(entries[0]?.timeToFirstTokenMs);
+    expect(emitted[1]?.durationMs).toBe(entries[1]?.durationMs);
+  });
+
   it("aggregateActivityAnalytics resolves against real Postgres (no deployments 500)", async () => {
     // Was a 500: the deployments read referenced an unqualified relation outside
     // any try/catch. Must resolve with a well-formed (empty) monitor block.

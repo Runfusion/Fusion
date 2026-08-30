@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
+import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
 import { TaskComments } from "../TaskComments";
 
 vi.mock("../../api", () => ({
@@ -138,17 +139,34 @@ describe("TaskComments", () => {
       const textarea = screen.getByPlaceholderText(/Add a comment/);
       fireEvent.change(textarea, { target: { value: "Hello" } });
 
-      expect(screen.getByText("5 / 2000")).toBeTruthy();
+      expect(screen.getByText(`5 / ${MAX_TASK_MESSAGE_LENGTH}`)).toBeTruthy();
     });
 
-    it("disables submit button when text exceeds max length", () => {
+    it("submits text above the former limit without truncation", async () => {
+      const longText = "a".repeat(5_000);
+      vi.mocked(addSteeringComment).mockResolvedValue(makeTask());
       render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
 
       const textarea = screen.getByPlaceholderText(/Add a comment/);
-      fireEvent.change(textarea, { target: { value: "a".repeat(2001) } });
+      fireEvent.change(textarea, { target: { value: longText } });
 
       const button = screen.getByText("Add Comment");
-      expect(button.hasAttribute("disabled")).toBe(true);
+      expect(button).not.toHaveAttribute("disabled");
+      fireEvent.click(button);
+
+      await waitFor(() => {
+        expect(addSteeringComment).toHaveBeenCalledWith("FN-001", longText, undefined);
+      });
+    });
+
+    it("disables submit button when text exceeds the shared max length", () => {
+      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
+
+      const textarea = screen.getByPlaceholderText(/Add a comment/);
+      fireEvent.change(textarea, { target: { value: "a".repeat(MAX_TASK_MESSAGE_LENGTH + 1) } });
+
+      const button = screen.getByText("Add Comment");
+      expect(button).toHaveAttribute("disabled");
     });
   });
 

@@ -1,5 +1,15 @@
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import "./ToolCallDetails.css";
+
+/*
+FNXC:ToolCallDisplay 2026-08-29-04:34:
+FN-253 makes complete arguments and results visible across both task-log surfaces. Dense Activity
+hosts opt into a visible CSS preview plus an explicit reveal; the control never appears without
+additional content, and StandardChatSurface retains its existing unbounded display.
+*/
+export const TOOL_CALL_PREVIEW_MAX_LINES = 6;
+export const TOOL_CALL_PREVIEW_MAX_CHARS = 600;
 
 /**
  * FNXC:ToolCallDisplay 2026-08-01-15:39:
@@ -50,8 +60,68 @@ interface ToolCallDetailsProps {
   argumentsLabel: string;
   resultLabel: string;
   resultIsError?: boolean;
+  /** Opt in only on dense transcript surfaces; standard detail views keep full values visible. */
+  clampLongValues?: boolean;
   renderValue?: (value: string) => ReactNode;
   className?: string;
+}
+
+function needsToolValuePreview(text: string): boolean {
+  return text.length > TOOL_CALL_PREVIEW_MAX_CHARS || text.split(/\r?\n/).length > TOOL_CALL_PREVIEW_MAX_LINES;
+}
+
+interface ToolCallDetailsRowProps {
+  label: string;
+  text: string;
+  isError?: boolean;
+  clampLongValues: boolean;
+  renderValue: (value: string) => ReactNode;
+}
+
+function ToolCallDetailsRow({
+  label,
+  text,
+  isError = false,
+  clampLongValues,
+  renderValue,
+}: ToolCallDetailsRowProps) {
+  const { t } = useTranslation("app");
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const lineCount = text.split(/\r?\n/).length;
+  const canClamp = clampLongValues && needsToolValuePreview(text);
+  const revealLabel = t(
+    "toolCallDetails.showMore",
+    "Show more ({{count}} {{lineLabel}})",
+    {
+      count: lineCount,
+      lineLabel: lineCount === 1
+        ? t("toolCallDetails.line", "line")
+        : t("toolCallDetails.lines", "lines"),
+    },
+  );
+
+  return (
+    <div className={`tool-call-details-row${isError ? " tool-call-details-row--error" : ""}`}>
+      {label ? <span className="tool-call-details-label">{label}</span> : null}
+      <div className="tool-call-details-content">
+        <pre id={contentId} className={`tool-call-details-value${canClamp && !expanded ? " tool-call-details-value--clamped" : ""}`}>
+          {renderValue(text)}
+        </pre>
+        {canClamp ? (
+          <button
+            type="button"
+            className="tool-call-details-reveal"
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? t("toolCallDetails.showLess", "Show less") : revealLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 /** Renders only meaningful rows so callers never leave an empty detail shell behind. */
@@ -61,6 +131,7 @@ export function ToolCallDetails({
   argumentsLabel,
   resultLabel,
   resultIsError = false,
+  clampLongValues = false,
   renderValue = (value) => value,
   className = "",
 }: ToolCallDetailsProps): ReactNode {
@@ -70,8 +141,8 @@ export function ToolCallDetails({
 
   return (
     <div className={`tool-call-details ${className}`.trim()}>
-      {argumentsText ? <div className="tool-call-details-row">{argumentsLabel ? <span className="tool-call-details-label">{argumentsLabel}</span> : null}<pre className="tool-call-details-value">{renderValue(argumentsText)}</pre></div> : null}
-      {resultText ? <div className={`tool-call-details-row${resultIsError ? " tool-call-details-row--error" : ""}`}>{resultLabel ? <span className="tool-call-details-label">{resultLabel}</span> : null}<pre className="tool-call-details-value">{renderValue(resultText)}</pre></div> : null}
+      {argumentsText ? <ToolCallDetailsRow label={argumentsLabel} text={argumentsText} clampLongValues={clampLongValues} renderValue={renderValue} /> : null}
+      {resultText ? <ToolCallDetailsRow label={resultLabel} text={resultText} isError={resultIsError} clampLongValues={clampLongValues} renderValue={renderValue} /> : null}
     </div>
   );
 }

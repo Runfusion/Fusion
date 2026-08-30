@@ -112,6 +112,9 @@ import {
   MIXED_0065_REPAIR_VERSION,
   CHAT_SESSION_MEMORY_FOCUS_VERSION,
   SESSION_CONTENTION_WAIT_STATE_VERSION,
+  TASK_STEP_REPORTS_VERSION,
+  TASK_EXTERNAL_BLOCK_VERSION,
+  TASK_REQUIRE_PLAN_APPROVAL_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -165,8 +168,16 @@ describe("schema-applier: immutable migration identities", () => {
     expect(REVIEW_CONVERGENCE_STAGE_VERSION).toBe("0065");
     expect(CHAT_SESSION_MEMORY_FOCUS_VERSION).toBe("0066");
     expect(SESSION_CONTENTION_WAIT_STATE_VERSION).toBe("0067");
-    expect(MIXED_0065_REPAIR_VERSION).toBe("0068");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0068");
+    expect(TASK_STEP_REPORTS_VERSION).toBe("0068");
+    expect(TASK_EXTERNAL_BLOCK_VERSION).toBe("0069");
+    expect(TASK_REQUIRE_PLAN_APPROVAL_VERSION).toBe("0070");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_REQUIRE_PLAN_APPROVAL_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0072");
+    /*
+    FNXC:MigrationCollisionRepair 2026-08-30-00:20:
+    The mixed-0065 repair renumbers to 0072: main released 0068-0071 while this branch held 0068.
+    */
+    expect(MIXED_0065_REPAIR_VERSION).toBe("0072");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -926,6 +937,25 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     `)) as unknown as Array<{ column_name: string }>;
     expect(columns).toEqual([{ column_name: "session_advisor_enabled" }]);
     expect(await getAppliedMigrations(ctx.db)).toContain(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
+  });
+
+  it("repairs a recorded 0070 migration when require_plan_approval is missing", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.tasks DROP COLUMN require_plan_approval;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name = 'require_plan_approval'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns).toEqual([{ column_name: "require_plan_approval" }]);
+    expect(await getAppliedMigrations(ctx.db)).toContain(TASK_REQUIRE_PLAN_APPROVAL_VERSION);
   });
 
   /*
@@ -1867,6 +1897,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
       SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       MIXED_0065_REPAIR_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1961,6 +1994,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
       SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       MIXED_0065_REPAIR_VERSION,
     ]);
   });
@@ -2188,6 +2224,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
       SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       MIXED_0065_REPAIR_VERSION,
     ]);
   });
@@ -2296,6 +2335,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
       SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       MIXED_0065_REPAIR_VERSION,
     ]);
   });
@@ -2404,6 +2446,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
       SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       MIXED_0065_REPAIR_VERSION,
     ]);
   });

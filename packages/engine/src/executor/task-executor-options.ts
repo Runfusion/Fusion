@@ -23,7 +23,6 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { MissionStore, AsyncMissionStore, Slice, Task, CliSessionStore } from "@fusion/core";
 import type { AgentSemaphore } from "../concurrency/concurrency.js";
-import type { WorktreePool } from "../worktree/worktree-pool.js";
 import type { UsageLimitPauser } from "../errors/usage-limit-detector.js";
 import type { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 import type { StuckTaskDetector } from "../healing/stuck-task-detector.js";
@@ -45,8 +44,6 @@ export interface TaskExecutorOptions {
    */
   getLocalNodeId?: () => string | undefined;
   semaphore?: AgentSemaphore;
-  /** Worktree pool for recycling idle worktrees across tasks. */
-  pool?: WorktreePool;
   /**
    * FNXC:ProviderRateLimitIsolation 2026-07-21-18:00:
    * Parks only tasks routed through the provider whose API limit was detected.

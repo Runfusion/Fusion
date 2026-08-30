@@ -117,10 +117,13 @@ export default interface Resources {
       "loading": "Loading agent logs…",
       "loadingMore": "Loading…",
       "markdown": "Markdown",
+      "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
       "plain": "Plain",
       "planning": "Planning",
       "reviewer": "Reviewer",
       "showFormattedMarkdown": "Show formatted markdown",
+      "showLessDetail": "Show less {{detailLabel}}",
+      "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}",
       "showOutput": "Show output",
       "showRawText": "Show raw text",
       "showToolCallsResults": "Show tool calls and results",
@@ -1208,7 +1211,7 @@ export default interface Resources {
         "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
         "guardRejected": "This move is not allowed by the workflow.",
         "mergeBlocked": "This task is blocked from completing until its merge step finishes.",
-        "promoteRejected": "This card could not be promoted.",
+        "staleMovePrecondition": "This card already moved on. Refresh to see where it is now.",
         "unknownColumn": "That column doesn't exist in this task's workflow.",
         "unplannedForExecution": "This task isn't ready for execution yet — planning or plan review is still outstanding.",
         "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead."
@@ -1537,10 +1540,6 @@ export default interface Resources {
       "pauseHint_one": "Pause {{count}} active unassigned task{{plural}}",
       "pauseHint_other": "Pause {{count}} active unassigned task{{plural}}",
       "preserveProgressTitle": "Preserve Progress?",
-      "promoteUnplannedCancel": "Keep Waiting",
-      "promoteUnplannedConfirm": "Start Anyway",
-      "promoteUnplannedMessage": "{{taskId}} is still waiting on planning or plan review. Promoting now starts execution with the current plan and cancels the pending replan.",
-      "promoteUnplannedTitle": "Start execution anyway?",
       "replanAll": "Replan All",
       "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
       "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
@@ -1613,7 +1612,8 @@ export default interface Resources {
         "showMore": "Show more loaded activity",
         "taskFilter": "Filter by task",
         "timeline": "Timeline",
-        "typeFilter": "Filter by event type"
+        "typeFilter": "Filter by event type",
+        "workflowGateNotRun": "Workflow gate not executed"
       },
       "area": {
         "empty": "No data for the selected range.",
@@ -3803,6 +3803,8 @@ export default interface Resources {
       "mergedAt": "Merged at",
       "mergedSuccess": "Merged successfully",
       "message": "Message",
+      "method": "Method",
+      "noOpReason": "No-op reason",
       "pr": "PR",
       "pulling": "Pulling…",
       "pushForceWithLease": "Push (force-with-lease)",
@@ -3815,6 +3817,8 @@ export default interface Resources {
       "shortstatTitle": "Final commit shortstat; for the full landed diff across all task commits, see the Changes tab.",
       "smartPull": "Smart Pull",
       "status": "Status",
+      "strategy": "Strategy",
+      "targetBranch": "Target branch",
       "title": "Merge Details"
     },
     "mermaid": {
@@ -4307,6 +4311,7 @@ export default interface Resources {
       "more": "More",
       "moreSheetTitle": "Navigate",
       "noScriptsAddOne": "No scripts — add one…",
+      "patchnode": "History",
       "planning": "Planning",
       "planningNeedsInputAriaLabel": "Planning needs your input",
       "primaryNavAriaLabel": "Primary navigation",
@@ -4749,6 +4754,24 @@ export default interface Resources {
       "tabCliAutoDerve": "Local CLI (auto-derive)",
       "testFailed": "Test failed — see status above.",
       "unreachable": "{{reason}}"
+    },
+    "patchnode": {
+      "cancelled": "Cancelled",
+      "empty": "Completed work will appear here day by day.",
+      "entryCount_one": "{{count}} entry",
+      "entryCount_other": "{{count}} entries",
+      "error": "History could not be loaded.",
+      "loadMore": "Load more",
+      "loading": "Loading History…",
+      "loadingMore": "Loading…",
+      "noResults": "No deliveries match this search.",
+      "retry": "Retry",
+      "reverted": "Reverted",
+      "searchAriaLabel": "Search History",
+      "searchPlaceholder": "Search deliveries",
+      "title": "History",
+      "today": "Today",
+      "yesterday": "Yesterday"
     },
     "piExtensions": {
       "filterHint": "{{extensions}} ext, {{skills}} skill, {{prompts}} prompt, {{themes}} theme"
@@ -6384,7 +6407,7 @@ export default interface Resources {
         "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled",
         "updates": "Updates",
         "weekly": "Weekly",
-        "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
+        "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
         "whenEnabledFusionChecksNpmForNewVersions": " When enabled, Fusion checks npm for new versions of",
         "whenEnabledTheDashboardProbesForAGlobally": " When enabled, the dashboard probes for a globally-installed"
       },
@@ -6399,6 +6422,8 @@ export default interface Resources {
         "defaultModel": "Default Model",
         "deny": "deny",
         "fallbackModel": "Fallback Model",
+        "fastAndCheapModel": "Fast & Cheap Model",
+        "fastAndCheapModelHelp": "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task.",
         "flowAndPublishesThemUnderTheOpencodeGo": " flow and publishes them under the opencode-go provider in model pickers. Default: enabled. ",
         "fusion": "Fusion",
         "globalBaselineModelsForEachAIRoleProject": " Global baseline models for each AI role. Project settings can override these per-project. ",
@@ -7259,7 +7284,7 @@ export default interface Resources {
         "browse": " Browse ",
         "browseWorktreesDirectory": "Browse worktrees directory",
         "closeParenPeriod": ").",
-        "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).",
+        "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).",
         "defaultsTo": ". Defaults to ",
         "defaultsToWorktreesLeaveEmptyUnlessOverriding": "Defaults to .worktrees — leave empty unless overriding",
         "disabledByDefaultOptInWhenEnabledFusion": " Disabled by default (opt-in). When enabled, Fusion shells out to ",
@@ -7269,7 +7294,6 @@ export default interface Resources {
         "failAndPauseTheTaskDefault": "Fail and pause the task (default)",
         "fallBackToFusionsNativeWorktreeBackend": "Fall back to Fusion's native worktree backend",
         "forWorktreeCreateSyncPruneAndRemoveOperations": " for worktree create, sync, prune, and remove operations and follows worktrunk&apos;s directory layout. ",
-        "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random.",
         "inAdditionToTheRemoteRebaseAboveAlso": " In addition to the remote rebase above, also rebase the task branch onto the local default-branch HEAD (rootDir). This catches sibling tasks that merged locally but haven't been pushed yet — without it, two concurrent tasks where one deletes code can have the other silently re-introduce it via the fallback strategy. Enabled by default; only disable if it causes issues with your workflow. ",
         "installTheWorktrunkBinaryBelowToEnableThis": "Install the worktrunk binary below to enable this integration.",
         "installWorktrunk": "Install worktrunk binary",
@@ -7277,23 +7301,16 @@ export default interface Resources {
         "keepsProgressMovingBySwitchingToFusionApos": " keeps progress moving by switching to Fusion&apos;s built-in worktree backend. ",
         "limitsTotalGitWorktreesIncludingInReviewTasks": "Limits total git worktrees including in-review tasks. Default: 4.",
         "maxWorktrees": "Max Worktrees",
-        "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.",
-        "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming.",
         "openApprovals": "Open Approvals",
         "optionalLeaveBlankToAutoResolveFusionWill": "Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.",
         "optionalSupports": " Optional. Supports ",
         "pnpmInstallFrozenLockfile": "pnpm install --frozen-lockfile",
-        "randomNamesEGSwiftFalcon": "Random names (e.g., swift-falcon)",
         "rebaseFromRemoteBeforeMerge": " Rebase from remote before merge ",
         "rebaseRemote": "Rebase Remote",
-        "recycleNotApplicableWithTaskIdNaming": "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.",
-        "recycleWorktrees": " Recycle worktrees ",
         "selectWorktreesDir": "Select worktrees directory",
         "shellCommandToRunInEachNewWorktree": "Shell command to run in each new worktree after creation. No default — unset.",
         "showWorktreeGroupingHelp": "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.",
         "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": " stops on worktrunk errors for explicit operator recovery; ",
-        "taskIDEGFN042": "Task ID (e.g., FN-042)",
-        "taskTitleEGFixLoginBug": "Task title (e.g., fix-login-bug)",
         "tryAgain": "Try again",
         "useGitDefault": "Use git default",
         "whenEnabledTheMergerFetchesFromTheConfigured": "When enabled, the merger fetches from the configured remote and rebases the task branch onto the latest default-branch tip before merging — catching concurrent pushes from other collaborators or fusion workers. Any conflicts the rebase surfaces flow into the existing smart/AI resolve pipeline. Default: enabled.",
@@ -7302,7 +7319,6 @@ export default interface Resources {
         "worktreeInitCommand": "Worktree Init Command",
         "worktreeLimitEnabled": "Limit concurrent worktrees",
         "worktreeLimitEnabledHelp": "When on, Max Worktrees caps how many tasks may hold a worktree at once. When off, Max Concurrent Tasks is the only limit. Tasks always run in their own git worktree either way — this does not change where work executes. Default: on.",
-        "worktreeNamingStyle": "Worktree Naming Style",
         "worktrees": "Worktrees",
         "worktreesDirectory": "Worktrees Directory",
         "worktreesPickerNote": "Navigate to the folder where Fusion should create task worktrees, then select the current directory.",
@@ -8011,6 +8027,7 @@ export default interface Resources {
       "toolCallCount_one": "{{count}} tool call",
       "toolCallCount_other": "{{count}} tool calls",
       "toolCallTo": "Tool call → {{label}}",
+      "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
       "toolError": "Tool error",
       "toolNames": "Tool names",
       "toolResult": "Tool result",
@@ -8164,11 +8181,18 @@ export default interface Resources {
         "showLess": "Show less",
         "showMore": "Show more"
       },
+      "details": {
+        "collapseDebug": "Collapse debug details",
+        "collapseRouting": "Collapse routing details",
+        "expandDebug": "Expand debug details",
+        "expandRouting": "Expand routing details"
+      },
       "duplicate": {
         "btn": "Duplicate",
-        "message": "Duplicate {{id}}? This will create a new task in Triage with the same description and prompt.",
+        "message": "Duplicate {{id}}? This will create a new task with the same description and prompt.",
         "success": "Duplicated {{id}} → {{newId}}",
-        "title": "Duplicate Task"
+        "title": "Duplicate Task",
+        "workflowLabel": "Workflow for the copy"
       },
       "edit": {
         "autosaveHint": "Changes autosave as you edit",
@@ -8407,12 +8431,12 @@ export default interface Resources {
       "recoveryState": "Recovery state",
       "refine": {
         "btn": "Refine",
-        "charCount_one": "{{count}}/2000 characters",
-        "charCount_other": "{{count}}/2000 characters",
+        "charCount_one": "{{count}}/{{max}} characters",
+        "charCount_other": "{{count}}/{{max}} characters",
         "createBtn": "Create Refinement Task",
         "creating": "Creating...",
         "feedbackRequired": "Please enter feedback describing what needs refinement",
-        "feedbackTooLong": "Feedback must be 2000 characters or less",
+        "feedbackTooLong": "Feedback must be {{max}} characters or less",
         "help": "Describe what needs to be refined or improved...",
         "modalTitle": "Refine",
         "placeholder": "Enter your feedback here...",
@@ -8420,11 +8444,13 @@ export default interface Resources {
       },
       "reset": {
         "btn": "Reset",
-        "confirmMessage": "This will erase all progress for {{id}} and start the task from scratch. Continue?",
-        "resetSuccess": "Reset {{id}} — fresh run will be allocated"
-      },
-      "respecify": {
-        "btn": "Respecify"
+        "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+        "confirmTitle": "Reset this task?",
+        "descriptionHelp": "Edit the request Fusion will re-plan from, then confirm.",
+        "descriptionLabel": "Original description",
+        "descriptionRequired": "A description is required.",
+        "resetSuccess": "Reset {{id}} — fresh run will be allocated",
+        "submitting": "Resetting…"
       },
       "retries": {
         "branchConflict": "Branch conflict recovery",
@@ -8455,7 +8481,18 @@ export default interface Resources {
       "retriesLabel": "Retries (recovery / workflow / merge / task_done)",
       "retry": {
         "btn": "Retry",
-        "retried": "Retried {{id}}"
+        "confirmLabel": "Retry",
+        "confirmTitle": "Retry this stage?",
+        "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+        "genericSuccess": "This stage will restart in its current column.",
+        "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+        "implementationSuccess": "Work will restart in this column.",
+        "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage.",
+        "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+        "planSuccess": "Planning will restart in this column.",
+        "retried": "Retried {{id}}",
+        "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+        "reviewSuccess": "Review will run again in this column."
       },
       "reverted": {
         "deleteAria": "Delete reverted task"
@@ -8520,37 +8557,12 @@ export default interface Resources {
         "heading": "Summary"
       },
       "summaryTab": {
-        "agentWorkHeading": "Work done by agents",
-        "cachedTokens": "Cached",
-        "changedHeading": "What changed",
-        "commit": "Commit",
-        "completedSteps": "Completed steps",
-        "completionHeading": "Completion summary",
-        "cost": "Cost",
-        "costUnavailable": "No pricing for this model",
-        "deletions": "Removed",
-        "filesChanged": "Files",
-        "inputTokens": "Input",
-        "insertions": "Added",
-        "model": "Model",
-        "noAgentWork": "No completed steps or workflow results are available for this task.",
-        "noChangedFiles": "No changed-file list is available for this task.",
-        "noCompletionSummary": "No completion summary was recorded for this task.",
-        "noTokenUsage": "No token usage recorded for this task yet.",
-        "outputTokens": "Output",
-        "retries": "Agents retried this task {{count}} time{{plural}}.",
-        "tokenCostHeading": "Token usage & cost",
-        "totalCost": "Total cost",
-        "totalTokens": "Total",
-        "unknownModel": "(unknown)",
-        "workflowResults": "Workflow results"
+        "agentWorkHeading": "Work done by agents"
       },
       "tabs": {
-        "attachments": "Attachments",
         "changes": "Changes",
         "chat": "Chat",
         "comments": "Comments",
-        "cost": "Cost",
         "debug": "Debug",
         "definition": "Definition",
         "dependencies": "Dependencies",
@@ -8760,6 +8772,50 @@ export default interface Resources {
     "taskHandlers": {
       "githubImported": "Imported {{id}} from GitHub"
     },
+    "taskHistory": {
+      "empty": {
+        "code": "No implementation summaries recorded. Summaries appear when implementation steps report what they delivered.",
+        "plan": "No planning reports recorded.",
+        "review": "No review reports recorded."
+      },
+      "entry": {
+        "completionSummary": "Completion summary",
+        "duration": "Took {{duration}}",
+        "merged": "Merged",
+        "noBody": "No report body was recorded.",
+        "noOpMerge": "No-op merge",
+        "stepReport": "Step {{index}}: {{name}}",
+        "verdictNoNotes": "The reviewer recorded no notes for this verdict."
+      },
+      "loading": "Loading history…",
+      "meta": {
+        "commit": "Commit",
+        "deletions": "Deletions",
+        "files": "Files",
+        "insertions": "Insertions",
+        "method": "Method",
+        "noOpReason": "No-op reason",
+        "pr": "Pull request",
+        "strategy": "Strategy",
+        "targetBranch": "Target branch"
+      },
+      "stage": {
+        "code": "Code",
+        "plan": "Plan",
+        "review": "Review"
+      },
+      "verdict": {
+        "advisory-failure": "Advisory failure",
+        "approve": "Approved",
+        "approve-with-notes": "Approved with notes",
+        "close-no-op": "Closed as no-op",
+        "failed": "Failed",
+        "passed": "Passed",
+        "pending": "Pending",
+        "revise": "Revise",
+        "skipped": "Skipped"
+      }
+    },
     "taskReview": {
       "addressPrFeedback": "Address PR feedback",
       "addressPrFeedbackFailed": "Failed to start PR feedback session",
@@ -8840,7 +8896,7 @@ export default interface Resources {
       "awaitingApprovalPlanReviewReplanCapTitle": "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.",
       "awaitingApprovalTitle": "This plan needs your approval before implementation can start.",
       "baseBranch": "Base",
-      "blockedByTooltip": "Blocked by {{taskId}} (file overlap)",
+      "blockedByTooltip": "Waiting for {{taskId}} (file overlap)",
       "branch": "Branch",
       "branchMetadata": "Branch metadata",
       "branchProgress": "{{done}}/{{total}} branches",
@@ -8899,6 +8955,15 @@ export default interface Resources {
       "executionTimeMerging": "Execution time {{elapsed}}. Merging",
       "executorModel": "Executor Model",
       "expand": "Expand",
+      "externalBlock": {
+        "explain": "Explain this error",
+        "explainPrompt": "Explain this error {{error}} and how to resolve it.",
+        "genericMessage": "External obstacle requires operator action",
+        "resuming": "Resuming…",
+        "retry": "Retry",
+        "title": "Blocked",
+        "unknownCode": "UNCLASSIFIED"
+      },
       "fanoutBlocks": "Blocks",
       "fanoutBottleneck": "Overlap bottleneck",
       "fanoutEscalated": "Escalated overlap",
@@ -8959,6 +9024,14 @@ export default interface Resources {
       "paused": "paused",
       "pausedByAgent": "paused by agent",
       "plan": "Plan",
+      "planApproval": {
+        "approve": "Approve",
+        "approveFailed": "Failed to approve plan: {{error}}",
+        "approving": "Approving...",
+        "copy": "Review the plan before implementation starts.",
+        "replanCapCopy": "Review the current plan, then approve it or request specific changes.",
+        "title": "Need Your Review"
+      },
       "planButtonTitle": "Open planning mode with current description",
       "planModel": "Plan Model",
       "prBadgeTitle": "PR #{{number}}: {{title}}",
@@ -8970,9 +9043,6 @@ export default interface Resources {
       "preserveProgressMessage": "This task has completed steps. Keep progress before moving?",
       "preserveProgressTitle": "Preserve Progress?",
       "projectDefaultLocal": "Project default / local",
-      "promote": "Promote",
-      "promoteTask": "Promote task",
-      "promoting": "Promoting…",
       "queued": "Queued",
       "refine": "Refine",
       "refineAddDetails": "Add details",
@@ -9166,6 +9236,12 @@ export default interface Resources {
       "todoListsLabel": "Todo lists",
       "todos": "Todos"
     },
+    "toolCallDetails": {
+      "line": "line",
+      "lines": "lines",
+      "showLess": "Show less",
+      "showMore": "Show more ({{count}} {{lineLabel}})"
+    },
     "trackingRepoSelect": {
       "customOption": "Custom…",
       "loadingHint": "Loading detected GitHub remotes…"
@@ -9239,6 +9315,7 @@ export default interface Resources {
       "aggregateAllPassed": "All passed",
       "aggregateInProgress": "In progress",
       "aggregateNoResults": "No results",
+      "aggregateNotFullyExecuted": "Not fully executed",
       "aggregateResult": "Aggregate result",
       "approveAndRun": "Approve & run",
       "approveCommandError": "Failed to approve command",
@@ -9280,6 +9357,10 @@ export default interface Resources {
       "needsReview": "Needs follow-up review.",
       "noStepsConfigured": "No workflow steps configured for this task.",
       "noWorkflowAssigned": "No workflow assigned",
+      "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+      "notRunReasonNotConfigured": "no test or build command is configured",
+      "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+      "notRunReasonToolingUnavailable": "a required tool was unavailable",
       "notes": "Notes:",
       "output": "Output:",
       "overview": "Workflow overview",
@@ -9296,6 +9377,7 @@ export default interface Resources {
       "started": "Started:",
       "statusAdvisory": "Advisory failure",
       "statusFailed": "Failed",
+      "statusNotRunWithReason": "Not executed — {{reason}}",
       "statusPassed": "Passed",
       "statusRunning": "Running…",
       "statusSkipped": "Skipped",
@@ -9312,6 +9394,8 @@ export default interface Resources {
       "summaryAdvisory_other": "{{count}} advisory",
       "summaryFailed_one": "{{count}} failed",
       "summaryFailed_other": "{{count}} failed",
+      "summaryNotExecuted_one": "{{count}} not executed",
+      "summaryNotExecuted_other": "{{count}} not executed",
       "summaryPassed_one": "{{count}} passed",
       "summaryPassed_other": "{{count}} passed",
       "summaryRunning_one": "{{count}} running",

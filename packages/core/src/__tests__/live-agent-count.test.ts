@@ -30,6 +30,25 @@ describe("live agent count predicates", () => {
     expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, userPaused: true }))).toBe(false);
   });
 
+  it("keeps an externally blocked non-terminal card as a holder but never as waiting work", () => {
+    const externalBlock = {
+      origin: "host-environment" as const,
+      code: "ENOSPC",
+      message: "no space left on device, write",
+      source: "agent-declaration" as const,
+      blockedAt: "2026-08-28T04:01:00.000Z",
+      resume: { column: "in-progress", currentStep: 6, worktree: "/worktrees/fn-209", branch: "fusion/fn-209" },
+    };
+    const blockedWip = task({ column: "in-progress", columnCountsTowardWip: true, status: "blocked", paused: true, externalBlock });
+    const blockedHold = task({ column: "todo", columnIsIntakeOrHold: true, status: "blocked", paused: true, externalBlock });
+
+    expect(isRunningAgentTask(blockedWip)).toBe(true);
+    expect(isRunningAgentTask(blockedHold)).toBe(true);
+    expect(countRunningAgentTasks([blockedWip, blockedHold])).toBe(2);
+    expect(isWaitingAgentTask(blockedWip)).toBe(false);
+    expect(isWaitingAgentTask(blockedHold)).toBe(false);
+  });
+
   it("does not count failed WIP (or any failed row) as a live capacity holder", () => {
     // Failed parks remain in WIP until rebound/operator action but must free maxWorktrees/maxConcurrent.
     expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, status: "failed" }))).toBe(false);

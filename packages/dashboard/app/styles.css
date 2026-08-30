@@ -1343,6 +1343,15 @@ Operator feedback requires one readable pixel face for ordinary prose, links, da
   font-family: var(--font-mono) !important;
 }
 
+/*
+FNXC:DashboardTheming 2026-08-28-07:45:
+The shared .btn rule hardcodes its font size, so Cozy Cartoon needs this single token-backed typography override to make ordinary buttons visibly larger. The compact exclusions preserve every .btn-sm/.btn--sm control, including the height-pinned Quick Add action row, while omitting height and min-height lets the desktop ViewHeader clamp keep trimming enlarged button padding without stretching headers.
+*/
+[data-color-theme="cozy-cartoon"] .btn:not(.btn-sm):not(.btn--sm) {
+  font-size: var(--cozy-cartoon-btn-font-size);
+  font-weight: var(--cozy-cartoon-btn-font-weight);
+}
+
 .modal {
   position: relative;
   background: var(--surface);
@@ -4027,7 +4036,7 @@ Toast text must contrast its status background across every dashboard theme and 
 .text-secondary { color: var(--text-muted); }
 .text-dim { color: var(--text-dim, var(--text-muted)); }
 
-/* === Column header dropdown menu (todo column "Respecify All", etc.) ====== */
+/* === Column header dropdown menu actions ================================ */
 .column-menu {
   position: relative;
   display: inline-flex;

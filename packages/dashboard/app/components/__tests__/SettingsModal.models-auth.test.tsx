@@ -215,6 +215,27 @@ describe("SettingsModal", () => {
   });
 
   describe("Project Models", () => {
+    it("renders the Fast & Cheap Model lane with its help in Global and Project Models", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MODEL_FIXTURE,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
+      renderModal({ initialSection: "global-models" });
+      await waitForSettingsModalReady();
+      expect(screen.getByLabelText("Fast & Cheap Model")).toBeInTheDocument();
+      expect(screen.getByText("Select a cheap model here for quick edits. It is used for Fast Mode when creating a task.")).toBeInTheDocument();
+      expect(document.querySelector('[data-settings-key="fastCheapGlobalModelId"]')).toBeInTheDocument();
+
+      cleanup();
+      renderModal({ initialSection: "project-models" });
+      await waitForSettingsModalReady();
+      expect(screen.getByLabelText("Fast & Cheap Model")).toBeInTheDocument();
+      expect(screen.getByText(/Select a cheap model here for quick edits\. It is used for Fast Mode when creating a task\./)).toBeInTheDocument();
+      expect(document.querySelector('[data-settings-key="fastCheapModelId"]')).toBeInTheDocument();
+    });
+
     it("saves opencode-go startup model sync toggle in global settings", async () => {
       mockFetchModels.mockResolvedValue({
         models: MODEL_FIXTURE,

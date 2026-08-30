@@ -1,5 +1,6 @@
 import { isWipColumnRole, type ColumnRoleFlags } from "./columnRoles";
 import type { Task, TaskLogEntry, WorkflowStepResult } from "@fusion/core";
+import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
 
 export interface TimingEvent {
   timestamp: string;
@@ -53,6 +54,66 @@ export function parseTimestampToMs(value?: string): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function formatDurationMs(valueMs: number): string {
+  if (valueMs < 1000) {
+    return `${Math.round(valueMs)} ms`;
+  }
+  const valueSeconds = valueMs / 1000;
+  if (valueSeconds < 60) {
+    return `${valueSeconds.toFixed(1)} s`;
+  }
+  const minutes = Math.floor(valueSeconds / 60);
+  const seconds = Math.round(valueSeconds % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
+const STEP_TRANSITION_ACTION = /^Step (\d+) \((.*)\) → (pending|in-progress|done|skipped)$/;
+
+/*
+FNXC:TaskStepDurations 2026-08-29-05:45:
+`packages/core/src/task-store/merge-queue-ops.ts` is the sole writer of these step-transition
+actions. Task-detail logs retain only the latest 500 entries, so an opening transition that has
+been trimmed must produce no duration instead of inventing a start time.
+*/
+export function buildStepDurations(log: TaskLogEntry[] | undefined): {
+  get(stepIndex: number, stepName: string): number | undefined;
+} {
+  const activeStarts = new Map<string, number>();
+  const durationsByStep = new Map<string, number>();
+  const durationsByIndex = new Map<number, number>();
+
+  for (const entry of log ?? []) {
+    const match = getTaskLogEntryAction(entry).match(STEP_TRANSITION_ACTION);
+    if (!match) continue;
+
+    const stepIndex = Number.parseInt(match[1] ?? "", 10);
+    const stepName = match[2] ?? "";
+    const status = match[3];
+    const timestampMs = parseTimestampToMs(entry.timestamp);
+    if (!Number.isInteger(stepIndex) || timestampMs == null || !status) continue;
+
+    const stepKey = `${stepIndex}:${stepName}`;
+    if (status === "in-progress") {
+      if (!activeStarts.has(stepKey)) activeStarts.set(stepKey, timestampMs);
+      continue;
+    }
+
+    const startedAtMs = activeStarts.get(stepKey);
+    if (startedAtMs == null || timestampMs < startedAtMs) continue;
+
+    const elapsedMs = timestampMs - startedAtMs;
+    durationsByStep.set(stepKey, (durationsByStep.get(stepKey) ?? 0) + elapsedMs);
+    durationsByIndex.set(stepIndex, (durationsByIndex.get(stepIndex) ?? 0) + elapsedMs);
+    activeStarts.delete(stepKey);
+  }
+
+  return {
+    get(stepIndex: number, stepName: string): number | undefined {
+      return durationsByStep.get(`${stepIndex}:${stepName}`) ?? durationsByIndex.get(stepIndex);
+    },
+  };
 }
 
 export function getWorkflowRuntimeMs(results: WorkflowStepResult[] | undefined, nowMs: number): number | null {

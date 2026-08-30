@@ -21,6 +21,23 @@ describe("executor prompt: completion recommendations", () => {
     expect(text).toContain("recommendations: []");
   });
 
+  it.each([
+    ["disabled", { maxRecommendationsPerTask: 0 }],
+    ["required", { maxRecommendationsPerTask: 3, requireTaskRecommendations: true }],
+    ["optional", { maxRecommendationsPerTask: 3, requireTaskRecommendations: false }],
+  ])("qualifies blocked exits and deferred verification in the %s branch", (_name, settings) => {
+    const text = prompt(settings);
+
+    expect(text).toContain("host-resource, network, model-provider, and credential failures");
+    expect(text).toContain("Missing tooling, optional services, and unrunnable commands");
+    if (settings.maxRecommendationsPerTask === 0) {
+      expect(text).toContain("completion summary and task log");
+    } else {
+      expect(text).toContain("plain prose without backticked command names");
+      expect(text).toContain("substitute a runnable check");
+    }
+  });
+
   it("states the cap from settings so the prompt matches what the validator accepts", () => {
     // A prompt promising a different maximum than the validator enforces produces rejected completions.
     expect(prompt({ maxRecommendationsPerTask: 5 })).toContain("at most 5");

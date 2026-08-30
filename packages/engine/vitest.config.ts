@@ -491,6 +491,13 @@ export default defineConfig({
             // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
             // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
             // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
+            /*
+            FNXC:ReliabilityQuarantine 2026-08-29-03:11:
+            FN-249 observed the second sequence-only failure of this file: the selected engine-abort
+            subject passes alone, while the serialized file misses recovery writes after sibling cases.
+            Quarantine the whole file under the deletion ratchet rather than weaken its assertions.
+            */
+            "src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts",
           ],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and

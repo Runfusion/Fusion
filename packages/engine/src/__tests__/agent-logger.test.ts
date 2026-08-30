@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AgentLogger, summarizeToolArgs } from "../agents/agent-logger.js";
-import type { TaskStore } from "@fusion/core";
+import { DEFAULT_GLOBAL_SETTINGS, type TaskStore } from "@fusion/core";
 
 const loggerWarnSpy = vi.hoisted(() => vi.fn());
 
@@ -15,30 +15,31 @@ vi.mock("../logger.js", () => ({
 // ── summarizeToolArgs tests ──────────────────────────────────────────
 
 describe("summarizeToolArgs", () => {
-  it("returns bash command", () => {
+  it("preserves a sole bash command byte-for-byte", () => {
     expect(summarizeToolArgs("Bash", { command: "ls -la" })).toBe("ls -la");
     expect(summarizeToolArgs("bash", { command: "echo hello" })).toBe("echo hello");
+    expect(summarizeToolArgs("Bash", { command: "a".repeat(1_300) })).toBe("a".repeat(1_300));
   });
 
-  it("returns long bash commands in full without truncation", () => {
-    const longCmd = "a".repeat(200);
-    const result = summarizeToolArgs("Bash", { command: longCmd });
-    expect(result).toBe(longCmd);
-  });
-
-  it("returns long string-valued fallback args without truncation", () => {
-    const longVal = "x".repeat(200);
-    expect(summarizeToolArgs("unknown_tool", { description: longVal })).toBe(longVal);
-  });
-
-  it("returns file path for Read/Edit/Write", () => {
+  it("preserves a sole path byte-for-byte for Read/Edit/Write", () => {
     expect(summarizeToolArgs("Read", { path: "src/types.ts" })).toBe("src/types.ts");
     expect(summarizeToolArgs("edit", { path: "src/store.ts" })).toBe("src/store.ts");
-    expect(summarizeToolArgs("Write", { path: "out.txt", content: "data" })).toBe("out.txt");
   });
 
-  it("falls back to first short string arg for unknown tools", () => {
-    expect(summarizeToolArgs("fn_task_update", { step: 1, status: "done" })).toBe("done");
+  it("renders every fn_run_verification argument with command first", () => {
+    expect(summarizeToolArgs("fn_run_verification", {
+      allowFullSuite: false,
+      command: "pnpm lint",
+    })).toBe("command=pnpm lint, allowFullSuite=false");
+  });
+
+  it("renders every fn_task_update argument with the first string value first", () => {
+    expect(summarizeToolArgs("fn_task_update", { step: 1, status: "done" })).toBe("status=done, step=1");
+  });
+
+  it("renders structured values as compact JSON", () => {
+    expect(summarizeToolArgs("unknown", { count: 42, flag: true })).toBe("count=42, flag=true");
+    expect(summarizeToolArgs("Write", { path: "out.txt", content: { value: "data" } })).toBe('path=out.txt, content={"value":"data"}');
   });
 
   it("returns undefined when no args or empty args", () => {
@@ -46,17 +47,18 @@ describe("summarizeToolArgs", () => {
     expect(summarizeToolArgs("Bash", {})).toBeUndefined();
   });
 
-  it("returns compact JSON for structured non-string args", () => {
-    // FNXC:StuckDetector 2026-07-22-20:20: structured custom-tool args need a distinct summary.
-    expect(summarizeToolArgs("unknown", { count: 42, flag: true })).toBe('{"count":42,"flag":true}');
-  });
-
-  it("appends a full-payload hash when structured JSON is truncated", () => {
-    // FNXC:StuckDetector 2026-07-22-20:25: late-diverging long structured args stay distinct via hash suffix.
-    // Use non-string values only so the structured JSON path is exercised (not first-string-arg).
-    const a = summarizeToolArgs("unknown", { pad: Array(200).fill(1), id: 1 });
-    const b = summarizeToolArgs("unknown", { pad: Array(200).fill(1), id: 2 });
-    expect(a!.length).toBeLessThanOrEqual(240);
+  it("bounds oversized multi-argument summaries with a full-payload hash", () => {
+    const a = summarizeToolArgs("fn_run_verification", {
+      command: "a".repeat(1_300),
+      allowFullSuite: false,
+      description: "x".repeat(400),
+    });
+    const b = summarizeToolArgs("fn_run_verification", {
+      command: "a".repeat(1_300),
+      allowFullSuite: true,
+      description: "x".repeat(400),
+    });
+    expect(a!.length).toBeLessThanOrEqual(1_200);
     expect(a).toMatch(/…#[0-9a-f]{12}$/);
     expect(b).toMatch(/…#[0-9a-f]{12}$/);
     expect(a).not.toBe(b);
@@ -98,6 +100,29 @@ describe("AgentLogger", () => {
       { taskId: "FN-BATCH", text: "hello", type: "text", detail: undefined, agent: undefined, timeToFirstTokenMs: 0 },
     ]);
     expect((store.appendAgentLog as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it("forwards tool detail and logger timing through the public batch contract", async () => {
+    const store = createMockStore(true) as unknown as TaskStore & { appendAgentLogBatch: ReturnType<typeof vi.fn> };
+    const logger = new AgentLogger({
+      store,
+      taskId: "FN-BATCH-TIMING",
+      persistAgentToolOutput: true,
+      flushSizeBytes: 1,
+    });
+
+    logger.onText("visible");
+    await vi.advanceTimersByTimeAsync(0);
+    logger.onToolStart("Bash", { command: "pnpm lint" });
+    await vi.advanceTimersByTimeAsync(25);
+    logger.onToolEnd("Bash", false, "ok");
+    await vi.advanceTimersByTimeAsync(0);
+
+    const batchRows = (store.appendAgentLogBatch as ReturnType<typeof vi.fn>).mock.calls.flatMap(([rows]) => rows);
+    expect(batchRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", timeToFirstTokenMs: 0 }),
+      expect.objectContaining({ type: "tool_result", detail: "ok", durationMs: 25 }),
+    ]));
   });
 
   it("buffers text and flushes on size threshold", async () => {
@@ -171,14 +196,106 @@ describe("AgentLogger", () => {
     expect(store.appendAgentLog).toHaveBeenNthCalledWith(3, "FN-004", "Read", "tool_error", "err", undefined);
   });
 
-  it("logs tool detail using summarizeToolArgs when explicitly enabled", async () => {
+  it("logs complete tool detail using summarizeToolArgs when explicitly enabled", async () => {
     const store = createMockStore();
-    const logger = new AgentLogger({ store, taskId: "FN-004A", persistAgentToolOutput: true });
+    const onAgentTool = vi.fn();
+    const logger = new AgentLogger({
+      store,
+      taskId: "FN-004A",
+      persistAgentToolOutput: true,
+      onAgentTool,
+    });
 
-    logger.onToolStart("Read", { path: "src/index.ts" });
+    logger.onToolStart("fn_run_verification", { command: "pnpm lint", allowFullSuite: false });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-004A", "Read", "tool", "src/index.ts", undefined);
+    const persistedDetail = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls[0]?.[3];
+    expect(persistedDetail).toBe("command=pnpm lint, allowFullSuite=false");
+    expect(onAgentTool).toHaveBeenCalledWith("FN-004A", "fn_run_verification", persistedDetail);
+  });
+
+  it("redacts complete tool detail once before matching store and callback sinks", async () => {
+    const store = createMockStore();
+    const appendLog = vi.fn().mockResolvedValue(undefined);
+    const secret = "sk-live-ABCDEFGHIJKLMN0123456789";
+    const logger = new AgentLogger({
+      store,
+      taskId: "FN-004A-DUAL",
+      persistAgentToolOutput: true,
+      appendLog,
+    });
+
+    logger.onToolStart("fn_run_verification", {
+      command: "pnpm lint",
+      authorization: `Bearer ${secret}`,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const storeDetail = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls[0]?.[3];
+    const callbackDetail = appendLog.mock.calls[0]?.[0]?.detail;
+    expect(storeDetail).toBe(callbackDetail);
+    expect(storeDetail).toContain("[REDACTED]");
+    expect(storeDetail).not.toContain(secret);
+  });
+
+  it("redacts tool arguments before matching external callbacks and persisted entries", async () => {
+    const store = createMockStore();
+    const onAgentTool = vi.fn();
+    const secret = "sk-live-ABCDEFGHIJKLMN0123456789";
+    const logger = new AgentLogger({
+      store,
+      taskId: "FN-253-REDACTED-CALLBACK",
+      persistAgentToolOutput: true,
+      onAgentTool,
+    });
+
+    logger.onToolStart("fn_run_verification", {
+      command: "pnpm lint",
+      authorization: `Bearer ${secret}`,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const persistedDetail = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls[0]?.[3];
+    expect(onAgentTool).toHaveBeenCalledTimes(1);
+    expect(onAgentTool).toHaveBeenCalledWith(
+      "FN-253-REDACTED-CALLBACK",
+      "fn_run_verification",
+      persistedDetail,
+    );
+    expect(persistedDetail).toContain("[REDACTED]");
+    expect(persistedDetail).not.toContain(secret);
+  });
+
+  it("persists complete tool arguments and results with the shipped global default", async () => {
+    const store = createMockStore();
+    const logger = new AgentLogger({
+      store,
+      taskId: "FN-253-DEFAULT",
+      persistAgentToolOutput: DEFAULT_GLOBAL_SETTINGS.persistAgentToolOutput,
+    });
+
+    logger.onToolStart("fn_run_verification", { command: "pnpm lint", allowFullSuite: false });
+    logger.onToolEnd("fn_run_verification", false, "ok");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(DEFAULT_GLOBAL_SETTINGS.persistAgentToolOutput).toBe(true);
+    expect(store.appendAgentLog).toHaveBeenNthCalledWith(
+      1,
+      "FN-253-DEFAULT",
+      "fn_run_verification",
+      "tool",
+      "command=pnpm lint, allowFullSuite=false",
+      undefined,
+    );
+    expect(store.appendAgentLog).toHaveBeenNthCalledWith(
+      2,
+      "FN-253-DEFAULT",
+      "fn_run_verification",
+      "tool_result",
+      "ok",
+      undefined,
+      { durationMs: 0, timeToFirstTokenMs: undefined },
+    );
   });
 
   it("persists tool_error detail while persistAgentToolOutput is disabled", async () => {

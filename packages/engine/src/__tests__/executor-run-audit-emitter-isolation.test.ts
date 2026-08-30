@@ -147,7 +147,7 @@ describe("FN-9172 executor run-audit emitter isolation", () => {
     }, task, ["plan"], { source: "graph-entry" }), state === "hanging");
 
     expect(recordRunAuditEvent).toHaveBeenCalledOnce();
-    expect(updateTask).toHaveBeenCalledWith("FN-ARTIFACT", expect.objectContaining({ status: "needs-replan" }), undefined);
+    expect(updateTask).toHaveBeenCalledWith("FN-ARTIFACT", expect.objectContaining({ status: null }), undefined);
   });
 
   it.each(Object.entries(sinkStates))("keeps completed-blocked parks returning true after a %s sink", async (state, makeSink) => {
@@ -185,7 +185,7 @@ describe("FN-9172 executor run-audit emitter isolation", () => {
     } as any, task.id, "/repo", "", new Map());
 
     const result = await settleBounded(() => tool.execute("call", {
-      outcome: "blocked", reason: "upstream dependency", blockedBy: ["FN-9999"],
+      outcome: "blocked", obstacle: "inside-worktree", reason: "upstream dependency", blockedBy: ["FN-9999"],
     }), state === "hanging");
 
     expect(result.content[0]?.text).toContain("parked as blocked");

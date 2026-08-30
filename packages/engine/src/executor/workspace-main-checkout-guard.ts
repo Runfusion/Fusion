@@ -13,7 +13,7 @@
  * is left alone when the stash is impossible. Refusing completion for a state the merger is built
  * to handle stops the board for nothing. (2) Attribution had no evidence: a File Scope match was
  * treated as task work with NO timing test, so an operator editing the same feature in the shared
- * checkout was indistinguishable from an agent that skipped `fn_acquire_repo_worktree` — and the
+ * checkout was indistinguishable from an agent that skipped its pre-created task worktree — and the
  * refusal named an operator-only remedy, so the card could only loop.
  * The dangerous cases keep hard refusals elsewhere: a task-attributed commit still returns
  * `main_checkout_edit` (it would reach the shared branch unreviewed), and work that exists ONLY in

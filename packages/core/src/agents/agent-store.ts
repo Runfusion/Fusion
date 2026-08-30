@@ -104,6 +104,7 @@ import {
   clearLastBlockedState as clearLastBlockedStateAsync,
 } from "../async-stores/async-agent-store.js";
 import { createLogger } from "../process/logger.js";
+import { truncateAgentLogDetail } from "./agent-log-constants.js";
 import { FsWatchPollController } from "../process/fs-watch-poll-controller.js";
 import {
   BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG,
@@ -2810,13 +2811,20 @@ export class AgentStore extends EventEmitter {
    * @param runId - The run ID
    * @param entry - The log entry to append
    */
+  /*
+  FNXC:AgentLogging 2026-08-29-05:06:
+  FN-253 makes tool detail default-persisted and dual-sunk by heartbeat loggers. Run logs previously
+  bypassed the shared task-log detail bound, so normalize tool detail before the existing 64 KB outer
+  guard while writing and emitting the same safe entry for reconnect-safe live viewers.
+  */
   async appendRunLog(agentId: string, runId: string, entry: AgentLogEntry): Promise<void> {
     const cap = AgentStore.RUN_LOG_ENTRY_MAX_BYTES;
+    const normalizedDetail = truncateAgentLogDetail(entry.detail, entry.type);
     const safeEntry: AgentLogEntry = {
       ...entry,
       text: entry.text.length > cap ? `${entry.text.slice(0, cap)}\n\n... (truncated, ${entry.text.length} chars)` : entry.text,
-      ...(entry.detail !== undefined && {
-        detail: entry.detail.length > cap ? `${entry.detail.slice(0, cap)}\n\n... (truncated, ${entry.detail.length} chars)` : entry.detail,
+      ...(normalizedDetail !== undefined && {
+        detail: normalizedDetail.length > cap ? `${normalizedDetail.slice(0, cap)}\n\n... (truncated, ${normalizedDetail.length} chars)` : normalizedDetail,
       }),
     };
     const line = JSON.stringify(safeEntry) + "\n";

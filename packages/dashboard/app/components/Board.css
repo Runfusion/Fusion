@@ -73,6 +73,14 @@ the disabled mobile path never activate it; this gesture pans the viewport and n
   user-select: none;
 }
 
+/*
+FNXC:BoardNavigation 2026-08-28-09:42 (FN-220):
+The closed grabbing hand must remain visible across every Board descendant even when a stationary pointer rests over a task control mid-drag. The three root classes plus `:is()` adopting `.card` specificity produce (0,4,0), strictly outranking the tile and disabled-control contracts at (0,3,0).
+*/
+.board.board-workflow-columns.is-mouse-panning :is(*, .card) {
+  cursor: grabbing;
+}
+
 @keyframes board-workflows-skeleton-pulse {
   0%, 100% {
     opacity: 0.55;

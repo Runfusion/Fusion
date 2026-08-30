@@ -524,6 +524,17 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
   margin-top: var(--space-xs);
 }
 
+/*
+FNXC:TaskChatToolDetails 2026-08-29-04:37:
+FN-253 reports historical missing payloads once per expanded tool host. The message must not become
+another nested disclosure or make individual tool rows look failed when only archival detail is absent.
+*/
+.task-chat-tool-details-missing {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 .task-chat-composer {
   display: flex;
   flex: 0 0 auto;
@@ -680,6 +691,10 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
 
   .task-chat-tool-entry {
     padding: var(--space-xs);
+  }
+
+  .task-chat-tool-details-missing {
+    padding-inline: var(--space-xs);
   }
 
   .task-chat-composer {

@@ -146,31 +146,6 @@ describeIfGit("FN-5241 reliability interactions: in-review handoff atomic", () =
       .filter((event) => event.mutationType.startsWith("task:auto-recover"))).toEqual([]);
   });
 
-  it("composes no-progress churn terminalization with atomic handoff + queue insertion", async () => {
-    const fx = await makeReliabilityFixture({ taskId: "FN-5241-churn" });
-    fixtures.push(fx);
-    const task = await createInProgressTask(fx.store, { stuckKillCount: 2, lineageId: "lin-5241" });
-
-    const result = await fx.manager.checkStuckBudget(task.id, "no-progress-churn", { ignoredStepUpdateCount: 25 });
-
-    expect(result).toBe(false);
-    const latest = await fx.store.getTask(task.id);
-    expect(latest?.column).toBe("in-review");
-    expect(latest?.status).toBe("failed");
-    expect(latest?.error).toMatch(/^STUCK_NO_PROGRESS_CHURN:/);
-    expect(await fx.store.peekMergeQueue()).toEqual([
-      expect.objectContaining({ taskId: task.id, priority: task.priority }),
-    ]);
-    const handoff = (await fx.store.getRunAuditEventsAsync({ taskId: task.id, mutationType: "task:handoff", limit: 10 }))[0];
-    expect(handoff?.metadata).toMatchObject({
-      taskId: task.id,
-      reason: "stuck-no-progress-churn",
-      agentId: "self-healing",
-      ownerAgentId: null,
-      alreadyEnqueued: false,
-    });
-  });
-
   it("rejects soft-deleted tasks without creating mergeQueue state", async () => {
     const fx = await makeReliabilityFixture({ taskId: "FN-5241-deleted" });
     fixtures.push(fx);

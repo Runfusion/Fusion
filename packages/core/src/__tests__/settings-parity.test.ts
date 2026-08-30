@@ -661,6 +661,8 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "mergerProvider", modelId: "mergerModelId", expectedScope: "project" },
     { provider: "mergerFallbackProvider", modelId: "mergerFallbackModelId", expectedScope: "project" },
     { provider: "mergerGlobalProvider", modelId: "mergerGlobalModelId", expectedScope: "global" },
+    { provider: "fastCheapProvider", modelId: "fastCheapModelId", expectedScope: "project" },
+    { provider: "fastCheapGlobalProvider", modelId: "fastCheapGlobalModelId", expectedScope: "global" },
   ] as const;
 
   it.each(allModelLanePairs)(

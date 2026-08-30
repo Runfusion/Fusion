@@ -26,6 +26,10 @@ or log surfaces beyond the viewport.
   text-transform: uppercase;
 }
 
+.tool-call-details-content {
+  min-width: 0;
+}
+
 .tool-call-details-value {
   min-width: 0;
   max-inline-size: 100%;
@@ -37,6 +41,32 @@ or log surfaces beyond the viewport.
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/*
+FNXC:ToolCallDisplay 2026-08-29-04:37:
+FN-253 previews Task Activity payloads with CSS rather than truncating saved text. This keeps file
+paths and copyable values complete after the user chooses the adjacent reveal control.
+*/
+.tool-call-details-value--clamped {
+  max-block-size: calc(var(--font-size-xs) * var(--line-height-normal) * 6);
+  overflow: hidden;
+}
+
+.tool-call-details-reveal {
+  margin-top: var(--space-xs);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+}
+
+.tool-call-details-reveal:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .tool-call-details-row--error {

@@ -1047,9 +1047,18 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   rename operations retain the 100 KiB default. Model context windows cannot define HTTP bytes:
   parsing precedes model resolution, bytes are not tokens, and context is shared with history,
   system/tool input, reasoning, and output.
+
+  FNXC:TaskMessageLength 2026-08-29-08:02:
+  Task-message routes use the same finite 2 MiB JSON envelope as chat because their application
+  limit is 100,000 characters. The default 100 KiB parser would otherwise return a bare 413 before
+  accented or newline-heavy operator text reaches route validation; exact task file-save paths keep
+  their dedicated parser and no broader task prefix is admitted.
   */
   const isChatMessagePath = (path: string): boolean =>
     /^\/api\/chat\/(?:sessions|rooms)\/[^/]+\/messages\/?$/.test(path);
+  const isTaskMessagePath = (method: string, path: string): boolean =>
+    (method === "POST" && /^\/api\/tasks\/[^/]+\/(?:steer|comments|refine|spec\/revise)\/?$/.test(path))
+    || (method === "PATCH" && /^\/api\/tasks\/[^/]+\/comments\/[^/]+\/?$/.test(path));
   const isTaskFileSavePath = (path: string): boolean =>
     /^\/api\/tasks\/[^/]+\/files\/.+\/?$/.test(path);
   const isWorkspaceFileSavePath = (path: string): boolean => {
@@ -1062,7 +1071,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     if (req.path === "/api/voice/transcribe" || req.path === "/api/voice/transcribe/") return next();
     const parser = req.path === "/api/planning/start-streaming" || req.path === "/api/planning/start-streaming/"
       ? planningImageCaptureParser
-      : req.method === "POST" && isChatMessagePath(req.path)
+      : ((req.method === "POST" && isChatMessagePath(req.path)) || isTaskMessagePath(req.method, req.path))
         ? chatMessageParser
         : req.method === "POST" && (isTaskFileSavePath(req.path) || isWorkspaceFileSavePath(req.path))
           ? fileSaveParser

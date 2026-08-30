@@ -56,6 +56,7 @@ import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
+import { PlanningSessionPrompt } from "./PlanningSessionPrompt";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
@@ -67,6 +68,7 @@ import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 import { useToast } from "../hooks/useToast";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 
 const WARNING_ICON = "⚠️";
 
@@ -437,6 +439,16 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
 
 export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated: _onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, sourceIssue, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal", active = true }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
+  /*
+  FNXC:PlanningMode 2026-08-28-04:16:
+  PlanningKeepAlive supplies `planningWorkflowId ?? planningHeaderWorkflowId`, which is null when no
+  lane is selected. Forwarding that null invokes the store's explicit No Workflow opt-out instead of
+  the intended project default, so create requests omit null, blank, and aggregate board selections.
+  */
+  const createTaskWorkflowId = useMemo(() => {
+    const normalized = workflowId?.trim();
+    return normalized && normalized !== ALL_WORKFLOWS_BOARD_VIEW_ID ? normalized : undefined;
+  }, [workflowId]);
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
   // Escape-to-close behavior (the back-stack/onClose path), so escapeEnabled is deliberately not wired below.
@@ -445,8 +457,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   /*
   FNXC:Planning 2026-07-15-00:00:
   FN-8003 keeps the started prompt separate from the editable composer so users can recover the original idea when an interview errors or drifts off track. The composer may be reset or reused, but this value belongs only to the active session.
+
+  FNXC:PlanningHistory 2026-08-28-03:34:
+  FN-210 renders the active session's initiating prompt read-only wherever Planning Mode presents its question-and-answer history.
   */
-  const [_activePlanPrompt, setActivePlanPrompt] = useState("");
+  const [activePlanPrompt, setActivePlanPrompt] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
   // FNXC:PlanningMultiTask 2026-08-03-18:32: Latest task created from this plan. Passing its id with the next explicit Proceed action
@@ -2003,12 +2018,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       typed or selected local answer before its enabled Next action can submit it. A different
       session still takes the neutral loader so its prior turn never remains visible.
       */
-      const preservesActiveWorkspace = currentSessionIdRef.current === sessionId
+      const isDifferentSession = currentSessionIdRef.current !== sessionId;
+      const preservesActiveWorkspace = !isDifferentSession
         && (viewRef.current.type === "question" || viewRef.current.type === "plan_review");
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
       currentSessionIdRef.current = sessionId;
 
+      /*
+      FNXC:PlanningHistory 2026-08-28-03:47:
+      The History overlay remains mounted while an externally selected session loads. Clear the
+      initiating prompt at a different-session load boundary so the prior session's prompt cannot
+      appear under the new selection, while same-session refreshes retain their visible prompt.
+      */
+      if (isDifferentSession) setActivePlanPrompt("");
       setError(null);
       /*
       FNXC:PlanningMultiTask 2026-07-24-01:40:
@@ -2988,10 +3011,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       });
     } else {
       draftSessionIdRef.current = sessionId;
-      setInitialPlan(_activePlanPrompt);
+      setInitialPlan(activePlanPrompt);
       setView({ type: "initial" });
     }
-  }, [_activePlanPrompt, projectId, workspaceQuestion]);
+  }, [activePlanPrompt, projectId, workspaceQuestion]);
 
   const handleRetryFromError = useCallback(async () => {
     if (view.type !== "error") {
@@ -3214,7 +3237,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setView({ type: "creating_task", session, summary });
     try {
       const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(sessionId, summary, projectId, {
-        ...(workflowId !== undefined ? { workflowId } : {}),
+        ...(createTaskWorkflowId ? { workflowId: createTaskWorkflowId } : {}),
         ...(linkedTaskId ? { previousTaskId: linkedTaskId } : {}),
       }));
       clearPlanningActiveSession(projectId);
@@ -3227,7 +3250,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       validateCreateInFlightRef.current = false;
     }
-  }, [linkedTaskId, projectId, t, workflowId, workspaceQuestion]);
+  }, [createTaskWorkflowId, linkedTaskId, projectId, t, workspaceQuestion]);
 
   const handleMobileKeyboardActionPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     /*
@@ -3262,7 +3285,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setView({ type: "creating_task", session: view.session, summary: view.summary });
     try {
       const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(view.session.sessionId, view.summary, projectId, {
-        ...(workflowId !== undefined ? { workflowId } : {}),
+        ...(createTaskWorkflowId ? { workflowId: createTaskWorkflowId } : {}),
         ...(linkedTaskId ? { previousTaskId: linkedTaskId } : {}),
       }));
       clearPlanningActiveSession(projectId);
@@ -3274,7 +3297,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       validateCreateInFlightRef.current = false;
     }
-  }, [linkedTaskId, projectId, t, view, workflowId]);
+  }, [createTaskWorkflowId, linkedTaskId, projectId, t, view]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -3297,7 +3320,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         FNXC:WorkflowSelection 2026-06-20-16:48:
         Planning Mode saves must carry the workflow lane that opened the modal so created tasks do not land on the main board before appearing on the selected sub-board.
         */
-        ...(workflowId !== undefined ? { workflowId } : {}),
+        ...(createTaskWorkflowId ? { workflowId: createTaskWorkflowId } : {}),
         ...(linkedTaskId ? { previousTaskId: linkedTaskId } : {}),
       });
       onTaskCreated(task);
@@ -3312,7 +3335,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       setIsCreatingTask(false);
     }
-  }, [baseBranch, branchMode, branchName, editedSummary, view, projectId, workflowId, linkedTaskId, onTaskCreated, handleClose]);
+  }, [baseBranch, branchMode, branchName, createTaskWorkflowId, editedSummary, view, projectId, linkedTaskId, onTaskCreated, handleClose]);
 
   const _handleSelectAnsweredQuestion = useCallback(async (entry: ConversationHistoryEntry) => {
     const questionId = entry.question?.id;
@@ -3685,6 +3708,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   </button>
                 </div>
                 <div className="planning-history-scroll">
+                  <PlanningSessionPrompt prompt={activePlanPrompt} testId="planning-history-initial-prompt" />
                   {historyPanelEntries.length > 0 ? (
                     // FNXC:PlanningHistory 2026-07-20-23:24: FN-8449 keeps history thinking collapsed so operators can scan Q&A first; the existing toggle remains available to expand it, matching the FN-7974 chat default.
                     <ConversationHistory entries={historyPanelEntries} />
@@ -3979,6 +4003,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           {view.type === "error" && (
             <div className="planning-summary">
               <div className="planning-view-scroll planning-summary-scroll">
+                <PlanningSessionPrompt prompt={activePlanPrompt} testId="planning-error-initial-prompt" />
                 {conversationHistory.length > 0 && (
                   <>
                     <ConversationHistory entries={conversationHistory} />
@@ -4225,6 +4250,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               projectId={projectId}
               summary={editedSummary}
               historyEntries={conversationHistory}
+              initialPrompt={activePlanPrompt}
               onSummaryChange={setEditedSummary}
               tasks={tasks}
               branchMode={branchMode}
@@ -4664,6 +4690,7 @@ interface SummaryViewProps {
   projectId?: string;
   summary: PlanningSummary;
   historyEntries: ConversationHistoryEntry[];
+  initialPrompt?: string;
   onSummaryChange: (summary: PlanningSummary) => void;
   tasks: Task[];
   branchMode: "project-default" | "auto-new" | "existing" | "custom-new";
@@ -4684,6 +4711,7 @@ export function SummaryView({
   projectId,
   summary: rawSummary,
   historyEntries,
+  initialPrompt,
   onSummaryChange,
   tasks,
   branchMode,
@@ -4743,6 +4771,7 @@ export function SummaryView({
       <div className="planning-view-scroll planning-summary-scroll">
         {historyEntries.length > 0 && (
           <OnboardingDisclosure summary={t("planning.showQA", "Show user Q&A")} className="planning-summary-qa-disclosure">
+            <PlanningSessionPrompt prompt={initialPrompt} testId="planning-summary-initial-prompt" />
             <ConversationHistory entries={historyEntries} />
             <div className="conversation-separator" />
           </OnboardingDisclosure>

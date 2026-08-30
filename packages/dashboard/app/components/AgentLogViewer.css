@@ -264,8 +264,9 @@ Agent-log timing labels are metadata, not timestamps. Keep TTFT and duration com
   box-shadow: var(--focus-ring-strong);
 }
 
-.agent-log-tool-detail-content--collapsed {
-  display: none;
+.agent-log-tool-detail-content--preview {
+  max-block-size: calc(var(--font-size-xs) * var(--line-height-normal) * 6);
+  overflow: hidden;
 }
 
 .agent-log-tool-detail {
@@ -280,6 +281,16 @@ Agent-log timing labels are metadata, not timestamps. Keep TTFT and duration com
   background: color-mix(in srgb, var(--surface) 70%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+}
+
+.agent-log-missing-detail-hint {
+  margin: var(--space-sm) 0;
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
 }
 
 .agent-log-plain-block {
@@ -453,6 +464,10 @@ Agent-log timing labels are metadata, not timestamps. Keep TTFT and duration com
 
   .agent-log-tool-detail-toggle {
     min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+  }
+
+  .agent-log-tool-detail-content--preview {
+    max-block-size: calc(var(--font-size-xs) * var(--line-height-normal) * 6);
   }
 
   .agent-log-timing-labels {

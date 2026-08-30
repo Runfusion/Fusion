@@ -52,6 +52,7 @@ const SIDEBAR_REGISTRY_VIEW_IDS = [
   "command-center",
   "board",
   "list",
+  "patchnode",
   "planning",
   "missions",
   "agents",

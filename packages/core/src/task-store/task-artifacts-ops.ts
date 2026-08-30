@@ -12,6 +12,8 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
  */
 
 import { TaskStore } from "../store.js";
+import { buildPatchnodeEntryInput } from "../board/patchnode.js";
+import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
@@ -565,7 +567,7 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
     const mergeBlocker = getTaskMergeBlocker(task, {
       reviewColumns,
-      requiredPreMergeStepIds: mergeIr ? resolveRequiredPreMergeStepIds(mergeIr, task.enabledWorkflowSteps) : undefined,
+      requiredPreMergeStepIds: mergeIr ? resolveRequiredPreMergeStepIds(mergeIr, task.enabledWorkflowSteps, task) : undefined,
     });
     if (mergeBlocker) {
       throw new Error(`Cannot move ${task.id} to done: ${mergeBlocker}`);
@@ -579,7 +581,22 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
       task.executionCompletedAt = task.columnMovedAt;
     }
 
-    await store.atomicWriteTaskJson(dir, task);
+    /*
+    FNXC:PatchnodeLedger 2026-08-28-12:16:
+    Each completion is keyed by this move's columnMovedAt and snapshots its current title and summary. The next move overwrites that occurrence evidence, so this insert belongs inside the task-row transaction and intentionally fails the move if it cannot commit; the already-complete return above prevents duplicate delivery writes.
+
+    FNXC:PatchnodeLedger 2026-08-28-13:35:
+    Completion capture requires the store's real project partition. An unbound writer must fail this transaction instead of manufacturing a legacy project id whose entry the project-scoped feed can never read.
+    */
+    await store.atomicWriteTaskJson(dir, task, {
+      withinTransaction: async (tx) => {
+        await appendPatchnodeEntryInTransaction(
+          tx,
+          store.asyncLayer!.projectId ?? "",
+          buildPatchnodeEntryInput(task, "completed", task.columnMovedAt!),
+        );
+      },
+    });
 
     // Update cache if watcher is active
     if (store.isWatching) store.taskCache.set(task.id, { ...task });

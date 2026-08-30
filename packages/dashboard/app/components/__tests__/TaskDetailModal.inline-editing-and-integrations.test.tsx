@@ -1200,6 +1200,68 @@ describe("TaskDetailModal", () => {
       });
     });
 
+    it("keeps edit-mode optional workflow steps out of the fast-to-standard update payload", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValue({ id: "FN-001" } as Task);
+
+      const { container } = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({
+            id: "FN-001",
+            column: "triage",
+            title: "Test",
+            description: "Desc",
+            executionMode: "fast",
+            enabledWorkflowSteps: ["code-review"],
+          })}
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { executionMode: null }, undefined);
+      });
+      expect(mockUpdate.mock.calls[0]?.[1]).toEqual({ executionMode: null });
+      expect(mockUpdate.mock.calls[0]?.[1]).not.toHaveProperty("enabledWorkflowSteps");
+    });
+
+    it("patches edit-mode standard-to-fast on a todo task without confirmation or replanning", async () => {
+      const { updateTask, rebuildTaskSpec } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      const mockRebuild = vi.mocked(rebuildTaskSpec);
+      mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo", title: "Test", description: "Desc", executionMode: "fast" }) as Task);
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-001", column: "todo", title: "Test", description: "Desc", executionMode: "standard" })}
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith("FN-001", { executionMode: "fast" }, undefined));
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockRebuild).not.toHaveBeenCalled();
+    });
+
     it("confirms and replans when edit-mode executionMode changes on a todo task", async () => {
       const { updateTask, rebuildTaskSpec } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
@@ -1413,18 +1475,22 @@ describe("TaskDetailModal", () => {
       expect(addToast).toHaveBeenCalledWith("Failed to update FN-001: Request failed", "error");
     });
 
-    it("prompts before replanning a todo task when changing inline execution mode from standard to fast", async () => {
+    it.each([
+      ["desktop", undefined],
+      ["mobile", "back"],
+    ] as const)("patches a todo task from standard to fast in place on %s", async (_surface, mobileHeaderMode) => {
       const { updateTask, rebuildTaskSpec } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
       const addToast = vi.fn();
       const onTaskUpdated = vi.fn();
-      mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo", executionMode: "fast" }) as Task);
-      mockRebuild.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "triage", status: "needs-replan", executionMode: "fast" }) as Task);
+      const updatedTask = makeTask({ id: "FN-001", column: "todo", executionMode: "fast" });
+      mockUpdate.mockResolvedValueOnce(updatedTask as Task);
 
       render(
         <TaskDetailModal
           initialTab="definition"
+          mobileHeaderMode={mobileHeaderMode}
           task={makeTask({ id: "FN-001", column: "todo", executionMode: "standard" })}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1438,21 +1504,15 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Execution mode: standard" }));
 
       await waitFor(() => {
-        expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
-          title: "Change execution mode and replan?",
-          message: "Changing execution mode for this task will move it back to Planning so Fusion can rebuild the plan for fast mode.",
-        }));
-      });
-      await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { executionMode: "fast" }, undefined);
-        expect(mockRebuild).toHaveBeenCalledWith("FN-001", undefined);
       });
-      expect(mockUpdate.mock.invocationCallOrder[0]).toBeLessThan(mockRebuild.mock.invocationCallOrder[0]);
-      expect(onTaskUpdated).not.toHaveBeenCalled();
-      expect(addToast).toHaveBeenCalledWith("Execution mode updated to fast — FN-001 returned to Planning for replanning", "info");
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockRebuild).not.toHaveBeenCalled();
+      expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+      expect(addToast).toHaveBeenCalledWith("Execution mode updated to fast", "success");
     });
 
-    it("cancels a todo inline execution mode change before update or replan", async () => {
+    it("cancels the retained fast-to-standard todo replan before update", async () => {
       const { updateTask, rebuildTaskSpec } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
@@ -1461,7 +1521,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "todo", executionMode: "standard" })}
+          task={makeTask({ id: "FN-001", column: "todo", executionMode: "fast" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1470,17 +1530,20 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Execution mode: standard" }));
+      fireEvent.click(screen.getByRole("button", { name: "Execution mode: fast" }));
 
       await waitFor(() => {
         expect(mockConfirm).toHaveBeenCalled();
       });
       expect(mockUpdate).not.toHaveBeenCalled();
       expect(mockRebuild).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: "Execution mode: standard" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: "Execution mode: fast" })).toHaveAttribute("aria-pressed", "true");
     });
 
-    it("prompts and replans a todo task when changing inline execution mode from fast to standard", async () => {
+    it.each([
+      ["desktop", undefined],
+      ["mobile", "back"],
+    ] as const)("prompts and replans a todo task from fast to standard on %s", async (_surface, mobileHeaderMode) => {
       const { updateTask, rebuildTaskSpec } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
@@ -1490,6 +1553,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
+          mobileHeaderMode={mobileHeaderMode}
           task={makeTask({ id: "FN-001", column: "todo", executionMode: "fast" })}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1511,12 +1575,11 @@ describe("TaskDetailModal", () => {
       expect(mockUpdate.mock.invocationCallOrder[0]).toBeLessThan(mockRebuild.mock.invocationCallOrder[0]);
     });
 
-    it("prompts and replans an in-progress task when changing inline execution mode", async () => {
+    it("patches an in-progress task from standard to fast without confirmation or replanning", async () => {
       const { updateTask, rebuildTaskSpec } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
       mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "in-progress", executionMode: "fast" }) as Task);
-      mockRebuild.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "triage", status: "needs-replan", executionMode: "fast" }) as Task);
 
       render(
         <TaskDetailModal
@@ -1533,10 +1596,10 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Execution mode: standard" }));
 
       await waitFor(() => {
-        expect(mockConfirm).toHaveBeenCalled();
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { executionMode: "fast" }, undefined);
-        expect(mockRebuild).toHaveBeenCalledWith("FN-001", undefined);
       });
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockRebuild).not.toHaveBeenCalled();
     });
 
     it("updates triage inline execution mode without prompting or replanning", async () => {
@@ -1575,18 +1638,18 @@ describe("TaskDetailModal", () => {
       });
     });
 
-    it("reverts inline execution mode when active-task replan fails after update", async () => {
+    it("reverts to fast when the retained fast-to-standard replan fails after update", async () => {
       const { updateTask, rebuildTaskSpec } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
       const addToast = vi.fn();
-      mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo", executionMode: "fast" }) as Task);
+      mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo", executionMode: null }) as Task);
       mockRebuild.mockRejectedValueOnce(new Error("Replan failed"));
 
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "todo", executionMode: "standard" })}
+          task={makeTask({ id: "FN-001", column: "todo", executionMode: "fast" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1595,14 +1658,14 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Execution mode: standard" }));
+      fireEvent.click(screen.getByRole("button", { name: "Execution mode: fast" }));
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { executionMode: "fast" }, undefined);
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { executionMode: null }, undefined);
         expect(mockRebuild).toHaveBeenCalledWith("FN-001", undefined);
       });
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Execution mode: standard" })).toHaveAttribute("aria-pressed", "false");
+        expect(screen.getByRole("button", { name: "Execution mode: fast" })).toHaveAttribute("aria-pressed", "true");
       });
       expect(addToast).toHaveBeenCalledWith("Failed to update FN-001: Replan failed", "error");
     });

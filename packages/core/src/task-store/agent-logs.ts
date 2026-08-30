@@ -116,7 +116,13 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
     }
   }
 
-export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{ taskId: string; text: string; type: AgentLogEntry["type"]; detail?: string; agent?: AgentLogEntry["agent"]; }>,): Promise<void> {
+export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{ taskId: string; text: string; type: AgentLogEntry["type"]; detail?: string; agent?: AgentLogEntry["agent"]; durationMs?: number; timeToFirstTokenMs?: number }>,): Promise<void> {
+    /*
+    FNXC:AgentLogging 2026-08-29-04:26:
+    AgentLogger uses this batch path in production, so fields dropped here disappear from durable logs,
+    live streams, and every viewer. FN-253 keeps it in parity with the single-entry writer by forwarding
+    bounded detail and the timing fields the logger has always supplied.
+    */
     if (entries.length === 0) {
       return;
     }
@@ -138,6 +144,7 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
     
 
     const citationInputs: GoalCitationInput[] = [];
+    const persistedEntries = new Map<typeof normalizedEntries[number], AgentLogEntry>();
     const entriesByTask = new Map<string, typeof validEntries>();
     for (const entry of validEntries) {
       const taskEntries = entriesByTask.get(entry.taskId);
@@ -158,9 +165,15 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
           type: entry.type,
           detail: entry.detail ?? null,
           agent: entry.agent ?? null,
+          durationMs: entry.durationMs ?? null,
+          timeToFirstTokenMs: entry.timeToFirstTokenMs ?? null,
         })),
       );
-      for (const entry of appended) {
+      for (const [index, entry] of appended.entries()) {
+        const sourceEntry = taskEntries[index];
+        if (sourceEntry) {
+          persistedEntries.set(sourceEntry, entry);
+        }
         try {
           citationInputs.push(
             ...store.scanAndRecordCitations(
@@ -192,14 +205,17 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
       store.db.bumpLastModified();
     }
 
-    for (const entry of normalizedEntries) {
+    for (const sourceEntry of normalizedEntries) {
+      const entry: AgentLogEntry = persistedEntries.get(sourceEntry) ?? { timestamp, ...sourceEntry };
       store.emit("agent:log", {
-        timestamp,
+        timestamp: entry.timestamp,
         taskId: entry.taskId,
         text: entry.text,
         type: entry.type,
         ...(entry.detail !== undefined && { detail: entry.detail }),
         ...(entry.agent !== undefined && { agent: entry.agent }),
+        ...(entry.durationMs !== undefined && { durationMs: entry.durationMs }),
+        ...(entry.timeToFirstTokenMs !== undefined && { timeToFirstTokenMs: entry.timeToFirstTokenMs }),
       });
     }
   }

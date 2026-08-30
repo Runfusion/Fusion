@@ -212,16 +212,16 @@ describe("triage planning prompt single source", () => {
     await expect(captureBasePrompt(task, store)).resolves.toBe(overridePrompt);
   });
 
-  it("keeps fast mode on the planning-fast workflow prompt", async () => {
-    const task = createTask({ id: "FN-6232-FAST", executionMode: "fast" });
-    const store = createStore(task);
+  it("uses the planning-fast workflow prompt when leanPlanning is enabled", async () => {
+    const task = createTask({ id: "FN-6232-LEAN", executionMode: "standard" });
+    const store = createStore(task, {}, { leanPlanning: true });
 
     await expect(captureBasePrompt(task, store)).resolves.toBe(renderedFastPlanningPrompt);
   });
 
-  it.each(["standard", "fast"] as const)("injects direct-user duplicate policy into the %s planning session", async (executionMode) => {
-    const task = createTask({ id: `FN-6232-USER-${executionMode}`, executionMode, sourceType: "dashboard_ui" });
-    const store = createStore(task);
+  it.each(["standard", "lean"] as const)("injects direct-user duplicate policy into the %s planning session", async (mode) => {
+    const task = createTask({ id: `FN-6232-USER-${mode}`, executionMode: "standard", sourceType: "dashboard_ui" });
+    const store = createStore(task, {}, mode === "lean" ? { leanPlanning: true } : {});
 
     await expect(capturePromptLayers(task, store)).resolves.toContain("Only active tasks can be duplicate blockers");
   });

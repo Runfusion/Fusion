@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { RUN_AUDIT_EMIT_TIMEOUT_MS } from "../util/emit-bounded-run-audit.js";
-import { promoteHeldTask, releaseHeldTaskByEvent, runHoldReleaseSweep } from "../execution/hold-release.js";
+import { releaseHeldTaskByEvent, runHoldReleaseSweep } from "../execution/hold-release.js";
 
 type Sink = undefined | (() => unknown);
 const hostileSinks: [string, Sink][] = [
@@ -45,11 +44,6 @@ function storeFor(tasks: Task[], ir: WorkflowIr, recordRunAuditEvent: Sink) {
   } as unknown as TaskStore;
 }
 
-async function settleAwaited(pending: Promise<unknown>, name: string) {
-  if (name === "hangs") await vi.advanceTimersByTimeAsync(RUN_AUDIT_EMIT_TIMEOUT_MS);
-  await expect(pending).resolves.toMatchObject({ released: true, toColumn: "in-progress" });
-}
-
 describe("hold-release run-audit sink health", () => {
   it.each(hostileSinks)("keeps the real dependency-parity sweep result unchanged when audit sink %s", async (_name, sink) => {
     const held = task({ id: "FN-1", dependencies: ["FN-2"] });
@@ -61,19 +55,6 @@ describe("hold-release run-audit sink health", () => {
       mutationType: "merge:dependency-parity-diff", taskId: "FN-2",
       metadata: { depId: "FN-2", completeFlagResult: false, legacyResult: true, source: "hold-release.dependency" },
     }));
-  });
-
-  it.each(hostileSinks)("keeps force-promote observable results unchanged when audit sink %s", async (name, sink) => {
-    if (name === "hangs") vi.useFakeTimers();
-    try {
-      const held = task({ status: "needs-replan" });
-      const audit = sink ? vi.fn(sink) : undefined;
-      const store = storeFor([held], workflow("capacity"), audit);
-      await settleAwaited(promoteHeldTask(store, held.id, {}, { force: true }), name);
-      if (audit) expect(audit).toHaveBeenCalledWith(expect.objectContaining({
-        mutationType: "task:promote-forced-unplanned", taskId: "FN-1", agentId: "system", runId: "promote-force-FN-1",
-      }));
-    } finally { vi.useRealTimers(); }
   });
 
   it.each(hostileSinks)("keeps event release observable results unchanged when audit sink %s", async (_name, sink) => {

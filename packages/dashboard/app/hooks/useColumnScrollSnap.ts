@@ -174,6 +174,10 @@ function defaultIsUserInteraction(event: Event): boolean {
   return event.isTrusted;
 }
 
+function isMousePointerEvent(event: Event): boolean {
+  return "pointerType" in event && (event as PointerEvent).pointerType === "mouse";
+}
+
 function addMediaChangeListener(query: MediaQueryList, listener: () => void): () => void {
   if (typeof query.addEventListener === "function") {
     query.addEventListener("change", listener);
@@ -868,6 +872,13 @@ export function useColumnScrollSnap(
     */
     const beginInteraction = (event: Event) => {
       if (!isUserInteraction(event)) return;
+      /*
+      FNXC:BoardNavigation 2026-08-30-07:01:
+      The mobile column-snap owner must never capture mouse input. A non-touch desktop browser at
+      <=768 CSS px resolves to mobile, and ancestor capture retargets the compatibility click away
+      from the button beneath the cursor; FN-9219 fixed only Electron's drag-region variant.
+      */
+      if (isMousePointerEvent(event)) return;
 
       if (event.type === "touchstart") touchSequenceActive = true;
       clearPin();
@@ -954,6 +965,7 @@ export function useColumnScrollSnap(
     };
 
     const handlePointerMove = (event: Event) => {
+      if (isMousePointerEvent(event)) return;
       if (!interactionActive || pinnedScrollLeft !== null) return;
       const point = getClientPoint(event);
       if (point === null) return;
@@ -990,6 +1002,7 @@ export function useColumnScrollSnap(
     const handleFingerLift = (event: Event) => {
       // Clear before any early return so a stale flag can't outlive the touch sequence.
       if (event.type === "touchend") touchSequenceActive = false;
+      if (isMousePointerEvent(event)) return;
       if (!interactionActive || pinnedScrollLeft !== null) return;
       if ("isPrimary" in event && (event as PointerEvent).isPrimary === false) return;
 
@@ -1019,7 +1032,9 @@ export function useColumnScrollSnap(
     const handleGestureCancel = (event: Event) => {
       if (event.type === "touchcancel") {
         touchSequenceActive = false;
-      } else if (touchSequenceActive) {
+      }
+      if (isMousePointerEvent(event)) return;
+      if (touchSequenceActive) {
         /*
         FNXC:BoardNavigation 2026-07-22-20:10:
         pointercancel from native scroll takeover while the finger is still down: the gesture

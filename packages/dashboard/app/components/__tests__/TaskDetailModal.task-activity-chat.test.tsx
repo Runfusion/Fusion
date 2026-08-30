@@ -777,7 +777,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
   });
 
-  it("preserves Summary as the done-task mobile default while Activity and Chat remain first", async () => {
+  it("keeps Summary as the done-task mobile default after the Activity, Chat, Plan, and Changes tabs", async () => {
     const user = userEvent.setup();
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
@@ -797,7 +797,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         />,
       );
 
-      expect(topLevelTabLabels().slice(0, 3)).toEqual(["Activity", "Chat", "Summary"]);
+      expect(topLevelTabLabels().slice(0, 5)).toEqual(["Activity", "Chat", "Plan", "Changes", "Summary"]);
       expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
       expect(screen.queryByRole("combobox", { name: "Activity view" })).not.toBeInTheDocument();
 
