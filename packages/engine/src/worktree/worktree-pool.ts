@@ -3,24 +3,18 @@ import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import type { SecretsStore, Settings, TaskStore, WorktrunkSettings, WorkspaceWorktreeContext } from "@fusion/core";
-import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/branch-conflicts.js";
+import type { Settings, TaskStore, WorktrunkSettings, WorkspaceWorktreeContext } from "@fusion/core";
 import { worktreePoolLog } from "../logger.js";
 /*
 */
 import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, resolveWorktreesDir } from "./worktree-paths.js";
-import { canonicalFusionBranchName } from "./worktree-names.js";
 import {
   resolveWorktrunkBinary,
 } from "./worktrunk-installer.js";
 import {
   RemovalReason,
   removeWorktree as removeWorktreeViaBackend,
-  resolveWorktreeBackend as resolveWorktreeBackendViaSettings,
 } from "./worktree-backend.js";
-import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
-import { resolveIntegrationBranch } from "../merge/integration-branch.js";
-import type { RunAuditor } from "../util/run-audit.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
@@ -431,7 +425,7 @@ export interface RelocateReclaimableWorktreeInput {
   sourcePath: string;
   targetPath: string;
   taskId: string;
-  settings?: Pick<Settings, "worktreeNaming" | "worktreesDir" | "worktrunk">;
+  settings?: Pick<Settings, "worktreesDir" | "worktrunk">;
   isPathActive: (path: string) => boolean | Promise<boolean>;
 }
 
@@ -460,431 +454,23 @@ export async function relocateReclaimableWorktreeIntoRoot(
     );
   }
 
-  let resolvedTargetPath = targetPath;
-  if (existsSync(resolvedTargetPath) && settings?.worktreeNaming !== "task-id") {
-    const taskSuffix = taskId.toLowerCase();
-    const candidates = [
-      `${targetPath}-${taskSuffix}`,
-      ...Array.from({ length: 5 }, (_, index) => `${targetPath}-${taskSuffix}-${index + 2}`),
-    ];
-    const available = candidates.find((candidate) => !existsSync(candidate));
-    if (!available) {
-      throw new Error(`No available relocation target for ${taskId} worktree near ${targetPath}`);
-    }
-    resolvedTargetPath = available;
+  if (existsSync(targetPath)) {
+    throw new Error(`Refusing to relocate ${taskId} worktree into its occupied task-ID path: ${targetPath}`);
   }
 
-  await mkdir(dirname(resolvedTargetPath), { recursive: true });
-  await execFileAsync("git", ["worktree", "move", sourcePath, resolvedTargetPath], {
+  await mkdir(dirname(targetPath), { recursive: true });
+  await execFileAsync("git", ["worktree", "move", sourcePath, targetPath], {
     cwd: rootDir,
     timeout: 120_000,
     maxBuffer: 10 * 1024 * 1024,
   });
 
-  return { kind: "ready", path: resolvedTargetPath, relocated: true };
+  return { kind: "ready", path: targetPath, relocated: true };
 }
 
 /**
- * A pool of idle git worktrees that can be recycled across tasks.
- *
- * When `recycleWorktrees` is enabled, completed task worktrees are returned
- * to this pool instead of being deleted. New tasks acquire a warm worktree
- * from the pool, preserving build caches (node_modules, target/, dist/).
- *
- * The pool only tracks *idle* worktrees — those not currently assigned to
- * any active task. The scheduler's `maxWorktrees` setting still governs
- * the total number of worktrees (active + idle).
- *
- * **Lifecycle across restarts:** The pool is in-memory only, but on engine
- * startup it can be rehydrated from disk state via {@link rehydrate} and
- * {@link scanIdleWorktrees}. When `recycleWorktrees` is true, the startup
- * sequence scans the `.worktrees/` directory, identifies idle worktrees
- * (those not assigned to any active task), and bulk-loads them into the
- * pool. When `recycleWorktrees` is false, orphaned worktrees are cleaned
- * up via {@link cleanupOrphanedWorktrees}.
- */
-function deriveTaskIdFromBranch(branchName: string): string {
-  const match = branchName.match(/^fusion\/(fn-\d+)(?:-\d+)?(?:-[a-z0-9._-]+)*$/i);
-  return match ? match[1].toUpperCase() : branchName.toUpperCase();
-}
-
-export type PrepareForTaskResult = {
-  branch: string;
-  worktreePath: string;
-  reclaimed: boolean;
-  existingTipSha?: string;
-  strandedCommitCount?: number;
-};
-
-export type PoolInvariantPhase = "acquire" | "rehydrate" | "release";
-
-export type PoolInvariantViolation = {
-  path: string;
-  existingHolder: string;
-  requestingTaskId: string;
-  phase: PoolInvariantPhase;
-};
-
-export class PoolDoubleLeaseError extends Error {
-  constructor(
-    public readonly path: string,
-    public readonly existingHolder: string,
-    public readonly requestingTaskId: string,
-    public readonly phase: PoolInvariantPhase,
-  ) {
-    super(`Pool double lease detected for ${path}: held by ${existingHolder}, requested by ${requestingTaskId} during ${phase}`);
-    this.name = "PoolDoubleLeaseError";
-  }
-}
-
-export interface WorktreePoolOptions {
-  auditFactory?: (taskId: string) => Pick<RunAuditor, "filesystem">;
-  secretsStore?: Pick<SecretsStore, "listEnvExportable">;
-}
-
-export class WorktreePool {
-  private idle = new Set<string>();
-  private leased = new Map<string, string>();
-  private invariantViolationHandler?: (violation: PoolInvariantViolation) => void;
-
-  constructor(_options: WorktreePoolOptions = {}) {}
-
-  /**
-   * Acquire an idle worktree from the pool.
-   *
-   * Returns the absolute path of an idle worktree, or `null` if the pool
-   * is empty. Before returning, verifies the directory still exists on disk
-   * and prunes any stale entries.
-   */
-  acquire(taskId: string): string | null {
-    for (const path of this.idle) {
-      this.assertNotDoubleLeased(path, taskId, "acquire");
-      this.idle.delete(path);
-      this.leased.set(path, taskId);
-      if (existsSync(path)) {
-        return path;
-      }
-      this.leased.delete(path);
-      worktreePoolLog.debug(`Pruned stale entry: ${path}`);
-    }
-    return null;
-  }
-
-  /**
-   * Return a worktree to the idle pool after a task completes.
-   *
-   * The worktree directory is retained on disk with its build caches intact.
-   * Call this instead of `git worktree remove` when recycling is enabled.
-   *
-   * @param worktreePath — Absolute path to the worktree directory
-   */
-  release(worktreePath: string, releasingTaskId?: string): void {
-    const existingHolder = this.leased.get(worktreePath);
-    if (!existingHolder) {
-      worktreePoolLog.warn(`release called for non-leased worktree: ${worktreePath}`);
-    } else if (releasingTaskId && existingHolder !== releasingTaskId) {
-      this.notifyInvariantViolation({
-        path: worktreePath,
-        existingHolder,
-        requestingTaskId: releasingTaskId,
-        phase: "release",
-      });
-      worktreePoolLog.warn(
-        `release task mismatch for ${worktreePath}: leased holder=${existingHolder}, releasingTaskId=${releasingTaskId}`,
-      );
-    }
-    this.leased.delete(worktreePath);
-    this.idle.add(worktreePath);
-  }
-
-  /** Number of idle worktrees currently in the pool. */
-  get size(): number {
-    return this.idle.size;
-  }
-
-  /** Check whether a specific path is in the idle pool. */
-  has(path: string): boolean {
-    return this.idle.has(path);
-  }
-
-  setInvariantViolationHandler(handler: (violation: PoolInvariantViolation) => void): void {
-    this.invariantViolationHandler = handler;
-  }
-
-  /** @internal test-only visibility */
-  getLeasedPaths(): ReadonlyMap<string, string> {
-    return this.leased;
-  }
-
-  private notifyInvariantViolation(violation: PoolInvariantViolation): void {
-    try {
-      this.invariantViolationHandler?.(violation);
-    } catch (error) {
-      worktreePoolLog.warn(`Invariant violation handler failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  private assertNotDoubleLeased(path: string, requestingTaskId: string, phase: PoolInvariantPhase): void {
-    const existingHolder = this.leased.get(path);
-    if (!existingHolder || existingHolder === requestingTaskId) {
-      return;
-    }
-    const violation: PoolInvariantViolation = { path, existingHolder, requestingTaskId, phase };
-    this.notifyInvariantViolation(violation);
-    throw new PoolDoubleLeaseError(path, existingHolder, requestingTaskId, phase);
-  }
-
-  /**
-   * Remove and return all idle worktree paths.
-   *
-   * Useful for shutdown/cleanup — the caller is responsible for
-   * running `git worktree remove` on each returned path.
-   */
-  drain(): string[] {
-    const paths = Array.from(this.idle);
-    this.idle.clear();
-    this.leased.clear();
-    return paths;
-  }
-
-  /**
-   * Bulk-load known idle worktree paths into the pool.
-   *
-   * Called at engine startup to restore the pool from disk state.
-   * Paths that no longer exist on disk are silently skipped.
-   *
-   * @param idlePaths — Absolute paths to idle worktree directories
-   */
-  rehydrate(idlePaths: string[]): void {
-    for (const path of idlePaths) {
-      if (!existsSync(path)) {
-        worktreePoolLog.debug(`Rehydrate skipped (not on disk): ${path}`);
-        continue;
-      }
-      const existingHolder = this.leased.get(path);
-      if (existingHolder) {
-        this.notifyInvariantViolation({
-          path,
-          existingHolder,
-          requestingTaskId: existingHolder,
-          phase: "rehydrate",
-        });
-        worktreePoolLog.warn(`Rehydrate skipped leased worktree ${path} (holder=${existingHolder})`);
-        continue;
-      }
-      this.idle.add(path);
-    }
-  }
-
-  /**
-   * Prepare a recycled worktree for a new task.
-   *
-   * Resets the working tree to a clean state, then creates (or force-resets)
-   * the task's branch based on the given start point (or `main` by default).
-   * This ensures the new task starts from the correct base with a clean
-   * working directory, while preserving untracked build caches
-   * (node_modules, target/, dist/). As an explicit carve-out, this
-   * preparation removes `packages/desktop/dist` and
-   * `packages/desktop/dist-electron`.
-   *
-   * Steps performed:
-   * 1. `git checkout -- .` — discard tracked file modifications
-   * 2. `git clean -fd` — remove untracked files (but not .gitignore'd caches)
-   * 3. Remove `packages/desktop/dist` + `packages/desktop/dist-electron` if present
-   * 4. `git checkout --detach <startPoint>` — move HEAD to the latest base commit
-   * 5. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
-   *
-   * Returns the actual branch name used. This may differ from `branchName`
-   * when legacy conflict recovery is explicitly enabled and generates a suffixed
-   * name (e.g., `fusion/fn-042-2`).
-   *
-   * @param worktreePath — Absolute path to the recycled worktree
-   * @param branchName — Branch name for the new task (e.g., `fusion/fn-042`)
-   * @param startPoint — Git ref to branch from (e.g., `fusion/fn-041`). Defaults to `main`.
-   * @returns The actual branch name checked out in the worktree
-   */
-  async prepareForTask(
-    worktreePath: string,
-    branchName: string,
-    startPoint?: string,
-    options?: { allowSiblingBranchRename?: boolean; repoDir?: string; requestingTaskId?: string; branchOrigin?: "engine-canonical" | "group-derived" | "operator-supplied" },
-  ): Promise<PrepareForTaskResult> {
-    // Clean tracked modifications
-    try {
-      await execAsync("git checkout -- .", { cwd: worktreePath });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      worktreePoolLog.debug(`git checkout -- . failed (may be clean): ${errorMessage}`);
-      // May fail if worktree is already clean — that's fine
-    }
-
-    // Remove untracked files (but not .gitignore'd build caches)
-    await execAsync("git clean -fd", { cwd: worktreePath });
-    await removeDesktopBuildArtifacts(worktreePath, worktreePoolLog);
-
-    const base = startPoint || await resolveIntegrationBranch(options?.repoDir ?? worktreePath, undefined);
-    // Reject base values that would cause the new branch to inherit the
-    // worktree's current HEAD instead of the intended start point. Historical
-    // contamination ("branch: Created from HEAD") landed FN-5472's tip on
-    // freshly-created fn-5432/fn-5255 branches because the recycled worktree
-    // was still pointing at the previous occupant's commit and base silently
-    // collapsed onto HEAD.
-    const trimmedBase = base?.trim() ?? "";
-    if (!trimmedBase || trimmedBase.toUpperCase() === "HEAD") {
-      throw new Error(
-        `prepareForTask: refusing to create branch ${branchName} from base ${JSON.stringify(base)} (worktree=${worktreePath}, startPoint=${String(startPoint)})`,
-      );
-    }
-
-    await execAsync(`git checkout --detach ${base}`, {
-      cwd: worktreePath,
-    });
-
-    // Create or force-reset the branch from the start point (or main)
-    const checkoutCmd = `git checkout -B "${branchName}" ${base}`;
-    const resolvedBase = (await execAsync(`git rev-parse --verify "${base}^{commit}"`, { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
-
-    // Verify HEAD actually landed at the resolved base after --detach. If
-    // detach silently leaves HEAD elsewhere (e.g. the base ref didn't exist
-    // and git fell through to current HEAD), creating the branch now would
-    // pin it to the wrong tip — exactly the FN-5432 / FN-5255 contamination
-    // pattern ("branch: Created from HEAD" pointing at the previous occupant's
-    // tip). Only enforced when we have real SHAs to compare; mock-driven
-    // unit tests that return empty buffers fall through harmlessly.
-    if (/^[0-9a-f]{40}$/i.test(resolvedBase)) {
-      const detachedHead = (await execAsync("git rev-parse HEAD", { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
-      if (detachedHead !== resolvedBase) {
-        throw new Error(
-          `prepareForTask: post-detach HEAD ${detachedHead} does not match resolved base ${resolvedBase} (${base}) for ${branchName} — refusing to create branch`,
-        );
-      }
-    }
-    const taskId = deriveTaskIdFromBranch(branchName);
-    /*
-    FNXC:WorkspaceBranches 2026-08-20-04:18:
-    Recycling must not turn an operator's requested branch into a new branch at the base. When the
-    branch already exists, attach it intact; Git continues to refuse a live checkout in another worktree.
-    */
-    if (options?.branchOrigin === "operator-supplied") {
-      const branchExists = await execAsync(`git show-ref --verify --quiet "refs/heads/${branchName}"`, { cwd: worktreePath })
-        .then(() => true)
-        .catch(() => false);
-      if (branchExists) {
-        // A checkout failure here is intentional: Git preserves its live-worktree refusal.
-        await execAsync(`git checkout "${branchName}"`, { cwd: worktreePath });
-        return { branch: branchName, worktreePath, reclaimed: false };
-      }
-    }
-    try {
-      await execAsync(checkoutCmd, {
-        cwd: worktreePath,
-      });
-      await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
-      return { branch: branchName, worktreePath, reclaimed: false };
-    } catch (err: unknown) {
-      const execError = err instanceof Error ? err : new Error(String(err));
-      const stderr = "stderr" in execError
-        ? String((execError as { stderr?: unknown }).stderr ?? execError.message)
-        : execError.message;
-      const match = stderr.match(/already used by worktree at '([^']+)'/);
-      if (!match) {
-        throw err;
-      }
-
-      // The branch is checked out in a different worktree. Keep stale-conflict
-      // cleanup behavior for missing paths; otherwise either surface a typed
-      // conflict or, when explicitly enabled, fall back to the legacy sibling
-      // suffix flow.
-      const conflictingPath = match[1];
-      const repoDir = options?.repoDir ?? worktreePath;
-      const inspection = await inspectBranchConflict({
-        repoDir,
-        branchName,
-        conflictingWorktreePath: conflictingPath,
-        requestingTaskId: options?.requestingTaskId ?? taskId,
-        ownerTaskId: taskId,
-        startPoint: base,
-        integrationRef: await resolveIntegrationBranch(repoDir, undefined),
-      });
-      if (inspection.kind === "stale" || inspection.kind === "stale-resolved" || inspection.kind === "tip-already-merged") {
-        const backend = resolveWorktreeBackendViaSettings({}, { logger: worktreePoolLog });
-        await backend.prune({ rootDir: options?.repoDir ?? worktreePath });
-        if (inspection.kind === "tip-already-merged") {
-          try {
-            await execAsync(`git branch -D "${branchName}"`, { cwd: worktreePath });
-          } catch {
-            // best-effort
-          }
-        }
-        await execAsync(checkoutCmd, { cwd: worktreePath });
-        await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
-        return { branch: branchName, worktreePath, reclaimed: false };
-      }
-
-      if (inspection.kind === "reclaimable") {
-        worktreePoolLog.log(
-          `reclaimed self-owned branch conflict for ${branchName}: tip=${inspection.tipSha} strandedSince${base}=${inspection.strandedCommits.length}`,
-        );
-        return {
-          branch: branchName,
-          worktreePath: inspection.livePath,
-          reclaimed: true,
-          existingTipSha: inspection.tipSha,
-          strandedCommitCount: inspection.strandedCommits.length,
-        };
-      }
-
-      if (inspection.kind === "fully-subsumed") {
-        worktreePoolLog.log(
-          `reclaimed fully-subsumed branch conflict for ${branchName}: tip=${inspection.tipSha} strandedSince${base}=0`,
-        );
-        return {
-          branch: branchName,
-          worktreePath: inspection.livePath,
-          reclaimed: true,
-          existingTipSha: inspection.tipSha,
-          strandedCommitCount: 0,
-        };
-      }
-
-      if (!options?.allowSiblingBranchRename) {
-        if (inspection.kind === "live-foreign") {
-          throw inspection.error;
-        }
-        throw new Error(`Branch ${branchName} is already in use at ${conflictingPath}`);
-      }
-
-      const conflictBase = branchName;
-      for (let suffix = 2; suffix <= 6; suffix++) {
-        const suffixedName = `${branchName}-${suffix}`;
-        const suffixedCmd = `git checkout -B "${suffixedName}" ${conflictBase}`;
-        try {
-          await execAsync(suffixedCmd, { cwd: worktreePath });
-          await assertCleanBranchAtBase(worktreePath, suffixedName, resolvedBase, taskId);
-          return { branch: suffixedName, worktreePath, reclaimed: false };
-        } catch (suffixErr: unknown) {
-          const suffixExecError = suffixErr instanceof Error ? suffixErr : new Error(String(suffixErr));
-          const suffixStderr = "stderr" in suffixExecError && typeof suffixExecError.stderr === "string"
-            ? suffixExecError.stderr.toString()
-            : "";
-          if (!suffixStderr.includes("already used by worktree")) {
-            throw suffixErr;
-          }
-        }
-      }
-
-      throw new Error(
-        `Cannot create branch for task: "${branchName}" and suffixes -2 through -6 are all in use by other worktrees`,
-      );
-    }
-  }
-}
-
-/**
- * Scan the `.worktrees/` directory to find idle worktrees that can be
- * loaded into the pool on startup.
- *
- * A worktree is considered "idle" if it exists on disk under
+ * Scan the `.worktrees/` directory for task worktrees no longer assigned to
+ * an active task. A worktree is idle if it exists under
  * `<rootDir>/.worktrees/` but is NOT assigned (via `task.worktree`) to
  * any non-done task.
  *
@@ -976,8 +562,8 @@ export async function scanIdleWorktrees(
  * Clean up orphaned worktrees left behind from previous engine runs.
  *
  * Removes worktree directories under `<rootDir>/.worktrees/` that are NOT
- * assigned to any non-done task. Used on startup when `recycleWorktrees`
- * is false to avoid disk waste.
+ * assigned to any non-done task, preventing stale directories from blocking
+ * deterministic task-ID worktree creation.
  *
  * Failures on individual worktree removals are logged but not fatal.
  *
@@ -1265,7 +851,9 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
     if (poolLanes.get(task.id)?.managed.has(task.column) === true) continue;
     if (poolLanes.get(task.id)?.archived.has(task.column) === true) continue;
     if (task.branch) activeBranches.add(task.branch);
-    activeBranches.add(canonicalFusionBranchName(task.id));
+    // Keep non-pool branch reaping aware of the canonical task branch without importing
+    // worktree-names here (that module reaches worktree-paths, which reaches this helper).
+    activeBranches.add(`fusion/${task.id.toLowerCase()}`);
   }
 
   return allBranches.filter((branch) => !activeBranches.has(branch));

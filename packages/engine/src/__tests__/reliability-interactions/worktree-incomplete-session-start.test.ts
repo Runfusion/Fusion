@@ -48,7 +48,7 @@ describe("reliability interactions: FN-4917 worktree incomplete session-start", 
     ["missing", "Refusing to start coding agent in missing worktree: /tmp/wt"],
     ["incomplete", "Refusing to start coding agent in incomplete worktree: /tmp/wt"],
     ["unregistered", "Refusing to start coding agent in unregistered git worktree: /tmp/wt"],
-  ])("executor auto-recovers %s session-start failures", async (classification, errorText) => {
+  ])("executor repairs %s session-start failures in place", async (classification, errorText) => {
     const store = createMockStore();
     const events: any[] = [];
 
@@ -63,7 +63,7 @@ describe("reliability interactions: FN-4917 worktree incomplete session-start", 
 
     await runRecovery(store, task, errorText, events);
 
-    expect(task.column).toBe("todo");
+    expect(task.column).toBe("in-progress");
 
     const incompleteDetectedIndex = events.findIndex((event) => event.type === "worktree:incomplete-detected" || event.mutationType === "worktree:incomplete-detected");
     const autoRecoveredIndex = events.findIndex((event) => event.type === "worktree:auto-recovered" || event.mutationType === "worktree:auto-recovered");
@@ -87,7 +87,7 @@ describe("reliability interactions: FN-4917 worktree incomplete session-start", 
       }),
     }));
 
-    expect(store.moveTask.mock.calls).toContainEqual(["FN-4917-T", "todo", { moveSource: "engine", recoveryRehome: true }]);
+    expect(store.moveTask).not.toHaveBeenCalled();
     for (const call of store.logEntry.mock.calls) {
       const leaked = call.some((arg: unknown) => typeof arg === "string" && /Refusing to start coding agent/.test(arg));
       expect(leaked).toBe(false);
@@ -112,8 +112,7 @@ describe("reliability interactions: FN-4917 worktree incomplete session-start", 
 
     await runRecovery(store, task, "Refusing to start coding agent in incomplete worktree: /tmp/wt", events);
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4917-T", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
-    expect(store.moveTask.mock.calls).not.toContainEqual(["FN-4917-T", "todo"]);
+    expect(store.moveTask).not.toHaveBeenCalled();
     for (const call of store.logEntry.mock.calls) {
       const leaked = call.some((arg: unknown) => typeof arg === "string" && /Refusing to start coding agent/.test(arg));
       expect(leaked).toBe(false);

@@ -34,6 +34,10 @@ describe("MergeDetails", () => {
             prNumber: 42,
             mergeCommitMessage: "feat(FN-001): merge fusion/fn-001",
             mergeConfirmed: true,
+            mergeTargetBranch: "main",
+            resolutionStrategy: "ai",
+            resolutionMethod: "auto",
+            noOpReason: "Already landed",
           },
         })}
       />,
@@ -49,5 +53,22 @@ describe("MergeDetails", () => {
     expect(screen.getByText("#42")).toBeTruthy();
     expect(screen.getByText("feat(FN-001): merge fusion/fn-001")).toBeTruthy();
     expect(screen.getByText("Merged successfully")).toBeTruthy();
+    expect(screen.getByText("Target branch")).toBeTruthy();
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getByText("Strategy")).toBeTruthy();
+    expect(screen.getByText("ai")).toBeTruthy();
+    expect(screen.getByText("Method")).toBeTruthy();
+    expect(screen.getByText("auto")).toBeTruthy();
+    expect(screen.getByText("No-op reason")).toBeTruthy();
+    expect(screen.getByText("Already landed")).toBeTruthy();
+  });
+
+  it("omits optional resolution rows when merge details do not carry them", () => {
+    render(<MergeDetails task={makeTask({ mergeDetails: { commitSha: "abcdef123456" } })} />);
+
+    expect(screen.queryByText("Target branch")).toBeNull();
+    expect(screen.queryByText("Strategy")).toBeNull();
+    expect(screen.queryByText("Method")).toBeNull();
+    expect(screen.queryByText("No-op reason")).toBeNull();
   });
 });

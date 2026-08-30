@@ -16,6 +16,8 @@ after `task:reconcile-stranded-hold-continuation` fired. 529 self-healing
 recoveries in 18 days — self-healing had silently become the PRIMARY handoff,
 each one costing the card the sweep's full staleness grace.
 
+**Diagnostic update (2026-08-28):** automatic hold-release passes no longer write that refusal for an unplanned card. The equivalent current sweep evidence is `awaiting-planning:<reason>` (for this incident, normally `awaiting-planning:plan-review-pending`); an explicit promote or external-event request can still produce the historical refusal line.
+
 ## Root cause
 
 Two independent defects compounded:

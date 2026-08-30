@@ -9,8 +9,8 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:TaskReset 2026-08-19-06:30:
-These PostgreSQL tests pin the reset publication boundary rather than a sequence of facade calls. A failure after continuation retirement must roll back the retired row, foreach instance deletion, and task-row reset together; success must expose intake/needs-replan only with all graph cleanup committed.
+FNXC:TaskReset 2026-08-28-20:50:
+These PostgreSQL tests pin the reset publication boundary rather than a sequence of facade calls. A failure after continuation retirement must roll back the retired row, foreach instance deletion, and task-row reset together; success exposes a null-status, empty-plan fresh planning row only after graph cleanup and discarded-run presentation state commit together.
 */
 
 pgDescribe("TaskStore reset publication", () => {
@@ -34,6 +34,14 @@ pgDescribe("TaskStore reset publication", () => {
       workflowIrPin: "pin-before-reset",
       workflowStepResults: [{ workflowStepId: "plan-review", status: "failed" }],
       awaitingApprovalReason: "plan-review-replan-cap",
+      size: "M",
+      prInfo: { number: 239, url: "https://example.invalid/pull/239", state: "open" },
+      prInfos: [{ number: 239, url: "https://example.invalid/pull/239", state: "open" }],
+      tokenUsage: { inputTokens: 10, outputTokens: 20, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 30, firstUsedAt: new Date().toISOString(), lastUsedAt: new Date().toISOString(), byModel: {} },
+      tokenBudgetSoftAlertedAt: new Date().toISOString(),
+      tokenBudgetHardAlertedAt: new Date().toISOString(),
+      stepReports: [{ stepIndex: 0, summary: "Discarded report", filesChanged: [] }],
+      workflowTransitionNotification: { transitionId: "transition-239", toColumn: "in-progress", createdAt: new Date().toISOString() },
     } as never);
     const continuation = await store.upsertWorkflowWorkItem({
       taskId: task.id,
@@ -64,8 +72,16 @@ pgDescribe("TaskStore reset publication", () => {
     const reset = await store.resetTaskPublication(task.id, "todo");
 
     expect(reset.column).toBe("todo");
-    expect(reset.status).toBe("needs-replan");
-    expect(reset.steps.every((step) => step.status === "pending")).toBe(true);
+    expect(reset.status).toBeUndefined();
+    expect(reset.steps).toEqual([]);
+    expect(reset.size).toBeUndefined();
+    expect(reset.prInfo).toBeUndefined();
+    expect(reset.prInfos).toBeUndefined();
+    expect(reset.tokenUsage).toBeUndefined();
+    expect(reset.tokenBudgetSoftAlertedAt).toBeUndefined();
+    expect(reset.tokenBudgetHardAlertedAt).toBeUndefined();
+    expect(reset.stepReports ?? []).toEqual([]);
+    expect(reset.workflowTransitionNotification).toBeUndefined();
     expect(reset.worktree).toBeUndefined();
     expect(reset.branch).toBeUndefined();
     expect(reset.checkedOutBy).toBeUndefined();
@@ -77,6 +93,65 @@ pgDescribe("TaskStore reset publication", () => {
       expect.objectContaining({ state: "cancelled" }),
     ]);
     expect(await store.hasWorkflowRunStepInstancesForTask(task.id)).toBe(false);
+  });
+
+  it("commits a description override with intake state and preserves description without options", async () => {
+    const overridden = await seedPopulatedResetState();
+    const resetWithOverride = await overridden.store.resetTaskPublication(
+      overridden.task.id,
+      "todo",
+      { description: "  corrected original request  " },
+    );
+
+    expect(resetWithOverride).toMatchObject({
+      column: "todo",
+      description: "corrected original request",
+      steps: [],
+    });
+    expect(resetWithOverride.status).toBeUndefined();
+    const [durableOverride] = await h.layer().db.select({
+      status: schema.project.tasks.status,
+      steps: schema.project.tasks.steps,
+    }).from(schema.project.tasks).where(eq(schema.project.tasks.id, overridden.task.id));
+    expect(durableOverride).toEqual({ status: null, steps: [] });
+    const persistedOverride = await overridden.store.getTask(overridden.task.id);
+    expect(persistedOverride).toMatchObject({
+      column: "todo",
+      description: "corrected original request",
+    });
+    expect(persistedOverride?.status).toBeUndefined();
+
+    const preserved = await seedPopulatedResetState();
+    const resetWithoutOptions = await preserved.store.resetTaskPublication(preserved.task.id, "todo");
+    expect(resetWithoutOptions.description).toBe(preserved.task.description);
+  });
+
+  it("clears workspace worktrees, acquire leases, and land intents with publication", async () => {
+    const { store, task } = await seedPopulatedResetState();
+    const now = new Date().toISOString();
+    await store.updateTask(task.id, {
+      workspaceWorktrees: { api: { worktreePath: "/tmp/fn-reset/api", branch: "fusion/fn-reset" } },
+    });
+    const db = h.layer().db;
+    await db.insert(schema.project.workspaceCoordinationLeases).values({
+      leaseKey: `${task.id}:api`, kind: "acquire", ownerTaskId: task.id, ownerNodeId: "execute",
+      ownerIncarnationId: "test", status: "held", acquiredAt: now, renewedAt: now,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), createdAt: now, updatedAt: now,
+    });
+    await db.insert(schema.project.workspaceLandIntents).values({
+      taskId: task.id, repoRelPath: "api", remoteUrl: "https://example.invalid/api.git", integrationRef: "main",
+      intendedSha: "a".repeat(40), expectedTip: "b".repeat(40), fenceRefName: "refs/fusion/test",
+      fenceRefSha: "c".repeat(40), ownerTaskId: task.id, ownerNodeId: "execute", ownerIncarnationId: "test",
+      fenceToken: 0n, status: "pending", createdAt: now, updatedAt: now,
+    });
+
+    const reset = await store.resetTaskPublication(task.id, "todo");
+
+    expect(reset.column).toBe("todo");
+    expect(reset.status).toBeUndefined();
+    expect(reset.workspaceWorktrees).toBeUndefined();
+    await expect(db.select().from(schema.project.workspaceCoordinationLeases).where(eq(schema.project.workspaceCoordinationLeases.ownerTaskId, task.id))).resolves.toEqual([]);
+    await expect(db.select().from(schema.project.workspaceLandIntents).where(eq(schema.project.workspaceLandIntents.taskId, task.id))).resolves.toEqual([]);
   });
 
   it("clears run projections while retaining operator documents, attachments, and released symbol-lock history", async () => {
@@ -125,6 +200,18 @@ pgDescribe("TaskStore reset publication", () => {
     const now = new Date().toISOString();
     await store.upsertTaskDocument(task.id, { key: "agent-only", content: "must survive rollback", author: "agent" });
     await h.layer().db.insert(schema.project.artifacts).values({ id: `${task.id}-rollback-artifact`, type: "document", title: "rollback", authorId: "agent", taskId: task.id, createdAt: now, updatedAt: now });
+    await store.updateTask(task.id, { workspaceWorktrees: { api: { worktreePath: "/tmp/fn-reset/api", branch: "fusion/fn-reset" } } });
+    await h.layer().db.insert(schema.project.workspaceCoordinationLeases).values({
+      leaseKey: `${task.id}:rollback`, kind: "acquire", ownerTaskId: task.id, ownerNodeId: "execute",
+      ownerIncarnationId: "test", status: "held", acquiredAt: now, renewedAt: now,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), createdAt: now, updatedAt: now,
+    });
+    await h.layer().db.insert(schema.project.workspaceLandIntents).values({
+      taskId: task.id, repoRelPath: "api", remoteUrl: "https://example.invalid/api.git", integrationRef: "main",
+      intendedSha: "a".repeat(40), expectedTip: "b".repeat(40), fenceRefName: "refs/fusion/test",
+      fenceRefSha: "c".repeat(40), ownerTaskId: task.id, ownerNodeId: "execute", ownerIncarnationId: "test",
+      fenceToken: 0n, status: "pending", createdAt: now, updatedAt: now,
+    });
     const [beforeFailure] = await h.layer().db.select({
       column: schema.project.tasks.column,
       status: schema.project.tasks.status,
@@ -152,5 +239,7 @@ pgDescribe("TaskStore reset publication", () => {
     expect(await store.hasWorkflowRunStepInstancesForTask(task.id)).toBe(true);
     expect(await h.layer().db.select().from(schema.project.taskDocuments).where(eq(schema.project.taskDocuments.taskId, task.id))).toEqual([expect.objectContaining({ key: "agent-only" })]);
     expect(await h.layer().db.select().from(schema.project.artifacts).where(eq(schema.project.artifacts.taskId, task.id))).toEqual([expect.objectContaining({ id: `${task.id}-rollback-artifact` })]);
+    expect(await h.layer().db.select().from(schema.project.workspaceCoordinationLeases).where(eq(schema.project.workspaceCoordinationLeases.ownerTaskId, task.id))).toEqual([expect.objectContaining({ leaseKey: `${task.id}:rollback` })]);
+    expect(await h.layer().db.select().from(schema.project.workspaceLandIntents).where(eq(schema.project.workspaceLandIntents.taskId, task.id))).toEqual([expect.objectContaining({ repoRelPath: "api" })]);
   });
 });

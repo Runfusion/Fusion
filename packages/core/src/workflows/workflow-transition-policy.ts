@@ -32,6 +32,12 @@ WIP column is rejected and the task parks ready at the boundary.
 */
 
 import { type TraitFlags } from "./trait-types.js";
+import {
+  classifyLifecycleDirection,
+  classifyLifecycleRole,
+  evaluateForbiddenLifecyclePath,
+  isSanctionedEngineBackwardMove,
+} from "./workflow-lifecycle-direction.js";
 import { type TransitionRejection, makeTransitionRejection } from "../tasks/transition-types.js";
 
 /** The trait-derived facts about a column, resolved by the caller from the IR.
@@ -59,6 +65,10 @@ export interface TransitionInvariantInput {
   from: TransitionColumnFacts;
   to: TransitionColumnFacts;
   mergeBlockerReason: string | null;
+  /** Raw caller option: optionless dashboard moves are deliberately exempt. */
+  moveSource?: "user" | "engine" | "scheduler";
+  /** Registered explanation for a remaining legal engine backward move. */
+  lifecycleReason?: string;
 }
 
 /** Discriminated decision. `allow:false` carries a JSON-safe {@link TransitionRejection}. */
@@ -145,6 +155,44 @@ export function evaluateTerminalReentryPostcondition(
  * counter). A finite limit at or below the occupant count rejects; a non-finite
  * limit never gates.
  */
+/**
+ * Invariant 3: explicitly engine/scheduler-sourced moves must obey the lifecycle
+ * deny-list and must name a sanctioned reason for a remaining backward step.
+ */
+export function evaluateLifecycleDirectionPostcondition(
+  input: TransitionInvariantInput,
+): TransitionRejection | null {
+  if (input.moveSource !== "engine" && input.moveSource !== "scheduler") return null;
+
+  const fromRole = classifyLifecycleRole(input.from.flags);
+  const toRole = classifyLifecycleRole(input.to.flags);
+  if (fromRole === undefined || toRole === undefined) return null;
+
+  const forbidden = evaluateForbiddenLifecyclePath(fromRole, toRole, input.lifecycleReason);
+  if (forbidden) {
+    return makeTransitionRejection(
+      "guard-rejected",
+      "transition.rejected.forbiddenLifecyclePath",
+      false,
+      `Forbidden lifecycle path ${forbidden.rule}: '${input.from.columnId}' (${fromRole}) → '${input.to.columnId}' (${toRole})${input.lifecycleReason ? `; reason=${input.lifecycleReason}` : ""}. ${forbidden.detail}`,
+    );
+  }
+
+  if (
+    classifyLifecycleDirection(fromRole, toRole) === "backward"
+    && !isSanctionedEngineBackwardMove(input.lifecycleReason, fromRole, toRole)
+  ) {
+    return makeTransitionRejection(
+      "guard-rejected",
+      "transition.rejected.unsanctionedLifecycleMove",
+      false,
+      `Unsanctioned lifecycle move: '${input.from.columnId}' (${fromRole}) → '${input.to.columnId}' (${toRole}); reason=${input.lifecycleReason ?? "absent"}`,
+    );
+  }
+
+  return null;
+}
+
 export function evaluateCapacityRejection(
   toColumnId: string,
   capacity: CapacityFacts | null | undefined,
@@ -162,8 +210,9 @@ export function evaluateCapacityRejection(
 }
 
 /**
- * Evaluate the structural transition invariants (merge-blocker on complete entry,
- * terminal→wip re-entry) as a single ordered return-guard. First rejection wins;
+ * Evaluate structural transition invariants as a single ordered return-guard.
+ * First rejection wins; merge-blocker and terminal re-entry checks run before the
+ * lifecycle-direction policy.
  * otherwise `allow`. Capacity is NOT evaluated here because it needs an in-txn
  * occupant count — the caller invokes {@link evaluateCapacityRejection} inside the
  * move transaction after this passes.
@@ -176,6 +225,9 @@ export function evaluateTransitionInvariants(
 
   const terminalReentry = evaluateTerminalReentryPostcondition(input);
   if (terminalReentry) return { allow: false, rejection: terminalReentry };
+
+  const lifecycleDirection = evaluateLifecycleDirectionPostcondition(input);
+  if (lifecycleDirection) return { allow: false, rejection: lifecycleDirection };
 
   return ALLOW;
 }

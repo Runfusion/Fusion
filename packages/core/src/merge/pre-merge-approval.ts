@@ -1,4 +1,6 @@
 import type { Task, WorkflowStepResult } from "../types.js";
+import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
+import { isWorkflowStepNotRun } from "../workflows/workflow-step-results.js";
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
 
 export type PreMergeApprovalState = "approved" | "missing" | "not-approved" | "stale-content" | "unprovable-content";
@@ -34,8 +36,18 @@ function evaluateStep(
     */
     const requiresExplicitVerdict = workflowStepId === "code-review" || result.reviewKind === "code";
     const approvedVerdict = result.verdict === "APPROVE" || result.verdict === "APPROVE_WITH_NOTES";
+    /*
+    FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+    A check that could not run must not block a task, but its honest skipped carrier can open only a
+    non-content, non-plan gate. Code-domain checks still require a positive current verdict, and the
+    plan-domain exclusion is load-bearing because the status-only return below would otherwise let an
+    unexecuted Plan Review open the merge door despite `isPlanReviewSatisfied` refusing it.
+    */
+    const isPlanDomain = workflowStepId === PLAN_REVIEW_GROUP_ID || result.reviewKind === "plan";
+    const notRunApproves = isWorkflowStepNotRun(result) && !requiresExplicitVerdict && !isPlanDomain;
     const approved = (result.status === "passed" && (requiresExplicitVerdict ? approvedVerdict : (result.verdict === undefined || approvedVerdict)))
-      || (result.status === "skipped" && !!result.bypassedBy);
+      || (result.status === "skipped" && !!result.bypassedBy)
+      || notRunApproves;
     if (!approved || !!result.remediationArchivedAt) return { workflowStepId, state: "not-approved" };
     // Plan fingerprints bind plan text rather than source diff and must never be cross-compared.
     if (result.reviewKind === "plan") return { workflowStepId, state: "approved" };

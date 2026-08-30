@@ -66,6 +66,7 @@ export const MODEL_LANE_KEYS = [
   "mergerFallbackProvider", "mergerFallbackModelId", "mergerFallbackThinkingLevel",
   "githubImportAutoTranslate", "importTranslateTargetLocale",
   "importTranslateProvider", "importTranslateModelId", "importTranslateThinkingLevel",
+  "fastCheapProvider", "fastCheapModelId", "fastCheapCredentialInstanceId", "fastCheapThinkingLevel",
 ] as const;
 
 const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
@@ -224,6 +225,10 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "modelRouterEnabled",
     "modelRouterCheapProvider",
     "modelRouterCheapModelId",
+    "fastCheapGlobalProvider",
+    "fastCheapGlobalModelId",
+    "fastCheapGlobalCredentialInstanceId",
+    "fastCheapGlobalThinkingLevel",
     "opencodeGoModelSync",
     "openrouterAppAttribution",
     "openrouterModelFilters",
@@ -261,6 +266,10 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "modelRouterEnabled",
     "modelRouterCheapProvider",
     "modelRouterCheapModelId",
+    "fastCheapGlobalProvider",
+    "fastCheapGlobalModelId",
+    "fastCheapGlobalCredentialInstanceId",
+    "fastCheapGlobalThinkingLevel",
     "opencodeGoModelSync",
     "openrouterAppAttribution",
     "openrouterModelFilters",

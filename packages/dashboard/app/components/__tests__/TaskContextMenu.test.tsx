@@ -26,24 +26,33 @@ function actionIds(task: Task, overrides: Partial<Parameters<typeof buildTaskAct
 }
 
 describe("TaskContextMenu shared task action model", () => {
-  it("mirrors detail Actions menu availability across lifecycle states", () => {
-    expect(actionIds(makeTask({ column: "triage" }))).toEqual(["respecify", "pause", "delete"]);
-    expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t }).shouldShowActionsMenu).toBe(false);
+  it("mirrors Retry, Reset, and Delete availability across lifecycle states", () => {
+    const onRetry = vi.fn();
+    expect(actionIds(makeTask({ column: "triage" }), { onRetry })).toEqual(["retry", "pause", "delete"]);
+    expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, onRetry }).shouldShowActionsMenu).toBe(true);
+    expect(actionIds(makeTask({ column: "in-review" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn() })).toEqual(["refine", "retry", "pause", "reset", "delete"]);
+    expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn() })).toEqual(["refine", "delete"]);
+    expect(actionIds(makeTask({ column: "archived" }), { onRetry, onReset: vi.fn() })).toEqual(["delete"]);
+  });
 
-    expect(actionIds(makeTask({ column: "triage", status: "failed" as any }), { canRetryTask: true, hasRetryHandler: true })).toEqual(["respecify", "retry", "pause", "delete"]);
-    expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage", status: "failed" as any }), t, canRetryTask: true, hasRetryHandler: true }).shouldShowActionsMenu).toBe(true);
+  it("offers exactly the supported recovery actions", () => {
+    const supported = buildTaskActionMenuModel({
+      task: makeTask({ column: "in-progress" }),
+      t,
+      onRetry: vi.fn(),
+      onReset: vi.fn(),
+    });
+    expect(supported.actions.map((action) => action.id)).toEqual(["retry", "pause", "reset", "delete"]);
+  });
 
-    expect(actionIds(makeTask({ column: "in-review" }), { hasDuplicateHandler: true, hasResetHandler: true, onOpenRefine: vi.fn() })).toEqual([
-      "duplicate",
-      "refine",
-      "respecify",
-      "pause",
-      "reset",
-      "delete",
-    ]);
-    expect(actionIds(makeTask({ column: "done" }), { hasResetHandler: true, onOpenRefine: vi.fn() })).toEqual(["refine", "respecify", "delete"]);
-    expect(actionIds(makeTask({ column: "done" }), { hasResetHandler: true })).toEqual(["respecify", "delete"]);
-    expect(actionIds(makeTask({ column: "archived" }), { hasResetHandler: true })).toEqual(["delete"]);
+  it("offers Retry for every mutable live column, including pending recovery", () => {
+    const onRetry = vi.fn();
+    const onReset = vi.fn();
+    for (const task of [makeTask(), makeTask({ status: null as any, nextRecoveryAt: new Date(Date.now() + 60_000).toISOString() })]) {
+      expect(actionIds(task, { onRetry, onReset })).toEqual(["retry", "pause", "reset", "delete"]);
+    }
+    expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset })).toEqual(["delete"]);
+    expect(actionIds(makeTask({ column: "archived" }), { onRetry, onReset, currentColumnFlags: { archived: true } })).toEqual(["delete"]);
   });
 
   it("exposes Plan only for pre-execution hold columns with a host callback", () => {
@@ -107,7 +116,7 @@ describe("TaskContextMenu shared task action model", () => {
     const noCallback = buildTaskActionMenuModel({ task: makeTask(), t });
 
     expect(untracked.actions.find((action) => action.id === "enable-github-tracking")?.label).toBe("Enable GitHub tracking");
-    expect(untracked.actions.map((action) => action.id)).toEqual(["respecify", "enable-github-tracking", "pause", "delete"]);
+    expect(untracked.actions.map((action) => action.id)).toEqual(["enable-github-tracking", "pause", "delete"]);
     expect(disabled.actions.map((action) => action.id)).toContain("enable-github-tracking");
     expect(enabled.actions.map((action) => action.id)).not.toContain("enable-github-tracking");
     expect(linked.actions.map((action) => action.id)).not.toContain("enable-github-tracking");
@@ -119,7 +128,7 @@ describe("TaskContextMenu shared task action model", () => {
 
   it("exposes pause, unpause, and paused-by-agent note with detail labels", () => {
     const active = buildTaskActionMenuModel({ task: makeTask(), t });
-    expect(active.actions.map((action) => action.id)).toEqual(["respecify", "pause", "delete"]);
+    expect(active.actions.map((action) => action.id)).toEqual(["pause", "delete"]);
     expect(active.actions.find((action) => action.id === "pause")?.label).toBe("Pause");
 
     const paused = buildTaskActionMenuModel({
@@ -277,11 +286,9 @@ describe("TaskContextMenu shared task action model", () => {
 FNXC:WorkflowResolvedColumns 2026-07-30-10:20 (PR #2626 review — greptile P2):
 The intake-only vs intake+hold distinction, covered per workflow SHAPE rather than per column id.
 
-`shouldShowActionsMenu` suppresses the menu only for a PURE intake lane. That distinction is the
-whole point of the conversion and it was asserted only through the legacy `triage` id, which cannot
-express either post-U11 shape: a merged Planning column carries both traits, and Coding (Ideas)
-carries intake alone on a non-legacy id. A later predicate change could restore the unwanted Ideas
-menu or hide actions on Planning cards with nothing failing.
+`shouldShowActionsMenu` follows the generated action list, so a pure intake lane remains an
+operator-recoverable planning stage rather than a hidden menu special case. Cover both trait and
+legacy fallbacks so first paint never withdraws the shared actions.
 */
 describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
   const model = (column: string, flags: Record<string, boolean>) =>
@@ -291,10 +298,8 @@ describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
       currentColumnFlags: flags as never,
     }).shouldShowActionsMenu;
 
-  it("SUPPRESSES the menu on a Coding (Ideas) capture — intake with no hold, non-legacy id", () => {
-    // `ideas` is not the legacy intake id, so only the trait can answer. A bare captured idea has
-    // no actions worth offering yet, which is the case the original guard existed for.
-    expect(model("ideas", { intake: true })).toBe(false);
+  it("SHOWS the menu on a Coding (Ideas) capture — intake with no hold, non-legacy id", () => {
+    expect(model("ideas", { intake: true })).toBe(true);
   });
 
   it("SHOWS the menu on a merged Planning column — intake AND hold", () => {
@@ -308,10 +313,8 @@ describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
     expect(model("todo", { hold: true })).toBe(true);
   });
 
-  it("SUPPRESSES on a RENAMED pure-intake lane, proving no id is consulted", () => {
-    // The assertion that fails if anyone reintroduces an id comparison: `backlog` matches no
-    // legacy literal, so a correct answer here can only come from the trait.
-    expect(model("backlog", { intake: true })).toBe(false);
+  it("SHOWS on a RENAMED pure-intake lane, proving no id is consulted", () => {
+    expect(model("backlog", { intake: true })).toBe(true);
   });
 });
 

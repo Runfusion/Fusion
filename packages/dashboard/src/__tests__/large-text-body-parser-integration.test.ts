@@ -23,11 +23,19 @@ import { chatStreamManager } from "../chat.js";
 import { request } from "../test-request.js";
 
 const LARGE_LOG = "2026-08-21T04:35:00Z INFO repeated log line\n".repeat(3_000).trimEnd();
+const LARGE_TASK_MESSAGE = "é".repeat(60_000);
 const largeJson = (content = LARGE_LOG) => JSON.stringify({ content });
+const taskMessageJson = (field: "text" | "feedback") => JSON.stringify({ [field]: LARGE_TASK_MESSAGE });
 
 /** Minimal production-stack store: route tests intentionally use createServer, not a router. */
 class LargeTextParserStore extends EventEmitter {
-  constructor(private readonly rootDir: string) { super(); }
+  private readonly task: { id: string; column: string; worktree: string; comments: never[]; steeringComments: never[] };
+
+  constructor(private readonly rootDir: string) {
+    super();
+    this.task = { id: "task-1", column: "todo", worktree: rootDir, comments: [], steeringComments: [] };
+  }
+
   getRootDir() { return this.rootDir; }
   getFusionDir() { return join(this.rootDir, ".fusion"); }
   getSettings = vi.fn(async (): Promise<Settings> => ({} as Settings));
@@ -35,7 +43,14 @@ class LargeTextParserStore extends EventEmitter {
   getGlobalSettingsStore = () => ({ getSettings: async () => ({}) });
   getAsyncLayer = vi.fn(() => ({ db: { update: vi.fn(() => ({ set: vi.fn(() => ({ where: vi.fn(() => ({ returning: vi.fn(async () => []) })) })) })) } }));
   getProjectScopedPluginMcpServers = vi.fn().mockResolvedValue([]);
-  getTask = vi.fn(async () => ({ worktree: this.rootDir }));
+  getTask = vi.fn(async () => this.task);
+  addSteeringComment = vi.fn(async () => this.task);
+  addTaskComment = vi.fn(async () => this.task);
+  updateTaskComment = vi.fn(async () => this.task);
+  refineTask = vi.fn(async () => ({ ...this.task, id: "task-2" }));
+  logEntry = vi.fn(async () => undefined);
+  updateTask = vi.fn(async () => this.task);
+  moveTask = vi.fn(async () => this.task);
   getTaskWorkflowSelection = vi.fn();
   getWorkflowDefinition = vi.fn(async () => undefined);
   getWorkflowSettingValues = vi.fn(() => ({}));
@@ -72,6 +87,7 @@ async function app() {
   scopedChatManager.current = chatManager as never;
   return {
     root,
+    store,
     chatManager,
     app: createServer(store as unknown as TaskStore, {
       noAuth: true,
@@ -106,6 +122,43 @@ describe("large-text body parser integration", () => {
     expect(server.chatManager.sendRoomMessage).toHaveBeenCalledTimes(1);
     expect(server.chatManager.sendRoomMessage).toHaveBeenCalledWith("room-1", LARGE_LOG, undefined);
     expect((room.body as { message: { content: string } }).message.content).toBe(LARGE_LOG);
+  });
+
+  it("delivers over-100-KiB task messages through each exact task-message route", async () => {
+    const server = await app();
+    const textBody = taskMessageJson("text");
+    const feedbackBody = taskMessageJson("feedback");
+    expect(LARGE_TASK_MESSAGE).toHaveLength(60_000);
+    expect(Buffer.byteLength(textBody)).toBeGreaterThan(100 * 1024);
+    expect(Buffer.byteLength(textBody)).toBeLessThanOrEqual(2 * 1024 * 1024);
+
+    const steer = await request(server.app, "POST", "/api/tasks/task-1/steer/", textBody, { "content-type": "application/json" });
+    const comment = await request(server.app, "POST", "/api/tasks/task-1/comments", textBody, { "content-type": "application/json" });
+    const editComment = await request(server.app, "PATCH", "/api/tasks/task-1/comments/comment-1/", textBody, { "content-type": "application/json" });
+    const refine = await request(server.app, "POST", "/api/tasks/task-1/refine", feedbackBody, { "content-type": "application/json" });
+    const revise = await request(server.app, "POST", "/api/tasks/task-1/spec/revise", feedbackBody, { "content-type": "application/json" });
+
+    expect(steer.status).toBe(200);
+    expect(comment.status).toBe(200);
+    expect(editComment.status).toBe(200);
+    expect(refine.status).toBe(201);
+    expect(revise.status).toBe(200);
+    expect(server.store.addSteeringComment).toHaveBeenCalledWith("task-1", LARGE_TASK_MESSAGE, "user");
+    expect(server.store.addTaskComment).toHaveBeenCalledWith("task-1", LARGE_TASK_MESSAGE, "user");
+    expect(server.store.updateTaskComment).toHaveBeenCalledWith("task-1", "comment-1", LARGE_TASK_MESSAGE);
+    expect(server.store.refineTask).toHaveBeenCalledWith("task-1", LARGE_TASK_MESSAGE);
+    expect(server.store.logEntry).toHaveBeenCalledWith("task-1", "AI spec revision requested", LARGE_TASK_MESSAGE);
+  });
+
+  it("keeps the task-message transport envelope at 2 MiB", async () => {
+    const server = await app();
+    const body = JSON.stringify({ text: "x".repeat(2 * 1024 * 1024) });
+    expect(Buffer.byteLength(body)).toBeGreaterThan(2 * 1024 * 1024);
+
+    const response = await request(server.app, "POST", "/api/tasks/task-1/steer", body, { "content-type": "application/json" });
+    expect(response.status).toBe(413);
+    expect(response.body).toEqual({ error: "payload-too-large" });
+    expect(server.store.addSteeringComment).not.toHaveBeenCalled();
   });
 
   it("persists over-100-KiB workspace saves exactly, including encoded paths and operation-named files", async () => {
@@ -165,6 +218,8 @@ describe("large-text body parser integration", () => {
     "/api/files",
     "/api/files-extra/save",
     "/api/chat/sessions/session-1/messages-extra",
+    "/api/tasks/task-1/steer-extra",
+    "/api/tasks/task-1/spec/rebuild",
   ])("keeps %s on the default 100-KiB parser", async (path) => {
     const server = await app();
     const response = await request(server.app, "POST", path, largeJson(), { "content-type": "application/json" });

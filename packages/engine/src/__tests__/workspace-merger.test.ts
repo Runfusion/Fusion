@@ -679,7 +679,7 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
    * REVERTED it (ahead of main, net-zero, tip NOT an ancestor) has zero landed sub-repos and no
    * already-landed proof. It must be blocked back to todo with error — NOT laundered into `done`.
    */
-  it("FN-8141: blocks a commit-expected all-empty (reverted) workspace to todo, not done", async () => {
+  it("FN-8141: returns a commit-expected all-empty workspace to WIP, not done", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     addRepoRevertedBranch(fx, "repo-a");
     addRepoRevertedBranch(fx, "repo-b");
@@ -704,8 +704,8 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(result.finalizeBlockedReason).toEqual(expect.stringContaining("operator review required"));
     for (const r of result.repos) expect(r.status).toBe("empty");
 
-    // Moved back to todo with error set; never moved done and never emitted task:merged.
-    expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "todo" }]);
+    // Review-owned recovery returns directly to WIP; it never visits Planning or emits task:merged.
+    expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "in-progress" }]);
     expect(store.updateTask).toHaveBeenCalledWith(
       TASK_ID,
       expect.objectContaining({ error: expect.stringContaining("operator review required") }),

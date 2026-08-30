@@ -368,7 +368,7 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
     const store = createMockStore();
     const agentStore = { getAgent: vi.fn().mockResolvedValue(null), createAgent: vi.fn() };
     const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
-    const output = '{"verdict":"APPROVE","notes":""}';
+    const output = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}';
     mockedCreateFnAgent.mockImplementation(async () => {
       const listeners: Array<(event: any) => void> = [];
       return {

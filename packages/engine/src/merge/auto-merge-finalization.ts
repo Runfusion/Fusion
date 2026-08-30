@@ -11,6 +11,7 @@ import {
   type TaskStore,
 } from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
+import { cleanupLandedTaskWorktree } from "./post-landing-worktree-cleanup.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
 
 /*
@@ -229,6 +230,7 @@ export async function finalizeProvenAutoMergeTask({
   store,
   taskId,
   result,
+  rootDir,
   audit,
   auditAgentId,
   auditPhase,
@@ -246,6 +248,27 @@ export async function finalizeProvenAutoMergeTask({
   const { completeColumn, mergeColumn, isCompleteColumn } = await resolveFinalizationColumns(store, taskId);
 
   const validationMergeDetails = buildFinalizationMergeDetails(latest, result);
+  const cleanupLandedWorktree = async (task: Task, mergeDetails: NonNullable<Task["mergeDetails"]>): Promise<void> => {
+    if (!rootDir) return;
+    await cleanupLandedTaskWorktree({
+      store,
+      taskId,
+      worktreePath: task.worktree,
+      rootDir,
+      landedSha: mergeDetails.commitSha ?? result?.commitSha,
+      source,
+      audit,
+      log: async (message) => {
+        if (fence) {
+          await fence.write("log", () => store.logEntry(taskId, message).catch(() => undefined));
+        } else {
+          await store.logEntry(taskId, message).catch(() => undefined);
+        }
+        await log?.(message);
+      },
+      fence,
+    });
+  };
   /*
    * FNXC:WorkflowMerge 2026-06-29-10:35:
    * Workflow-owned completion requires current merge proof, not just a stale `mergeConfirmed` flag. A task cannot reach or remain accepted as `done` when workflow steps are still pending or a no-op claims landed files. Branch-only residue is ignored because squash landing validates the task patch, not branch-history cleanliness.
@@ -265,8 +288,16 @@ export async function finalizeProvenAutoMergeTask({
       await log?.(`Auto-merge finalization blocked for ${taskId}: ${proofVerdict.reason}`);
       return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: proofVerdict.reason };
     }
-    if (result) result.task = latest;
-    return { outcome: "already-done", task: latest, previousColumn: latest.column };
+    /*
+    FNXC:WorkflowMergeFinalization 2026-08-29-01:06:
+    This is convergence, not the ordering gate: a task that reached complete before FN-251 still
+    receives proof-gated cleanup when the finalizer sees its durable landing again. No root directory
+    means there is no trustworthy cleanup boundary, so preserve the historical no-op finalization.
+    */
+    await cleanupLandedWorktree(latest, validationMergeDetails);
+    const converged = await store.getTask(taskId).catch(() => latest);
+    if (result) result.task = converged;
+    return { outcome: "already-done", task: converged, previousColumn: latest.column };
   }
 
   const mergeDetails = validationMergeDetails;
@@ -356,11 +387,25 @@ export async function finalizeProvenAutoMergeTask({
     );
   }
 
+  /*
+  FNXC:WorkflowMergeFinalization 2026-08-29-01:06:
+  For a proven single-repository landing, resolve cleanup before the complete-column move. Preserved
+  deliverable, unverifiable, and active-session outcomes are logged but never reclassify a durable
+  landing as a merge failure, because blocking this transition would permanently wedge the card.
+  */
+  await cleanupLandedWorktree(latest, mergeDetails);
+
   try {
     fence?.assertOwned("finalization");
+    /*
+    FNXC:AutoMergeMoveAttribution 2026-08-29-07:37:
+    Proven merge finalization advances review to the complete lane. Use a dedicated neutral
+    provenance instead of workflow-graph, workflow-remediation, or plan-approval: those literals
+    carry in-review-entry and reopen semantics. The value is also forwarded to plugin move policies.
+    */
     const moved = await store.moveTask(taskId, completeColumn, shouldRecoveryRehome
-      ? { moveSource: "engine", recoveryRehome: true, preserveProgress: true }
-      : { moveSource: "engine", preserveProgress: true });
+      ? { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", recoveryRehome: true, preserveProgress: true }
+      : { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", preserveProgress: true });
     if (result) result.task = moved;
     if (shouldRecoveryRehome) {
       await recordFinalizationAudit({

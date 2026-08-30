@@ -47,7 +47,7 @@ const quarantinedCliTests: string[] = [
   recorded pre-existing CLI test failures observed during verify:workspace. Root causes varied:
   - extension-fn-secret-get.test.ts: store.getAsyncLayer mock drift (async-satellite dual-path).
   - chat.test.ts: MessageStore.getInbox returns non-array under Node 26 node:sqlite (SQLite-path).
-  - skill-sync.test.ts: undocumented engine tools (fn_acquire_repo_worktree, fn_artifact_*).
+  - skill-sync.test.ts: undocumented engine tools (legacy workspace acquisition and fn_artifact_*).
   - version.test.ts: changeset script assertion drift (project now uses scripts/release.mjs).
   - dashboard.test.ts: mesh lifecycle mock assertion drift.
   - bundled-plugin-freshness.test.ts: bundled plugin build freshness drift.

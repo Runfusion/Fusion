@@ -1,6 +1,7 @@
 import type { TaskStore } from "../store.js";
 import type { Task, TaskStep } from "../types.js";
 import { hasOpenEquivalentRemediationStep, remediationWaveCount } from "../tasks/remediation-steps.js";
+import { planRemediationPlacement } from "../tasks/remediation-step-placement.js";
 
 export interface AppendRemediationStepsOptions {
   wave?: number;
@@ -11,6 +12,8 @@ export interface AppendRemediationStepsResult {
   appended: TaskStep[];
   appendedCount: number;
   wave: number;
+  insertionIndex?: number;
+  verificationStepIndex?: number;
 }
 
 /**
@@ -26,6 +29,8 @@ export async function appendRemediationStepsImpl(
 ): Promise<AppendRemediationStepsResult> {
   let appended: TaskStep[] = [];
   let wave = 0;
+  let insertionIndex: number | undefined;
+  let verificationStepIndex: number | undefined;
   const task = await store.updateTaskAtomic(taskId, (current) => {
     const existing = current.steps ?? [];
     wave = options.wave ?? remediationWaveCount(existing) + 1;
@@ -39,7 +44,17 @@ export async function appendRemediationStepsImpl(
         ...(candidate.dependsOn ? { dependsOn: [...candidate.dependsOn] } : {}),
       }));
     if (appended.length === 0) return null;
-    return { steps: [...existing, ...appended] };
+    const placement = planRemediationPlacement(existing, appended);
+    insertionIndex = placement.insertionIndex;
+    verificationStepIndex = placement.verificationStepIndex;
+    return { steps: placement.steps, currentStep: placement.insertionIndex };
   });
-  return { task, appended, appendedCount: appended.length, wave };
+  return {
+    task,
+    appended,
+    appendedCount: appended.length,
+    wave,
+    ...(insertionIndex === undefined ? {} : { insertionIndex }),
+    ...(verificationStepIndex === undefined ? {} : { verificationStepIndex }),
+  };
 }

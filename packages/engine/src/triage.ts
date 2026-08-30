@@ -21,6 +21,7 @@ import {
   buildTriageMemoryInstructions,
   isUnplannedSeedPrompt,
   isTaskAwaitingPlanning,
+  isFastExecutionMode,
   getTaskDuplicateLineage,
   resolveExplicitDuplicateMarker,
   resolveAgentPrompt,
@@ -64,6 +65,8 @@ import {
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
   loadWorkspaceConfig,
+  isLegacyWorkspaceWorktreeLayout,
+  resolveWorkspaceTaskWorktreeDir,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -173,6 +176,12 @@ import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spec-validation/task-document-references.js";
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import {
+  extractCommandBinaries,
+  formatEnvironmentCapabilitiesSection,
+  probeEnvironmentCapabilities,
+  type EnvironmentCapabilityProbe,
+} from "./environment/environment-capabilities.js";
+import {
   PRIORITY_SPECIFY,
   computeTopLevelConcurrencyClaimedFromStore,
   formatAdmissionCapacityQueuedReason,
@@ -190,7 +199,7 @@ import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
 import { acquireActiveSessionPath, activeSessionRegistry } from "./agents/active-session-registry.js";
-import { PlanningResetFence } from "./planning-reset-fence.js";
+import { isPlanningResetHoldClearingUpdate, PlanningResetFence } from "./planning-reset-fence.js";
 import { registerPlanningLivenessProbe } from "./agents/planning-liveness.js";
 import {
   resolveAgentInstructions,
@@ -217,6 +226,70 @@ import type { StuckTaskDetector } from "./healing/stuck-task-detector.js";
 */
 const STALE_PLANNING_STATUS_GRACE_MS = 20 * 60_000;
 
+export interface PlanningDependencyInstructionTarget {
+  repository: string;
+  readiness: WorktreeDependencyReadiness;
+}
+
+/** Render only the exceptional dependency work that the planner must resolve before Plan Review. */
+export function buildPlanningDependencyInstallationInstruction(
+  targets: readonly PlanningDependencyInstructionTarget[],
+): string {
+  const blocking = targets.filter((target) =>
+    target.readiness.readiness === "unresolved" || target.readiness.readiness === "unrecognized",
+  );
+  if (blocking.length === 0) return "";
+  const lines = [
+    "## Dependency installation",
+    "",
+    "This planning worktree is the same task-pinned directory execution will use. Resolve every item below through `fn_install_worktree_dependencies`; planner prose or a shell claim is not a durable resolution.",
+  ];
+  for (const target of blocking) {
+    const { readiness } = target;
+    if (readiness.readiness === "unresolved") {
+      for (const row of readiness.unresolvedRepos) {
+        const entry = readiness.entries.find((candidate) => candidate.ecosystem === row.ecosystem);
+        lines.push(`- \`${target.repository}\`: ${row.manifests.join(", ") || row.ecosystem}; command \`${row.command}\`; ${entry?.reason ?? entry?.outcome ?? "not yet installed"}.`);
+      }
+    } else {
+      lines.push(`- \`${target.repository}\`: Fusion has no built-in command for ${readiness.evidence.join(", ")}. Determine the package manager and run its install command through \`fn_install_worktree_dependencies\`, or use its \`none\` action with a reason if no install step is genuinely required.`);
+    }
+  }
+  lines.push("", "Plan Review will return a REVISE beginning `Dependencies are not installed.` until these records are resolved.");
+  return lines.join("\n");
+}
+
+async function resolvePlanningDependencyInstruction(input: {
+  task: Task;
+  rootDir: string;
+  planningCwd: string;
+  settings: Settings;
+}): Promise<string> {
+  const workspace = await loadWorkspaceConfig(input.rootDir).catch(() => null);
+  const targets: PlanningDependencyInstructionTarget[] = [];
+  const inspect = (repository: string, worktreePath: string) => {
+    if (!existsSync(worktreePath)) return;
+    const plan = detectWorktreeDependencyPlan(worktreePath, input.settings);
+    const evidence = detectUnrecognizedDependencyEvidence(worktreePath);
+    targets.push({ repository, readiness: resolveWorktreeDependencyReadiness(worktreePath, plan, evidence) });
+  };
+  try {
+    if (workspace?.repos.length) {
+      for (const repository of workspace.repos) {
+        const path = input.task.workspaceWorktrees?.[repository]?.worktreePath;
+        if (path) inspect(repository, path);
+      }
+    } else if (input.planningCwd !== input.rootDir) {
+      inspect("task worktree", input.planningCwd);
+    }
+  } catch {
+    // A missing/unreadable probe is intentionally not dependency evidence. Plan Review will retain
+    // its not-determined fallthrough rather than manufacture an unresolved worktree.
+    return "";
+  }
+  return buildPlanningDependencyInstallationInstruction(targets);
+}
+
 
 import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -237,6 +310,7 @@ import {
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskPromptWriteTool,
+  createInstallWorktreeDependenciesTool,
   createWorkflowListTool,
   createWorkflowSelectTool,
   resolveTerminalColumnsForTasks,
@@ -246,6 +320,14 @@ import {
   isResearchToolSurfaceEnabled,
 } from "./execution/tool-availability.js";
 import { runGhostBugPreflight } from "./triage-domain/triage-preflight.js";
+import { runConfiguredCommand } from "./executor/configured-command.js";
+import { resolveGraphNodeSessionBoundary } from "./executor/run-graph-custom-node.js";
+import {
+  detectUnrecognizedDependencyEvidence,
+  detectWorktreeDependencyPlan,
+  resolveWorktreeDependencyReadiness,
+  type WorktreeDependencyReadiness,
+} from "./worktree/worktree-dependency-install.js";
 import { archiveAsGhostBug } from "./self-healing.js";
 import {
   TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
@@ -293,6 +375,8 @@ export interface TriageProcessorOptions {
   */
   onSpecifyComplete?: (task: Task, report: PlanningHandoffReport) => void;
   onSpecifyError?: (task: Task, error: Error) => void;
+  /** Advisory execution-lane nudge after an admitted planning promise returns its slot. */
+  onPlanningSlotReleased?: () => void;
   onAgentText?: (taskId: string, delta: string) => void;
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
@@ -444,6 +528,8 @@ export class TriageProcessor {
   private advancedRecoveryReservations = new Set<string>();
   /** Prevent a selected planner from reappearing before specifyTask claims it. */
   private readonly coordinatorAdmittedTaskIds = new Set<string>();
+  /** One visible planning-bypass record per Fast card prevents discovery-poll log spam. */
+  private readonly fastLanePlanningSkipLogged = new Set<string>();
   /** Durable planning provider keeps this lane visible to execute/merge polls. */
   private unregisterAdmissionProvider: (() => void) | null = null;
   /** Timestamps when tasks entered the `processing` set, for staleness detection. */
@@ -700,7 +786,7 @@ export class TriageProcessor {
           reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
             this.coordinatorAdmittedTaskIds.add(task.id);
-            void this.specifyTask(task);
+            this.startAdmittedPlanning(task);
           },
         }));
       },
@@ -817,8 +903,8 @@ export class TriageProcessor {
     */
     this.taskColumnWakeHandler = (task: Task, meta?: { lanes?: TaskMoveLanes }) => {
       if (!task?.id) return;
-      // Reset publication emits this durable state after its held lock commits, so a fresh planner is not delayed by the conservative reset TTL.
-      if (task.status === "needs-replan") this.resetFence.clearHold(task.id);
+      // Reset or graph-replan publication emits a durable clearing shape after its held lock commits, so a fresh planner is not delayed by the conservative reset TTL.
+      if (isPlanningResetHoldClearingUpdate(task)) this.resetFence.clearHold(task.id);
       const isPlannerWakeColumn = meta?.lanes
         ? task.column === meta.lanes.hold || task.column === meta.lanes.intake
         : LEGACY_PLANNER_WAKE_COLUMNS.has(task.column);
@@ -1399,6 +1485,10 @@ export class TriageProcessor {
    * Do not recover `needs-replan` / `plan-review-unavailable`.
    */
   async recoverApprovedTask(task: Task): Promise<boolean> {
+    if (isFastExecutionMode(task)) {
+      await this.recordFastLanePlanningSkip(task);
+      return false;
+    }
     /*
     FNXC:PlanningDependencyReseed 2026-08-04-00:30:
     A dependency reseed from older writers could clear status after the planner
@@ -1520,8 +1610,10 @@ export class TriageProcessor {
     }
 
     /*
-    FNXC:PlanApproval 2026-07-01-08:12:
-    Recovery finalizes an already-written PROMPT.md and must use the same merged project/workflow settings as fresh triage. The project planApprovalMode value stays project-scoped while workflow requirePlanApproval may overlay, so auto-approve-all still wins for ordinary plan approval.
+    FNXC:PlanApproval 2026-08-28-17:16:
+    Recovery finalizes an already-written PROMPT.md with the same merged project/workflow settings
+    as fresh triage. FN-234 removed task-level escalation, so only project planApprovalMode and the
+    workflow requirePlanApproval value decide whether this recovery needs manual approval.
     */
     const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
     const approvalRequired = resolvePlanApprovalRequired(settings);
@@ -1913,6 +2005,9 @@ export class TriageProcessor {
     };
 
     const candidates = allTasks.filter(couldBeCandidate);
+    for (const candidate of candidates) {
+      if (isFastExecutionMode(candidate)) void this.recordFastLanePlanningSkip(candidate);
+    }
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-18:40 (U11 — STALL 3):
     Resolves the IR ONCE per candidate and derives both the lifecycle roles and the
@@ -2039,7 +2134,8 @@ export class TriageProcessor {
          `paused`, so a row carrying `userPaused` without `paused` slipped through —
          invisible before this change (an undeclared-column card was admitted by
          nothing at all) and reachable the moment the rescue widens admission. */
-      (t) => ((isAtIntakeColumn(t) && !isAtHoldColumn(t)) || isAtUndeclaredColumn(t))
+      (t) => !isFastExecutionMode(t)
+        && ((isAtIntakeColumn(t) && !isAtHoldColumn(t)) || isAtUndeclaredColumn(t))
         && t.userPaused !== true
         && isTaskStillInPlanningStage(t)
         && !this.advancedRecoveryReservations.has(t.id)
@@ -2048,7 +2144,8 @@ export class TriageProcessor {
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
     );
     const eligibleTodoTasksRaw = candidates.filter(
-      (t) => isAtHoldColumn(t) && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+      (t) => !isFastExecutionMode(t)
+        && isAtHoldColumn(t) && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && t.status !== "planning"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
@@ -2138,6 +2235,46 @@ export class TriageProcessor {
     }, TriageProcessor.NUDGE_DEBOUNCE_MS);
     this.nudgeTimer.unref?.();
     return true;
+  }
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-08-28-21:44:
+  Every admitted planning promise, including work selected through the durable coordinator provider, returns shared project capacity when it settles. Attach one common completion chain at both admission surfaces so success, rejection, and every pre-session early return immediately pull queued planning work and nudge execution rather than waiting for a timer.
+  */
+  /*
+  FNXC:FastLane 2026-08-29-02:55:
+  Fast tasks intentionally carry only the operator's bootstrap request, so planning discovery and
+  direct planner admission must record one durable explanation instead of opening a specification
+  session or producing a log entry on every poll.
+  */
+  private async recordFastLanePlanningSkip(task: Pick<Task, "id">): Promise<void> {
+    if (this.fastLanePlanningSkipLogged.has(task.id)) return;
+    this.fastLanePlanningSkipLogged.add(task.id);
+    const message = "Fast mode intentionally skips specification planning";
+    planLog.log(`${task.id}: ${message}`);
+    await this.store.logEntry(task.id, message).catch(() => undefined);
+  }
+
+  private startAdmittedPlanning(task: Task): void {
+    void this.specifyTask(task)
+      .catch((error: unknown) => {
+        planLog.error(`${task.id}: admitted planning promise rejected:`, error);
+      })
+      .finally(() => this.notifyPlanningSlotReleased());
+  }
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-08-28-21:24:
+  A settled planning promise returns shared project capacity. Pull the next queued planning card immediately and nudge execution at that event rather than waiting for a timer; this is advisory only, so the next poll still applies pause, seed-prompt, dependency, worktree, and admission-coordinator gates.
+  */
+  private notifyPlanningSlotReleased(): void {
+    if (!this.running) return;
+    this.requestImmediatePoll();
+    try {
+      this.options.onPlanningSlotReleased?.();
+    } catch (error) {
+      planLog.warn(`Planning-slot release listener failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** Coalescing window for requestImmediatePoll, so a multi-card drag causes one poll, not N. */
@@ -2457,7 +2594,7 @@ export class TriageProcessor {
               start: async () => {
                 admittedThisPoll.add(task.id);
                 this.coordinatorAdmittedTaskIds.add(task.id);
-                void this.specifyTask(task);
+                this.startAdmittedPlanning(task);
               },
             })),
         });
@@ -2622,6 +2759,12 @@ export class TriageProcessor {
   }
 
   async specifyTask(task: Task): Promise<void> {
+    if (isFastExecutionMode(task)) {
+      await this.recordFastLanePlanningSkip(task);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
+      this.coordinatorAdmittedTaskIds.delete(task.id);
+      return;
+    }
     if (this.resetFence.isResetHoldActive(task.id)) {
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
@@ -2706,10 +2849,7 @@ export class TriageProcessor {
       still carrying this status (until U9 adoption) simply re-plans through the
       normal path below; the graph re-runs Plan Review under a CAS lease.
       */
-      const isFast = task.executionMode === "fast";
-      // FN-6236: this is the only legacy executionMode="fast" bridge. Downstream
-      // triage policy reads resolved workflow flags instead of the raw string.
-      const leanPlanning = settings.leanPlanning === true || isFast;
+      const leanPlanning = settings.leanPlanning === true;
 
       const agentWork = async () => {
         // Set status only after the semaphore slot has been acquired, so
@@ -2931,6 +3071,12 @@ export class TriageProcessor {
             triageRunContext,
             () => !this.resetFence.isStale(task.id, planningGeneration),
           ),
+          createInstallWorktreeDependenciesTool(this.store, task.id, {
+            rootDir: this.rootDir,
+            runConfiguredCommand,
+            getSettings: async () => this.store.getSettings(),
+            runContext: triageRunContext,
+          }),
           createWorkflowListTool(this.store),
           createWorkflowSelectTool(this.store, task.id),
           ...(isResearchToolSurfaceEnabled(settings)
@@ -3069,30 +3215,6 @@ export class TriageProcessor {
         // this a no-op there while still guaranteeing no dangling token leaks.
         const renderedBasePrompt = renderTriagePolicyPlaceholders(resolvedBasePrompt, triagePolicySettings);
         const duplicatePolicyInstruction = buildPlanningDuplicatePolicyInstruction();
-        /*
-        FNXC:RepositoryScope 2026-08-21-00:12:
-        Workspace plan persistence rejects a missing Repository Scope, so every planner that sees
-        repository intent must be explicitly instructed to emit the confirmed heading rather than
-        repeatedly producing a plan the authoritative writer cannot publish.
-        */
-        const triageLayers = buildPromptLayers({
-          basePrompt: renderedBasePrompt,
-          goalContext: triageGoalResolution.goalContext,
-          agentInstructions: [
-            triageIdentitySection,
-            duplicatePolicyInstruction,
-            task.repositoryScope
-              ? `## Workspace repository intent\nThis is a multi-repository workspace task. Your final PROMPT.md MUST include a non-empty \`## Repository Scope\` heading with a markdown bullet list of configured repository names. Confirm only repositories the task concerns; do not infer intent from acquired checkouts. File Scope entries must be qualified as \`repository/path\` when more than one repository is in scope.`
-              : "",
-            triageInstructions,
-            isResearchToolSurfaceEnabled(settings)
-              ? getResearchGuidanceForSurface("triage")
-              : "",
-          ].filter((section) => section.trim()).join("\n\n"),
-          pluginContributions: triagePluginContributions,
-        });
-
-        const triageSystemPromptFinal = collapsePromptLayers(triageLayers);
 
         // Build skill selection context (assigned agent skills take precedence over role fallback)
         const skillContext = await buildSessionSkillContext({
@@ -3163,14 +3285,8 @@ export class TriageProcessor {
         here is the one Plan Review and the implementation session then reuse.
         */
         let planningCwd = (await this.options.acquirePlanningWorktree?.(task.id).catch(() => null)) || this.rootDir;
-        const workspacePlanningConfig = planningCwd === this.rootDir
-          ? await loadWorkspaceConfig(this.rootDir).catch(() => null)
-          : null;
-        const planningSessionBoundary = workspacePlanningConfig?.repos.length
-          ? { kind: "read-only-root" as const, writableRoot: null, projectRoot: this.rootDir, readOnlyRoots: [this.rootDir] }
-          : planningCwd === this.rootDir
-            ? undefined
-            : { kind: "task-worktree" as const, writableRoot: planningCwd, projectRoot: this.rootDir };
+        const workspacePlanningConfig = await loadWorkspaceConfig(this.rootDir).catch(() => null);
+        let planningSessionBoundary: ReturnType<typeof resolveGraphNodeSessionBoundary> | { kind: "task-worktree"; writableRoot: string; projectRoot: string } | undefined;
         if (planningCwd !== this.rootDir) {
           /*
           FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
@@ -3203,6 +3319,9 @@ export class TriageProcessor {
             holderLiveProbe: (holderTaskId) => this.processing.has(holderTaskId) || this.hasLivePlanningWork(holderTaskId),
           });
           if (acquired.action === "contended") {
+            if (workspacePlanningConfig?.repos.length) {
+              throw new Error(`Workspace planning task directory is held by live task ${acquired.holderTaskId}; refusing shared-checkout fallback`);
+            }
             planLog.warn(
               `${task.id}: planning worktree ${planningCwd} is held by live task ${acquired.holderTaskId} (${acquired.holderKind}) — planning in the shared checkout instead`,
             );
@@ -3217,6 +3336,46 @@ export class TriageProcessor {
           }
           await this.store.logEntry(task.id, `Planning session running in task worktree ${planningCwd}`).catch(() => undefined);
         }
+        if (workspacePlanningConfig?.repos.length) {
+          if (planningCwd === this.rootDir) {
+            throw new Error("Workspace planning requires a private task directory, not the workspace root");
+          }
+          const planningTask = await this.store.getTask(task.id);
+          const taskDir = resolveWorkspaceTaskWorktreeDir(this.rootDir, settings, task.id);
+          planningSessionBoundary = resolveGraphNodeSessionBoundary({
+            isWorkspace: true,
+            writeCapable: true,
+            legacyWorkspaceLayout: isLegacyWorkspaceWorktreeLayout(planningTask, taskDir),
+            rootDir: this.rootDir,
+            worktreePath: planningCwd,
+            confirmedRepositories: workspacePlanningConfig.repos,
+          });
+        } else if (planningCwd !== this.rootDir) {
+          planningSessionBoundary = { kind: "task-worktree", writableRoot: planningCwd, projectRoot: this.rootDir };
+        }
+
+        const planningDependencyInstruction = await resolvePlanningDependencyInstruction({
+          task: await this.store.getTask(task.id),
+          rootDir: this.rootDir,
+          planningCwd,
+          settings,
+        });
+        const triageLayers = buildPromptLayers({
+          basePrompt: renderedBasePrompt,
+          goalContext: triageGoalResolution.goalContext,
+          agentInstructions: [
+            triageIdentitySection,
+            duplicatePolicyInstruction,
+            planningDependencyInstruction,
+            triageInstructions,
+            isResearchToolSurfaceEnabled(settings)
+              ? getResearchGuidanceForSurface("triage")
+              : "",
+          ].filter((section) => section.trim()).join("\n\n"),
+          pluginContributions: triagePluginContributions,
+        });
+        const triageSystemPromptFinal = collapsePromptLayers(triageLayers);
+
         /*
         FNXC:TriagePlanningRetry 2026-08-03-00:02:
         Plan Review may only receive evidence from a clean planner attempt. Capture the root
@@ -3442,6 +3601,12 @@ export class TriageProcessor {
           const [planDocument, originalDescriptionDocument] = typeof getTaskDocument === "function"
             ? await Promise.all([getTaskDocument.call(this.store, task.id, "plan"), getTaskDocument.call(this.store, task.id, "original-description")])
             : [null, null];
+          const environmentCapabilities = await probeEnvironmentCapabilities({
+            extraCommands: [
+              ...extractCommandBinaries(settings?.testCommand),
+              ...extractCommandBinaries(settings?.buildCommand),
+            ],
+          }).catch((): EnvironmentCapabilityProbe => ({ capabilities: [], degraded: true }));
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
@@ -3453,6 +3618,7 @@ export class TriageProcessor {
               plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
               originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
               planReviewFeedbackHistory,
+              environmentCapabilities,
             },
             assignedAgent,
           );
@@ -5262,8 +5428,8 @@ export class TriageProcessor {
     FNXC:PlanApproval 2026-06-26-00:00:
     Project planApprovalMode has precedence over the workflow-resolved requirePlanApproval value so operators can force auto-approval or manual approval for every task in this project.
 
-    FNXC:PlanApproval 2026-07-01-08:12:
-    This is the ordinary manual plan-approval gate only, after release authorization and Workflow Plan Review have already made their independent decisions. Always call resolvePlanApprovalRequired with the merged settings object so project auto-approve-all can override workflow requirePlanApproval without weakening non-plan safety gates.
+    FNXC:PlanApproval 2026-08-28-17:16:
+    This is the ordinary manual plan-approval gate only, after release authorization and Workflow Plan Review have already made their independent decisions. FN-234 removed task-level escalation; always resolve from the merged settings object so project auto-approve-all can override workflow requirePlanApproval without weakening non-plan safety gates.
 
     FNXC:PlanApproval 2026-07-04-12:15:
     FN-7526 re-verified this invariant end to end: every finalizeApprovedTask caller (specifyTask, recoverApprovedTask, retryUnavailablePlanReview, tryFinalizeExplicitDuplicateMarker) already derives `settings` from mergeEffectiveSettings so planApprovalMode (never a MOVED_SETTINGS_KEYS/workflow-owned key) survives any stored workflow requirePlanApproval overlay untouched. No production defect was found; regression tests were added across every surface to lock the invariant so a future bare-settings call site (e.g. `{ requirePlanApproval }` without planApprovalMode) is caught immediately instead of silently reintroducing the reported parking behavior.
@@ -5656,7 +5822,12 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
-  planningContext?: { plan?: string; originalDescription?: string; planReviewFeedbackHistory?: string[] },
+  planningContext?: {
+    plan?: string;
+    originalDescription?: string;
+    planReviewFeedbackHistory?: string[];
+    environmentCapabilities?: EnvironmentCapabilityProbe;
+  },
   memoryAgent?: Agent | null,
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
@@ -5678,6 +5849,10 @@ export function buildSpecificationPrompt(
     lines.push("Use these exact commands in testing/verification steps.");
     commandsSection = "\n\n" + lines.join("\n");
   }
+
+  const environmentCapabilitiesSection = planningContext?.environmentCapabilities
+    ? formatEnvironmentCapabilitiesSection(planningContext.environmentCapabilities)
+    : "";
 
   const completionDocumentationMode = settings?.completionDocumentationMode ?? "off";
   let completionDocumentationSection = "";
@@ -5843,5 +6018,5 @@ ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join("
 ## Instructions
 ${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Produce a fresh complete PROMPT.md specification following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Produce a complete PROMPT.md specification following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
-Call \`fn_task_prompt_write\` after the complete final specification is ready. If it returns an error, correct the problem and retry; do not finish planning until the tool confirms the authoritative PROMPT.md read-back. Do not use the generic filesystem write tool for PROMPT.md.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
+Call \`fn_task_prompt_write\` after the complete final specification is ready. If it returns an error, correct the problem and retry; do not finish planning until the tool confirms the authoritative PROMPT.md read-back. Do not use the generic filesystem write tool for PROMPT.md.${commandsSection}${environmentCapabilitiesSection ? `\n\n${environmentCapabilitiesSection}` : ""}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

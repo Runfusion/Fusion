@@ -99,6 +99,7 @@ export function createExecutorColumnBoundaryHooks(
       try {
         await store.moveTask(task.id, toColumn, {
           moveSource: "engine",
+          lifecycleReason: "workflow-graph-node-column",
           workflowMoveSource: "workflow-graph",
           bypassGuards: true,
           preserveProgress: true,

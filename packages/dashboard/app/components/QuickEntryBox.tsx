@@ -24,6 +24,7 @@ import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils
 import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartInitialColumn, resolveQuickAddStartWorkflowTarget, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedMenuPosition";
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
+import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
 import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 
 const STORAGE_KEY = "kb-quick-entry-text";
@@ -270,6 +271,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [enabledOptionalStepIds, setEnabledOptionalStepIds] = useState<string[]>([]);
   const [isFastMode, setIsFastMode] = useState(false);
   const isFastModeRef = useRef(isFastMode);
+  const preFastOptionalStepIdsRef = useRef<string[] | null>(null);
+  const defaultOnOptionalStepIds = useMemo(
+    () => optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId),
+    [optionalSteps],
+  );
   useEffect(() => {
     isFastModeRef.current = isFastMode;
   }, [isFastMode]);
@@ -420,6 +426,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     let cancelled = false;
     setOptionalSteps([]);
     setEnabledOptionalStepIds([]);
+    preFastOptionalStepIdsRef.current = null;
 
     if (!effectiveOptionalWorkflowId) {
       return () => {
@@ -431,6 +438,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       .then((steps) => {
         if (cancelled) return;
         setOptionalSteps(steps);
+        preFastOptionalStepIdsRef.current = null;
         /*
         FNXC:FastOptionalSteps 2026-06-30-10:24:
         Optional-step metadata can resolve after the operator has already selected Fast. Seed `[]` in that race so async defaultOn loading cannot undo Fast's speed-first opt-out; later dropdown clicks still add explicit selections normally.
@@ -441,6 +449,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         if (cancelled) return;
         setOptionalSteps([]);
         setEnabledOptionalStepIds([]);
+        preFastOptionalStepIdsRef.current = null;
       });
 
     return () => {
@@ -462,14 +471,28 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   FNXC:FastOptionalSteps 2026-06-30-10:41:
   A Fast create must submit explicit `[]` even if optional-step metadata has not loaded yet; otherwise the store/engine see `enabledWorkflowSteps` as omitted and re-seed default-on gates.
+
+  FNXC:FastOptionalSteps 2026-08-29-12:08:
+  FN-260 makes Fast reversible: leaving it restores the pre-Fast selection plus any steps explicitly enabled while Fast was active. Invalidate that baseline whenever non-user metadata seeding or reset replaces the enabled set, so stale workflow selections fall back to the current defaultOn seed.
   */
+
   const toggleFastMode = useCallback(() => {
-    setIsFastMode((prev) => {
-      const next = !prev;
-      if (next) setEnabledOptionalStepIds([]);
-      return next;
-    });
-  }, []);
+    const next = !isFastMode;
+    if (next) {
+      preFastOptionalStepIdsRef.current = enabledOptionalStepIds;
+      setEnabledOptionalStepIds([]);
+    } else {
+      setEnabledOptionalStepIds(
+        restoreOptionalStepsOnFastExit(
+          preFastOptionalStepIdsRef.current,
+          enabledOptionalStepIds,
+          defaultOnOptionalStepIds,
+        ),
+      );
+      preFastOptionalStepIdsRef.current = null;
+    }
+    setIsFastMode(next);
+  }, [defaultOnOptionalStepIds, enabledOptionalStepIds, isFastMode]);
 
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
@@ -718,7 +741,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setPlanningThinkingLevel("");
     setMergerThinkingLevel("");
     setSelectedPresetId(undefined);
-    setEnabledOptionalStepIds(optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId));
+    setEnabledOptionalStepIds(defaultOnOptionalStepIds);
+    preFastOptionalStepIdsRef.current = null;
     setIsFastMode(false);
     setGithubTrackingOverride(null);
     setSessionAdvisorOverride(null);
@@ -736,7 +760,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     if (typeof window !== "undefined") {
       removeScopedItem(STORAGE_KEY, projectId);
     }
-  }, [pendingAttachments, projectId, optionalSteps]);
+  }, [defaultOnOptionalStepIds, pendingAttachments, projectId]);
 
   const handleAttachmentFiles = useCallback((files: FileList | File[] | null | undefined) => {
     if (!files || files.length === 0) return;

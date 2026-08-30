@@ -108,6 +108,12 @@ function collectTaskActivityEvidence(taskId: string, runId: string, entries: Tas
     .slice(-EVIDENCE_LIMITS.taskActivity);
 }
 
+/*
+FNXC:EvalEvidence 2026-08-29-05:17:
+FN-253 makes tool detail default-persisted, and this evidence feeds an evaluator model. The existing
+500-character excerpt clamp applies after text-plus-detail construction, so text-first ordering keeps
+the identifying tool name when a large detail is truncated and the fixed 25-row cap stays comparable.
+*/
 function collectAgentLogEvidence(taskId: string, runId: string, entries: AgentLogEntry[]): TaskEvaluationEvidenceBundle["agentLogs"] {
   return entries
     .map((entry, index) => {

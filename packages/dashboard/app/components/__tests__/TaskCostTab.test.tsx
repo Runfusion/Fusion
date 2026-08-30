@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type { TaskDetail, TaskTokenUsage } from "@fusion/core";
+import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
+import {
+  makeTask,
+  noop,
+  noopDelete,
+  noopMerge,
+  noopOpenDetail,
+  setupTaskDetailModalHooks,
+} from "./TaskDetailModal.test-helpers";
+import { TaskDetailModal } from "../TaskDetailModal";
 import { TaskCostTab } from "../TaskCostTab";
+
+setupTaskDetailModalHooks();
 
 function usage(overrides: Partial<TaskTokenUsage> = {}): TaskTokenUsage {
   return {
@@ -51,5 +63,29 @@ describe("TaskCostTab", () => {
     expect(screen.getByTestId("task-cost-tab")).toBeInTheDocument();
     expect(screen.getByText("No model token usage has been recorded for this task yet.")).toBeInTheDocument();
     expect(screen.queryByTestId("task-cost-row")).toBeNull();
+  });
+
+  it("separates the adjacent Stats cards with tokenized spacing", () => {
+    const css = loadAllAppCssBaseOnly();
+    const costRule = css.match(/\.detail-section--cost\s*\{([^}]*)\}/);
+
+    expect(costRule).toBeTruthy();
+    expect(costRule?.[1]).toMatch(/margin-top:\s*var\(--space-[^)]+\);/);
+
+    render(
+      <TaskDetailModal
+        initialTab="stats"
+        task={makeTask({ tokenUsage: usage() })}
+        onClose={noop}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const statsPanel = screen.getByRole("region", { name: "Task execution statistics" });
+    const costSection = screen.getByTestId("task-cost-tab").closest(".detail-section--cost");
+    expect(statsPanel.nextElementSibling).toBe(costSection);
   });
 });

@@ -10,7 +10,7 @@ Invariant under test across the node surfaces that previously degraded to the ro
  - Plan Review (no worktree yet) acquires and runs in a task worktree;
  - a custom read-only gate (no worktree yet) does the same — this is not Plan-Review-special;
  - an existing usable worktree is REUSED, not re-acquired;
- - the acquisition is skipped for workspace projects, whose sessions are browse-root-rooted by design.
+ - workspace Plan Review acquires every configured child checkout and runs from the task directory.
 */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TaskDetail } from "@fusion/core";
@@ -71,7 +71,7 @@ describe("every workflow node runs in the task worktree, never the shared checko
   ])("acquires a task worktree for %s when the task has none", async (_label, node) => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, ROOT);
-    mockedExistsSync.mockReturnValue(true);
+    mockedExistsSync.mockReturnValue(false);
 
     const captured: { worktreePath?: string } = {};
     vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
@@ -108,13 +108,17 @@ describe("every workflow node runs in the task worktree, never the shared checko
     expect(acquireSpy).not.toHaveBeenCalled();
   });
 
-  it("uses a declared read-only workspace root for workspace Plan Review", async () => {
+  it("uses a task directory and workspace boundary for workspace Plan Review", async () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, ROOT);
     (executor as any).workspaceConfig = { repos: ["apps/web"] };
     mockedExistsSync.mockReturnValue(true);
 
-    const acquireSpy = vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree");
+    const acquiredPath = `${ROOT}/.fusion/worktrees/fn-1403/apps/web`;
+    const acquiredTask = makeTask({
+      workspaceWorktrees: { "apps/web": { worktreePath: acquiredPath, branch: "fusion/fn-1403-apps-web" } },
+    });
+    const acquireSpy = vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(acquiredTask);
     const captured: { worktreePath?: string; boundary?: unknown } = {};
     vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
       captured.worktreePath = args[2];
@@ -123,11 +127,11 @@ describe("every workflow node runs in the task worktree, never the shared checko
     });
 
     const live = makeTask();
-    store.getTask.mockResolvedValue(live as any);
+    store.getTask.mockResolvedValueOnce(live as any).mockResolvedValueOnce(live as any).mockResolvedValue(acquiredTask as any);
     await (executor as any).runGraphCustomNode(PLAN_REVIEW_NODE, live, {}, undefined);
 
-    expect(captured.worktreePath).toBe(ROOT);
-    expect(captured.boundary).toMatchObject({ kind: "read-only-root", writableRoot: null, projectRoot: ROOT });
-    expect(acquireSpy).not.toHaveBeenCalled();
+    expect(captured.worktreePath).toBe(`${ROOT}/.fusion/worktrees/fn-1403`);
+    expect(captured.boundary).toMatchObject({ kind: "workspace-task-dir", writableRoot: `${ROOT}/.fusion/worktrees/fn-1403`, projectRoot: ROOT });
+    expect(acquireSpy).toHaveBeenCalledTimes(1);
   });
 });

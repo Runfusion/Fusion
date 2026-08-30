@@ -1012,7 +1012,7 @@ Copy this checklist into a bug-fix or UI-affordance add/remove task's `## Surfac
 - [ ] For content-bound merge gates: singular diff fingerprints, workspace per-repository evidence, unavailable/empty descriptors, disabled review groups, renamed review lanes, and workflow-selection provenance (reader absent, no selection, and read failure)
 - [ ] For merge finalization: confirmed-merge reconciliation, non-checklist blockers, and no failed park after a landed merge
 - [ ] For execution/merge exclusion: live executor refusal with and without approval, reciprocal executor dispatch refusal during merge, in-flight review revocation, and final ref-advance recheck
-- [ ] For worktree cleanup: active-session, successor-session after abort, raw/canonical path spellings, and workspace sub-repository worktrees
+- [ ] For worktree cleanup: active-session, successor-session after abort, raw/canonical path spellings, workspace sub-repository worktrees, and proof-gated ignored-only versus deliverable/unverifiable checkout content
 - [ ] Long-running subprocess or verification-active surfaces when the invariant involves engine liveness, stuck detection, or command execution (`fn_run_verification`, configured commands, timeout/deadline behavior)
 - [ ] Desktop + mobile breakpoints / platforms that exercise the behavior
 - [ ] Empty / undefined / duplicate / populated data states

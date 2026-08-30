@@ -165,7 +165,6 @@ describe("workspace root routing store fake", () => {
 });
 
 const settings: Partial<Settings> = {
-  worktreeNaming: "task-id",
   commitMsgHookEnabled: true,
   taskPrefix: "FN",
   taskAttributionTrailerNames: ["Fusion-Task-Id"],
@@ -228,7 +227,7 @@ describeIfGit("FN-034 workspace root worktree routing", { timeout: 60_000 }, () 
     expect(result.task.worktree).toBeNull();
   });
 
-  it("rejects a stale review target instead of falling back to another repository", async () => {
+  it("acquires configured repositories even when legacy remediation metadata is stale", async () => {
     fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
     const task = makeTask("FN-107");
     task.repositoryScope = {
@@ -239,13 +238,16 @@ describeIfGit("FN-034 workspace root worktree routing", { timeout: 60_000 }, () 
     };
     const { store, current } = makeFakeStore(task);
 
-    await expect(acquireWorkspaceTaskWorktrees({
+    const result = await acquireWorkspaceTaskWorktrees({
       workspaceConfig: { repos: fixture.repos },
       workspaceRootDir: fixture.rootDir,
       task: current(),
       store,
       settings,
       registry: new ActiveSessionRegistry(),
-    })).rejects.toThrow("remediation target is stale");
+    });
+
+    expect(Object.keys(result.task.workspaceWorktrees ?? {}).sort()).toEqual(["repo-a", "repo-b"]);
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-107"));
   });
 });

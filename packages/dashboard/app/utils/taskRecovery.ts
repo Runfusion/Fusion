@@ -14,6 +14,11 @@ export function hasPendingAutomaticRecovery(task: Task, nowMs = Date.now()): boo
 /**
  * Determine whether a task needs a human-initiated retry.
  *
+ * FNXC:TaskRecoveryVocabulary 2026-08-28-00:38:
+ * FN-206 retains this exported predicate for callers/tests that classify legacy failure state, but
+ * removes its menu Retry gate, Actions-menu visibility disjunct, and Task Detail failure-alert gate.
+ * Retry now repeats any mutable live stage, including one awaiting automatic recovery.
+ *
  * FNXC:TaskRecoveryAffordance 2026-07-16-12:00:
  * A nonzero `recoveryRetryCount` and elapsed `nextRecoveryAt` do not themselves make a
  * task retryable: elapsed or absent schedules fall back to terminal-status rules. A

@@ -22,6 +22,13 @@ describe("resolvePlanApprovalRequired", () => {
     expect(resolvePlanApprovalRequired({ planApprovalMode: "require-all", requirePlanApproval })).toBe(true);
   });
 
+  it("accepts only settings and resolves each project policy from that single input", () => {
+    expect(resolvePlanApprovalRequired).toHaveLength(1);
+    expect(resolvePlanApprovalRequired({ planApprovalMode: "auto-approve-all", requirePlanApproval: false })).toBe(false);
+    expect(resolvePlanApprovalRequired({ planApprovalMode: "workflow", requirePlanApproval: true })).toBe(true);
+    expect(resolvePlanApprovalRequired({ planApprovalMode: "require-all" })).toBe(true);
+  });
+
   it("falls back to workflow behavior for unknown persisted modes", () => {
     expect(
       resolvePlanApprovalRequired({

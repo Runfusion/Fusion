@@ -125,7 +125,6 @@ import {
   resolveWorkflowIrForTask,
   resolvePreMergeGateForTask,
   resolveRequiredPreMergeStepIds,
-  resolveReboundTarget,
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
   resolveTaskLifecycleColumns,
@@ -153,7 +152,8 @@ const LEGACY_COMPLETE_LANES: readonly string[] = ["done"];
 
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
-import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath, RemovalReason, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
+import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath } from "./worktree/worktree-pool.js";
+import { RemovalReason, removeWorktree } from "./worktree/worktree-backend.js";
 import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
@@ -328,31 +328,40 @@ import { evaluateBranchGroupPromotion, resolveBranchGroupMergeRouting } from "./
 import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
 import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree/worktree-ref-sync.js";
 import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merge/merger-scope-auto-widen.js";
+import { moveTaskToContainedBackwardTarget } from "./execution/lifecycle-move.js";
 
 export { IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
 
 /*
 FNXC:WorkflowMergeLifecycle 2026-07-19-07:40 (U7 / R2/R7/KTD-10):
-Merge lifecycle moves derive their target column from the task's workflow IR, not
-literal enum ids: a recoverable merge-failure rebound targets the KTD-10 backlog
-column (hold → intake → first), a merge-lane failure parks in the merge-
-orchestration column, and completion moves to the complete-trait column.
-builtin:coding resolves these to todo / in-review / done so the default pipeline
-is byte-identical; a custom workflow (the benchmark) lands in its own backlog /
-Merging / Done columns. One IR resolution per merge op (not an enumeration loop);
-any resolution failure falls back to the legacy literal so a merge is never stranded.
+Merge-lane and completion moves resolve the workflow's own merge and complete columns.
+
+FNXC:LifecycleContainment 2026-08-28-03:03:
+FN-207 routes every recoverable merge failure through the contained-backward seam instead of this
+resolver: review returns to WIP, WIP returns to hold, missing targets stay in place, and capacity
+refusal never substitutes another column.
+
+FNXC:LifecycleContainment 2026-08-28-03:19:
+All legacy merger blocker branches share one exported routing seam so their review-to-WIP behavior,
+no-target containment, and capacity deferral are exercised without duplicating a full Git merge.
 */
+export async function reboundLegacyMergeTask(store: TaskStore, taskId: string) {
+  return moveTaskToContainedBackwardTarget(store, taskId, "merge-failure-rebound", {
+    preserveProgress: true,
+    moveSource: "engine",
+  });
+}
+
 async function resolveMergerLifecycleColumn(
   store: TaskStore,
   taskId: string,
-  which: "rebound" | "complete" | "merge",
+  which: "complete" | "merge",
 ): Promise<string> {
-  const fallback = which === "complete" ? "done" : which === "merge" ? "in-review" : "todo";
+  const fallback = which === "complete" ? "done" : "in-review";
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
     if (which === "complete") return resolveCompleteColumn(ir) ?? fallback;
-    if (which === "merge") return resolveMergeOrchestrationColumn(ir) ?? fallback;
-    return resolveReboundTarget(ir) ?? fallback;
+    return resolveMergeOrchestrationColumn(ir) ?? fallback;
   } catch {
     return fallback;
   }
@@ -807,7 +816,7 @@ const VERIFICATION_EXTRA_ENV: NodeJS.ProcessEnv = Object.fromEntries(
   ).filter(([key]) => !(key in process.env)),
 );
 
-async function runDeterministicVerification(
+export async function runDeterministicVerification(
   store: TaskStore,
   rootDir: string,
   taskId: string,
@@ -824,6 +833,15 @@ async function runDeterministicVerification(
   // Nothing to verify
   if (!testCommand && !buildCommand) {
     mergerLog.debug(`${taskId}: no verification commands configured — skipping`);
+    /*
+    FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+    Merge verification with no configured command is non-blocking, but it is not a pass. Return the
+    explicit marker and persist an honest log before the success logging path can run.
+    */
+    result.notRun = true;
+    const message = "Deterministic merge verification not executed because no test or build command is configured — NOTHING WAS VERIFIED.";
+    await store.logEntry(taskId, message);
+    await store.appendAgentLog(taskId, message, "status", undefined, "merger");
     return result;
   }
 
@@ -5072,9 +5090,6 @@ export interface MergerOptions {
   onAgentText?: (delta: string) => void;
   /** Called with agent tool usage */
   onAgentTool?: (toolName: string) => void;
-  /** Worktree pool — when provided and `recycleWorktrees` is enabled,
-   *  worktrees are released to the pool instead of being removed. */
-  pool?: WorktreePool;
   /** Usage limit pauser — parks only the affected provider-routed task. */
   usageLimitPauser?: UsageLimitPauser;
   /** Called with the agent session immediately after creation. Enables the
@@ -6392,11 +6407,6 @@ workflow steps run exclusively as the workflow graph's own post-merge optional-g
  * Attempt 2 (if enabled and Attempt 1 failed): Auto-resolve lock/generated files, retry AI
  * Attempt 3 (if enabled and Attempt 2 failed): Reset and use git merge -X theirs --squash
  *
- * When `options.pool` is provided and `recycleWorktrees` is enabled in
- * settings, the worktree is detached from its branch and released to the
- * idle pool instead of being removed. The task's branch is always deleted
- * regardless of pooling. On next task execution, the pooled worktree will
- * be acquired and prepared with a fresh branch via {@link WorktreePool.prepareForTask}.
  */
 
 /**
@@ -6532,7 +6542,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
         lane: "early-empty-own-diff",
       },
     });
-    await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
+    await reboundLegacyMergeTask(store, taskId);
     return {
       task,
       branch,
@@ -6668,10 +6678,13 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
   }
   if (worktreeRemoved || branchDeleted) {
     try {
+      /*
+      FNXC:BranchNaming 2026-08-28-06:41:
+      FN-213 couples each cleared pointer to its own predicate. In particular, omitting the branch key when the branch survives prevents a branch write whose provenance was conditionally absent from failing after the worktree was already removed.
+      */
       await store.updateTask(taskId, {
-        worktree: worktreeRemoved ? null : task.worktree,
-        branch: branchDeleted ? null : task.branch,
-        ...(branchDeleted ? { branchWriteOrigin: "engine" as const } : {}),
+        ...(worktreeRemoved ? { worktree: null } : {}),
+        ...(branchDeleted ? { branch: null, branchWriteOrigin: "engine" as const } : {}),
       });
       // Keep the in-memory task in sync with the DB so the returned
       // MergeResult.task does not advertise a removed path / deleted branch.
@@ -6820,7 +6833,7 @@ export async function aiMergeTask(
   */
   let mergeGate;
   try {
-    mergeGate = await resolvePreMergeGateForTask(store, taskId, task.enabledWorkflowSteps);
+    mergeGate = await resolvePreMergeGateForTask(store, taskId, task.enabledWorkflowSteps, task);
   } catch {
     throw new Error(`Cannot merge ${taskId}: merge gate could not resolve the task workflow`);
   }
@@ -7112,18 +7125,8 @@ export async function aiMergeTask(
     //   - FN-4811 active-session: skip a match whose path is currently owned
     //     by a DIFFERENT task in `activeSessionRegistry`. Same-task or unowned
     //     paths are eligible for direct reuse.
-    //   - FN-4954 pool-lease: when `recycleWorktrees=true` AND a pool is
-    //     attached, skip the direct-reuse shortcut and fall through to
-    //     `acquireTaskWorktree`, which integrates with `WorktreePool.acquire`
-    //     so the pool's `leased` map stays consistent. Without that fall-through
-    //     the new path would bypass pool bookkeeping and could collide with
-    //     `PoolDoubleLeaseError`.
     const expectedBranch = resolveTaskWorkingBranch(task);
-    // FN-4954: when a worktree pool is attached and recycling is enabled, pool
-    // semantics REQUIRE going through `acquireTaskWorktree` so `WorktreePool`'s
-    // lease bookkeeping stays consistent. Skip the direct-reuse shortcut here
-    // and fall through to the existing acquisition path.
-    const directReuseEligible = !(options.pool && settings.recycleWorktrees);
+    const directReuseEligible = true;
     if (directReuseEligible) {
       try {
         const { stdout: porcelain } = await execAsync(
@@ -7267,7 +7270,6 @@ export async function aiMergeTask(
       rootDir: projectRootDir,
       store,
       settings,
-      pool: options.pool,
       logger: mergerLog,
       audit,
       runContext: engineRunContext,
@@ -7667,7 +7669,7 @@ export async function aiMergeTask(
             lane: "legacy-no-op-classifier",
           },
         }, { log: mergerLog });
-        await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
+        await reboundLegacyMergeTask(store, taskId);
         await releaseReuseHandoffEarly("no-commits-incomplete-blocked");
         return {
           task,
@@ -7701,7 +7703,7 @@ export async function aiMergeTask(
             classification: classification.kind,
           },
         }, { log: mergerLog });
-        await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
+        await reboundLegacyMergeTask(store, taskId);
         await releaseReuseHandoffEarly("lost-work-blocked");
         return {
           task,
@@ -7764,7 +7766,7 @@ export async function aiMergeTask(
       target: taskId,
       metadata: { reason: classification.reason, details: classification.details, autoRetry: true },
     }, { log: mergerLog });
-    await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
+    await reboundLegacyMergeTask(store, taskId);
     await releaseReuseHandoffEarly(unprovenError);
     return {
       task,
@@ -7899,7 +7901,7 @@ export async function aiMergeTask(
         target: taskId,
         metadata: { reason: classification.reason, details: classification.details, branchMissing: true, autoRetry: true },
       }, { log: mergerLog });
-      await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
+      await reboundLegacyMergeTask(store, taskId);
       return result;
     }
 
@@ -7976,7 +7978,7 @@ export async function aiMergeTask(
             lane: "legacy-branch-missing-no-op",
           },
         }, { log: mergerLog });
-        await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
+        await reboundLegacyMergeTask(store, taskId);
         return result;
       }
       const noOpReason = `branch has zero commits ahead of ${classification.baseRef}`;
@@ -9794,36 +9796,6 @@ export async function aiMergeTask(
     if (otherUser) {
       mergerLog.debug(`Worktree retained — still needed by ${otherUser}`);
       result.worktreeRemoved = false;
-    } else if (options.pool && settings.recycleWorktrees) {
-      if (activeSessionRegistry.isPathActive(worktreePath)) {
-        mergerLog.warn(`${taskId}: skipping pooled release for active session path ${worktreePath}`);
-        await audit?.git({
-          type: "worktree:removal-refused-active-session",
-          target: worktreePath,
-          metadata: { taskId, reason: RemovalReason.MergerCleanup, kind: "merger" },
-        });
-        result.worktreeRemoved = false;
-      } else {
-        try {
-          const onBranch = await execAsync("git symbolic-ref --quiet HEAD", { cwd: worktreePath, timeout: 5_000, encoding: "utf-8" })
-            .then(() => true)
-            .catch(() => false);
-          if (onBranch) {
-            await execAsync("git checkout --detach HEAD", { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" });
-          }
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          mergerLog.warn(`${taskId}: failed to detach pooled worktree before release: ${msg}`);
-        }
-        try {
-          await store.updateTask(taskId, { worktree: null, branch: null, branchWriteOrigin: "engine" });
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          mergerLog.warn(`${taskId}: failed to clear worktree pointer before pool release: ${msg}`);
-        }
-        options.pool.release(worktreePath, taskId);
-        result.worktreeRemoved = false;
-      }
     } else {
       try {
         if (activeSessionRegistry.isPathActive(worktreePath)) {
@@ -11526,8 +11498,16 @@ export async function completeTask(
   const preMoveTask = await store.getTask(taskId);
   // Clear transient status before moving to done
   await store.updateTask(taskId, { status: null });
-  // Use moveTask for proper event emission
-  const task = await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "complete"));
+  /*
+  FNXC:MergerMoveAttribution 2026-08-29-07:37:
+  Legacy merger completion remains a forward merge authority. Its own neutral provenance keeps the
+  lifecycle timeline legible without borrowing graph/remediation/plan-approval literals that alter
+  review-entry auditing and reopen field-clearing semantics; plugins observe this source too.
+  */
+  // Use moveTask for proper event emission.
+  const task = await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "complete"), {
+    workflowMoveSource: "merger-complete-task",
+  });
   const settings = await store.getSettings();
   if (isMergeRequestContractShadowEnabled(settings) && preMoveTask?.autoMerge !== false) {
     const mergeRequestRecord = await store.getMergeRequestRecordAsync(taskId);

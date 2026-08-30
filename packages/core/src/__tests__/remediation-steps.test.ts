@@ -34,7 +34,32 @@ describe("review remediation steps", () => {
     const { store, task } = fakeStore(prefix);
     const result = await appendRemediationStepsImpl(store as never, task.id, [remediation("missing undefined case")]);
     expect(task.steps.slice(0, prefix.length)).toEqual(prefix);
-    expect(result).toMatchObject({ appendedCount: 1, wave: 1 });
+    expect(result).toMatchObject({ appendedCount: 1, wave: 1, insertionIndex: 1, verificationStepIndex: 2 });
+    expect(result.appended).toHaveLength(1);
+    expect(task.steps.at(-1)).toEqual({ name: "Testing & Verification", status: "pending" });
+  });
+
+  it("keeps completed verification history and reports only the appended fix", async () => {
+    const originalVerification = { name: "Testing & Verification", status: "done" as const };
+    const { store, task } = fakeStore([
+      { name: "Implement", status: "done" },
+      originalVerification,
+    ]);
+    const result = await appendRemediationStepsImpl(store as never, task.id, [remediation("missing undefined case")]);
+
+    expect(task.steps.map((entry) => [entry.name, entry.status])).toEqual([
+      ["Implement", "done"],
+      ["Testing & Verification", "done"],
+      ["Fix: missing undefined case", "pending"],
+      ["Testing & Verification", "pending"],
+    ]);
+    expect(task.steps[1]).toBe(originalVerification);
+    expect(result).toMatchObject({
+      appendedCount: 1,
+      insertionIndex: 2,
+      verificationStepIndex: 3,
+    });
+    expect(result.appended.map((entry) => entry.name)).toEqual(["Fix: missing undefined case"]);
   });
 
   it("deduplicates only open equivalent remediation", async () => {
@@ -53,6 +78,19 @@ describe("review remediation steps", () => {
       expect(name).not.toMatch(/(^|[^a-z])(testing|verification|documentation|delivery)([^a-z]|$)/i);
       expect(name).not.toMatch(/test|verif|qa|review/i);
     }
+  });
+
+  it("prefers finding titles while retaining legacy name fallbacks", () => {
+    expect(formatRemediationStepName({ title: "Short headline", detail: "Long reviewer explanation", name: "Legacy label" }))
+      .toBe("Fix: Short headline");
+    expect(formatRemediationStepName({ title: " \n\t ", detail: "Long reviewer explanation" }))
+      .toBe("Fix: Long reviewer explanation");
+    expect(formatRemediationStepName({ name: "Legacy label" })).toBe("Fix: Legacy label");
+    expect(formatRemediationStepName({})).toBe("Fix: review finding");
+
+    const multiLine = formatRemediationStepName({ title: "Short\n  headline\tfor operators" });
+    expect(multiLine).toBe("Fix: Short headline for operators");
+    expect(multiLine).not.toContain("\n");
   });
 
   it("recognizes open equivalence structurally", () => {

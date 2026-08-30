@@ -89,4 +89,13 @@ export const projectModelsSearchEntries: SettingsSearchEntry[] = [
       "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default — unset.",
     keywords: ["pull request", "body"],
   },
+  {
+    sectionId: "project-models",
+    key: "fastCheapModelId",
+    labelKey: "settings.globalModels.fastAndCheapModel",
+    labelFallback: "Fast & Cheap Model",
+    helpKey: "settings.globalModels.fastAndCheapModelHelp",
+    helpFallback: "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task.",
+    keywords: ["fast", "cheap", "fast mode"],
+  },
 ];

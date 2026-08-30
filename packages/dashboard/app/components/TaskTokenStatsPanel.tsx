@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { Task, TaskTokenUsage, WorkflowStepResult } from "@fusion/core";
-import { extractTimingEvents, getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWallClockSinceFirstExecutionMs, getWorkflowRuntimeMs, type TimingEvent } from "../utils/taskTiming";
+import { extractTimingEvents, formatDurationMs, getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWallClockSinceFirstExecutionMs, getWorkflowRuntimeMs, type TimingEvent } from "../utils/taskTiming";
 import type { ColumnRoleFlags } from "../utils/columnRoles";
 import { getCanonicalStepNumber } from "../lib/step-display";
 import "./TaskTokenStatsPanel.css";
@@ -72,19 +72,6 @@ function formatTimestamp(value: string): string {
     return value;
   }
   return parsed.toLocaleString();
-}
-
-function formatDuration(valueMs: number): string {
-  if (valueMs < 1000) {
-    return `${Math.round(valueMs)} ms`;
-  }
-  const valueSeconds = valueMs / 1000;
-  if (valueSeconds < 60) {
-    return `${valueSeconds.toFixed(1)} s`;
-  }
-  const minutes = Math.floor(valueSeconds / 60);
-  const seconds = Math.round(valueSeconds % 60);
-  return `${minutes}m ${seconds}s`;
 }
 
 function summarizeWorkflowTiming(results: WorkflowStepResult[]): WorkflowTimingSummary {
@@ -186,7 +173,7 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task, columnFlags }: 
           </div>
           <div className="task-token-stats-panel__metric" role="listitem">
             <span className="task-token-stats-panel__label">{t("taskDetail.timedDuration", "Timed duration")}</span>
-            <span className="task-token-stats-panel__value">{formatDuration(totalTimingDurationMs)}</span>
+            <span className="task-token-stats-panel__value">{formatDurationMs(totalTimingDurationMs)}</span>
           </div>
           <div className="task-token-stats-panel__metric" role="listitem">
             <span className="task-token-stats-panel__label">{t("taskDetail.workflowTimedSteps", "Workflow timed steps")}</span>
@@ -194,16 +181,16 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task, columnFlags }: 
           </div>
           <div className="task-token-stats-panel__metric" role="listitem">
             <span className="task-token-stats-panel__label">{t("taskDetail.workflowRuntime", "Workflow runtime")}</span>
-            <span className="task-token-stats-panel__value">{formatDuration(workflowTiming.totalDurationMs)}</span>
+            <span className="task-token-stats-panel__value">{formatDurationMs(workflowTiming.totalDurationMs)}</span>
           </div>
           <div className="task-token-stats-panel__metric" role="listitem">
             <span className="task-token-stats-panel__label">{t("taskDetail.totalExecutionTime", "Total execution time")}</span>
-            <span className="task-token-stats-panel__value">{formatDuration(totalExecutionMs)}</span>
+            <span className="task-token-stats-panel__value">{formatDurationMs(totalExecutionMs)}</span>
           </div>
           {showWallClockSinceFirstExecution ? (
             <div className="task-token-stats-panel__metric" role="listitem">
               <span className="task-token-stats-panel__label">{t("taskDetail.wallClockSinceFirst", "Wall-clock since first execution")}</span>
-              <span className="task-token-stats-panel__value">{formatDuration(wallClockSinceFirstExecutionMs)}</span>
+              <span className="task-token-stats-panel__value">{formatDurationMs(wallClockSinceFirstExecutionMs)}</span>
             </div>
           ) : null}
         </div>
@@ -213,7 +200,7 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task, columnFlags }: 
             <dt>{t("taskDetail.longestTimingEvent", "Longest timing event")}</dt>
             <dd>
               {longestTimingEvent?.durationMs
-                ? `${longestTimingEvent.summary} (${formatDuration(longestTimingEvent.durationMs)})`
+                ? `${longestTimingEvent.summary} (${formatDurationMs(longestTimingEvent.durationMs)})`
                 : t("taskDetail.noTimedEvents", "No timed events recorded yet.")}
             </dd>
           </div>
@@ -221,7 +208,7 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task, columnFlags }: 
             <dt>{t("taskDetail.longestWorkflowStep", "Longest workflow step")}</dt>
             <dd>
               {workflowTiming.longestStep
-                ? `${workflowTiming.longestStep.name} (${formatDuration(workflowTiming.longestStep.durationMs)})`
+                ? `${workflowTiming.longestStep.name} (${formatDurationMs(workflowTiming.longestStep.durationMs)})`
                 : t("taskDetail.noWorkflowStepTimings", "No completed workflow step timings yet.")}
             </dd>
           </div>

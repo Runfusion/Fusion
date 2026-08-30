@@ -96,6 +96,33 @@ function createStore(rows: Task[], settings: Partial<Settings> = {}): TaskStore 
       if (patch) tasks.set(id, { ...current, ...patch } as Task);
       return tasks.get(id) as Task;
     }),
+    publishWorkspaceCodeReviewEvidence: vi.fn(async (id: string, input: {
+      expectedScopeRevision: number;
+      reviewEvidence: NonNullable<NonNullable<Task["repositoryScope"]>["reviewEvidence"]>;
+      clearReviewRemediation: boolean;
+      modifiedFiles?: string[];
+    }) => {
+      const current = tasks.get(id);
+      if (!current) throw new Error(`Missing task ${id}`);
+      const scope = current.repositoryScope;
+      if (!scope) return { task: current, published: false as const, reason: "scope-absent" as const };
+      if (scope.revision !== input.expectedScopeRevision) {
+        return { task: current, published: false as const, reason: "scope-superseded" as const };
+      }
+      const next = {
+        ...current,
+        repositoryScope: {
+          ...scope,
+          reviewEvidence: input.reviewEvidence,
+          ...(input.clearReviewRemediation && scope.reviewRemediation?.scopeRevision === input.expectedScopeRevision
+            ? { reviewRemediation: undefined }
+            : {}),
+        },
+        ...(input.modifiedFiles !== undefined ? { modifiedFiles: input.modifiedFiles } : {}),
+      } as Task;
+      tasks.set(id, next);
+      return { task: next, published: true as const };
+    }),
     moveTask: vi.fn(async (id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       const cur = tasks.get(id);
@@ -472,6 +499,7 @@ const pgDescribeIfGit = hasGit ? pgDescribe : describe.skip;
 pgDescribeIfGit("workspace local-only PostgreSQL landing", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_workspace_local_only_e2e",
+    projectId: "fn-259-workspace-e2e",
   });
   let fx: WorkspaceFixture;
 
@@ -514,9 +542,10 @@ pgDescribeIfGit("workspace local-only PostgreSQL landing", () => {
       */
       steps: ((await store.getTask(taskId))?.steps ?? []).map((step) => ({ ...step, status: "done" as const })),
       workspaceWorktrees: source.workspaceWorktrees,
-      repositoryScope: source.repositoryScope,
       modifiedFiles: source.modifiedFiles,
     } as Partial<Task>);
+    vi.spyOn(store, "getRootDir").mockReturnValue(fx.rootDir);
+    await store.updateTaskRepositoryScope(taskId, source.repositoryScope);
     const recordFence = vi.spyOn(store, "recordWorkspaceLeaseFenceRef");
     const recordIntent = vi.spyOn(store, "recordWorkspaceLandIntent");
     const acquired = vi.spyOn(store, "acquireWorkspaceLease");
@@ -566,9 +595,10 @@ pgDescribeIfGit("workspace local-only PostgreSQL landing", () => {
       */
       steps: ((await store.getTask(taskId))?.steps ?? []).map((step) => ({ ...step, status: "done" as const })),
       workspaceWorktrees: source.workspaceWorktrees,
-      repositoryScope: source.repositoryScope,
       modifiedFiles: source.modifiedFiles,
     } as Partial<Task>);
+    vi.spyOn(store, "getRootDir").mockReturnValue(fx.rootDir);
+    await store.updateTaskRepositoryScope(taskId, source.repositoryScope);
     // FNXC:WorkspaceIntegration 2026-08-22-00:26:
     // The local-only symptom must pass through the production Code Review evidence writer before
     // ProjectEngine dispatches landing, so an in-memory pre-approved fixture cannot hide a review-to-land race.

@@ -342,6 +342,14 @@
   --swatch-sample-4: var(--flexoki-swatch-sample-4);
 }
 
+/* FNXC:DashboardTheming 2026-08-28-07:45: Cozy Cartoon maps only its global mode-specific cream, coral, and lavender samples so the pastel preview remains accurate before selection and stays synchronized with the persisted theme registry. */
+.theme-swatch-cozy-cartoon {
+  --swatch-sample-1: var(--cozy-cartoon-swatch-sample-1);
+  --swatch-sample-2: var(--cozy-cartoon-swatch-sample-2);
+  --swatch-sample-3: var(--cozy-cartoon-swatch-sample-3);
+  --swatch-sample-4: var(--cozy-cartoon-swatch-sample-4);
+}
+
 .theme-swatch-aurora {
   --swatch-sample-1: var(--aurora-swatch-sample-1);
   --swatch-sample-2: var(--aurora-swatch-sample-2);
@@ -1244,6 +1252,14 @@
   --swatch-sample-2: var(--flexoki-swatch-sample-2);
   --swatch-sample-3: var(--flexoki-swatch-sample-3);
   --swatch-sample-4: var(--flexoki-swatch-sample-4);
+}
+
+/* FNXC:DashboardTheming 2026-08-28-07:45: The light selector chip resolves the Cozy Cartoon flagship pastel samples globally instead of borrowing active-theme colors. */
+[data-theme="light"] .theme-swatch-cozy-cartoon {
+  --swatch-sample-1: var(--cozy-cartoon-swatch-sample-1);
+  --swatch-sample-2: var(--cozy-cartoon-swatch-sample-2);
+  --swatch-sample-3: var(--cozy-cartoon-swatch-sample-3);
+  --swatch-sample-4: var(--cozy-cartoon-swatch-sample-4);
 }
 
 [data-theme="light"] .theme-swatch-aurora {

@@ -55,7 +55,6 @@ import {
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
   resolveWipTargetForTask,
-  resolveReboundTargetForTask,
   clearMergeConfirmedTransientStatus,
   classifyGhError,
   createRecallCaptureWriter,
@@ -66,6 +65,7 @@ import {
   resolvePreMergeGateForTask,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
+import { moveTaskToContainedBackwardTarget } from "./execution/lifecycle-move.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import { isTaskExecutionLive } from "./merge/merge-execution-exclusion.js";
 import { isMergeActiveStatus } from "./merge/merge-active-status.js";
@@ -76,7 +76,6 @@ import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import { createStoreSpecDriftRepository, SpecDriftReconciler } from "./spec-drift-reconciler.js";
 import { publishPersistedMissionFeatureAlignment } from "./missions/mission-feature-sync.js";
-import type { WorktreePool } from "./worktree/worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
 import { PrMonitor } from "./merge/pr-monitor.js";
 import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./overseer/planner-overseer.js";
@@ -193,7 +192,6 @@ export type ProcessPullRequestMergeFn = (
   store: TaskStore,
   cwd: string,
   taskId: string,
-  pool?: WorktreePool,
   /** Propagates merge-queue cancellation into refresh git mutations. */
   signal?: AbortSignal,
 ) => Promise<"merged" | "waiting" | "skipped">;
@@ -2276,7 +2274,10 @@ export class ProjectEngine {
         // Live surface cleared — allow a fresh skip log if work goes live again later.
         this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
         /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-        await store.moveTask(task.id, await resolveReboundTargetForTask(store, task.id), { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        await moveTaskToContainedBackwardTarget(store, task.id, "self-healing-stranded-recovery", {
+          preserveProgress: true,
+          moveSource: "engine",
+        }, task.column);
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
         await this.emitOverseerInterventionSafe(() =>
@@ -3232,7 +3233,7 @@ export class ProjectEngine {
     if (injected || !Array.isArray(task.steps)) return injected ?? undefined;
     let mergeGate;
     try {
-      mergeGate = await resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps);
+      mergeGate = await resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps, task);
     } catch {
       return "merge gate could not resolve the task workflow";
     }
@@ -4169,6 +4170,14 @@ export class ProjectEngine {
         // don't start a merge whose queue entry was cleared by stop().
         if (this.shuttingDown) break;
         const hasManualResolver = this.hasMergeResolvers(taskId);
+        /*
+        FNXC:MergeQueue 2026-08-28-09:29:
+        Waiting-caller dispatches deliberately skip the merge-confirmed fast path in the automatic
+        lane below. FN-219 traced a duplicate full merge to that gap after a landing completed but
+        its finalization did not. Keep this lane structure intact: runAiMerge's proof-gated
+        already-landed check is the load-bearing protection shared by onMerge, interpreter merge,
+        direct CLI callers, and automatic retries.
+        */
         try {
           // Manual merges (onMerge) skip auto-merge eligibility checks
           if (!hasManualResolver) {
@@ -4860,7 +4869,6 @@ export class ProjectEngine {
                     store,
                     cwd,
                     taskId,
-                    (this.runtime as any).worktreePool,
                     abortSignal,
                   ),
                 abortSignal,
@@ -4923,8 +4931,6 @@ export class ProjectEngine {
             // Direct merge via AI agent, gated by semaphore
             runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge merging ${taskId}...`);
 
-            const pool = (this.runtime as any).worktreePool;
-
             const agentStore = (this.runtime as any).agentStore;
 
             const usageLimitPauser = (this.runtime as any).usageLimitPauser;
@@ -4942,7 +4948,6 @@ export class ProjectEngine {
               */
               const mergerOptions = {
                 manual: hasManualResolver,
-                pool,
                 usageLimitPauser,
                 credentialRotator,
                 agentStore,

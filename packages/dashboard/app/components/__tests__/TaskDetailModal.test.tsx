@@ -115,14 +115,13 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-describe("TaskDetailModal reset confirmations", () => {
-  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+describe("TaskDetailModal reset dialog", () => {
+  it("edits and submits the original description without consulting confirmation settings", async () => {
     const onResetTask = vi.fn(async () => makeTask());
     const addToast = vi.fn();
-    mockConfirm.mockResolvedValueOnce(true);
     render(
       <TaskDetailModal
-        task={makeTask({ id: "FN-001", column: "in-progress" as any })}
+        task={makeTask({ id: "FN-001", column: "in-progress" as any, description: "Original detail request" })}
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
@@ -134,19 +133,48 @@ describe("TaskDetailModal reset confirmations", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(screen.getByTestId("task-reset-description")).toHaveValue("Original detail request");
+    fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected detail request" } });
+    fireEvent.click(screen.getByTestId("task-reset-submit"));
+
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith(
+      "FN-001",
+      { description: "Corrected detail request" },
+    ));
+    expect(addToast).toHaveBeenCalledWith("Reset FN-001 — fresh run will be allocated", "success");
+  });
+
+  it("keeps the detail Reset call arity unchanged when the description is untouched", async () => {
+    const onResetTask = vi.fn(async () => makeTask());
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-001", column: "in-progress" as any, description: "Original detail request" })}
+        onClose={noop}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onResetTask={onResetTask}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-reset-submit"));
+
     await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
-    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset", message: expect.stringContaining("worktree") }));
-    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("worktree and plan discarded"), "success");
-    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+    expect(onResetTask.mock.calls[0]).toEqual(["FN-001"]);
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 
   it("shows endpoint failure instead of reset success copy", async () => {
     const addToast = vi.fn();
     const onResetTask = vi.fn().mockRejectedValue(new Error("partial cleanup; retry Reset"));
-    mockConfirm.mockResolvedValueOnce(true);
     render(
       <TaskDetailModal
-        task={makeTask({ id: "FN-002", column: "in-progress" as any })}
+        task={makeTask({ id: "FN-002", column: "in-progress" as any, description: "Retry this request" })}
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
@@ -157,8 +185,11 @@ describe("TaskDetailModal reset confirmations", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-reset-submit"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("partial cleanup; retry Reset", "error"));
-    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("worktree and plan discarded"), "success");
+    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("fresh run will be allocated"), "success");
+    expect(screen.getByTestId("task-reset-dialog")).toBeInTheDocument();
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 });
 
@@ -208,10 +239,10 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
   });
 
-  it("preserves Summary as the default for done tasks while keeping Chat then Activity order", () => {
+  it("preserves Summary as the default for done tasks after Chat, Activity, Plan, and Changes", () => {
     renderTask("done");
 
-    expect(tabLabels().slice(0, 3)).toEqual(["Chat", "Activity", "Summary"]);
+    expect(tabLabels().slice(0, 5)).toEqual(["Chat", "Activity", "Plan", "Changes", "Summary"]);
     expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
   });
 
@@ -401,8 +432,10 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(document.querySelector(".detail-error-alert")).toBeNull();
   });
 
-  it("surfaces the latest tool error detail and stages a model override before retrying", async () => {
+  it("confirms the current stage before saving a model override and retrying", async () => {
     const user = userEvent.setup();
+    const retryConfirmation = createDeferred<boolean>();
+    mockConfirm.mockReturnValueOnce(retryConfirmation.promise);
     const { useAgentLogs } = await import("../../hooks/useAgentLogs");
     const { fetchModels, fetchNodes, updateTask } = await import("../../api");
     vi.mocked(useAgentLogs).mockReturnValue({
@@ -443,8 +476,21 @@ describe("TaskDetailModal planner Chat tab", () => {
     await user.selectOptions(screen.getByLabelText("Executor model"), "anthropic/claude-alternate");
     await user.click(screen.getByRole("button", { name: "Apply and retry" }));
 
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Retry this stage?",
+      message: "Repeat the current stage and keep this card in its current column.",
+      confirmLabel: "Retry",
+      danger: true,
+    })));
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(onRetryTask).not.toHaveBeenCalled();
+
+    await act(async () => retryConfirmation.resolve(true));
+
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith("FN-099", { modelProvider: "anthropic", modelId: "claude-alternate" }, undefined));
     await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-099"));
+    expect(mockConfirm.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(updateTask).mock.invocationCallOrder[0]!);
+    expect(vi.mocked(updateTask).mock.invocationCallOrder[0]).toBeLessThan(onRetryTask.mock.invocationCallOrder[0]!);
   });
 
   it("does not attribute a recovered historical tool error to an unknown graph failure", async () => {
@@ -1392,6 +1438,10 @@ describe("TaskDetailModal branch group surfacing", () => {
 });
 
 describe("TaskDetailModal delete affordance", () => {
+  async function selectDelete(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  }
   function dependencyConflictError(dependentIds: string[]) {
     const error = new Error("Task has dependents");
     (error as Error & { details: { code: string; dependentIds: string[] } }).details = {
@@ -1437,7 +1487,7 @@ describe("TaskDetailModal delete affordance", () => {
     });
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1465,7 +1515,7 @@ describe("TaskDetailModal delete affordance", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false }));
     expect(onRequestClose).toHaveBeenCalledTimes(1);
@@ -1496,7 +1546,7 @@ describe("TaskDetailModal delete affordance", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledTimes(2));
     expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
@@ -1517,7 +1567,7 @@ describe("TaskDetailModal delete affordance", () => {
     const addToast = vi.fn();
     const { onClose } = renderClosingTaskDetailModal({ onDeleteTask, addToast });
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1549,7 +1599,7 @@ describe("TaskDetailModal delete affordance", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
       title: "Force Delete Task",
@@ -1564,7 +1614,7 @@ describe("TaskDetailModal delete affordance", () => {
     mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "cancel", checkboxValue: false });
     const { onClose } = renderClosingTaskDetailModal({ onDeleteTask });
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     expect(onDeleteTask).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -1606,26 +1656,30 @@ describe("TaskDetailModal delete affordance", () => {
 describe("TaskDetailModal in-review stall diagnostics", () => {
   it("renders diagnostic row and jumps to highlighted activity entry", async () => {
     const user = userEvent.setup();
+    const task = makeTask({
+      column: "in-review",
+      /*
+      FNXC:InReviewStallBadge 2026-07-26-18:20:
+      Fixture repointed off `merge-blocker`, which is now badge-suppressed. This case guards the
+      diagnostics row and its jump-to-activity-entry behavior — not any one stall code — so it
+      needs a code that still surfaces.
+      */
+      inReviewStall: {
+        code: "transient-merge-status-no-owner",
+        reason: "Workflow pre-merge check failed",
+        observedAt: "2026-05-13T00:00:00.000Z",
+      },
+      log: [
+        { timestamp: "2026-05-13T00:01:00.000Z", action: "In-review stall surfaced [transient-merge-status-no-owner]: Workflow pre-merge check failed" },
+      ],
+    });
+    const { fetchTaskDetail } = await import("../../api");
+    vi.mocked(fetchTaskDetail).mockResolvedValue(task);
+
     render(
       <TaskDetailModal
         initialTab="details"
-        task={makeTask({
-          column: "in-review",
-          /*
-          FNXC:InReviewStallBadge 2026-07-26-18:20:
-          Fixture repointed off `merge-blocker`, which is now badge-suppressed. This case guards the
-          diagnostics row and its jump-to-activity-entry behavior — not any one stall code — so it
-          needs a code that still surfaces.
-          */
-          inReviewStall: {
-            code: "transient-merge-status-no-owner",
-            reason: "Workflow pre-merge check failed",
-            observedAt: "2026-05-13T00:00:00.000Z",
-          },
-          log: [
-            { timestamp: "2026-05-13T00:01:00.000Z", action: "In-review stall surfaced [transient-merge-status-no-owner]: Workflow pre-merge check failed" },
-          ],
-        })}
+        task={task}
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}

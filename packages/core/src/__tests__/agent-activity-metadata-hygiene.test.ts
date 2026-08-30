@@ -25,8 +25,11 @@ describe("agent activity metadata hygiene", () => {
 
   it("preserves every terminal workflow status on its emitted gate outcome", () => {
     expect(sanitizeAgentActivityMetadata("workflow:gate-passed", {
-      stepId: "code-review", status: "advisory_failure", attempt: 1,
-    })).toEqual({ stepId: "code-review", status: "advisory_failure", attempt: 1 });
+      stepId: "code-review", status: "advisory_failure", attempt: 1, notRun: true,
+    })).toEqual({ stepId: "code-review", status: "advisory_failure", attempt: 1, notRun: true });
+    expect(sanitizeAgentActivityMetadata("workflow:gate-passed", {
+      stepId: "code-review", status: "passed", attempt: 0, notRun: "true",
+    })).toEqual({ stepId: "code-review", status: "passed", attempt: 0 });
     expect(sanitizeAgentActivityMetadata("workflow:gate-failed", {
       stepId: "code-review", status: "advisory_failure", attempt: 1,
     })).toEqual({ stepId: "code-review", status: "advisory_failure", attempt: 1 });

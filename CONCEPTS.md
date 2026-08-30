@@ -57,9 +57,10 @@ A registered workspace that Fusion can operate on: it has a canonical local path
 A **workspace** is a special Project variant where the registered path is not
 itself a Git repository, but contains multiple Git repositories as direct
 sub-directories. Fusion discovers sub-repos at init time and records them in
-`.fusion/workspace.json`. In workspace mode, task execution does not require a
-single root-level worktree; instead, the agent acquires per-repo worktrees
-on demand via `fn_acquire_repo_worktree`.
+`.fusion/workspace.json`. In workspace mode, task start creates one private
+child worktree for every configured repository beneath a task-ID-derived task
+directory. Agents work only in those prepared paths; repository membership is
+not selected or acquired on demand.
 
 Workspace-task merges are **non-atomic**: each sub-repo lands on its own local
 integration ref independently, so a partial-land window (some sub-repos merged,

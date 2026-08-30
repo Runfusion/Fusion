@@ -10,10 +10,15 @@
   overflow-y: auto;
 }
 
+.confirm-dialog__select,
 .confirm-dialog__checkbox {
   display: grid;
   gap: var(--space-xs);
   margin: 0 var(--space-xl) var(--space-lg);
+}
+
+.confirm-dialog__select .select {
+  width: 100%;
 }
 
 .confirm-dialog__checkbox-description {
@@ -46,6 +51,14 @@
     padding-top: 0;
     padding-bottom: 0;
     overflow: hidden;
+  }
+
+  .confirm-dialog__select {
+    width: auto;
+  }
+
+  .confirm-dialog__select .select {
+    width: 100%;
   }
 
   .confirm-dialog__actions {

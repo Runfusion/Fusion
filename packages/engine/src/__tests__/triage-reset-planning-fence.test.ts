@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { disposeTaskBeforeReset, type Task, type TaskStore } from "@fusion/core";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
-import { PLANNING_RESET_HOLD_MS, PlanningResetFence } from "../planning-reset-fence.js";
+import { isPlanningResetHoldClearingUpdate, PLANNING_RESET_HOLD_MS, PlanningResetFence } from "../planning-reset-fence.js";
 import { TriageProcessor } from "../triage.js";
 
 /*
@@ -23,6 +23,72 @@ describe("Triage planning reset fence", () => {
     expect(fence.isResetHoldActive("FN-151")).toBe(false);
     fence.clearHold("FN-151");
     expect(fence.isResetHoldActive("FN-151")).toBe(false);
+  });
+
+  it("recognizes graph replans and the fresh reset publication shape", () => {
+    const fresh = {
+      id: "FN-239-FRESH",
+      description: "reset planner",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, status: "needs-replan" })).toBe(true);
+    expect(isPlanningResetHoldClearingUpdate(fresh)).toBe(true);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, steps: [{ name: "retained", status: "pending" }] })).toBe(false);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, worktree: "/tmp/live" })).toBe(false);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, branch: "fusion/live" })).toBe(false);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, sessionFile: "/tmp/session.json" })).toBe(false);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, workflowStepResults: [{ workflowStepId: "plan", status: "pending" }] })).toBe(false);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, error: "failed" })).toBe(false);
+    expect(isPlanningResetHoldClearingUpdate({ ...fresh, status: "planning" })).toBe(false);
+  });
+
+  it("clears the live TriageProcessor reset hold when fresh publication wakes the planner", async () => {
+    const task = {
+      id: "FN-239-PUBLISHED",
+      description: "reset planner",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({ pollIntervalMs: 600_000, maxConcurrent: 1, maxWorktrees: 1 }),
+      listTasks: vi.fn().mockResolvedValue([]),
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+      off: vi.fn(),
+    } as unknown as TaskStore;
+    const processor = new TriageProcessor(store, "/tmp/fn-239-root");
+    vi.spyOn(processor as unknown as { poll: () => Promise<void> }, "poll").mockResolvedValue(undefined);
+    processor.start();
+    const resetFence = (processor as unknown as { resetFence: PlanningResetFence }).resetFence;
+    const wakeHandler = (processor as unknown as {
+      taskColumnWakeHandler: (updated: Task, meta?: unknown) => void;
+    }).taskColumnWakeHandler;
+
+    try {
+      expect(vi.mocked(store.on)).toHaveBeenCalledWith("task:updated", wakeHandler);
+      await disposeTaskBeforeReset(store, task);
+      expect(resetFence.isResetHoldActive(task.id)).toBe(true);
+
+      const registeredWakeHandler = vi.mocked(store.on).mock.calls
+        .find(([event, listener]) => event === "task:updated" && listener === wakeHandler)?.[1] as (updated: Task) => void;
+      registeredWakeHandler(task);
+
+      expect(resetFence.isResetHoldActive(task.id)).toBe(false);
+    } finally {
+      processor.stop();
+    }
   });
 
   it("does not republish a recovered worktree artifact queued behind Reset", async () => {

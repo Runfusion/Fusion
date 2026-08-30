@@ -137,7 +137,7 @@ export type GitMutationType =
   | "worktree:base-refresh-reconciled"
   /*
    * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-   * Emitted when task-pinned acquisition (`worktreeNaming: "task-id"`) corrects a `task.worktree` cache that
+   * Emitted when task-ID worktree acquisition corrects a `task.worktree` cache that
    * disagrees with the derived `<worktreesDir>/<task-id>` path (the FN-7996 stale/foreign-pointer shape).
    * Metadata is ids/paths-only: `{ taskId, previous, derived, source }`.
    */
@@ -200,6 +200,13 @@ export type GitMutationType =
   | "worktree:admin-entry-pruned"
   | "worktree:removal-refused-active-session"
   | "worktree:removal-forced-over-active-session"
+  /*
+  FNXC:WorktreeCleanup 2026-08-29-00:54:
+  FN-251 records only the proof-gated discard and defensive preservation classifications so a
+  post-landing cleanup outcome is observable without making audit persistence a lifecycle gate.
+  */
+  | "worktree:post-landing-ignored-content-discarded"
+  | "worktree:removal-preserved"
   | "worktree:active-session-reconciled"
   | "worktree:stale-lock-detected"
   | "worktree:stale-lock-recovered"
@@ -515,6 +522,9 @@ export type DatabaseMutationType =
   | "task:steering-comment:add"
   | "task:assign"
   | "task:checkout"
+  /* FNXC:ExternalBlock 2026-08-28-04:08: external-block telemetry contains ids and fixed classifications only; raw obstacle prose stays on the task. */
+  | "task:external-block-parked"
+  | "task:external-block-cleared"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
   /*
@@ -524,6 +534,10 @@ export type DatabaseMutationType =
   */
   | "task:review-finding-disputed"
   | "task:review-convergence-escalation"
+  /** FNXC:ReviewVerdictNotes 2026-08-28-22:45: Records ids and fixed note-repair outcomes only; reviewer prose never enters run-audit. */
+  | "task:review-notes-repaired"
+  /** FNXC:ReviewEmptyContent 2026-08-28-13:14: Records the ids-only terminal close for a provably empty Code Review input. */
+  | "task:review-empty-content-parked"
   | "task:review-arbitration"
   | "task:review-convergence-human-escalation"
   /**
@@ -562,11 +576,6 @@ export type DatabaseMutationType =
   Generic terminal recovery records only durable identifiers and bounded outcomes.
   The apply token is a fencing capability, so audit rows must never persist it or task error prose.
   */
-  | "task:auto-recover-terminal-failure"
-  | "task:auto-recover-terminal-failure-exhausted"
-  /** Metadata: { taskId, column, attempt, maxAttempts, delayMs?, outcome } — ids/counts/outcomes only. */
-  | "task:no-progress-no-task-done-requeue"
-  | "task:no-progress-no-task-done-requeue-exhausted"
   | "task:auto-recover-finalize-already-on-main"
   /** Metadata: { taskId, previousColumn, targetColumn, commitSha, status, blockedBy, overlapBlockedBy, reason } */
   | "task:auto-merge-finalize-column-mismatch-reconciled"
@@ -654,9 +663,6 @@ export type DatabaseMutationType =
    * Metadata: { source, classification, recordedWorktreeStillUsable, clearedWorktreeMetadata, clearedBranch, retainedNonCanonicalBranch }
    */
   | "task:auto-recover-worktree-session-metadata"
-  | "task:auto-recover-in-progress-limbo"
-  /** Metadata: { taskId, branch, worktree, checkedOutBy, executionStartedAt, executionAgeMs, graceMs, liveWorktreeBoundBranch, reason } */
-  | "task:auto-recover-in-progress-limbo-no-action"
   | "task:resume-limbo-escalated"
   /** Metadata: { taskId, executionAgeMs, graceMs, staleBindingAgeFloorMs, checkedOutBy, agentPresent, lastActivityMs, hasRecentRunAudit, worktree, branch, worktreeExists, signalReason } */
   | "task:reclaim-phantom-executor-binding"
@@ -724,10 +730,6 @@ export type DatabaseMutationType =
   | "task:reclaim-self-owned-branch-conflict-no-action"
   | "task:orphan-detected-no-action"
   | "task:reattach-orphaned-execution"
-  /** Metadata: { taskId, lastReason, stuckKillCount, attemptedStuckKillCount, maxStuckKills, checkedOutBy, executionStartedAt, executionAgeMs, graceMs, liveWorktreeBoundBranch } */
-  | "task:stuck-loop-exhausted-no-action"
-  /** Metadata: { taskId: string; ignoredStepUpdateCount: number; stuckKillStreak: number; lastReason: "no-progress-churn" } */
-  | "task:stuck-no-progress-churn-terminalized"
   /** Metadata: { taskId, cycleCount, windowMs, lastMoveSource } */
   | "task:dispatch-oscillation-terminalized"
   /** Metadata: { taskId, cycleCount, maxCycles, progressSignature, failureValue } */

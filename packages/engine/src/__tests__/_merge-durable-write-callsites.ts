@@ -288,6 +288,7 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   seedWorkspaceCodeReviewContinuationIfIdle: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateStep: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskRepositoryScope: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  publishWorkspaceCodeReviewEvidence: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateWorkspaceReviewState: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskAtomic: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskComment: { kind: "writer", reason: "persists or mutates TaskStore state" },
@@ -298,6 +299,7 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   updateWorkflowPromptOverrides: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateWorkflowSettingValues: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateWorkflowStep: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  updateWorkflowStepResultsFenced: { kind: "writer", reason: "atomically persists workflow-step results behind their durable fence" },
   upsertMergeRequestRecord: { kind: "writer", reason: "persists or mutates TaskStore state" },
   upsertPrInfoByNumber: { kind: "writer", reason: "persists or mutates TaskStore state" },
   upsertTask: { kind: "writer", reason: "persists or mutates TaskStore state" },
@@ -309,6 +311,18 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   writeConfig: { kind: "writer", reason: "persists or mutates TaskStore state" },
   writeTaskJsonFile: { kind: "writer", reason: "persists or mutates TaskStore state" },
   writeTaskWorkflowSelection: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  /*
+  FNXC:MergeReliability 2026-08-29-01:10:
+  FN-251's inventory regeneration found six previously unclassified TaskStore methods. Patchnode
+  completion, revert, reconciliation, and feed reads can mutate the durable ledger; remediation
+  appends mutate task steps. Project identity is a synchronous scoped read and stays non-writer.
+  */
+  appendRemediationSteps: { kind: "writer", reason: "persists task remediation steps" },
+  getProjectId: { kind: "non-writer", reason: "returns the bound project identity without persistence" },
+  listPatchnodeEntries: { kind: "writer", reason: "may reconcile and persist the patchnode ledger before reading" },
+  reconcilePatchnodeLedger: { kind: "writer", reason: "reconciles durable patchnode ledger entries" },
+  recordPatchnodeCompletion: { kind: "writer", reason: "persists a patchnode completion ledger entry" },
+  recordPatchnodeRevert: { kind: "writer", reason: "persists patchnode revert and pairing state" },
   appendAgentLog: { kind: "writer", reason: "persists task-scoped agent timeline state" },
   emit: { kind: "writer", reason: "announces task lifecycle events to durable subscribers" },
   logEntry: { kind: "writer", reason: "persists task-scoped log state and refreshes updatedAt" },

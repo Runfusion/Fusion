@@ -56,6 +56,7 @@ import { DocumentsView } from "../DocumentsView";
 import { EvalsView } from "../EvalsView";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { GoalsView } from "../GoalsView";
+import { PatchnodeView } from "../PatchnodeView";
 import { InsightsView } from "../InsightsView";
 import { MemoryView } from "../MemoryView";
 import { PullRequestView } from "../PullRequestView";
@@ -198,7 +199,7 @@ export interface MainContentProps {
   moveTask: (
     id: string,
     column: ColumnId,
-    optionsOrPosition?: { preserveProgress?: boolean } | number,
+    optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number,
   ) => Promise<Task>;
   pauseTask: (id: string) => Promise<Task>;
   openBoardTaskDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
@@ -260,8 +261,8 @@ export interface MainContentProps {
   closeTaskDetailMainPanel: () => void;
   setMainPanelDetailTask: Dispatch<SetStateAction<Task | TaskDetail | null>>;
   mergeTask: (id: string) => Promise<MergeResult>;
-  resetTask: (id: string) => Promise<Task>;
-  duplicateTask: (id: string) => Promise<Task>;
+  resetTask: (id: string, options?: { description?: string }) => Promise<Task>;
+  duplicateTask: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   unpauseTask: (id: string) => Promise<Task>;
   capacityRiskBannerEnabled: boolean;
   capacityRiskDismissed: boolean;
@@ -275,6 +276,7 @@ export interface MainContentProps {
   DocumentsView: LazyExoticComponent<typeof DocumentsView>;
   EvalsView: LazyExoticComponent<typeof EvalsView>;
   GoalsView: LazyExoticComponent<typeof GoalsView>;
+  PatchnodeView: LazyExoticComponent<typeof PatchnodeView>;
   InsightsView: LazyExoticComponent<typeof InsightsView>;
   MemoryView: LazyExoticComponent<typeof MemoryView>;
   PullRequestView: LazyExoticComponent<typeof PullRequestView>;

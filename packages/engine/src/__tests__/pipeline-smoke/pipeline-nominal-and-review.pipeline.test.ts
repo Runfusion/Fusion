@@ -14,7 +14,7 @@ const describeIfReady = hasGit ? pgDescribe : describe.skip;
 
 // Structural validation stays outside the PostgreSQL lifecycle so it cannot start a runtime.
 describe("pipeline smoke scenario contract", () => {
-  it("keeps the executable scenario manifest closed at twenty entries", () => {
+  it("keeps the executable scenario manifest closed at twenty-one entries", () => {
     assertPipelineScenarioTable();
   });
 });

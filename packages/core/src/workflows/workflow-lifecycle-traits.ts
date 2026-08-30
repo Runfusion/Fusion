@@ -529,6 +529,38 @@ export async function resolveReboundTargetForTask(store: WorkflowIrResolverStore
  * execution?", which is a single destination, not a membership test. Callers asking "is this card in
  * WIP?" want `columnsWithFlag(ir, "countsTowardWip")` instead — a board may declare several.
  */
+/*
+FNXC:LifecycleContainment 2026-08-28-01:09:
+FN-207 keeps automatic repair adjacent to the task's current lifecycle role.
+`resolveReboundTarget` remains hold-first for WIP replanning, but it is unsafe for
+review cards because it would skip implementation. This resolver has no literal
+or first-column fallback: an absent destination means the caller must retain the
+card in place rather than inventing a planning route.
+*/
+export function resolveContainedBackwardTarget(ir: WorkflowIr, fromColumnId: string): string | undefined {
+  const source = columnsOf(ir).find((column) => column.id === fromColumnId);
+  if (!source) return undefined;
+  const roleFlags = getTraitRegistry().resolveColumnFlags(source);
+  if (roleFlags.mergeOrchestration || roleFlags.mergeBlocker || roleFlags.humanReview) {
+    return columnsWithFlag(ir, "countsTowardWip")[0];
+  }
+  if (roleFlags.countsTowardWip) return columnsWithFlag(ir, "hold")[0];
+  return undefined;
+}
+
+export async function resolveContainedBackwardTargetForTask(
+  store: WorkflowIrResolverStore,
+  taskId: string,
+  fromColumnId: string,
+): Promise<string | undefined> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    return ir ? resolveContainedBackwardTarget(ir, fromColumnId) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function resolveWipTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);

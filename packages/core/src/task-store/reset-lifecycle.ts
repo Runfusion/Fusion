@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { ColumnId, Task, TaskStep } from "../types.js";
+import type { ColumnId, Task } from "../types.js";
 import * as schema from "../postgres/schema/index.js";
 import { projectScopeFor } from "../postgres/data-layer.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
@@ -24,23 +24,48 @@ export function __setResetPublicationFailureForTesting(
   };
 }
 
-function pendingSteps(steps: TaskStep[]): TaskStep[] {
-  return steps.map((step) => ({ ...step, status: "pending" }));
+export interface ResetTaskPublicationOptions {
+  description?: string;
+}
+
+export function resolveResetDescription(
+  current: string | undefined,
+  override?: string,
+): string | undefined {
+  const trimmedOverride = typeof override === "string" ? override.trim() : "";
+  return trimmedOverride.length > 0 ? trimmedOverride : current;
 }
 
 /*
-FNXC:TaskReset 2026-08-19-06:30:
-The reset publisher is the single durable fresh-planning boundary. It re-reads the project-scoped row under the task and workflow locks, retires graph continuations and foreach instances, then writes pending steps, cleared execution/review state, `needs-replan`, and the resolved intake column in one transaction. Filesystem cleanup and runtime cancellation happen before this function; no route-level step, move, or pin writes may be interleaved.
+FNXC:TaskReset 2026-08-28-20:50:
+The reset publisher reproduces the durable state of a freshly started idea: no plan steps, per-run presentation state, or lifecycle status survives. `needs-replan` remains the graph signal for revising a rejected plan, while an operator Reset is a new planning request and must render "Queued to plan"; the bootstrap seed PROMPT.md written fail-closed by the route is now the load-bearing planning-admission signal instead. Reset deliberately preserves task history and operator intent: log, comments, steering comments, attachments, operator documents, assignedAgentId, model and preset configuration, enabledWorkflowSteps, creation-time reviewLevel, noCommitsExpected, repositoryScope, branchContext, the monotonic checkoutLeaseEpoch fence, wedgeNotification through preserveDurableTaskWedgeInvariants, and never-cleared timing analytics firstExecutionAt, cumulativeActiveMs, cumulativePlanningMs, and columnDwellMs.
+
+FNXC:TaskReset 2026-08-28-16:31:
+A corrected original request must commit in the same transaction as fresh-planning state so a failed Reset cannot leave rewritten intent behind. Blank overrides preserve the current description, while a non-empty override updates `task.description`, which `applyOriginalDescription` republishes into the regenerated `## Original Description` section.
 */
-function buildResetTask(task: Task, intakeColumn: ColumnId): Task {
+/** @internal Pure reset publication builder for contract tests. */
+export function buildResetTask(
+  task: Task,
+  intakeColumn: ColumnId,
+  options?: ResetTaskPublicationOptions,
+): Task {
   const now = new Date().toISOString();
   return {
     ...task,
+    description: resolveResetDescription(task.description, options?.description) ?? task.description,
     column: intakeColumn,
-    status: "needs-replan",
+    status: undefined,
     error: undefined,
     currentStep: 0,
-    steps: pendingSteps(task.steps),
+    steps: [],
+    size: undefined,
+    prInfo: undefined,
+    prInfos: undefined,
+    tokenUsage: undefined,
+    tokenBudgetSoftAlertedAt: undefined,
+    tokenBudgetHardAlertedAt: undefined,
+    stepReports: [],
+    workflowTransitionNotification: undefined,
     worktree: undefined,
     workspaceWorktrees: undefined,
     branch: undefined,
@@ -52,6 +77,7 @@ function buildResetTask(task: Task, intakeColumn: ColumnId): Task {
     paused: false,
     userPaused: false,
     pausedReason: undefined,
+    externalBlock: undefined,
     pausedByAgentId: undefined,
     checkedOutBy: undefined,
     checkedOutAt: undefined,
@@ -115,17 +141,33 @@ function buildResetTask(task: Task, intakeColumn: ColumnId): Task {
   };
 }
 
-function assertResetTask(task: Task, intakeColumn: ColumnId): void {
-  if (task.column !== intakeColumn || task.status !== "needs-replan") {
-    throw new Error("Reset publication returned a task outside its resolved intake state");
+/** @internal Runtime assertion for the committed reset publication contract. */
+export function assertResetTask(
+  task: Task,
+  intakeColumn: ColumnId,
+  expectedDescription?: string,
+): void {
+  if (task.column !== intakeColumn || task.status !== undefined) {
+    throw new Error("Reset publication returned a task outside its resolved fresh-planning state");
   }
-  if (task.steps.some((step) => step.status !== "pending")) {
-    throw new Error("Reset publication returned a task with a non-pending step");
+  if (task.steps.length > 0) {
+    throw new Error("Reset publication returned a task with retained plan steps");
+  }
+  if (
+    task.size != null || task.prInfo != null || (task.prInfos?.length ?? 0) > 0
+    || task.tokenUsage != null || task.tokenBudgetSoftAlertedAt != null || task.tokenBudgetHardAlertedAt != null
+    || (task.stepReports?.length ?? 0) > 0 || task.workflowTransitionNotification != null
+  ) {
+    throw new Error("Reset publication returned stale per-run presentation state");
+  }
+  if (task.description !== expectedDescription) {
+    throw new Error("Reset publication returned a task without the expected description");
   }
   if (
     task.worktree != null || task.branch != null || task.sessionFile != null
     || task.checkedOutBy != null || task.workflowIrPin != null || task.workflowStepResults?.length
-    || task.review != null || task.reviewState != null || task.awaitingApprovalReason != null
+    || task.review != null || task.reviewState != null || task.awaitingApprovalReason != null || task.externalBlock != null
+    || Object.keys(task.workspaceWorktrees ?? {}).length > 0
   ) {
     throw new Error("Reset publication returned stale execution or review state");
   }
@@ -135,6 +177,7 @@ export async function resetTaskPublicationImpl(
   store: TaskStore,
   taskId: string,
   intakeColumn: ColumnId,
+  options?: ResetTaskPublicationOptions,
 ): Promise<Task> {
   const layer = store.asyncLayer;
   if (!layer) {
@@ -195,6 +238,21 @@ export async function resetTaskPublicationImpl(
       await tx.delete(schema.project.completionHandoffMarkers).where(and(projectScopeFor(schema.project.completionHandoffMarkers.projectId, projectId), eq(schema.project.completionHandoffMarkers.taskId, taskId)));
       await tx.delete(schema.project.mergeQueue).where(and(projectScopeFor(schema.project.mergeQueue.projectId, projectId), eq(schema.project.mergeQueue.taskId, taskId)));
       await tx.delete(schema.project.mergeRequests).where(and(projectScopeFor(schema.project.mergeRequests.projectId, projectId), eq(schema.project.mergeRequests.taskId, taskId)));
+      /*
+      FNXC:TaskReset 2026-08-27-22:20:
+      Reset clears workspace acquire leases and land intents in the same publication transaction.
+      A retained acquire lease would make the next dispatch raise WorkspaceRepoAcquireBusyError until
+      TTL expiry, while a retained pending land intent could revive partial-land recovery for worktrees
+      the reset no longer owns.
+      */
+      await tx.delete(schema.project.workspaceLandIntents).where(and(
+        projectScopeFor(schema.project.workspaceLandIntents.projectId, projectId),
+        eq(schema.project.workspaceLandIntents.taskId, taskId),
+      ));
+      await tx.delete(schema.project.workspaceCoordinationLeases).where(and(
+        projectScopeFor(schema.project.workspaceCoordinationLeases.projectId, projectId),
+        eq(schema.project.workspaceCoordinationLeases.ownerTaskId, taskId),
+      ));
       await tx.delete(schema.project.artifacts).where(and(
         projectScopeFor(schema.project.artifacts.projectId, projectId), eq(schema.project.artifacts.taskId, taskId),
         sql`coalesce(${schema.project.artifacts.metadata}->>'source', '') <> 'attachment'`,
@@ -208,7 +266,8 @@ export async function resetTaskPublicationImpl(
         eq(schema.project.workflowRunBranches.taskId, taskId),
       ));
 
-      const next = buildResetTask(current, intakeColumn);
+      const expectedDescription = resolveResetDescription(current.description, options?.description);
+      const next = buildResetTask(current, intakeColumn, options);
       await upsertTaskRowInTransaction(
         tx,
         next as unknown as Record<string, unknown>,
@@ -218,7 +277,7 @@ export async function resetTaskPublicationImpl(
       const committedRow = await readTaskRowInTransaction(tx, taskId, undefined, projectId);
       if (!committedRow) throw new Error(`Task ${taskId} disappeared during reset publication`);
       published = store.rowToTask(store.pgRowToTaskRow(committedRow));
-      assertResetTask(published, intakeColumn);
+      assertResetTask(published, intakeColumn, expectedDescription);
     });
   });
 

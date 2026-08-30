@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getTaskMergeBlocker } from "../merge/task-merge.js";
+import { evaluatePreMergeApprovals } from "../merge/pre-merge-approval.js";
 
 const base = {
   column: "in-review", paused: false, steps: [], repositoryScope: undefined,
@@ -29,5 +30,32 @@ describe("positive pre-merge approval gate", () => {
     const task = { ...base, workflowStepResults: [{ workflowStepId: "code-review", workflowStepName: "Code", status: "passed" as const, verdict: "APPROVE" as const, reviewKind: "code" as const }] };
     expect(getTaskMergeBlocker(task, { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "unavailable", reason: "git" } } }))
       .toBe("task has no provable approval for the content being merged");
+  });
+
+  it("binds an empty-input approval only to a still-empty singular diff", () => {
+    const task = {
+      ...base,
+      workflowStepResults: [{
+        workflowStepId: "code-review", workflowStepName: "Code", status: "passed" as const,
+        verdict: "APPROVE" as const, reviewKind: "code" as const,
+        reviewInputFingerprint: "empty-review-input:v1",
+      }],
+    };
+    const empty = evaluatePreMergeApprovals(task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "empty" } },
+    });
+    const populated = evaluatePreMergeApprovals(task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "a".repeat(64) } },
+    });
+    const unavailable = evaluatePreMergeApprovals(task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "unavailable", reason: "git" } },
+    });
+
+    expect(empty[0]?.state).toBe("approved");
+    expect(populated[0]?.state).toBe("stale-content");
+    expect(unavailable[0]?.state).toBe("unprovable-content");
   });
 });

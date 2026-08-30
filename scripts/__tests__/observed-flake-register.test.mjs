@@ -88,13 +88,16 @@ test("testing guidance and the AGENTS.md exception retain record escalation evid
 /*
 FNXC:TestFlakeRegister 2026-08-19-12:04:
 FN-9146 requires the register's active statuses to name the current evidence owner after a completed campaign. Enforce the stated count, retained observation state, ownership, and inbound testing-guide anchors so that decision surface cannot silently drift.
+
+FNXC:TestFlakeRegister 2026-08-30-04:25:
+A closed record may stay PHYSICALLY inside the active section when later evidence still cross-references it: entry 7 was closed on 2026-08-23 after its file was quarantined, but the FN-9146 campaign-evidence assertion below reads its per-run table in place, so relocating it to the archive would destroy that coverage. The stated introduction count describes ACTIVE records only, so closed-status entries are excluded here rather than moved. Counting raw sections instead made the two disagree the moment entry 7 closed and left main red. Drift protection is unchanged: the pinned list below still fixes every active heading and its exact status text.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
   const statedCount = register.match(/\*\*(\d+) active observation records\*\*/);
   assert.ok(statedCount, "Expected the register introduction to state the active observation count");
 
-  const activeEntries = readActiveEntries(register);
+  const activeEntries = readActiveEntries(register).filter(({ status }) => !/^Closed\b/.test(status));
   assert.equal(
     activeEntries.length,
     Number(statedCount[1]),
@@ -111,8 +114,12 @@ test("observed-flake register active count, escalation state, and owners stay sy
       status: "Active first sighting — evidence owner FN-9146.",
     },
     {
-      heading: "7. Mission store PostgreSQL teardown hook",
-      status: "Active first sighting — evidence owner FN-9146.",
+      heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
+      status: "Active first sighting — recorded 2026-08-23, unattributed.",
+    },
+    {
+      heading: "14. Merge-node paused-abort retry sequence",
+      status: "Quarantined 2026-08-29 after a second sequence-only sighting.",
     },
   ]);
 });

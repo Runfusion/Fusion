@@ -348,6 +348,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   importTranslateGlobalCredentialInstanceId: undefined,
   importTranslateGlobalModelId: undefined,
   importTranslateGlobalThinkingLevel: undefined,
+  // FNXC:FastCheapModelLane 2026-08-29-02:43: The Fast & Cheap route owns an optional global lane and otherwise inherits normal execution resolution.
+  fastCheapGlobalProvider: undefined,
+  fastCheapGlobalCredentialInstanceId: undefined,
+  fastCheapGlobalModelId: undefined,
+  fastCheapGlobalThinkingLevel: undefined,
   /*
   FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
   Global model lanes can override the default thinking effort independently. Undefined preserves the existing inheritance to `defaultThinkingLevel`.
@@ -374,10 +379,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   vitestKillThresholdPct: 90,
   // Agent log persistence controls
   /*
-  FNXC:AgentLogs 2026-06-23-00:00:
-  Verbose tool arguments and results are default-off to reduce persisted log volume and payload exposure. Operators who need saved tool details can explicitly opt in with persistAgentToolOutput: true; tool timeline rows remain logged either way.
+  FNXC:AgentLogs 2026-08-29-04:32:
+  FN-253 makes complete tool arguments and results visible by default: AgentLogger redacts them at
+  its single write boundary, persistence and delivery lanes bound each row, and operators can retain
+  the previous low-volume behavior by explicitly setting persistAgentToolOutput: false.
   */
-  persistAgentToolOutput: false,
+  persistAgentToolOutput: true,
   /*
   FNXC:ToolOutputBudget 2026-08-03-16:00:
   FN-8616 lets operators raise, lower, or disable the FN-8614 per-result tool-output
@@ -579,7 +586,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   worktreeCopyFiles: [],
   testCommand: undefined,
   buildCommand: undefined,
-  recycleWorktrees: false,
   showWorktreeGrouping: false,
   openTasksInRightSidebar: false,
   /*
@@ -608,7 +614,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   taskDetailChatFirst: false,
   executorAllowSiblingBranchRename: false,
-  worktreeNaming: "random",
   worktrunk: {
     enabled: false,
     binaryPath: undefined,
@@ -850,6 +855,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   importTranslateCredentialInstanceId: undefined,
   importTranslateModelId: undefined,
   importTranslateThinkingLevel: undefined,
+  // FNXC:FastCheapModelLane 2026-08-29-02:43: Project Fast & Cheap overrides stay separate from ordinary execution models so fast routing remains opt-in.
+  fastCheapProvider: undefined,
+  fastCheapCredentialInstanceId: undefined,
+  fastCheapModelId: undefined,
+  fastCheapThinkingLevel: undefined,
   /*
   FNXC:Settings-MergerModel 2026-07-13-07:52:
   Merger model lane stays project-scoped (not workflow-moved) like title summarizer: Settings → Project Models can override the global merger baseline without binding the choice to a workflow graph.

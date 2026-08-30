@@ -14,6 +14,12 @@ import type { SettingsSearchEntry } from "../types";
 
 const SECTIONS_DIR = resolve(__dirname, "../../sections");
 
+/** Dynamic model-lane keys that are rendered from the shared lane catalog rather than literal descriptors. */
+const DYNAMIC_RENDERED_KEYS: Record<string, readonly string[]> = {
+  "GlobalModelsSection.tsx": ["fastCheapGlobalModelId"],
+  "ProjectModelsSection.tsx": ["fastCheapModelId"],
+};
+
 /**
  * Extracts the descriptor keys a section renders. Matches the established
  * `descriptor={{ key: "..." }}` idiom every typed row uses (see GeneralSection
@@ -24,13 +30,16 @@ const SECTIONS_DIR = resolve(__dirname, "../../sections");
  * `htmlFor` → `data-settings-key` (e.g. general.mobileNavPrimaryItems). Those
  * rows are indexed and jumpable but never use the descriptor={{ key }} shape.
  */
-function extractDescriptorKeys(source: string): string[] {
+function extractDescriptorKeys(source: string, filename?: string): string[] {
   const keys = new Set<string>();
   for (const m of source.matchAll(/descriptor=\{\{\s*key:\s*"([^"]+)"/g)) {
     keys.add(m[1]);
   }
   for (const m of source.matchAll(/<SettingsFieldRow\b[\s\S]*?\bhtmlFor="([^"]+)"/g)) {
     keys.add(m[1]);
+  }
+  for (const key of filename ? DYNAMIC_RENDERED_KEYS[filename] ?? [] : []) {
+    keys.add(key);
   }
   return [...keys];
 }
@@ -81,7 +90,7 @@ describe("settings search index", () => {
 
     for (const [file, sectionId] of Object.entries(SECTION_FILE_TO_ID)) {
       const source = readFileSync(join(SECTIONS_DIR, file), "utf8");
-      const rendered = extractDescriptorKeys(source);
+      const rendered = extractDescriptorKeys(source, file);
       expect(rendered.length, `${file} renders no descriptor rows — is it migrated?`).toBeGreaterThan(0);
 
       const indexed = new Set(
@@ -103,7 +112,7 @@ describe("settings search index", () => {
     for (const [file, sectionId] of Object.entries(SECTION_FILE_TO_ID)) {
       const source = readFileSync(join(SECTIONS_DIR, file), "utf8");
       const keys = renderedBySection.get(sectionId) ?? new Set<string>();
-      for (const key of extractDescriptorKeys(source)) keys.add(key);
+      for (const key of extractDescriptorKeys(source, file)) keys.add(key);
       renderedBySection.set(sectionId, keys);
     }
 
@@ -119,7 +128,7 @@ describe("settings search index", () => {
   it("registers a section id for every section that renders descriptor rows", () => {
     const unregistered = sectionFiles()
       .filter((file) => !(file in SECTION_FILE_TO_ID))
-      .filter((file) => extractDescriptorKeys(readFileSync(join(SECTIONS_DIR, file), "utf8")).length > 0);
+      .filter((file) => extractDescriptorKeys(readFileSync(join(SECTIONS_DIR, file), "utf8"), file).length > 0);
 
     /*
     FNXC:SettingsSearch 2026-07-15-17:35:

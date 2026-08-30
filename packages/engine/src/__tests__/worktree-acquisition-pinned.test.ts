@@ -143,9 +143,6 @@ describe("acquireTaskWorktree — task-pinned mode", () => {
       rootDir: ROOT,
       store: makeStore(),
       settings: pinnedSettings,
-      // A pool is attached with recycleWorktrees on — pinned mode must ignore it entirely.
-      pool: { acquire: vi.fn(() => join(ROOT, ".worktrees", "grand-ridge")), prepareForTask: vi.fn(), release: vi.fn() } as any,
-      settingsOverride: undefined,
       createWorktree,
     } as any);
 
@@ -153,12 +150,8 @@ describe("acquireTaskWorktree — task-pinned mode", () => {
     expect(createWorktree).toHaveBeenCalledWith("fusion/fn-8069", join(ROOT, ".worktrees", "fn-8069"), "FN-8069", "main", false);
   });
 
-  it("runtime backstop: recycle ON disables pinning (mutually exclusive) so the pool is consulted", async () => {
-    // recycleWorktrees + worktreeNaming:"task-id" is rejected at the settings-write boundary; if a legacy
-    // on-disk config still carries both, the runtime degrades safely to recycling (pinning off), so the
-    // pool IS consulted — pinned mode never calls pool.acquire.
-    const acquire = vi.fn(() => null); // empty pool → falls through to fresh
-    const release = vi.fn();
+  it("ignores persisted legacy naming and recycle settings while retaining the task-id path", async () => {
+    const acquire = vi.fn(() => null);
     const createWorktree = vi.fn(async (branch: string, path: string) => ({ path, branch }));
 
     const result = await acquireTaskWorktree({
@@ -166,12 +159,12 @@ describe("acquireTaskWorktree — task-pinned mode", () => {
       rootDir: ROOT,
       store: makeStore(),
       settings: { worktreeNaming: "task-id", recycleWorktrees: true } as any,
-      pool: { acquire, prepareForTask: vi.fn(), release } as any,
+      // Legacy callers may still supply this unknown option; native acquisition must ignore it.
+      pool: { acquire, prepareForTask: vi.fn(), release: vi.fn() } as any,
       createWorktree,
-    });
+    } as any);
 
-    expect(acquire).toHaveBeenCalledWith("FN-7996");
-    // Falls through to the normal fresh path (task-id naming still derives fn-7996 for the directory name).
+    expect(acquire).not.toHaveBeenCalled();
     expect(result.worktreePath).toBe(PINNED);
   });
 

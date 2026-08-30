@@ -301,6 +301,10 @@ export function buildRunImplementationDeps(
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
     ]),
+    reexecuteTaskInPlace: async (taskId: string) => {
+      const live = await host.store.getTask(taskId);
+      setTimeout(() => { void host.execute(live); }, 0);
+    },
     sharedWorkerTools: buildSharedWorkerToolsDeps(host),
   };
   return defineLiveWorkspaceConfig(bag, host);
@@ -312,6 +316,7 @@ export function buildRunGraphCustomNodeDeps(host: any): any {
     ensureWorkspaceConfig: withWorkspaceResolver(host),
     options: host.options as { pluginRunner?: unknown; [k: string]: unknown },
     graphUnattendedRuns: host.graphUnattendedRuns,
+    runConfiguredCommand: pure.runConfiguredCommand,
     ...facadeMethods(host, [
       "getRunContextFor",
       "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
@@ -412,6 +417,10 @@ export function buildMarkStuckAbortedDeps(host: any): any {
       "hasActiveWorktreeBinding",
     ]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
+    reexecuteTaskInPlace: async (taskId: string) => {
+      const live = await host.store.getTask(taskId);
+      setTimeout(() => { void host.execute(live); }, 0);
+    },
   };
   return defineLiveWorkspaceConfig(bag, host);
 }
@@ -465,7 +474,6 @@ export function buildEnsureGraphCustomNodeWorktreeDeps(host: any, runConfiguredC
     ...facadeMethods(host, [
       "getRunContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
     ]),
-    pool: host.options.pool,
     secretsStore: host.options.secretsStore,
     createWorktree: (
       branch: string, path: string, taskId: string, startPoint?: string, allowSibling?: boolean,
@@ -802,7 +810,7 @@ export function buildExecuteCoreDeps(host: any): any {
     releaseSemaphore: () => { host.options.semaphore?.release(); },
     ...facadeMethods(host, [
       "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet",
-      "executeWorkflowGraph",
+      "blockOuterDispatchWhenFileScopeLeaseHeld", "executeWorkflowGraph",
     ]),
   };
 }

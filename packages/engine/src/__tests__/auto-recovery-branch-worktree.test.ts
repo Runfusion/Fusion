@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
 import { BranchWorktreeAutoRecoveryHandler } from "../auto-recovery-handlers/branch-worktree.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
-import { TransitionRejectionError } from "@fusion/core";
 
 const branchConflictMocks = vi.hoisted(() => ({
   inspectBranchConflict: vi.fn(),
@@ -40,6 +39,7 @@ function createFixtures(taskOverrides: Record<string, unknown> = {}, mode = "pro
   const taskStore = {
     updateTask: vi.fn(async () => undefined),
     moveTask: vi.fn(async () => undefined),
+    logEntry: vi.fn(async () => undefined),
     ...(ir
       ? {
           getTaskWorkflowSelectionAsync: async () => ({ workflowId: "recovery-lifecycle", stepIds: [] }),
@@ -120,28 +120,17 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
 
   This drives the rejection itself, which is the behaviour every route ends at.
   */
-  it("records a skip instead of throwing when the rebound destination is rejected", async () => {
+  it("contains recovery when the source has no adjacent backward destination", async () => {
     const f = createFixtures({ column: "building" }, "programmatic");
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-17:45 (#2797 review — greptile P1):
-    A REAL TransitionRejectionError, not a look-alike Error whose message happens to read like one.
-    The reason is now derived from the typed `rejection.code`, so a plain Error must NOT be classified
-    as a lane problem — which is the point of the companion case below.
-    */
-    f.taskStore.moveTask.mockRejectedValue(
-      new TransitionRejectionError(
-        { code: "unknown-column", messageKey: "transition.rejected.unknownColumn", retryable: false, detail: "Column 'todo' is not defined in this task's workflow" } as never,
-        "Invalid transition: 'building' -> 'todo'. Unknown column for this workflow.",
-      ),
-    );
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
 
     /* The handler must not propagate — that is the regression. */
     await expect(f.handler.issueRetry(f.failure, f.decision, f.ctx)).resolves.not.toThrow();
 
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
       type: "branch-worktree:auto-requeue-skipped",
-      metadata: expect.objectContaining({ reason: "rebound-target-rejected", rejectionCode: "unknown-column", reboundTarget: "todo" }),
+      metadata: expect.objectContaining({ reason: "no-contained-target", column: "building", branchPreserved: true }),
     }));
     /* And the success audit must NOT be written for a move that did not happen. */
     expect(f.runAudit.database).not.toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
@@ -210,7 +199,11 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
     expect(f.taskStore.updateTask).not.toHaveBeenCalled();
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.hold, expect.anything());
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith(
+      "FN-4536",
+      RENAMED_VOCAB.wip,
+      expect.objectContaining({ lifecycleReason: "branch-worktree-recovery" }),
+    );
   });
 
   it("reanchors bootstrap misbinding then requeues", async () => {

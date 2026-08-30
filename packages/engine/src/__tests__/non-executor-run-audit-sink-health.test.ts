@@ -134,48 +134,6 @@ describe("FN-9175 non-executor audit sink health", () => {
       manager.stop();
     });
 
-    it.each(hostileModes)("keeps no-progress retry and exhaustion mutations bounded with a %s audit sink", async (mode) => {
-      const sink = sinkFor(mode);
-      const task = {
-        id: `FN-9186-${mode}`,
-        column: "in-progress",
-        status: "failed",
-        error: "Agent finished without calling fn_task_done: sandbox unavailable",
-        paused: false,
-        steps: [],
-      };
-      const store = {
-        ...sink.host,
-        getSettings: vi.fn().mockResolvedValue({ maintenanceIntervalMs: 0 }),
-        listTasks: vi.fn(async ({ column }: { column: string }) => column === task.column ? [{ ...task }] : []),
-        updateTaskAtomic: vi.fn(async (_id: string, updater: (live: typeof task) => Partial<typeof task> | null) => {
-          const patch = await updater({ ...task });
-          if (patch) Object.assign(task, patch);
-          return { ...task };
-        }),
-        moveTask: vi.fn(async () => { task.column = "todo"; }),
-        logEntry: vi.fn().mockResolvedValue(undefined),
-        getRootDir: vi.fn(() => "/tmp/fn-9175"),
-      };
-      const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/fn-9175", getExecutingTaskIds: () => new Set() });
-      vi.spyOn(manager as any, "hasRecoverableGitWork").mockResolvedValue(false);
-      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true });
-      await expect(settleBounded(sink, () => manager.recoverNoProgressNoTaskDoneFailures())).resolves.toBe(1);
-      expect(store.moveTask).toHaveBeenCalledOnce();
-
-      Object.assign(task, {
-        column: "in-progress",
-        status: "failed",
-        error: "Agent finished without calling fn_task_done: sandbox unavailable",
-        taskDoneRetryCount: 3,
-        recoveryRetryCount: 3,
-        nextRecoveryAt: undefined,
-      });
-      await expect(settleBounded(sink, () => manager.recoverNoProgressNoTaskDoneFailures())).resolves.toBe(0);
-      expect(task.error).toMatch(/^NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED:/);
-      expect(store.moveTask).toHaveBeenCalledOnce();
-      manager.stop();
-    });
 
     it.each(hostileModes)("reclaims a wedged active merge with a %s audit sink", async (mode) => {
       const sink = sinkFor(mode);

@@ -46,9 +46,11 @@ describe("workflow malformed-verdict gate", () => {
     expect(parseWorkflowStepOutput("looks good to me")).toEqual({
       output: "looks good to me",
       verdict: "APPROVE",
-      notes: "",
+      notes: "looks good to me",
     });
-    expect(parseWorkflowStepOutput("lorem ipsum")).toEqual({ output: "lorem ipsum", malformed: true });
+    const malformed = parseWorkflowStepOutput("lorem ipsum");
+    expect(malformed).toEqual({ output: "lorem ipsum", malformed: true });
+    expect(malformed).not.toHaveProperty("notesMissing");
     expect(parseWorkflowStepOutput("native skill output", { requireVerdict: false })).toEqual({ output: "native skill output" });
   });
 

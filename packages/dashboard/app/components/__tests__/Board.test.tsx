@@ -24,12 +24,10 @@ vi.mock("../../hooks/useBatchBadgeFetch", () => ({
 
 const pendingBoardWorkflows = () => new Promise<never>(() => {});
 const fetchBoardWorkflowsMock = vi.fn().mockImplementation(pendingBoardWorkflows);
-const promoteTaskMock = vi.fn().mockResolvedValue({});
 
 vi.mock("../../api", () => ({
   fetchWorkflowSteps: (...args: unknown[]) => fetchWorkflowStepsMock(...args),
   fetchBoardWorkflows: (...args: unknown[]) => fetchBoardWorkflowsMock(...args),
-  promoteTask: (...args: unknown[]) => promoteTaskMock(...args),
 }));
 
 // Capture SSE event handlers registered via subscribeSse so tests can simulate
@@ -198,7 +196,6 @@ beforeEach(() => {
   fetchBatchMock.mockReset();
   fetchWorkflowStepsMock.mockReset();
   fetchWorkflowStepsMock.mockImplementation(pendingWorkflowSteps);
-  promoteTaskMock.mockClear();
   subscribeSseMock.mockClear();
   for (const key of Object.keys(sseHandlers)) delete sseHandlers[key];
   fetchBoardWorkflowsMock.mockReset();
