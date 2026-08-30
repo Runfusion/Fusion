@@ -53,7 +53,7 @@ jobs:
           node -e "require('node:fs').writeFileSync(process.argv[1], process.argv[2] + '\n')" "$pack_dir/agent-browser-version.txt" "$agent_browser_version"
 
       - name: Upload packed install fixture
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: agent-browser-install-pack
           path: |
