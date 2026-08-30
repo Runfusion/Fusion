@@ -102,6 +102,30 @@ function makeStore(tasksInput: Task[]) {
   return { tasks, store };
 }
 
+function configureTaskWorkflowSelections(
+  store: TaskStore,
+  definitions: ReadonlyArray<{ id: string; ir: unknown }>,
+  workflowIdByTaskId: Readonly<Record<string, string>>,
+): void {
+  const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
+  const mutable = store as unknown as {
+    listWorkflowDefinitions: ReturnType<typeof vi.fn>;
+    getTaskWorkflowSelection: ReturnType<typeof vi.fn>;
+    getTaskWorkflowSelectionAsync: ReturnType<typeof vi.fn>;
+    getWorkflowDefinition: ReturnType<typeof vi.fn>;
+  };
+  mutable.listWorkflowDefinitions = vi.fn(async () => definitions);
+  mutable.getTaskWorkflowSelection = vi.fn((taskId: string) => {
+    const workflowId = workflowIdByTaskId[taskId];
+    return workflowId ? { workflowId, stepIds: [] } : undefined;
+  });
+  mutable.getTaskWorkflowSelectionAsync = vi.fn(async (taskId: string) => {
+    const workflowId = workflowIdByTaskId[taskId];
+    return workflowId ? { workflowId, stepIds: [] } : undefined;
+  });
+  mutable.getWorkflowDefinition = vi.fn(async (workflowId: string) => definitionById.get(workflowId));
+}
+
 describe("SelfHealingManager FN-5488 fast-path regressions", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -246,6 +270,131 @@ describe("SelfHealingManager FN-5488 fast-path regressions", () => {
       dependent.id,
       expect.stringContaining(`reason=${REASON_UNBACKED_MERGING}`),
     );
+  });
+
+  it("preserves overlapBlockedBy when a failed review holder still owns a worktree", async () => {
+    const holder = createTask("FN-254-HOLDER", {
+      column: "in-review",
+      status: "failed",
+      worktree: "/wt/fn-254-holder",
+    });
+    const dependent = createTask("FN-254-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: holder.id,
+    });
+    const { tasks, store } = makeStore([holder, dependent]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    await manager.clearStaleBlockedBy();
+
+    expect(tasks.get(dependent.id)).toMatchObject({
+      status: "queued",
+      overlapBlockedBy: holder.id,
+    });
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(
+      dependent.id,
+      expect.objectContaining({ signature: `file-scope:${holder.id}` }),
+    );
+  });
+
+  it("uses the holder workflow rather than a project-wide WIP column union", async () => {
+    const holder = createTask("FN-254-HOLDER", {
+      column: "shared",
+      priority: "low",
+      worktree: "/wt/fn-254-holder",
+    });
+    const dependent = createTask("FN-254-DEPENDENT", {
+      column: "todo",
+      priority: "high",
+      status: "queued",
+      overlapBlockedBy: holder.id,
+    });
+    const { tasks, store } = makeStore([holder, dependent]);
+    configureTaskWorkflowSelections(
+      store,
+      [
+        {
+          id: "wf-holder",
+          ir: {
+            version: "v2",
+            name: "holder-workflow",
+            columns: [
+              { id: "todo", name: "Todo", traits: [{ trait: "hold" }] },
+              { id: "shared", name: "Shared", traits: [] },
+              { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+            ],
+            nodes: [],
+            edges: [],
+          },
+        },
+        {
+          id: "wf-other",
+          ir: {
+            version: "v2",
+            name: "other-workflow",
+            columns: [
+              { id: "shared", name: "Shared", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            ],
+            nodes: [],
+            edges: [],
+          },
+        },
+      ],
+      { [holder.id]: "wf-holder" },
+    );
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    await manager.clearStaleBlockedBy();
+
+    expect(tasks.get(dependent.id)).toMatchObject({
+      status: null,
+      overlapBlockedBy: null,
+    });
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+  });
+
+  it("clears overlapBlockedBy after a holder is terminal or a review worktree is gone", async () => {
+    for (const holder of [
+      createTask("FN-254-DONE", { column: "done", worktree: "/wt/fn-254-done" }),
+      createTask("FN-254-CLEAN", { column: "in-review", status: "failed" }),
+    ]) {
+      const dependent = createTask(`FN-254-DEPENDENT-${holder.id}`, {
+        column: "todo",
+        status: "queued",
+        overlapBlockedBy: holder.id,
+      });
+      const { tasks, store } = makeStore([holder, dependent]);
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+      await manager.clearStaleBlockedBy();
+
+      expect(tasks.get(dependent.id)).toMatchObject({
+        overlapBlockedBy: null,
+        status: null,
+      });
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not rebound a WIP holder whose overlap lease is waived for its dependency", async () => {
+    const dependency = createTask("FN-254-DEP", {
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: "FN-254-HOLDER",
+    });
+    const holder = createTask("FN-254-HOLDER", {
+      column: "in-progress",
+      worktree: "/wt/fn-254-holder",
+      dependencies: [dependency.id],
+    });
+    const { store } = makeStore([holder, dependency]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    const rebound = vi.spyOn(manager as any, "reboundTask");
+
+    await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+
+    expect(rebound).not.toHaveBeenCalled();
   });
 
   it("preserves overlapBlockedBy + queued status when failed-retry-exhausted blocker clears", async () => {

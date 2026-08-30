@@ -40,7 +40,6 @@ function taskWithUsage(overrides: Partial<Task> = {}): Task {
     column: "todo",
     steps: [{ name: "Implement", status: "pending" }] as any,
     awaitingPlanning: false,
-    // FNXC:TaskCardPromote 2026-08-11-09:13: This promote-visible fixture explicitly disables the default-on plan-review gate.
     enabledWorkflowSteps: [],
     dependencies: [],
     tokenUsage: {
@@ -59,7 +58,7 @@ function taskWithUsage(overrides: Partial<Task> = {}): Task {
 }
 
 describe("TaskCard cost badge", () => {
-  it("renders exactly one derived cost badge for a slim-payload-compatible task inside an enabled provider", () => {
+  it("renders exactly one derived cost badge inside an enabled provider", () => {
     const { container } = render(
       <CostBadgeProvider value={{ enabled: true, pricingOverrides: undefined }}>
         <TaskCard task={taskWithUsage()} onOpenDetail={noop} addToast={noop} />
@@ -70,9 +69,10 @@ describe("TaskCard cost badge", () => {
     expect(badges).toHaveLength(1);
     expect(badges[0]?.textContent).toContain("$0.25");
     expect(badges[0]).toHaveAttribute("title", "Estimated cost $0.25");
+    expect(badges[0]?.closest(".card-promote-cost-row")).toBeNull();
   });
 
-  it("leaves no badge shell when disabled or when usage is missing or zero", () => {
+  it("leaves no badge shell when disabled or usage is missing or zero", () => {
     const disabled = render(<TaskCard task={taskWithUsage()} onOpenDetail={noop} addToast={noop} />);
     expect(disabled.container.querySelector(".card-cost-indicator")).toBeNull();
     disabled.unmount();
@@ -83,7 +83,6 @@ describe("TaskCard cost badge", () => {
       </CostBadgeProvider>,
     );
     expect(missing.container.querySelector(".card-cost-indicator")).toBeNull();
-    expect(missing.container.querySelector(".card-cost-indicator[aria-label]")).toBeNull();
     missing.unmount();
 
     const zero = render(
@@ -94,7 +93,7 @@ describe("TaskCard cost badge", () => {
     expect(zero.container.querySelector(".card-cost-indicator")).toBeNull();
   });
 
-  it("renders once alongside leading files-changed footer content", () => {
+  it("uses the established footer placement alongside leading files-changed content", () => {
     const { container } = render(
       <CostBadgeProvider value={{ enabled: true }}>
         <TaskCard
@@ -105,77 +104,27 @@ describe("TaskCard cost badge", () => {
       </CostBadgeProvider>,
     );
 
-    const badges = container.querySelectorAll(".card-cost-indicator");
-    expect(badges).toHaveLength(1);
-    expect(badges[0]?.closest(".card-footer-row")).not.toBeNull();
-    expect(badges[0]?.closest(".card-footer-row-right")).not.toBeNull();
+    const badge = container.querySelector(".card-cost-indicator");
+    expect(badge?.closest(".card-footer-row")).not.toBeNull();
+    expect(badge?.closest(".card-footer-row-right")).not.toBeNull();
+    expect(container.querySelector(".card-promote-cost-row")).toBeNull();
   });
 
-  it.each([1280, 390])("omits unavailable cost chips and their shells at %ipx with or without Promote", (width) => {
+  it.each([1280, 390])("keeps unavailable chips absent at %ipx", (width) => {
     const originalWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
-
     try {
-      const unavailableWithoutPromote = render(
+      const { container } = render(
         <CostBadgeProvider value={{ enabled: true }}>
           <TaskCard
-            task={taskWithUsage({
-              tokenUsage: { ...taskWithUsage().tokenUsage!, modelProvider: "unknown", modelId: "no-price" },
-            })}
+            task={taskWithUsage({ tokenUsage: { ...taskWithUsage().tokenUsage!, modelProvider: "unknown", modelId: "no-price" } })}
             onOpenDetail={noop}
             addToast={noop}
           />
         </CostBadgeProvider>,
       );
-      expect(unavailableWithoutPromote.container.querySelector(".card-cost-indicator")).toBeNull();
-      expect(unavailableWithoutPromote.container.querySelector(".card-cost-indicator[aria-label]")).toBeNull();
-      expect(unavailableWithoutPromote.container.querySelector(".card-promote-cost-row")).toBeNull();
-      unavailableWithoutPromote.unmount();
-
-      const unavailableWithPromote = render(
-        <CostBadgeProvider value={{ enabled: true }}>
-          <TaskCard
-            task={taskWithUsage({
-              tokenUsage: {
-                ...taskWithUsage().tokenUsage!,
-                modelProvider: "unknown",
-                modelId: "no-price",
-                perModel: [
-                  { modelProvider: "openai", modelId: "gpt-5-mini", inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000 },
-                  { modelProvider: "unknown", modelId: "no-price", inputTokens: 1, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1 },
-                ],
-              },
-            })}
-            onOpenDetail={noop}
-            addToast={noop}
-            onPromote={vi.fn().mockResolvedValue(undefined)}
-          />
-        </CostBadgeProvider>,
-      );
-      expect(unavailableWithPromote.container.querySelector(".card-cost-indicator")).toBeNull();
-      expect(unavailableWithPromote.container.querySelector(".card-cost-indicator[aria-label]")).toBeNull();
-      expect(unavailableWithPromote.container.querySelector(".card-promote-cost-row")).toBeNull();
-      unavailableWithPromote.unmount();
-
-      const pricedWithoutPromote = render(
-        <CostBadgeProvider value={{ enabled: true }}>
-          <TaskCard task={taskWithUsage()} onOpenDetail={noop} addToast={noop} />
-        </CostBadgeProvider>,
-      );
-      const footerBadge = pricedWithoutPromote.container.querySelectorAll(".card-cost-indicator");
-      expect(footerBadge).toHaveLength(1);
-      expect(footerBadge[0]?.textContent).toContain("$");
-      pricedWithoutPromote.unmount();
-
-      const pricedWithPromote = render(
-        <CostBadgeProvider value={{ enabled: true }}>
-          <TaskCard task={taskWithUsage()} onOpenDetail={noop} addToast={noop} onPromote={vi.fn().mockResolvedValue(undefined)} />
-        </CostBadgeProvider>,
-      );
-      const promoteBadge = pricedWithPromote.container.querySelectorAll(".card-cost-indicator");
-      expect(promoteBadge).toHaveLength(1);
-      expect(promoteBadge[0]?.textContent).toContain("$");
-      expect(promoteBadge[0]?.closest(".card-promote-cost-row")).not.toBeNull();
+      expect(container.querySelector(".card-cost-indicator")).toBeNull();
+      expect(container.querySelector(".card-promote-cost-row")).toBeNull();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
     }
@@ -183,7 +132,6 @@ describe("TaskCard cost badge", () => {
 
   it("keeps the shared card cost chip visible at the mobile breakpoint", () => {
     const css = loadAllAppCss();
-
     expect(css).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-time-indicator\s*,\s*\.card-cost-indicator[\s\S]*?height:\s*var\(--card-chip-height-mobile\)/);
     expect(css).not.toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-cost-indicator\s*\{[^}]*display:\s*none/);
   });

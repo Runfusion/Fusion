@@ -4,7 +4,7 @@ import type { AgentActivityEventType } from "../../api";
 import { ActivityFeedRowPresentation } from "../ActivityFeed";
 import { isHiddenAgentActivityType } from "../agentsOrgChartActivity";
 import { AreaShell } from "./areas/AreaShell";
-import { AGENT_ACTIVITY_TYPE_CONFIG, DEFAULT_AGENT_ACTIVITY_CONFIG } from "./agentActivityPresentation";
+import { AGENT_ACTIVITY_TYPE_CONFIG, resolveAgentActivityPresentation } from "./agentActivityPresentation";
 import type { DateRange } from "./DateRangePicker";
 import { useAgentActivity, type AgentActivityFilters } from "./useAgentActivity";
 import "./AgentActivityPanel.css";
@@ -93,8 +93,12 @@ export function AgentActivityPanel({ projectId, range, onOpenAgent, onOpenTask }
 
 function AgentActivityRow({ event, onOpenAgent, onOpenTask }: { event: ReturnType<typeof useAgentActivity>["events"][number]; onOpenAgent?: (agentId: string) => void; onOpenTask?: (taskId: string) => void }) {
   const { t } = useTranslation("app");
-  const baseConfig = AGENT_ACTIVITY_TYPE_CONFIG[event.type] ?? DEFAULT_AGENT_ACTIVITY_CONFIG;
-  const config = { ...baseConfig, label: t(`commandCenter.agentActivity.eventTypes.${event.type}`, baseConfig.label) };
+  const presentation = resolveAgentActivityPresentation(event.type, event.metadata);
+  const config = {
+    icon: presentation.icon,
+    color: presentation.color,
+    label: t(presentation.labelKey, presentation.fallbackLabel),
+  };
   const openTaskLabel = t("commandCenter.agentActivity.openTask", "Open task {{taskId}}", { taskId: event.taskId });
   const openAgentLabel = t("commandCenter.agentActivity.openAgent", "Open agent {{agentId}}", { agentId: event.agentId });
   const content = <ActivityFeedRowPresentation

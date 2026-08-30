@@ -155,7 +155,7 @@ export function MainContent({
   globalPaused,
   updateTask,
   retryTask,
-  archiveTask,
+    archiveTask,
   unarchiveTask,
   revertTask,
   deleteTask,
@@ -196,6 +196,7 @@ export function MainContent({
   DocumentsView,
   EvalsView,
   GoalsView,
+  PatchnodeView,
   InsightsView,
   MemoryView,
   PullRequestView,
@@ -447,6 +448,7 @@ export function MainContent({
                 taskColumnFlags={columnFlagsByTaskId?.get(task.id)}
                 projectId={currentProject?.id}
                 onOpenDetail={openPluginTaskDetail}
+                onOpenChatWithPrefill={onOpenChatWithPrefill}
                 addToast={addToast}
                 onUpdateTask={updateTask}
                 prAuthAvailable={prAuthAvailable}
@@ -747,6 +749,21 @@ export function MainContent({
     );
   }
 
+  if (taskView === "patchnode") {
+    return (
+      <PageErrorBoundary>
+        <Suspense fallback={null}>
+          <PatchnodeView
+            projectId={currentProject?.id}
+            onOpenTaskDetail={(taskId) => fetchTaskDetail(taskId, currentProject?.id)
+              .then((task) => openDetailTask(task as TaskDetail))
+              .catch(() => undefined)}
+          />
+        </Suspense>
+      </PageErrorBoundary>
+    );
+  }
+
   if (taskView === "goalsView") {
     if (!settingsLoaded || !goalsEnabled) {
       return null;
@@ -909,6 +926,7 @@ export function MainContent({
             globalPaused={globalPaused}
             onUpdateTask={updateTask}
             onRetryTask={retryTask}
+            onOpenChatWithPrefill={onOpenChatWithPrefill}
             onUnpauseTask={unpauseTask}
             onResetTask={resetTask}
             onDuplicateTask={duplicateTask}
@@ -974,9 +992,10 @@ export function MainContent({
               onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}
+              onOpenChatWithPrefill={onOpenChatWithPrefill}
               onPauseTask={pauseTask}
               onUnpauseTask={unpauseTask}
-              onResetTask={resetTask}
+            onResetTask={resetTask}
               onDuplicateTask={duplicateTask}
               /*
               FNXC:Navigation 2026-06-22-09:00:
@@ -1030,8 +1049,9 @@ export function MainContent({
           globalPaused={globalPaused}
           onUpdateTask={updateTask}
           onRetryTask={retryTask}
+          onOpenChatWithPrefill={onOpenChatWithPrefill}
           onUnpauseTask={unpauseTask}
-          onResetTask={resetTask}
+            onResetTask={resetTask}
           onDuplicateTask={duplicateTask}
           onMergeTask={mergeTask}
           onArchiveTask={archiveTask}
@@ -1073,6 +1093,7 @@ export function MainContent({
         projectId={currentProject?.id}
         onMoveTask={moveTask}
         onRetryTask={retryTask}
+        onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
         onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onPauseTask={pauseTask}
@@ -1080,7 +1101,7 @@ export function MainContent({
         onArchiveTask={archiveTask}
         onRevertTask={revertTask}
         onMergeTask={mergeTask}
-        onResetTask={resetTask}
+            onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
         onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}

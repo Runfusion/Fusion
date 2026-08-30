@@ -492,6 +492,7 @@ function TaskChatToolEntry({ entry }: { entry: AgentLogEntry }) {
         argumentsLabel={t("taskChat.arguments", "Arguments")}
         resultLabel=""
         resultIsError={entry.type === "tool_error"}
+        clampLongValues
         renderValue={linkifyFilePaths}
       />
     </article>
@@ -546,6 +547,7 @@ function TaskChatToolInvocation({ row }: { row: Extract<TaskChatToolGroupRow, { 
         argumentsLabel={t("taskChat.arguments", "Arguments")}
         resultLabel={completion?.type === "tool_error" ? t("taskChat.error", "Error") : t("taskChat.result", "Result")}
         resultIsError={completion?.type === "tool_error"}
+        clampLongValues
         renderValue={linkifyFilePaths}
       />
     </article>
@@ -563,6 +565,14 @@ function TaskChatToolGroup({ entries }: { entries: AgentLogEntry[] }) {
   const errorCount = entries.filter((entry) => entry.type === "tool_error").length;
   const { visibleNames, overflowCount } = getToolNameSummary(entries);
   const rows = getToolGroupRows(entries);
+  /*
+  FNXC:ToolCallDisplay 2026-08-29-04:34:
+  FN-253 keeps complete task-log payloads visible by default and clamps only long values behind an
+  explicit reveal. Historical tool and result rows without detail receive one host-level explanation,
+  never a repeated per-row warning or a misleading error state.
+  */
+  const hasMissingDetails = entries.some((entry) =>
+    (entry.type === "tool" || entry.type === "tool_result") && !entry.detail);
 
   return (
     <details className="task-chat-tool-group" data-testid="task-chat-tool-group">
@@ -582,6 +592,11 @@ function TaskChatToolGroup({ entries }: { entries: AgentLogEntry[] }) {
         <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Tool group timestamp" />
       </summary>
       <div className="task-chat-tool-group-entries">
+        {hasMissingDetails ? (
+          <p className="task-chat-tool-details-missing" role="note" data-testid="task-chat-tool-details-missing">
+            {t("taskChat.toolDetailsMissing", "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.")}
+          </p>
+        ) : null}
         {rows.map((row) => (
           row.kind === "invocation" ? (
             <TaskChatToolInvocation key={getEntryKey(row.call, row.callIndex)} row={row} />

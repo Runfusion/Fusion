@@ -366,8 +366,8 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
     cliPackageVersion,
     getMergeStrategy,
-    processPullRequestMerge: (s, wd, taskId, pool, signal) =>
-      processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
+    processPullRequestMerge: (s, wd, taskId, signal) =>
+      processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, signal),
     createGroupPr: createGroupPrCallback(githubClient),
     syncGroupPr: syncGroupPrCallback(githubClient),
     /*

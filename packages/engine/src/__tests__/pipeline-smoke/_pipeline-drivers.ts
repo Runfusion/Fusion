@@ -78,7 +78,7 @@ export async function executePipelineScenario(
   }
   if (scenario.recovery) {
     await scenario.recovery.run(context);
-    await context.harness.assertTerminal(taskFor(context).id, "merged-done");
+    await context.harness.assertTerminal(taskFor(context).id, scenario.recoveryExpectedTerminal ?? "merged-done");
   }
 }
 
@@ -548,5 +548,24 @@ export const PIPELINE_SCENARIO_DRIVERS = {
     if (observedColumns.some((column) => legacy.has(column))) {
       throw new Error("S19 observed a legacy column id on a renamed workflow.");
     }
+  }),
+
+  s21Arrange: driver("seed the MRG-058 verification interruption with five real commits", async (context) => {
+    const task = await arrangeTask(context, "S21");
+    await context.harness.arrangeExternalBlockReplay(task);
+  }),
+  s21Act: driver("drive scheduler and recovery while retaining the frozen work", async (context) => {
+    const task = taskFor(context);
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      await context.harness.driveExternalBlockRecoveryCycles(task.id, { startup: iteration === 0 });
+      await context.harness.assertExternalBlockReplay(task, "blocked");
+    }
+    context.result = await context.harness.assertTerminal(task.id, "blocked");
+  }),
+  s21Recovery: driver("invoke dashboard Retry and re-enter the interrupted verification node", async (context) => {
+    const task = taskFor(context);
+    await context.harness.resumeExternalBlockReplay(task.id);
+    await context.harness.assertExternalBlockReplay(task, "resumed");
+    context.result = await context.harness.assertTerminal(task.id, "parked");
   }),
 } as const;

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Settings, Task, TaskStore } from "@fusion/core";
+import { BranchWriteProvenanceError, type Settings, type Task, type TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 import { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -43,14 +44,14 @@ function makeStore(
   } as Settings;
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => settings),
-    getTask: vi.fn((id: string) => (task && id === task.id ? task : null)),
+    getTask: vi.fn(async (id: string) => (task && id === task.id ? task : null)),
     listTasks: vi.fn(async ({ column }: { column?: string } = {}) => {
       if (!task) return [];
       if (!column) return [task];
       if (column === "in-progress") return [task];
       return [];
     }),
-    updateTask: vi.fn(async (_id: string, updates: Partial<Task>) => (task ? Object.assign(task, updates) : null)),
+    updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, updates: Partial<Task>) => (task ? Object.assign(task, updates) : null))),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
       if (!task) return null;
       task.column = column;
@@ -106,14 +107,42 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     expect(sweepSpy).toHaveBeenCalled();
   });
 
-  it("returns reclaimed for reclaimable conflicts", async () => {
+  it("returns reclaimed for reclaimable conflicts with derived engine provenance", async () => {
     const task = makeTask({ column: "in-review", paused: true, pausedReason: "branch-conflict-unrecoverable" as any, updatedAt: new Date(Date.now() - 11 * 60_000).toISOString() });
     const store = makeStore(task);
     vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({ kind: "reclaimable", livePath: task.worktree, tipSha: "abc123", taskAttributedCommitCount: 1, strandedCommits: [{ sha: "abc123" }] } as any);
     const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(task.id);
     expect(result.outcome).toBe("reclaimed");
-    expect((store.moveTask as any).mock.calls.some((c: any[]) => c[1] === "todo")).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      branch: "fusion/fn-4763",
+      branchWriteOrigin: "engine",
+      worktree: "/tmp/test/.worktrees/fn-4763",
+    }));
+    expect((store.moveTask as any).mock.calls.some((c: any[]) => c[1] === "in-progress")).toBe(true);
+  });
+
+  it("preserves operator branch ownership during reclaim", async () => {
+    const override = { branch: "fusion/fn-4763", by: "operator" as const, at: "2026-08-28T06:41:00.000Z" };
+    const task = makeTask({ branchContext: { branchOverride: override } as Task["branchContext"] });
+    const store = makeStore(task);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({
+      kind: "reclaimable",
+      livePath: task.worktree,
+      tipSha: "abc123",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "abc123" }],
+    } as any);
+    const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+
+    const result = await manager.reclaimPrConflictForTask(task.id);
+
+    expect(result.outcome).toBe("reclaimed");
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      branch: "fusion/fn-4763",
+      branchWriteOrigin: "operator",
+    }));
+    expect(task.branchContext?.branchOverride).toEqual(override);
   });
 
   it("returns reclaimed for fully-subsumed conflicts", async () => {
@@ -163,10 +192,50 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     expect(removeSpy).not.toHaveBeenCalled();
   });
 
+  describe("non-conflict PR reclaim failures", () => {
+    const failures = [
+      new BranchWriteProvenanceError(),
+      new Error('Command failed: git worktree remove --force "/tmp/live"'),
+      new Error("ENOTEMPTY: directory not empty, rmdir '/tmp/live/node_modules'"),
+      new Error("database unavailable"),
+    ];
+
+    for (const failure of failures) {
+      it(`defers ${failure.message} without relocation or a destructive park`, async () => {
+        const task = makeTask();
+        const store = makeStore(task);
+        vi.spyOn(branchConflicts, "inspectBranchConflict").mockRejectedValueOnce(failure);
+        const dispatcher = vi.spyOn(AutoRecoveryDispatcher.prototype, "dispatch");
+        const relocate = vi.spyOn(worktreePool, "relocateReclaimableWorktreeIntoRoot");
+        const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+
+        const result = await manager.reclaimPrConflictForTask(task.id);
+
+        expect(result).toEqual({ outcome: "skipped", reason: failure.message });
+        expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("reclaim deferred — non-conflict error"));
+        expect(dispatcher).not.toHaveBeenCalled();
+        expect(relocate).not.toHaveBeenCalled();
+        expect((store.updateTask as any).mock.calls.some((call: any[]) => call[1]?.status === "failed")).toBe(false);
+        expect((store.moveTask as any).mock.calls.some((call: any[]) => call[2]?.preserveWorktree === false)).toBe(false);
+        expect(task).toMatchObject({ branch: "fusion/fn-4763", worktree: "/tmp/test/.worktrees/fn-4763" });
+      });
+    }
+  });
+
   it("returns paused-unrecoverable when conflict is unrecoverable and dispatcher pauses", async () => {
     const task = makeTask();
     const store = makeStore(task);
-    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({ kind: "live-foreign", error: new Error("unrecoverable") } as any);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({
+      kind: "live-foreign",
+      error: new branchConflicts.BranchConflictError({
+        branchName: task.branch!,
+        conflictingWorktreePath: task.worktree!,
+        existingTipSha: "abc123",
+        strandedCommits: [{ sha: "abc123", subject: "foreign" }],
+        startPoint: "main",
+        recommendedAction: "manual",
+      }),
+    } as any);
     vi.spyOn(AutoRecoveryDispatcher.prototype, "dispatch").mockResolvedValue({ action: "pause", reason: "test" } as any);
     const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(task.id);

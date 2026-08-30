@@ -17,7 +17,7 @@ branch was present, correct, and caller-less for days, which is exactly the fail
 */
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStep } from "@fusion/core";
-import { getBuiltinWorkflow } from "@fusion/core";
+import { getBuiltinWorkflow, planRemediationPlacement } from "@fusion/core";
 
 import { appendReviewRemediationSteps } from "../executor/append-review-remediation-steps.js";
 import { requestPreMergeOptionalStepFix } from "../executor/request-pre-merge-optional-step-fix.js";
@@ -66,10 +66,16 @@ function harness(workflowId = "builtin:coding-ideas-v2") {
     getSettings: vi.fn(async () => ({ autoMerge: true })),
     logEntry: vi.fn(async () => undefined),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => { Object.assign(task, patch); return task; }),
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null | undefined | Promise<Partial<Task> | null | undefined>) => {
+      const patch = await mutate(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     appendRemediationSteps: vi.fn(async (_id: string, steps: readonly TaskStep[], options: { wave?: number }) => {
       const appended = steps.map((step) => ({ ...step, status: "pending" as const }));
-      task.steps = [...(task.steps ?? []), ...appended];
-      return { task, appended, appendedCount: appended.length, wave: options.wave ?? 1 };
+      const placement = planRemediationPlacement(task.steps ?? [], appended);
+      task.steps = placement.steps;
+      return { task, appended, appendedCount: appended.length, wave: options.wave ?? 1, ...placement };
     }),
     getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId })),
     getWorkflowDefinition: vi.fn(async (id: string) => {
@@ -86,10 +92,15 @@ function harness(workflowId = "builtin:coding-ideas-v2") {
     parkPlanReviewReplanCapExhausted: vi.fn(async () => undefined),
     clearPausedAborted: vi.fn(),
     readTaskArtifact: async () => task.prompt,
-    appendReviewRemediationSteps: (live: Task, info: never) => appendReviewRemediationSteps(
+    appendReviewRemediationSteps: (
+      live: Task,
+      info: never,
+      options?: Parameters<typeof appendReviewRemediationSteps>[3],
+    ) => appendReviewRemediationSteps(
       { store: store as never, readTaskArtifact: async () => task.prompt, sendTaskBackForFix },
       live,
       info,
+      options,
     ),
     workflowLifecycleMovesInFlight: new Set<string>(),
     sendTaskBackForFix,
@@ -112,11 +123,15 @@ describe("fix steps appear on the card when a gate fails", () => {
     });
 
     expect(scheduled).toBe(true);
-    expect(pending()).toHaveLength(1);
+    expect(pending()).toHaveLength(2);
     expect(pending()[0]!.name).toContain("packages/engine/src/retry.ts");
     expect(pending()[0]!.remediation).toMatchObject({ gate: "Verification", wave: 1 });
-    // Completed implementation work is preserved: remediation appends, it never reopens.
-    expect(task.steps?.slice(0, 2).map((step) => step.status)).toEqual(["done", "done"]);
+    expect(task.steps?.map((step) => [step.name, step.status])).toEqual([
+      ["Add the retry guard", "done"],
+      ["Testing & Verification", "done"],
+      [expect.stringContaining("packages/engine/src/retry.ts"), "pending"],
+      ["Testing & Verification", "pending"],
+    ]);
     // And the card is actually re-dispatched to run that step.
     expect(sendTaskBackForFix).toHaveBeenCalledTimes(1);
   });
@@ -164,14 +179,77 @@ describe("fix steps appear on the card when a gate fails", () => {
     });
 
     expect(scheduled).toBe(true);
-    expect(pending()).toHaveLength(1);
-    expect(pending()[0]!.name).toContain("Reverse the retry guard condition");
+    expect(pending()).toHaveLength(2);
+    expect(pending()[0]!.name).toContain("inverted guard");
+    expect(pending()[0]!.name).not.toContain("Reverse the retry guard condition");
     expect(pending()[0]!.remediation).toMatchObject({
       gate: "Code Review",
       findingId: "finding-1",
       filePath: "packages/engine/src/retry.ts",
+      detail: "Reverse the retry guard condition",
     });
+    expect(task.steps?.map((step) => [step.name, step.status])).toEqual([
+      ["Add the retry guard", "done"],
+      ["Testing & Verification", "done"],
+      [expect.stringContaining("inverted guard"), "pending"],
+      ["Testing & Verification", "pending"],
+    ]);
     expect(sendTaskBackForFix).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "released-verification-no-progress",
+    "released-upstream-out-of-scope",
+    "released-no-pending-work",
+    "released-workspace-worktree-missing",
+    "superseded-scope",
+  ] as const)("does not reopen trailing work after the terminal remediation outcome %s", async (outcome) => {
+    const { deps, task, sendTaskBackForFix } = harness("builtin:coding");
+    deps.appendReviewRemediationSteps = vi.fn(async () => outcome) as never;
+
+    const scheduled = await requestPreMergeOptionalStepFix(deps as never, task.id, task, {
+      stepName: "Code Review",
+      feedback: "Review requested a bounded remediation outcome.",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      nodeId: "code-review",
+    });
+
+    expect(scheduled).toBe(false);
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "Code Review REVISE",
+      info: {
+        stepName: "Code Review",
+        feedback: "Review supplied no file-specific actionable finding.",
+        phase: "pre-merge" as const,
+        status: "failed" as const,
+        verdict: "REVISE" as const,
+        nodeId: "code-review",
+      },
+    },
+    {
+      label: "deterministic Verification without a reviewer verdict",
+      info: {
+        stepName: "Verification (test)",
+        feedback: "Verification failed without a parseable file-specific finding.",
+        phase: "pre-merge" as const,
+        status: "failed" as const,
+        nodeId: "verification",
+      },
+    },
+  ])("releases no-actionable feedback without reopening trailing work from $label", async ({ info }) => {
+    const { deps, task, sendTaskBackForFix } = harness("builtin:coding");
+    deps.appendReviewRemediationSteps = vi.fn(async () => "released-no-actionable-findings") as never;
+
+    const scheduled = await requestPreMergeOptionalStepFix(deps as never, task.id, task, info);
+
+    expect(scheduled).toBe(false);
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
   /*
@@ -207,7 +285,7 @@ describe("fix steps appear on the card when a gate fails", () => {
         task,
         { stepName: "Step 1", feedback: FAILING_OUTPUT, phase: "pre-merge", status: "failed", nodeId } as never,
       );
-      expect(appended, `nodeId ${String(nodeId)} must not be able to append work`).toBe(false);
+      expect(appended, `nodeId ${String(nodeId)} must not be able to append work`).toBe("not-applicable");
     }
 
     expect(pending()).toHaveLength(0);
@@ -266,11 +344,7 @@ describe("fix steps appear on the card when a gate fails", () => {
     expect(sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
-  /*
-  The appended shape is selected by the WORKFLOW, not by this seam: Coding (Ideas) reopens its
-  trailing step instead, and must keep doing so.
-  */
-  it("leaves the inherited Coding (Ideas) workflow on its reopen-trailing bounce", async () => {
+  it("derives named remediation for the inherited Coding (Ideas) workflow", async () => {
     const { deps, task, pending } = harness("builtin:coding-ideas");
 
     await requestPreMergeOptionalStepFix(deps as never, task.id, task, {
@@ -283,6 +357,17 @@ describe("fix steps appear on the card when a gate fails", () => {
       findings: [{ id: "f1", title: "t", body: "b", filePath: "packages/engine/src/retry.ts", severity: "critical" }],
     });
 
-    expect(pending(), "named remediation belongs to V2, not to the inherited board").toHaveLength(0);
+    expect(pending()).toHaveLength(2);
+    expect(pending()[0]).toMatchObject({
+      name: "Fix: t",
+      remediation: {
+        gate: "Code Review",
+        findingId: "f1",
+        filePath: "packages/engine/src/retry.ts",
+        detail: "b",
+      },
+    });
+    expect(pending()[0]!.name).not.toContain("b");
+    expect(pending()[1]).toEqual({ name: "Testing & Verification", status: "pending" });
   });
 });

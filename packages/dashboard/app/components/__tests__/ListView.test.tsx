@@ -223,8 +223,9 @@ import { readAppFile } from "../../test/cssFixture";
 
 const mockConfirm = vi.fn();
 const mockConfirmWithChoice = vi.fn();
+const mockConfirmWithSelect = vi.fn();
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice }),
+  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice, confirmWithSelect: mockConfirmWithSelect }),
 }));
 
 const mockAddToast = vi.fn();
@@ -771,6 +772,8 @@ describe("ListView", () => {
     vi.mocked(refreshPrStatus).mockResolvedValue({} as any);
     mockConfirm.mockReset();
     mockConfirmWithChoice.mockReset();
+    mockConfirmWithSelect.mockReset();
+    mockConfirmWithSelect.mockResolvedValue({ choice: "primary", checkboxValue: false, selectValue: "builtin:coding" });
     subscribeSseMock.mockClear();
     for (const key of Object.keys(listViewSseHandlers)) delete listViewSseHandlers[key];
     localStorage.clear();
@@ -802,6 +805,84 @@ describe("ListView", () => {
     renderListView();
     // The search/filter is now in the header, not in the list view toolbar
     expect(screen.getByText("View")).toBeDefined();
+  });
+
+  it("renders plan approval actions for a hold-column task in desktop rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    const payload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: { "FN-228-desktop": "builtin:coding" } };
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, payload);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(payload);
+    try {
+      renderListView({
+        tasks: [createMockTask({
+          id: "FN-228-desktop",
+          column: "todo",
+          status: "awaiting-approval",
+          prompt: "# Reviewed plan",
+        })],
+      });
+
+      const notice = screen.getByTestId("plan-approval-list-FN-228-desktop");
+      expect(within(notice).getByRole("button", { name: "Approve" })).toBeEnabled();
+      expect(within(notice).getAllByRole("button")).toHaveLength(1);
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("renders plan approval actions for a hold-column task in compact cards", () => {
+    const viewportSpy = mockMobileViewport();
+    const payload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: { "FN-228-mobile": "builtin:coding" } };
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, payload);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(payload);
+    try {
+      renderListView({
+        tasks: [createMockTask({
+          id: "FN-228-mobile",
+          column: "todo",
+          status: "awaiting-approval",
+          prompt: "# Reviewed plan",
+        })],
+      });
+
+      const notice = screen.getByTestId("plan-approval-list-FN-228-mobile");
+      expect(within(notice).getByRole("button", { name: "Approve" })).toBeEnabled();
+      expect(within(notice).getAllByRole("button")).toHaveLength(1);
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("hides the retired plan approval badge for legacy data in desktop rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    const payload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: { "FN-234-legacy": "builtin:coding" } };
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, payload);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(payload);
+    try {
+      const legacyFields = { requirePlanApproval: true } as unknown as Partial<Task>;
+      renderListView({ tasks: [createMockTask({ id: "FN-234-legacy", executionMode: "fast", ...legacyFields })] });
+
+      expect(screen.queryByTestId("plan-approval-badge-list-table-FN-234-legacy")).toBeNull();
+      expect(screen.getByLabelText("Fast mode")).toBeVisible();
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("hides the retired plan approval badge for legacy data in compact cards", () => {
+    const viewportSpy = mockMobileViewport();
+    const payload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: { "FN-234-legacy-mobile": "builtin:coding" } };
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, payload);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(payload);
+    try {
+      const legacyFields = { requirePlanApproval: true } as unknown as Partial<Task>;
+      renderListView({ tasks: [createMockTask({ id: "FN-234-legacy-mobile", executionMode: "fast", ...legacyFields })] });
+
+      expect(screen.queryByTestId("plan-approval-badge-list-card-FN-234-legacy-mobile")).toBeNull();
+      expect(screen.getByLabelText("Fast mode")).toBeVisible();
+    } finally {
+      viewportSpy.mockRestore();
+    }
   });
 
   it("renders the exhausted review budget indicator only for the matching approval reason in desktop rows", () => {
@@ -1240,17 +1321,69 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
-  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+  it("opens editable Reset without consulting confirmation settings", async () => {
     const onResetTask = vi.fn(async () => createMockTask());
-    mockConfirm.mockResolvedValueOnce(true);
-    renderListView({ tasks: [createMockTask({ id: "FN-901", column: "in-progress" })], onResetTask });
+    renderListView({
+      tasks: [createMockTask({ id: "FN-901", column: "in-progress", description: "Original list request" })],
+      onResetTask,
+    });
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
 
+    expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(screen.getByTestId("task-reset-description")).toHaveValue("Original list request");
+    fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected list request" } });
+    fireEvent.click(screen.getByTestId("task-reset-submit"));
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith(
+      "FN-901",
+      { description: "Corrected list request" },
+    ));
+  });
+
+  it("keeps the list Reset call arity unchanged when the description is untouched", async () => {
+    const onResetTask = vi.fn(async () => createMockTask());
+    renderListView({
+      tasks: [createMockTask({ id: "FN-901", column: "in-progress", description: "Original list request" })],
+      onResetTask,
+    });
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-reset-submit"));
+
     await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-901"));
-    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
-    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+    expect(onResetTask.mock.calls[0]).toEqual(["FN-901"]);
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it("forwards the selected workflow from the desktop row duplicate action", async () => {
+    const workflowPayload = {
+      ...DEFAULT_LANE_PAYLOAD,
+      workflows: [
+        DEFAULT_LANE_PAYLOAD.workflows[0],
+        { ...DEFAULT_LANE_PAYLOAD.workflows[0], id: "wf-b", name: "Workflow B" },
+      ],
+      taskWorkflowIds: { "FN-DUP": "builtin:coding" },
+    };
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, workflowPayload);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(workflowPayload);
+    mockConfirmWithSelect.mockResolvedValueOnce({ choice: "primary", checkboxValue: false, selectValue: "wf-b" });
+    const onDuplicateTask = vi.fn(async () => createMockTask({ id: "FN-COPY" }));
+    renderListView({
+      tasks: [createMockTask({ id: "FN-DUP", column: "todo" })],
+      onDuplicateTask,
+    });
+
+    const row = document.querySelector('.list-row[data-id="FN-DUP"]') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 40, clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Duplicate" }));
+
+    await waitFor(() => expect(onDuplicateTask).toHaveBeenCalledWith("FN-DUP", { workflowId: "wf-b" }));
+    expect(mockConfirmWithSelect).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ defaultValue: "builtin:coding" }),
+    }));
   });
 
   it("opens Planning Mode from eligible list row menus and omits it for executing rows", async () => {
@@ -2690,7 +2823,7 @@ describe("ListView", () => {
     expect(statusBadge.className).toContain("failed");
   });
 
-  it("suppresses failed table styling and Retry for a stale failed task with automatic recovery pending", () => {
+  it("suppresses failed table styling but keeps stage-aware Retry while automatic recovery is pending", () => {
     const viewportSpy = mockDesktopViewport();
     const task = createMockTask({
       id: "FN-RECOVERY",
@@ -2706,7 +2839,7 @@ describe("ListView", () => {
     expect(row).not.toHaveClass("failed");
     expect(screen.getByText("failed")).not.toHaveClass("failed");
     fireEvent.contextMenu(row, { clientX: 40, clientY: 50 });
-    expect(screen.queryByRole("menuitem", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
     viewportSpy.mockRestore();
   });
 

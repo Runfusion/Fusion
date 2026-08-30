@@ -1,0 +1,194 @@
+/*
+FNXC:PatchnodeView 2026-08-28-12:16:
+Patchnode uses the shared view shell and token-only cards so the permanent daily history remains readable as a single column on desktop and mobile without introducing a parallel visual system.
+*/
+.patchnode-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.patchnode-view__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  min-width: 0;
+  padding: var(--space-xl);
+}
+
+.patchnode-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: min(40vw, calc(var(--space-2xl) * 8));
+  color: var(--text-muted);
+}
+
+.patchnode-search svg {
+  flex: 0 0 auto;
+  width: var(--space-lg);
+  height: var(--space-lg);
+}
+
+.patchnode-search .input {
+  min-width: 0;
+  width: 100%;
+}
+
+.patchnode-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.patchnode-day__header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  border-bottom: calc(var(--space-xs) / 4) solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+
+.patchnode-day__header h3,
+.patchnode-day__header span,
+.patchnode-state p {
+  margin: 0;
+}
+
+.patchnode-day__header span {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.patchnode-day__entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.patchnode-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-lg);
+  color: var(--text-primary);
+  text-align: left;
+  transition: border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.patchnode-entry:hover {
+  border-color: var(--border-strong);
+  transform: translateY(calc(var(--space-xs) / -4));
+}
+
+.patchnode-entry:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.patchnode-entry--completed.patchnode-entry--reverted {
+  color: var(--text-muted);
+}
+
+.patchnode-entry--completed.patchnode-entry--reverted .patchnode-entry__body {
+  text-decoration: line-through;
+}
+
+.patchnode-entry--reverted.patchnode-entry--completed {
+  border-color: color-mix(in srgb, var(--color-error) 35%, var(--border-subtle));
+}
+
+.patchnode-entry--reverted:not(.patchnode-entry--completed) {
+  background: color-mix(in srgb, var(--color-error) 6%, var(--bg-secondary));
+}
+
+.patchnode-entry__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.patchnode-entry__task-id,
+.patchnode-entry__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.patchnode-entry__badge--cancelled {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.patchnode-entry__badge svg {
+  width: var(--space-md);
+  height: var(--space-md);
+}
+
+.patchnode-entry__body {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.patchnode-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  min-height: calc(var(--space-2xl) * 4);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.patchnode-load-more {
+  align-self: center;
+}
+
+@media (max-width: 768px) {
+  .patchnode-view__content {
+    gap: var(--space-lg);
+    padding: var(--space-lg);
+  }
+
+  .patchnode-view .view-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .patchnode-search {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .patchnode-day__header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .patchnode-entry {
+    padding: var(--space-md);
+  }
+}

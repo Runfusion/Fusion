@@ -198,7 +198,14 @@ describe("a reopen is decided by lifecycle ROLE, not by the default lineage's na
     expect(task.branch).toBe("fusion/FN-1");
   });
 
-  it.each(["user", "engine", undefined])("wipes review evidence for %s reopens", (workflowMoveSource) => {
+  it.each([
+    "user",
+    "engine",
+    "scheduler-hold-release",
+    "auto-merge-finalization",
+    "merger-complete-task",
+    undefined,
+  ])("wipes review evidence for %s reopens", (workflowMoveSource) => {
     const task = applyOn(RENAMED_IR, "checking", "queued", workflowMoveSource ? { workflowMoveSource } : {});
     expect(task.workflowStepResults).toBeUndefined();
   });

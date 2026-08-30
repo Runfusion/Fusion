@@ -18,8 +18,8 @@ const execAsync = promisify(exec);
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
+import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore, TaskStep } from "@fusion/core";
+import { isFastExecutionMode, isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel, resolveTrailingVerificationStepIndex } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -31,8 +31,8 @@ import {
 } from "../agents/agent-session-helpers.js";
 import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
 import type { SkillSelectionContext } from "../cli-runtime/skill-resolver.js";
-import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { resolveTaskWorktreePath } from "../worktree/worktree-paths.js";
+import { canonicalStepInstanceBranchName } from "../worktree/worktree-names.js";
 import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
@@ -142,7 +142,7 @@ export interface StepSessionExecutorOptions {
    */
   onStepStart?: (stepIndex: number) => void | boolean | Promise<void | boolean>;
   /** Callback invoked when a step completes (success or failure). */
-  onStepComplete?: (stepIndex: number, result: StepResult) => void;
+  onStepComplete?: (stepIndex: number, result: StepResult) => void | Promise<void>;
   /** Optional skill selection context for session creation. */
   skillSelection?: SkillSelectionContext;
   /** Optional extra skill body directories for session resource discovery. */
@@ -429,13 +429,16 @@ export function buildStepPrompt(
   settings?: Settings,
   worktreePath?: string,
 ): string {
+  if (isFastExecutionMode(taskDetail)) {
+    return buildFastLanePrompt(taskDetail, rootDir, settings, worktreePath);
+  }
   const { id, title, attachments } = taskDetail;
   const prompt = scopePromptToWorktree(taskDetail.prompt, rootDir, worktreePath);
 
   // Extract step-specific section
-  const stepSection = extractStepSection(prompt, stepIndex);
   const totalSteps = countSteps(prompt);
-  const isLastStep = stepIndex === totalSteps - 1;
+  const stepSection = resolveStepSection(taskDetail, prompt, stepIndex, totalSteps);
+  const isLastStep = stepIndex === Math.max(totalSteps, taskDetail.steps.length) - 1;
 
   // Extract global sections from the prompt
   const fileScopeSection = extractSection(prompt, "File Scope");
@@ -546,6 +549,59 @@ export function buildStepPrompt(
   return parts.join("\n");
 }
 
+/*
+FNXC:FastLane 2026-08-29-03:25:
+Fast implementation is one original-request session, not a compressed plan. Keep this builder free
+of step headings, review-level framing, and PROMPT.md section extraction so a small edit receives
+only the task context it needs: request, attachments, commands, steering, and worktree boundary.
+*/
+export function buildFastLanePrompt(
+  taskDetail: TaskDetail,
+  rootDir?: string,
+  settings?: Settings,
+  worktreePath?: string,
+): string {
+  const originalRequest = taskDetail.description || taskDetail.prompt || "";
+  const parts = [
+    `## Task: ${taskDetail.id}`,
+    taskDetail.title ? `**${taskDetail.title}**` : "",
+    "",
+    "## Original Request",
+    originalRequest,
+  ];
+
+  if (taskDetail.attachments && taskDetail.attachments.length > 0 && rootDir) {
+    const imageMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+    parts.push("", "## Attachments", "");
+    for (const attachment of taskDetail.attachments) {
+      const path = `${rootDir}/.fusion/tasks/${taskDetail.id}/attachments/${attachment.filename}`;
+      parts.push(
+        `- **${attachment.originalName}** (${imageMimes.has(attachment.mimeType) ? "screenshot" : attachment.mimeType}): \`${path}\``,
+      );
+    }
+  }
+
+  if (settings?.testCommand || settings?.buildCommand) {
+    parts.push("", "## Project Commands", "");
+    if (settings.testCommand) parts.push(`- **Test:** \`${settings.testCommand}\``);
+    if (settings.buildCommand) parts.push(`- **Build:** \`${settings.buildCommand}\``);
+  }
+
+  const steering = buildStepSteeringCommentsSection(taskDetail.steeringComments);
+  if (steering) parts.push("", steering);
+
+  parts.push(
+    "",
+    "## Worktree Boundaries",
+    "",
+    `Work only inside \`${worktreePath ?? "the assigned task worktree"}\`; do not edit the project root or another task's worktree.${rootDir ? ` Task attachments remain readable under \`${rootDir}/.fusion/tasks/${taskDetail.id}/attachments/\`.` : ""}`,
+    "",
+    `Find the relevant code, make the requested change, commit it as \`fix(${taskDetail.id}): <short summary>\`, then stop. Do not plan, review, or start additional work.`,
+  );
+
+  return parts.filter((part) => part !== "").join("\n");
+}
+
 function buildStepSteeringCommentsSection(comments: SteeringComment[] | undefined): string {
   if (!comments || comments.length === 0) return "";
 
@@ -605,6 +661,53 @@ function countSteps(prompt: string): number {
   return matches ? matches.length : 0;
 }
 
+/*
+FNXC:VerificationRemediation 2026-08-28-15:11:
+An appended remediation or verification occurrence has no authored PROMPT.md heading. Only indexes beyond the complete authored heading range may receive synthesized instructions; otherwise heading-number quirks could mask real authored content and the mandatory re-verification session could run with an empty body.
+*/
+function resolveStepSection(
+  taskDetail: TaskDetail,
+  prompt: string,
+  stepIndex: number,
+  authoredStepCount: number,
+): string {
+  const authoredSection = extractStepSection(prompt, stepIndex);
+  if (stepIndex < authoredStepCount) return authoredSection;
+  const liveStep = taskDetail.steps[stepIndex];
+  return liveStep ? synthesizeAppendedStepSection(liveStep) : authoredSection;
+}
+
+function synthesizeAppendedStepSection(step: TaskStep): string {
+  const lines = [
+    `### Appended Step: ${step.name}`,
+    "",
+    "Complete this appended workflow occurrence using the live task state.",
+  ];
+
+  if (step.remediation) {
+    lines.push(
+      "",
+      `- **Gate:** ${step.remediation.gate}`,
+      `- **Required fix:** ${step.remediation.detail}`,
+    );
+    if (step.remediation.filePath) lines.push(`- **File:** \`${step.remediation.filePath}\``);
+    if (step.remediation.line !== undefined) lines.push(`- **Line:** ${step.remediation.line}`);
+  }
+
+  if (resolveTrailingVerificationStepIndex([step]) === 0) {
+    lines.push(
+      "",
+      "Run a fresh verification pass after the preceding fixes:",
+      "- Run the project's configured test and build commands listed under Project Commands.",
+      "- Run the tests impacted by this task's changes.",
+      "- Fix every failure before completing this step.",
+      "- Never weaken, skip, or delete assertions merely to make verification pass.",
+    );
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Extract a named section from the prompt (e.g. "File Scope", "Do NOT").
  * Returns the section from the heading to the next ## or ### heading, or end.
@@ -646,7 +749,7 @@ export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number
   const { prompt, id, title, attachments } = taskDetail;
 
   // Extract the step-specific section
-  const stepSection = extractStepSection(prompt, stepIndex);
+  const stepSection = resolveStepSection(taskDetail, prompt, stepIndex, countSteps(prompt));
   const hasAttachments = Boolean(attachments && attachments.length > 0);
   const attachmentDir = rootDir ? `${rootDir}/.fusion/tasks/${id}/attachments/` : `.fusion/tasks/${id}/attachments/`;
   const steeringSection = buildStepSteeringCommentsSection(taskDetail.steeringComments);
@@ -1330,8 +1433,10 @@ export class StepSessionExecutor {
     const promptTaskDetail = this.consumeTaskDetailForStepPrompt();
     const stepPrompt = buildStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir, settings, worktreePath);
 
-    // Build reduced step prompt for context-limit recovery (simpler, shorter)
-    const reducedStepPrompt = buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir);
+    // Fast recovery stays in the same original-request lane instead of restoring step scaffolding.
+    const reducedStepPrompt = isFastExecutionMode(promptTaskDetail)
+      ? buildFastLanePrompt(promptTaskDetail, this.options.rootDir, settings, worktreePath)
+      : buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir);
     const reusePrimarySession = await this.shouldReusePrimarySession(worktreePath);
 
     // Acquire semaphore if provided
@@ -1385,7 +1490,11 @@ export class StepSessionExecutor {
          */
         const stepThinkingLevel = this.options.workflowStepThinkingLevel
           ?? (taskDetail.steps[stepIndex] as { thinkingLevel?: string } | undefined)?.thinkingLevel;
-        const effectiveThinkingLevel = resolveExecutorThinkingLevel(stepThinkingLevel ?? taskDetail.thinkingLevel, settings);
+        const effectiveThinkingLevel = resolveExecutorThinkingLevel(
+          stepThinkingLevel ?? taskDetail.thinkingLevel,
+          settings,
+          taskDetail.executionMode,
+        );
 
         try {
           // Get plugin tools from plugin runner if available
@@ -1470,6 +1579,7 @@ export class StepSessionExecutor {
             settings,
             this.options.assignedAgentRuntimeConfig,
             this.credentialInstanceId,
+            taskDetail.executionMode,
           );
 
           attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: taskDetail.assignedAgentId ?? null, taskId: taskDetail.id, nodeId: taskDetail.effectiveNodeId ?? taskDetail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "workflow-step", ephemeral: true });
@@ -1626,7 +1736,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             tokenUsage: await this.extractStepTokenUsage(session, reusePrimarySession),
           };
           await this.completeWorkflowStepActivityRun(activityRun, "completed", result);
-          this.options.onStepComplete?.(stepIndex, result);
+          await this.options.onStepComplete?.(stepIndex, result);
           return result;
         } catch (err: unknown) {
           // Normalize error message for consistent classification
@@ -1667,7 +1777,7 @@ Follow instructions precisely and avoid unrelated changes.`,
                 tokenUsage: await this.extractStepTokenUsage(session, reusePrimarySession),
               };
               await this.completeWorkflowStepActivityRun(activityRun, "completed", result);
-              this.options.onStepComplete?.(stepIndex, result);
+              await this.options.onStepComplete?.(stepIndex, result);
               return result;
             } catch (reducedErr: unknown) {
               const reducedErrorMessage = typeof reducedErr === "string"
@@ -1707,7 +1817,7 @@ Follow instructions precisely and avoid unrelated changes.`,
               tokenUsage: await this.extractStepTokenUsage(session, reusePrimarySession),
             };
             await this.completeWorkflowStepActivityRun(activityRun, "failed", result);
-            this.options.onStepComplete?.(stepIndex, result);
+            await this.options.onStepComplete?.(stepIndex, result);
             return result;
           }
           if (reusePrimarySession) {
@@ -1888,10 +1998,12 @@ Follow instructions precisely and avoid unrelated changes.`,
    * @returns The path to the new worktree.
    */
   private async createStepWorktree(stepIndex: number): Promise<string> {
-    const { rootDir, settings } = this.options;
-    const name = generateWorktreeName(rootDir, settings);
+    const { rootDir, settings, taskDetail } = this.options;
+    // FNXC:TaskWorktreeNames 2026-08-29-08:51: parallel step paths remain
+    // deterministic under their owning task rather than consuming random names.
+    const name = `${taskDetail.id.toLowerCase()}-step-${stepIndex}`;
     const worktreePath = resolveTaskWorktreePath(rootDir, settings, name);
-    const branchName = `fusion/step-${stepIndex}-${name}`;
+    const branchName = canonicalStepInstanceBranchName(taskDetail.id, stepIndex);
 
     stepExecLog.log(`Creating worktree for step ${stepIndex}: ${worktreePath} (branch: ${branchName})`);
 

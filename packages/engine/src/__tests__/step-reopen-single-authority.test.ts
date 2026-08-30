@@ -29,20 +29,61 @@ describe("FN-180 step reopen single authority", () => {
       { name: "Documentation & Delivery", status: "done" },
     ]);
     const store = {
-      updateStep: vi.fn(async (_id: string, index: number, status: string) => {
-        live.steps[index]!.status = status as Task["steps"][number]["status"];
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
       }),
-      updateTask: vi.fn(),
     };
 
     await expect(reopenLastStepForRevision(store as never, live.id, live)).resolves.toEqual({
-      index: 2,
+      index: 3,
       name: "Documentation & Delivery",
-      indexes: [2],
+      indexes: [3],
     });
-    expect(store.updateStep).toHaveBeenCalledTimes(1);
-    expect(store.updateStep).toHaveBeenCalledWith(live.id, 2, "pending");
-    expect(live.steps.map((step) => step.status)).toEqual(["done", "done", "pending"]);
+    expect(store.updateTaskAtomic).toHaveBeenCalledTimes(1);
+    expect(live.steps.map((step) => [step.name, step.status])).toEqual([
+      ["Implementation", "done"],
+      ["Testing & Verification", "done"],
+      ["Documentation & Delivery", "done"],
+      ["Documentation & Delivery", "pending"],
+    ]);
+    expect(live.currentStep).toBe(3);
+  });
+
+  it("does not append a replay while pending work is already queued", async () => {
+    const live = task([
+      { name: "Implementation", status: "done" },
+      { name: "Existing correction", status: "pending" },
+    ]);
+    const originalSteps = live.steps;
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
+    };
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live)).resolves.toBeNull();
+    expect(live.steps).toBe(originalSteps);
+    expect(live.steps).toHaveLength(2);
+  });
+
+  it("resets the cursor without growing an all-pending checklist", async () => {
+    const live = task([{ name: "Queued work", status: "pending" }]);
+    live.currentStep = 8;
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
+    };
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live)).resolves.toBeNull();
+    expect(live.steps).toHaveLength(1);
+    expect(live.currentStep).toBe(0);
   });
 
   it("uses the editor-authored IR policy instead of a workflow id", () => {

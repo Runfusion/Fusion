@@ -42,7 +42,7 @@ export interface CompletedPromotionFailureProvenanceEvaluation {
  */
 
 /** Bound the tail scan; sweeps run every housekeeping cycle over many tasks. */
-const MAX_LOG_SCAN = 250;
+export const MAX_LOG_SCAN = 250;
 
 /**
  * Log-action substrings that mark the current execution lifecycle ending in a failure/refusal park.

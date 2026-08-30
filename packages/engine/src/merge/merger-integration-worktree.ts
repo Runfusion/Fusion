@@ -26,7 +26,6 @@ import {
   canonicalizePath,
   classifyTaskWorktree,
   getRegisteredWorktreeBranchMap,
-  PoolDoubleLeaseError,
 } from "../worktree/worktree-pool.js";
 import { canonicalFusionBranchName } from "../worktree/worktree-names.js";
 
@@ -666,29 +665,14 @@ export async function acquireReuseHandoff(input: ReuseHandoffInput): Promise<Han
     }
   }
 
-  let lease;
-  try {
-    // Non-atomic fallback: executor lease checks above race with mergeQueue lease acquisition.
-    // TaskStore does not yet expose an atomic executor-lease absence check inside mergeQueue leasing.
-    lease = await (input.store as TaskStore & {
-      acquireMergeQueueLease(workerId: string, opts: { leaseDurationMs: number; now?: string; targetTaskId?: string }): Promise<unknown>;
-    }).acquireMergeQueueLease(MERGE_HANDOFF_WORKER_ID, {
-      leaseDurationMs: 15 * 60 * 1000,
-      targetTaskId: input.task.id,
-    });
-  } catch (error) {
-    if (error instanceof PoolDoubleLeaseError) {
-      throw new MergeHandoffRefusedError("lease-handoff-failed", "pool-double-lease", {
-        taskId: input.task.id,
-        worktreePath,
-        path: error.path,
-        existingHolder: error.existingHolder,
-        requestingTaskId: error.requestingTaskId,
-        phase: error.phase,
-      });
-    }
-    throw error;
-  }
+  // Non-atomic fallback: executor lease checks above race with mergeQueue lease acquisition.
+  // TaskStore does not yet expose an atomic executor-lease absence check inside mergeQueue leasing.
+  const lease = await (input.store as TaskStore & {
+    acquireMergeQueueLease(workerId: string, opts: { leaseDurationMs: number; now?: string; targetTaskId?: string }): Promise<unknown>;
+  }).acquireMergeQueueLease(MERGE_HANDOFF_WORKER_ID, {
+    leaseDurationMs: 15 * 60 * 1000,
+    targetTaskId: input.task.id,
+  });
   if (!lease) {
     throw new MergeHandoffRefusedError("lease-handoff-failed", "target-not-queued", {
       taskId: input.task.id,

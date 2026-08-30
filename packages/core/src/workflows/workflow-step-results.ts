@@ -1,5 +1,15 @@
 import type { WorkflowReviewFinding, WorkflowReviewFindingResolution, WorkflowReviewFindingSeverity, WorkflowStepResult } from "../types.js";
 
+export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved"] as const;
+export type WorkflowStepNotRunReason = (typeof WORKFLOW_STEP_NOT_RUN_REASONS)[number];
+
+/** A not-run result is terminal and honest only when its fixed reason accompanies `skipped`. */
+export function isWorkflowStepNotRun(result: WorkflowStepResult): boolean {
+  return result.status === "skipped"
+    && typeof result.notRunReason === "string"
+    && (WORKFLOW_STEP_NOT_RUN_REASONS as readonly string[]).includes(result.notRunReason);
+}
+
 export const WORKFLOW_REVIEW_FINDING_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export const WORKFLOW_REVIEW_FINDING_RESOLUTIONS = ["open", "resolved-in-review", "superseded", "dispute-upheld"] as const;
 /** Values an untrusted reviewer response may assign; automatic dispute closure is Fusion-owned. */

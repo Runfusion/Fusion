@@ -37,6 +37,7 @@ asserted is that each site is reachable under a renamed workflow. That gap is
 reported in the PR rather than papered over.
 */
 import { describe, expect, it, vi } from "vitest";
+import "@fusion/core";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 import { runAiMerge, resolveFinalizeReboundColumn } from "../merge/merger-ai.js";
@@ -70,7 +71,7 @@ function renamedIr(): WorkflowIr {
       { id: "inbox", label: "Inbox", traits: [{ trait: "intake" }] },
       { id: "drafting", label: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "building", label: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
-      { id: "reviewing", label: "Reviewing", traits: [{ trait: "mergeOrchestration" }] },
+      { id: "reviewing", label: "Reviewing", traits: [{ trait: "merge" }] },
       { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
       { id: "retired", label: "Retired", traits: [{ trait: "archived" }] },
     ],
@@ -87,7 +88,7 @@ function defaultIr(): WorkflowIr {
       { id: "triage", label: "Triage", traits: [{ trait: "intake" }] },
       { id: "todo", label: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "in-progress", label: "In Progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
-      { id: "in-review", label: "In Review", traits: [{ trait: "mergeOrchestration" }] },
+      { id: "in-review", label: "In Review", traits: [{ trait: "merge" }] },
       { id: "done", label: "Done", traits: [{ trait: "complete" }] },
       { id: "archived", label: "Archived", traits: [{ trait: "archived" }] },
     ],
@@ -202,7 +203,7 @@ describe("merger-ai under a renamed column vocabulary", () => {
         edges: [],
         columns: [
           { id: "drafting", label: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
-          { id: "reviewing", label: "Reviewing", traits: [{ trait: "mergeOrchestration" }] },
+          { id: "reviewing", label: "Reviewing", traits: [{ trait: "merge" }] },
           ...columns,
         ],
       } as unknown as WorkflowIr;
@@ -243,25 +244,22 @@ describe("merger-ai under a renamed column vocabulary", () => {
   });
 
   describe("finalize-blocked rebound target", () => {
-    it("resolves the workflow's hold column, not the literal todo", async () => {
-      const store = storeWith(task(), renamedIr());
-      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("drafting");
+    it("returns a renamed review card to the workflow's WIP lane", async () => {
+      const store = storeWith(task({ column: "reviewing" }), renamedIr());
+      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("building");
     });
 
-    it("resolves todo for the builtin coding workflow (regression floor)", async () => {
+    it("returns builtin review work to in-progress instead of Planning", async () => {
       const store = storeWith(task(), defaultIr());
-      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("todo");
+      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("in-progress");
     });
 
-    it("falls back to the legacy todo when the workflow cannot be resolved", async () => {
+    it("contains the card in review when the workflow cannot be resolved", async () => {
       const store = storeWith(task(), undefined);
-      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("todo");
+      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("in-progress");
     });
 
-    it("falls back to the legacy todo when resolution throws", async () => {
-      /* A finalize-blocked rebound parks work for an operator. It must not be
-         abandoned because a workflow lookup failed — the card would otherwise
-         be left stranded in the merge lane with no owner. */
+    it("contains the card in its live column when resolution throws", async () => {
       const store = {
         ...storeWith(task(), renamedIr()),
         getTaskWorkflowSelectionAsync: vi.fn(async () => {
@@ -272,7 +270,7 @@ describe("merger-ai under a renamed column vocabulary", () => {
         }),
       } as unknown as TaskStore;
 
-      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("todo");
+      await expect(resolveFinalizeReboundColumn(store, "FN-1")).resolves.toBe("in-progress");
     });
   });
 });

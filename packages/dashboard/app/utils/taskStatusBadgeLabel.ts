@@ -133,6 +133,10 @@ export function getTaskStatusBadgeLabel(
       : t("tasks.statusReplan", "Revising");
   }
   /* FNXC:WorkspaceContention 2026-08-23-06:50: contention used to clear status and appear as an unexplained column regression. */
+  /* FNXC:ExternalBlockUx 2026-08-28-04:56: Blocked is durable operator copy, while contention and queued states remain waiting vocabulary. */
+  if (status === "blocked") {
+    return t("tasks.externalBlock.title", "Blocked");
+  }
   if (status === "contention-hold") {
     return context?.sessionContentionWaitReason
       ? t("tasks.statusWaitingOn", "Waiting on {{reason}}", { reason: context.sessionContentionWaitReason })

@@ -103,7 +103,7 @@ status park, missing spec, and seed-vs-real content. The step count is deliberat
 that is the whole point — so the content cases assert both step shapes.
 */
 describe("isTaskAwaitingPlanning", () => {
-  const task = (overrides: Partial<{ id: string; title?: string; description: string; status?: string | null }> = {}) => ({
+  const task = (overrides: Partial<{ id: string; title?: string; description: string; status?: string | null; executionMode?: string | null }> = {}) => ({
     id: "FN-1",
     title: "Title",
     description: "desc",
@@ -112,6 +112,12 @@ describe("isTaskAwaitingPlanning", () => {
 
   it("is true for a parked replan regardless of a real spec on disk", () => {
     expect(isTaskAwaitingPlanning(task({ status: "needs-replan" }), "# FN-1: Title\n\n## Mission\n\nReal spec.\n")).toBe(true);
+  });
+
+  it("treats a Fast bootstrap request as ready while preserving an explicit replan hold", () => {
+    const bootstrap = buildBootstrapPrompt("FN-1", "Title", "desc");
+    expect(isTaskAwaitingPlanning(task({ executionMode: "fast" }), bootstrap)).toBe(false);
+    expect(isTaskAwaitingPlanning(task({ executionMode: "fast", status: "needs-replan" }), bootstrap)).toBe(true);
   });
 
   it("is true when PROMPT.md is missing", () => {

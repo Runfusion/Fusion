@@ -3,12 +3,12 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as Re
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
-import { isIntakeColumnRole, isReviewColumnRole } from "../utils/columnRoles";
+import { isReviewColumnRole } from "../utils/columnRoles";
 
 /*
-FNXC:TaskContextMenu 2026-08-27-12:01:
-FN-198 removes manual column relocation from dashboard task menus. Workflow graph ownership
-now decides placement; Reset, Respecify, and Delete remain the operator's replan or removal paths.
+FNXC:TaskRecoveryVocabulary 2026-08-28-00:38:
+FN-206 makes dashboard task recovery Retry, Reset, and Delete. Retry repeats the current stage
+in place; Reset abandons task state; Delete removes the card.
 */
 
 /*
@@ -92,7 +92,6 @@ export interface BuildTaskActionMenuModelOptions {
   task: Task | TaskDetail;
   t: TFunction<"app">;
   currentColumnFlags?: TaskContextMenuColumnFlags;
-  canRetryTask?: boolean;
   hasDuplicateHandler?: boolean;
   hasRetryHandler?: boolean;
   hasResetHandler?: boolean;
@@ -110,7 +109,6 @@ export interface BuildTaskActionMenuModelOptions {
   */
   onPlan?: () => void;
   onOpenRefine?: () => void;
-  onRespecify?: () => void;
   onRetry?: () => void;
   onReset?: () => void;
   onTogglePause?: () => void;
@@ -172,18 +170,6 @@ Same rule as `isReviewColumn` above: reached when no resolved flags arrive, wher
 function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags) return flags.complete !== true && flags.archived !== true;
   return column !== "done" && column !== "archived";
-}
-
-/**
- * A PURE intake lane — intake without hold. A merged Planning column carries both, so it is not
- * "pure intake": cards rest there waiting for capacity and have real actions.
- */
-function isPureIntakeColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
-  // With traits, "pure" means intake WITHOUT hold — a merged Planning column carries both and is
-  // therefore not pure. Without traits, defer to the shared intake role so the degraded-mode id
-  // list lives in exactly one place.
-  if (flags) return flags.intake === true && flags.hold !== true;
-  return isIntakeColumnRole(undefined, column);
 }
 
 export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
@@ -269,11 +255,9 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     task,
     t,
     currentColumnFlags,
-    canRetryTask = false,
     hasDuplicateHandler = Boolean(options.onDuplicate),
     hasRetryHandler = Boolean(options.onRetry),
     hasResetHandler = Boolean(options.onReset),
-    hasAssignedAgent = Boolean(task.assignedAgentId),
     hasBypassReviewHandler = Boolean(options.onBypassReview),
   } = options;
   const isTaskPaused = Boolean(task.paused || task.userPaused);
@@ -297,19 +281,12 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   }
 
   /*
-  FNXC:TaskContextMenu 2026-07-16-12:00:
-  Archived is an unsupported Respecify source: the rebuild route rejects it rather than
-  resurrecting intentionally archived work into a planner lane. Check both the semantic
-  workflow trait and legacy id so every menu host omits this dead affordance.
+  FNXC:TaskRecoveryVocabulary 2026-08-28-00:38:
+  Retry is not a failure-only escape hatch: a live intake, implementation, or review card can
+  always repeat its current stage. Terminal columns remain immutable through the shared trait/id
+  predicate, including first paint before workflow metadata is available.
   */
-  /* DELIBERATE-LITERAL — belt-and-braces, and the comment above says so: this checks BOTH the
-     resolved trait and the legacy id on purpose, so a host that supplies no flags still omits the
-     dead affordance. Dropping the literal would re-open it for exactly those hosts. */
-  if (task.column !== "archived" && currentColumnFlags?.archived !== true) {
-    actions.push({ id: "respecify", label: t("taskDetail.respecify.btn", "Respecify"), onSelect: options.onRespecify });
-  }
-
-  if (canRetryTask && hasRetryHandler) {
+  if (hasRetryHandler && isMutableLiveColumn(task.column, currentColumnFlags)) {
     actions.push({ id: "retry", label: t("taskDetail.retry.btn", "Retry"), onSelect: options.onRetry });
   }
 
@@ -382,29 +359,12 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions,
     reviewAction: getTaskReviewAction(task, options),
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-15:25 (Phase B — TaskContextMenu.tsx):
-    Was `task.column !== "triage"`. The intent is "a bare card sitting in a pure INTAKE lane has no
-    actions worth showing yet" — `triage` happened to be that lane, and `todo` (hold) always showed
-    the menu because cards waiting for capacity have real actions.
-
-    Post-U11 the literal inverts: a default Planning card is `todo`, so `!== "triage"` is true and
-    the menu shows unconditionally — which is right for the hold half, but the guard has stopped
-    distinguishing anything and would also show a full menu on a bare Coding (Ideas) capture.
-
-    Resolved to `intake AND NOT hold` — a PURE intake lane — which reproduces every shape:
-      legacy `triage`   intake only        -> suppressed (as before)
-      legacy `todo`     hold only          -> shown (as before)
-      merged Planning   intake + hold      -> shown (matches the Todo half, where cards wait)
-      Ideas `ideas`     intake only        -> suppressed (a bare captured idea)
-    Falls back to the legacy id when no flags are supplied, so unwired menu hosts are unchanged.
+    FNXC:TaskRecoveryVocabulary 2026-08-28-00:38:
+    A pure intake lane is the planning form of Retry, not a reason to hide recovery. Deriving
+    visibility from the produced action list keeps every host reachable and prevents a live card
+    from showing neither a recovery action nor an explanation.
     */
-    shouldShowActionsMenu:
-      !isPureIntakeColumn(task.column, currentColumnFlags) ||
-      task.status === "awaiting-approval" ||
-      canRetryTask ||
-      isTaskPaused ||
-      hasAssignedAgent ||
-      Boolean(options.onEnableGithubTracking && task.githubTracking?.enabled !== true),
+    shouldShowActionsMenu: actions.length > 0,
     isTaskPaused,
   };
 }

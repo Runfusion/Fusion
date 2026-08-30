@@ -689,7 +689,7 @@ fn task show FN-001
 fn task logs FN-001 --follow --limit 50 --type tool
 ```
 
-`fn task logs` now exposes full agent-log content for each entry type. In particular, `thinking`, `tool_result`, and `tool_error` entries preserve full multiline output (including stderr/stack details) so you can inspect raw tool responses directly from the CLI stream.
+`fn task logs` exposes full agent-log content for each entry type. Tool argument rows, successful `tool_result` rows, and `tool_error` rows preserve complete bounded detail, including stderr and stack details. Short single-line values stay inline beside the tool name; longer or multiline values render as an indented block under the same CLI log entry.
 
 `fn task show <id>` includes routing and provenance context when available:
 - task node override

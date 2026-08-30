@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { loadAllAppCss } from "../../test/cssFixture";
+import { loadAllAppCss, loadComponentCss } from "../../test/cssFixture";
 
 describe("ConfirmDialog", () => {
   afterEach(() => {
@@ -181,6 +181,58 @@ describe("ConfirmDialog", () => {
     // FNXC: portaled to document.body — query from document.
     expect(document.querySelector(".confirm-dialog-overlay")).toBeTruthy();
     expect(document.querySelector(".confirm-dialog.modal")).toBeTruthy();
+  });
+
+  it("renders the workflow select with its controlled value and reports changes", () => {
+    const onSelectChange = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{
+          title: "Duplicate Task",
+          message: "Choose a workflow",
+          select: {
+            label: "Workflow for the copy",
+            options: [
+              { value: "wf-a", label: "Workflow A" },
+              { value: "wf-b", label: "Workflow B" },
+            ],
+            defaultValue: "wf-a",
+          },
+        }}
+        selectValue="wf-a"
+        onSelectChange={onSelectChange}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Workflow for the copy")).toHaveValue("wf-a");
+    fireEvent.change(screen.getByTestId("confirm-dialog-select"), { target: { value: "wf-b" } });
+    expect(onSelectChange).toHaveBeenCalledWith("wf-b");
+  });
+
+  it("renders no select shell when select options are absent", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("confirm-dialog-select")).not.toBeInTheDocument();
+    expect(document.querySelector(".confirm-dialog__select")).toBeNull();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("keeps the mobile workflow select full-width without adding an empty shell", () => {
+    const css = loadComponentCss("ConfirmDialog.css");
+    const mobileStart = css.indexOf("@media (max-width: 768px)");
+    const mobile = css.slice(mobileStart);
+    expect(mobile).toMatch(/\.confirm-dialog__select \.select\s*\{[^}]*width:\s*100%/);
+    expect(mobile).toMatch(/\.confirm-dialog__select\s*\{[^}]*width:\s*auto/);
   });
 
   it("does not render checkbox when checkboxLabel is omitted", () => {

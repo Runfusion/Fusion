@@ -3,6 +3,7 @@ import type { TraitFlags } from "../workflows/trait-types.js";
 import type { Task } from "../types.js";
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import { columnHasFlag } from "../workflows/workflow-lifecycle-traits.js";
+import { isTaskExternallyBlocked } from "../tasks/task-external-block.js";
 
 export type RunningAgentCountSource = (projectIds: readonly string[]) => Promise<Record<string, number>> | Record<string, number>;
 
@@ -13,7 +14,7 @@ export type ColumnTerminalKind = "none" | "complete" | "archived";
  * The deliberately small, pure shape used by all top-level live-agent counts.
  * Store- and board-backed callers must attach trait-derived fields first.
  */
-export type RunningAgentTaskShape = Pick<Task, "column" | "status" | "paused" | "userPaused" | "sessionFile" | "checkedOutBy"> & Partial<Pick<Task, "workflowStepResults">> & {
+export type RunningAgentTaskShape = Pick<Task, "column" | "status" | "paused" | "userPaused" | "sessionFile" | "checkedOutBy"> & Partial<Pick<Task, "workflowStepResults" | "externalBlock">> & {
   columnTerminalKind?: ColumnTerminalKind;
   /** Trait-derived intake/hold membership, used by {@link isWaitingAgentTask}. */
   columnIsIntakeOrHold?: boolean;
@@ -90,6 +91,7 @@ two hand-written copies of one rule, and line 84 answering differently from line
 a card in both counts or neither.
 */
 const LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
+const LEGACY_WIP_COLUMN_ID = "in-progress";
 
 /** Legacy-vocabulary "is this column a planner lane?", for callers that supply no traits. */
 function isLegacyPreImplementationColumn(columnId: string): boolean {
@@ -129,7 +131,7 @@ export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskS
     ...task,
     columnTerminalKind: flags?.archived ? "archived" : flags?.complete ? "complete" : "none",
     columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : isLegacyPreImplementationColumn(task.column),
-    columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === "in-progress",
+    columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === LEGACY_WIP_COLUMN_ID,
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-23:10 (reason now at
     `isLegacyPreImplementationColumn`): these id fallbacks are REACHABLE, not fixture-only —
@@ -181,7 +183,15 @@ legacy-id literals are the flag-less fallback the enrichers exist to remove; con
 guess, and a wrong guess under-reports the queued total. Fix at the CALLER by passing flags/IR.
 */
 export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
-  if (task.paused || task.userPaused || terminalKind(task) !== "none") return false;
+  if (terminalKind(task) !== "none") return false;
+  /*
+  FNXC:ExternalBlock 2026-08-28-04:01:
+  A non-terminal external block deliberately remains a capacity holder even though its durable
+  pause fence prevents execution. Keeping maxConcurrent and maxWorktrees occupied ensures another
+  card cannot take the worktree slot the operator expects Retry to resume onto.
+  */
+  if (isTaskExternallyBlocked(task)) return true;
+  if (task.paused || task.userPaused) return false;
   /*
   FNXC:ConcurrencyIndicators 2026-08-01-19:22:
   Failed WIP parks (honest-blocked, graph parse failure, exhausted recovery) remain in the
@@ -198,13 +208,13 @@ export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   }
   // A live gate-session lease (pending step result) is Running even with a null status.
   if (hasLiveWorkflowStepLease(task)) return true;
-  const isWip = task.columnCountsTowardWip ?? task.column === "in-progress";
+  const isWip = task.columnCountsTowardWip ?? task.column === LEGACY_WIP_COLUMN_ID;
   return isWip;
 }
 
 /** Exact footer waiting membership: unpaused, non-terminal intake/hold work that is not live. */
 export function isWaitingAgentTask(task: RunningAgentTaskShape): boolean {
-  if (task.paused || task.userPaused || terminalKind(task) !== "none" || isRunningAgentTask(task)) return false;
+  if (isTaskExternallyBlocked(task) || task.paused || task.userPaused || terminalKind(task) !== "none" || isRunningAgentTask(task)) return false;
   return task.columnIsIntakeOrHold ?? isLegacyPreImplementationColumn(task.column);
 }
 

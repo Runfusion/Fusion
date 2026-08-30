@@ -19,9 +19,12 @@ import { getAgentDir, loadSkills, type AgentSession, type ToolDefinition } from 
 import {
   GROK_CLI_PROVIDER_ID,
   isGrokApiKeyFusionVisible,
+  isFastExecutionMode,
   isTestModeActive,
   resolveAgentToolOutputMaxChars,
   resolveExecutionSettingsModel,
+  resolveFastCheapSettingsModel,
+  resolveFastCheapThinkingLevel,
   resolvePermanentAgentEffectiveModel,
   resolveExecutorFallbackModel,
   resolveMergerSettingsModel,
@@ -375,7 +378,11 @@ function firstThinkingLevel(...levels: Array<ThinkingLevel | string | undefined 
 export function resolveExecutorThinkingLevel(
   taskThinkingLevel: ThinkingLevel | string | undefined,
   settings: Partial<Settings> | undefined,
+  executionMode?: string | null,
 ): string | undefined {
+  if (isFastExecutionMode({ executionMode })) {
+    return firstThinkingLevel(taskThinkingLevel, resolveFastCheapThinkingLevel(settings));
+  }
   return resolvePhaseThinkingLevel("execution", settings, taskThinkingLevel);
 }
 
@@ -581,6 +588,7 @@ export function resolveExecutorSessionModel(
   settings: Partial<Settings> | undefined,
   assignedAgentRuntimeConfig?: Record<string, unknown>,
   taskCredentialInstanceId?: string | null,
+  executionMode?: string | null,
 ): ResolvedModelSelection {
   if (isTestModeActive(settings)) {
     return {
@@ -589,14 +597,23 @@ export function resolveExecutorSessionModel(
     };
   }
 
-  const resolvedTaskModel = resolveTaskExecutionModel(
-    {
-      modelProvider: taskModelProvider,
-      modelId: taskModelId,
-      credentialInstanceId: taskCredentialInstanceId,
-    },
-    settings,
-  );
+  const hasExplicitTaskModel = Boolean(taskModelProvider?.trim() && taskModelId?.trim());
+  /*
+  FNXC:FastLane 2026-08-29-03:25:
+  A Fast task selects the Fast & Cheap lane only when it has no complete task-level model pair.
+  Explicit task choices and test mode remain higher-precedence operator controls; an unconfigured
+  Fast lane inherits execution resolution so existing projects retain their current model.
+  */
+  const resolvedTaskModel = isFastExecutionMode({ executionMode }) && !hasExplicitTaskModel
+    ? resolveFastCheapSettingsModel(settings)
+    : resolveTaskExecutionModel(
+      {
+        modelProvider: taskModelProvider,
+        modelId: taskModelId,
+        credentialInstanceId: taskCredentialInstanceId,
+      },
+      settings,
+    );
 
   return pickSettingsThenRuntimeModel(resolvedTaskModel, assignedAgentRuntimeConfig);
 }

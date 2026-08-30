@@ -92,7 +92,6 @@ describe("AgentLogViewer", () => {
       const detailText = "stdout:\n  line one\n    indented line two\n";
       const entries = [makeEntry({ text: "Bash", type: "tool_result", detail: detailText })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      fireEvent.click(screen.getByTestId("tool-detail-toggle"));
       // FNXC:ToolCallDisplay 2026-08-03-02:01: FN-8701 keeps the raw payload in a nested <pre>.
       const detail = container.querySelector(".agent-log-tool-detail .tool-call-details-value") as HTMLElement;
       expect(detail).toBeTruthy();

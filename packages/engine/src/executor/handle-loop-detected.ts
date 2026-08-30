@@ -42,8 +42,7 @@ export async function handleLoopDetected(
   }
 
   // Check attempt ceiling (max 1 compact-and-resume per execute() lifecycle).
-  // After this fallback, StuckTaskDetector -> SelfHealingManager.checkStuckBudget
-  // enforces STUCK_LOOP_EXHAUSTED terminalization when retry budget is spent.
+  // After this fallback, StuckTaskDetector disposes the stalled session and resumes the same task in place.
   const state = deps.loopRecoveryState.get(taskId);
   if (state && state.attempts >= 1) {
     executorLog.log(`${taskId} loop detected but compact ceiling reached — falling back to kill/requeue`);

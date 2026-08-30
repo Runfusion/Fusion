@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { ConfirmDialogProvider, useConfirm } from "../useConfirm";
 
 function Harness() {
-  const { confirm, confirmWithChoice, confirmWithCheckbox } = useConfirm();
+  const { confirm, confirmWithChoice, confirmWithCheckbox, confirmWithSelect } = useConfirm();
   const [result, setResult] = useState<string>("idle");
 
   return React.createElement(
@@ -72,6 +72,27 @@ function Harness() {
       "button",
       {
         onClick: async () => {
+          const outcome = await confirmWithSelect({
+            title: "Duplicate Task",
+            message: "Choose a workflow",
+            select: {
+              label: "Workflow for the copy",
+              options: [
+                { value: "wf-a", label: "Workflow A" },
+                { value: "wf-b", label: "Workflow B" },
+              ],
+              defaultValue: "wf-a",
+            },
+          });
+          setResult(JSON.stringify(outcome));
+        },
+      },
+      "open-select"
+    ),
+    React.createElement(
+      "button",
+      {
+        onClick: async () => {
           const choice = await confirmWithChoice({
             title: "Delete Done",
             message: "Delete or archive?",
@@ -110,6 +131,34 @@ describe("useConfirm", () => {
     fireEvent.click(screen.getByText("open-checkbox-without-checkbox"));
     await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent('{"choice":"primary","checkboxValue":false}'));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("open-select"));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent('{"choice":"primary","checkboxValue":false,"selectValue":"wf-a"}'));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("confirmWithSelect returns the changed select value on confirm", async () => {
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    fireEvent.click(screen.getByText("open-select"));
+    fireEvent.change(await screen.findByTestId("confirm-dialog-select"), { target: { value: "wf-b" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent(
+      '{"choice":"primary","checkboxValue":false,"selectValue":"wf-b"}',
+    ));
+  });
+
+  it("confirmWithSelect returns cancel without applying a changed value", async () => {
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    fireEvent.click(screen.getByText("open-select"));
+    fireEvent.change(await screen.findByTestId("confirm-dialog-select"), { target: { value: "wf-b" } });
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent(
+      '{"choice":"cancel","checkboxValue":false,"selectValue":"wf-b"}',
+    ));
   });
 
   it("resolves true when confirm is clicked", async () => {

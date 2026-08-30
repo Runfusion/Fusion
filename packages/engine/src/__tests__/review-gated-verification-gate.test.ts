@@ -97,6 +97,7 @@ describe("runDeterministicVerificationGate", () => {
 
     expect(gate.value).toBe("not-configured");
     expect(gate.value).not.toBe("passed");
+    expect(gate.contextPatch.notRunReason).toBe("not-configured");
     expect(String(gate.contextPatch.output)).toContain("NOTHING WAS VERIFIED");
     expect(runVerification).not.toHaveBeenCalled();
   });

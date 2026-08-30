@@ -32,7 +32,7 @@ function captureSession(): { last?: CapturedSession } {
         },
         prompt: vi.fn(async () => {
           for (const listener of listeners) {
-            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: '{"verdict":"APPROVE","notes":""}' } });
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}' } });
           }
         }),
         dispose: vi.fn(),

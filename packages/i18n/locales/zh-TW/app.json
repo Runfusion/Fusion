@@ -137,7 +137,10 @@
     "toolEntriesHidden_other": "",
     "toolsOff": "工具：關閉",
     "toolsOn": "工具：開啟",
-    "usingDefault": "使用預設值"
+    "usingDefault": "使用預設值",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "#{{roomName}} 的成員",
@@ -1200,10 +1203,10 @@
       "capacityExhausted": "",
       "guardRejected": "",
       "mergeBlocked": "",
-      "promoteRejected": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "staleMovePrecondition": ""
     },
     "todo": "待辦",
     "triage": "分診",
@@ -1528,10 +1531,6 @@
     "pauseHint_one": "",
     "pauseHint_other": "",
     "preserveProgressTitle": "保留進度？",
-    "promoteUnplannedCancel": "",
-    "promoteUnplannedConfirm": "",
-    "promoteUnplannedMessage": "",
-    "promoteUnplannedTitle": "",
     "replanAll": "全部重新規劃",
     "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
     "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
@@ -1947,6 +1946,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3725,7 +3725,11 @@
     "shortstatTitle": "最終提交簡統計；如需查看所有工作提交的完整著陸差異，請參閱「變更」分頁。",
     "smartPull": "智慧拉取",
     "status": "狀態",
-    "title": "合併詳情"
+    "title": "合併詳情",
+    "targetBranch": "",
+    "strategy": "",
+    "method": "",
+    "noOpReason": ""
   },
   "mesh": {
     "ariaLabel": "節點網格拓撲可視化",
@@ -4224,7 +4228,8 @@
     "terminal": "終端機",
     "todos": "待辦",
     "usage": "用量",
-    "workflows": "工作流程"
+    "workflows": "工作流程",
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "新增相依性",
@@ -6192,7 +6197,7 @@
       "saveToolOutputInAgentLogs": "",
       "updates": "",
       "weekly": "",
-      "whenDisabledToolRowsAreStillLoggedBut": "",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -6275,7 +6280,9 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "fastAndCheapModel": "快速且經濟的模型",
+      "fastAndCheapModelHelp": "在此選擇一個用於快速編輯的低價模型。建立任務時，快速模式將使用它。"
     },
     "header": {
       "discord": "Discord",
@@ -7010,27 +7017,21 @@
       "maxWorktrees": "",
       "worktreeLimitEnabled": "",
       "worktreeLimitEnabledHelp": "",
-      "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "開啟審批",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
       "optionalSupports": "",
       "pnpmInstallFrozenLockfile": "",
-      "randomNamesEGSwiftFalcon": "",
       "rebaseFromRemoteBeforeMerge": "",
       "rebaseRemote": "",
-      "recycleWorktrees": "",
       "selectWorktreesDir": "選取工作樹目錄",
       "shellCommandToRunInEachNewWorktree": "",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": "",
-      "taskIDEGFN042": "",
-      "taskTitleEGFixLoginBug": "",
       "tryAgain": "重試",
       "useGitDefault": "",
       "whenEnabledTheMergerFetchesFromTheConfigured": "",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": "",
       "whichRemoteToFetchForThePreMerge": "",
       "worktreeInitCommand": "",
-      "worktreeNamingStyle": "",
       "worktrees": "",
       "worktreesDirectory": "",
       "worktrunk": "",
@@ -7039,10 +7040,7 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": "",
-      "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "copyFilesHelp": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7945,7 +7943,8 @@
       "btn": "複製",
       "message": "複製 {{id}}？這將在 Triage 中建立一個具有相同描述和提示詞的新任務。",
       "success": "已複製 {{id}} → {{newId}}",
-      "title": "複製任務"
+      "title": "複製任務",
+      "workflowLabel": ""
     },
     "edit": {
       "autosaveHint": "編輯時自動儲存更改",
@@ -8151,7 +8150,7 @@
       "createBtn": "建立精化任務",
       "creating": "正在建立...",
       "feedbackRequired": "請輸入描述需要精化內容的反饋",
-      "feedbackTooLong": "反饋不能超過 2000 字元",
+      "feedbackTooLong": "",
       "help": "描述需要精化或改善的內容...",
       "modalTitle": "精化",
       "placeholder": "在此輸入您的反饋...",
@@ -8159,11 +8158,13 @@
     },
     "reset": {
       "btn": "重置",
-      "confirmMessage": "這將清除 {{id}} 的所有進度並從頭開始。繼續？",
-      "resetSuccess": "已重置 {{id}} — 將分配新的運行"
-    },
-    "respecify": {
-      "btn": "重新規範"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "resetSuccess": "已重置 {{id}} — 將分配新的運行",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "",
+      "descriptionLabel": "",
+      "descriptionRequired": "",
+      "submitting": ""
     },
     "retries": {
       "branchConflict": "分支衝突恢復",
@@ -8194,7 +8195,18 @@
     "retriesLabel": "重試次數（恢復 / 工作流程 / 合併 / 任務完成）",
     "retry": {
       "btn": "重試",
-      "retried": "已重試 {{id}}"
+      "retried": "已重試 {{id}}",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "執行時連結",
     "runtimeStatus": "執行時狀態",
@@ -8258,10 +8270,8 @@
       "worktreeTerminal": "終端",
       "workflow": "工作流程",
       "summary": "Summary",
-      "cost": "",
       "recommendations": "",
       "dependencies": "",
-      "attachments": "",
       "details": "",
       "debug": ""
     },
@@ -8296,30 +8306,7 @@
     "workflowTimedSteps": "工作流程計時步驟",
     "yes": "是",
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "gitlabTracking": {
       "collapse": "",
@@ -8400,6 +8387,12 @@
     },
     "debug": {
       "none": ""
+    },
+    "details": {
+      "expandRouting": "",
+      "collapseRouting": "",
+      "expandDebug": "",
+      "collapseDebug": ""
     }
   },
   "taskDocuments": {
@@ -8627,7 +8620,16 @@
     "attachFileFailed": "附加 {{fileName}} 失敗：{{error}}",
     "awaitingApproval": "等待核准",
     "baseBranch": "基礎",
-    "blockedByTooltip": "被 {{taskId}} 阻擋（檔案重疊）",
+    "blockedByTooltip": "正在等待 {{taskId}}（檔案重疊）",
+    "externalBlock": {
+      "title": "已阻擋",
+      "unknownCode": "未分類",
+      "genericMessage": "外部障礙需要操作員處理",
+      "explain": "解釋此錯誤",
+      "explainPrompt": "請解釋錯誤 {{error}} 及其解決方法。",
+      "resuming": "正在恢復…",
+      "retry": "重試"
+    },
     "branch": "分支",
     "branchMetadata": "分支中繼資料",
     "branchProgress": "",
@@ -8752,9 +8754,6 @@
     "prNodeTitle": "",
     "prNodeWithNumber": "",
     "projectDefaultLocal": "專案預設 / 本機",
-    "promote": "",
-    "promoteTask": "",
-    "promoting": "",
     "queued": "佇列中",
     "refine": "優化",
     "refineAddDetails": "新增細節",
@@ -8840,7 +8839,15 @@
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
-    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "planApproval": {
+      "approve": "",
+      "approveFailed": "",
+      "approving": "",
+      "copy": "",
+      "replanCapCopy": "",
+      "title": ""
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9088,7 +9095,15 @@
     "statusSkipped": "",
     "submitAndResume": "",
     "submitting": "",
-    "waitingForOutput": ""
+    "waitingForOutput": "",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "",
@@ -9541,7 +9556,8 @@
     "missingOutput": "",
     "missingOutputTimestamp": "",
     "statusUpdate": "",
-    "statusUpdateTimestamp": ""
+    "statusUpdateTimestamp": "",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9721,5 +9737,73 @@
     "close": "",
     "loading": "",
     "retry": ""
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "empty": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "entry": {
+      "noBody": "",
+      "completionSummary": "",
+      "stepReport": "",
+      "merged": "",
+      "noOpMerge": "",
+      "verdictNoNotes": "",
+      "duration": ""
+    },
+    "meta": {
+      "commit": "",
+      "targetBranch": "",
+      "strategy": "",
+      "method": "",
+      "files": "",
+      "insertions": "",
+      "deletions": "",
+      "pr": "",
+      "noOpReason": ""
+    },
+    "loading": "",
+    "verdict": {
+      "approve": "",
+      "approve-with-notes": "",
+      "revise": "",
+      "close-no-op": "",
+      "passed": "",
+      "failed": "",
+      "advisory-failure": "",
+      "skipped": "",
+      "pending": ""
+    }
+  },
+  "patchnode": {
+    "cancelled": "",
+    "empty": "",
+    "entryCount_one": "",
+    "entryCount_other": "",
+    "error": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "noResults": "",
+    "retry": "",
+    "reverted": "",
+    "searchAriaLabel": "",
+    "searchPlaceholder": "",
+    "title": "",
+    "today": "",
+    "yesterday": ""
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

@@ -68,7 +68,7 @@ pgDescribe("live merge-rebound E2E: where the LIVE merge path puts a card back",
       const taskId = `FN-MR-${key}-1`;
       await seedBoundTask(taskId, vocab, `${key}-1`);
 
-      expect(await resolveFinalizeReboundColumn(h.store(), taskId)).toBe(vocab.hold);
+      expect(await resolveFinalizeReboundColumn(h.store(), taskId)).toBe(vocab.wip);
     });
   });
 

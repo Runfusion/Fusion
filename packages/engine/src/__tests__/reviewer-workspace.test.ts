@@ -5,8 +5,10 @@ spawned with `cwd = worktree`; per-repo review means ONE reviewer agent per sub-
 looping the single-cwd `reviewStep`. These tests assert the LOOP + aggregation, not the reviewer's content:
 `reviewStep` is mocked (the narrow AI seam — FN-5048: no mock-the-world, no real AI spawn) and we record
 the cwd of each call. Coverage:
-- conjunction: two-repo task → two reviewer passes (one per repo cwd); review record reflects both; reviewed
-  only when BOTH pass; one repo REVISE → aggregate REVISE tagged with that repo.
+- complete coverage: two-repo task → two reviewer passes (one per repo cwd); one aggregate records
+  every repository, preserves earlier blockers across ordinary reviewer errors, and reports all findings.
+- provider failures abort the helper walk and are characterized through the production seam's existing
+  blanket `UNAVAILABLE` handler, without publishing a partial repository rejection.
 - finding tag: a finding in repo B is repo-tagged in the aggregated review body.
 - in-session seam (createReviewStepTool / fn_review_step): DELETED in U10 (R9) along with the tool.
   The per-sub-repo loop and externalReviewCheckout resolution it covered are the SAME shared helpers the
@@ -38,7 +40,7 @@ vi.mock("../executor/worktree-capture-modified-files.js", async (importOriginal)
   };
 });
 
-import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
+import { ReviewerProviderError, reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { TaskExecutor } from "../executor.js";
 import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 import type { Task, TaskStore, WorkspaceConfig } from "@fusion/core";
@@ -82,6 +84,27 @@ function makeStore(task: Task): TaskStore & EventEmitter {
       const patch = updater(task);
       if (patch) Object.assign(task, patch);
       return task;
+    }),
+    publishWorkspaceCodeReviewEvidence: vi.fn(async (_id: string, input: {
+      expectedScopeRevision: number;
+      reviewEvidence: NonNullable<NonNullable<Task["repositoryScope"]>["reviewEvidence"]>;
+      clearReviewRemediation: boolean;
+      modifiedFiles?: string[];
+    }) => {
+      const scope = task.repositoryScope;
+      if (!scope) return { task, published: false as const, reason: "scope-absent" as const };
+      if (scope.revision !== input.expectedScopeRevision) {
+        return { task, published: false as const, reason: "scope-superseded" as const };
+      }
+      task.repositoryScope = {
+        ...scope,
+        reviewEvidence: input.reviewEvidence,
+        ...(input.clearReviewRemediation && scope.reviewRemediation?.scopeRevision === input.expectedScopeRevision
+          ? { reviewRemediation: undefined }
+          : {}),
+      };
+      if (input.modifiedFiles !== undefined) task.modifiedFiles = input.modifiedFiles;
+      return { task, published: true as const };
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getRunContextFor: vi.fn(),
@@ -180,36 +203,56 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
     expect(result.verdict).toBe("REVISE");
     expect(result.review).toContain("repo-b"); // finding repo-tagged
     expect(result.review).toContain("bug in repo-b");
-    expect(result.summary).toMatch(/^repo-b:/);
+    expect(result.summary).toMatch(/^REVISE — blocking repositories: repo-b/);
   });
 
-  // FNXC:Workspace 2026-06-21-15:00: F3 — break on the FIRST non-APPROVE repo.
-  it("F3: repo-a APPROVE + repo-b REVISE (no throw) → aggregate REVISE tagged repo-b", async () => {
+  /*
+  FNXC:WorkspaceReviewCoverage 2026-08-28-11:50:
+  FN-223 drives the real step-review seam for ordinary failure and complete-walk behavior; the
+  provider-failure characterization below separately pins the seam's blanket error handler.
+  */
+  it("keeps an earlier REVISE when a later workspace reviewer throws", async () => {
     const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
-    const executor = workspaceExecutor(makeStore(task));
-    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
-      const repo = repoOfCwd(cwd);
-      return repo === "repo-a"
-        ? { verdict: "APPROVE", review: "clean repo-a", summary: "clean a" }
-        : { verdict: "REVISE", review: "bug repo-b", summary: "revise b" };
-    });
-    expect(result.verdict).toBe("REVISE");
-    expect(result.summary).toMatch(/^repo-b:/);
-  });
-
-  it("F3: repo-a REVISE + repo-b throws → REVISE preserved (break before repo-b; NOT masked to UNAVAILABLE)", async () => {
-    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
-    const executor = workspaceExecutor(makeStore(task));
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
     const seen: string[] = [];
-    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
+    mockedReviewStep.mockImplementation((async (cwd: string) => {
       seen.push(cwd);
       if (cwd === WT_B) throw new Error("repo-b reviewer blew up");
       return { verdict: "REVISE", review: "bug repo-a", summary: "revise a" };
-    });
-    // repo-a recorded the first non-APPROVE and the loop BROKE, so repo-b's reviewer is never invoked.
-    expect(seen).toEqual([WT_A]);
+    }) as any);
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: ROOT, baselineSha: "base" } } as any;
+
+    const result = await seams.stepReview!(task as any, context, { type: "code", advisory: false } as any) as ReviewResult;
+
+    expect(seen).toEqual([WT_A, WT_B]);
     expect(result.verdict).toBe("REVISE");
-    expect(result.summary).toMatch(/^repo-a:/);
+    expect(result.repositoryReviewOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repository: "repo-b", status: "REVIEWED", verdict: "UNAVAILABLE" }),
+    ]));
+    expect(result.review).toContain("Not covered by a verdict: repo-b");
+  });
+
+  it("reviews an approving peer after an earlier workspace REVISE", async () => {
+    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
+    const seen = scriptReviewByCwd({
+      [WT_A]: { verdict: "REVISE", review: "bug repo-a", summary: "revise a" },
+      [WT_B]: { verdict: "APPROVE", review: "clean repo-b", summary: "clean b" },
+    });
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: ROOT, baselineSha: "base" } } as any;
+
+    const result = await seams.stepReview!(task as any, context, { type: "code", advisory: false } as any) as ReviewResult;
+
+    expect(seen).toEqual([WT_A, WT_B]);
+    expect(result.verdict).toBe("REVISE");
+    expect(result.repositoryReviewOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repository: "repo-a", verdict: "REVISE" }),
+      expect.objectContaining({ repository: "repo-b", verdict: "APPROVE" }),
+    ]));
   });
 
   it("reviews only the modified scoped repository and records a clean peer as not reviewed", async () => {
@@ -291,7 +334,7 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
 });
 
 describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per sub-repo", () => {
-  it("workspace task: stepReview spawns one reviewer per sub-repo cwd, not active.worktreePath/root", async () => {
+  it("does not record workspace approval without per-repository fingerprints", async () => {
     const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES, worktree: ROOT });
     const store = makeStore(task);
     const executor = workspaceExecutor(store);
@@ -307,7 +350,41 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
     const result = await seams.stepReview!(task as any, context, { type: "code", advisory: true } as any);
     expect(seen).toEqual([WT_A, WT_B]);
     expect(seen).not.toContain(ROOT);
-    expect(result.verdict).toBe("APPROVE");
+    expect(result.verdict).toBe("UNAVAILABLE");
+    expect(result.summary).toContain("no workspace review fingerprints");
+  });
+
+  it("characterizes provider failure as unavailable without publishing a partial workspace rejection", async () => {
+    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
+    const store = makeStore(task);
+    const executor = workspaceExecutor(store);
+    const seen: string[] = [];
+    mockedReviewStep.mockImplementation((async (cwd: string) => {
+      seen.push(cwd);
+      if (cwd === WT_B) {
+        throw new ReviewerProviderError("provider rate limited", "usage-limit", { provider: "anthropic" });
+      }
+      return {
+        verdict: "REVISE",
+        review: "repo-a needs revision",
+        summary: "revise repo-a",
+        findings: [{ id: "finding-a", title: "A", body: "Fix A", filePath: "src/a.ts" }],
+      };
+    }) as any);
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: ROOT, baselineSha: "base" } } as any;
+
+    // This pins the seam's pre-existing blanket error conversion; the helper itself rethrows.
+    const result = await seams.stepReview!(task as any, context, { type: "code", advisory: false } as any) as ReviewResult;
+
+    expect(seen).toEqual([WT_A, WT_B]);
+    expect(result.verdict).toBe("UNAVAILABLE");
+    expect(result.verdict).not.toBe("REVISE");
+    expect(result.review).toContain("reviewer error:");
+    expect(result.review).toContain("provider rate limited");
+    expect(result.retryable).not.toBe(false);
+    expect(store.publishWorkspaceCodeReviewEvidence).not.toHaveBeenCalled();
+    expect(task.repositoryScope?.reviewEvidence).toBeUndefined();
   });
 
   it("clears a matching remediation target when step-review approves the current scope", async () => {
@@ -374,10 +451,12 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
   acquisition, one scoped coordinator produces exactly one review session before implementation.
   */
   it("discards a stale step-review callback after a repository scope revision", async () => {
+    const repoA = makeFingerprintableCheckout();
+    capturedFilesByCwd = { [repoA.path]: ["changed.ts"] };
     const task = makeTask({
-      workspaceWorktrees: { "repo-a": TWO_REPO_WORKTREES["repo-a"] },
+      workspaceWorktrees: { "repo-a": { worktreePath: repoA.path, branch: "fusion/fn-1", baseCommitSha: repoA.baseCommitSha } },
       repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
-      modifiedFiles: ["repo-a/src/changed.ts"],
+      modifiedFiles: ["repo-a/changed.ts"],
     });
     const store = makeStore(task);
     const executor = workspaceExecutor(store);
@@ -386,11 +465,14 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
     Model the P0 race precisely: evidence commits at revision 2, then an operator
     scope mutation wins before the step-inversion graph can mark its APPROVE done.
     */
-    vi.mocked(store.updateTaskAtomic).mockImplementationOnce(async (_id, updater) => {
-      const patch = await updater(task);
-      if (patch) Object.assign(task, patch);
-      task.repositoryScope = { ...task.repositoryScope!, repositories: ["repo-a", "repo-b"], revision: 3, reviewEvidence: undefined };
-      return task;
+    vi.mocked(store.publishWorkspaceCodeReviewEvidence).mockImplementationOnce(async (_id, input) => {
+      task.repositoryScope = {
+        ...task.repositoryScope!,
+        reviewEvidence: undefined,
+        repositories: ["repo-a", "repo-b"],
+        revision: 3,
+      };
+      return { task, published: true };
     });
     mockedReviewStep.mockImplementation(async () =>
       ({ verdict: "APPROVE", review: "approved before scope mutation", summary: "approved" }));
@@ -406,19 +488,26 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
   });
 
   it("discards a stale custom-node callback after a repository scope revision", async () => {
+    const repoA = makeFingerprintableCheckout();
+    capturedFilesByCwd = { [repoA.path]: ["changed.ts"] };
     const task = makeTask({
-      workspaceWorktrees: { "repo-a": TWO_REPO_WORKTREES["repo-a"] },
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: repoA.path, branch: "fusion/fn-1", baseCommitSha: repoA.baseCommitSha },
+      },
       repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
       modifiedFiles: ["repo-a/src/changed.ts"],
     });
     const store = makeStore(task);
     const executor = workspaceExecutor(store);
     /* FNXC:RepositoryScope 2026-08-21-02:48: The custom-node route receives the same post-evidence/pre-completion scope mutation. */
-    vi.mocked(store.updateTaskAtomic).mockImplementationOnce(async (_id, updater) => {
-      const patch = await updater(task);
-      if (patch) Object.assign(task, patch);
-      task.repositoryScope = { ...task.repositoryScope!, repositories: ["repo-a", "repo-b"], revision: 3, reviewEvidence: undefined };
-      return task;
+    vi.mocked(store.publishWorkspaceCodeReviewEvidence).mockImplementationOnce(async (_id, input) => {
+      task.repositoryScope = {
+        ...task.repositoryScope!,
+        reviewEvidence: undefined,
+        repositories: ["repo-a", "repo-b"],
+        revision: 3,
+      };
+      return { task, published: true };
     });
     vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(task);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, verdict: "APPROVE", output: "approved before scope mutation" });

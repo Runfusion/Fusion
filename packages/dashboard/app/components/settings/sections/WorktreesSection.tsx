@@ -2,7 +2,6 @@ import { useTranslation } from "react-i18next";
 import type { GitRemoteDetailed } from "../../../api";
 import type { useWorktrunkInstallStatus } from "../../../hooks/useWorktrunkInstallStatus";
 import { SettingsToggleRow } from "../SettingsToggleRow";
-import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
@@ -94,35 +93,6 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         value={form.worktreeInitCommand ?? null}
         onChange={(v) => setForm((f) => ({ ...f, worktreeInitCommand: v ?? "" }))}
       />
-      {/*
-      FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-      Recycling and Task-ID naming are MUTUALLY EXCLUSIVE (the settings API/store reject the combination):
-      "task-id" naming pins each task to its own worktree directory, which is incompatible with the cross-task
-      recycle pool. The exclusivity is enforced bidirectionally in the UI so a NEW conflict is unreachable —
-      this toggle is disabled while naming is "task-id" AND recycling is not already on, and the naming select
-      below is disabled while recycling is on. Together they prevent a save that the backend would 400.
-
-      FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
-      Legacy-conflict escape hatch: when a stored config already carries BOTH (recycle on + "task-id"), do NOT
-      lock both controls — that would strand the operator (unchanged save preserves a state the runtime treats
-      as recycling). The runtime backstop makes recycling win in that conflict, so mirror it here: keep this
-      toggle ENABLED and CHECKED (its true value, un-coerced) so the operator can turn recycling off, which
-      then re-enables the naming select below. The toggle only greys out for the forward-prevention case
-      ("task-id" naming while recycling is already off).
-      */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "recycleWorktrees",
-          label: t("settings.worktrees.recycleWorktrees", " Recycle worktrees "),
-          help: form.worktreeNaming === "task-id" && form.recycleWorktrees !== true
-            ? t("settings.worktrees.recycleNotApplicableWithTaskIdNaming", "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.")
-            : t("settings.worktrees.offByDefaultOptInWhenEnabledCompleted", "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming."),
-          scope: "project",
-          disabled: form.worktreeNaming === "task-id" && form.recycleWorktrees !== true,
-        }}
-        value={form.recycleWorktrees === true}
-        onChange={(v) => setForm((f) => ({ ...f, recycleWorktrees: v === true }))}
-      />
       <SettingsToggleRow
         descriptor={{
           key: "showWorktreeGrouping",
@@ -187,31 +157,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="executorAllowSiblingBranchRename">{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. Default: disabled. ")}</SettingsHelpTip>
         </div>
       </div>
-      {/*
-      FNXC:Worktrees 2026-07-15-17:35:
-      Recycling and naming are coupled: pooled worktrees keep the names they were created with, so the naming select is disabled while `recycleWorktrees` is on and its help swaps to explain why rather than letting the operator pick a style that would be silently ignored.
-
-      FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-      "Task ID" additionally enables task-pinned worktrees (each task owns one derivable directory for its whole lifecycle), which is why it is mutually exclusive with recycling \u2014 the recycle toggle above is disabled while this is "task-id". The select stays disabled while recycling is on so the operator cannot cross into the conflicting state from this side either.
-      */}
-      <SettingsSelectRow
-        descriptor={{
-          key: "worktreeNaming",
-          label: t("settings.worktrees.worktreeNamingStyle", "Worktree Naming Style"),
-          help: form.recycleWorktrees
-            ? t("settings.worktrees.namingStyleNotApplicableWhenRecycling", "Naming style is not applicable when recycling worktrees \u2014 pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.")
-            : t("settings.worktrees.howToNameFreshWorktreeDirectories", "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random."),
-          scope: "project",
-          disabled: form.recycleWorktrees,
-          options: [
-            { value: "random", label: t("settings.worktrees.randomNamesEGSwiftFalcon", "Random names (e.g., swift-falcon)") },
-            { value: "task-id", label: t("settings.worktrees.taskIDEGFN042", "Task ID (e.g., FN-042)") },
-            { value: "task-title", label: t("settings.worktrees.taskTitleEGFixLoginBug", "Task title (e.g., fix-login-bug)") },
-          ],
-        }}
-        value={form.worktreeNaming || "random"}
-        onChange={(v) => setForm((f) => ({ ...f, worktreeNaming: v as "random" | "task-id" | "task-title" }))}
-      />
+      {/* FNXC:Worktrees 2026-08-29-08:57: FN-258 standardizes task-ID worktree directories, so naming and recycling are no longer operator-configurable. */}
       <div className="form-group">
         {/* FNXC:SettingsHelp 2026-07-15-21:40: The help swaps to the worktrunk-disabled explanation, so the tip is what tells an operator why the input is greyed out; it stays on the same "?" as every other row rather than becoming a second inline idiom. */}
         <div className="settings-field-label-row">

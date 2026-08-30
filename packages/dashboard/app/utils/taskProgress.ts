@@ -15,11 +15,26 @@ Render states (design-lens): the progress model distinguishes
 - `advisory_failure` (non-blocking REVISE — amber, counts as completed; does not block merge)
 - `failed` (blocking gate failure — red)
 - `skipped`
+- `not_run` (terminal and non-blocking, but never painted as a pass)
 Disabled optional steps are simply absent from `enabledWorkflowSteps`, so they never appear in the
 counter/bar. Recorded workflow-node progress is included independently because it represents an actual graph stage that ran, not a toggle placeholder.
+
+FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+The dashboard browser bundle aliases `@fusion/core` to its type-only leaf, unlike dashboard tests.
+Keep this fixed reason tuple local and drift-tested against the Node barrel instead of value-importing
+core workflow helpers that would pass Vitest and fail the production build.
 */
 
-export type UnifiedTaskProgressStatus = StepStatus | "failed" | "advisory_failure" | "running";
+export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved"] as const;
+const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
+
+export function isWorkflowStepNotRun(result: WorkflowStepResult): boolean {
+  return result.status === "skipped"
+    && typeof result.notRunReason === "string"
+    && WORKFLOW_STEP_NOT_RUN_REASON_SET.has(result.notRunReason);
+}
+
+export type UnifiedTaskProgressStatus = StepStatus | "failed" | "advisory_failure" | "running" | "not_run";
 
 export interface UnifiedTaskProgressItem {
   id: string;
@@ -35,7 +50,7 @@ export interface UnifiedTaskProgress {
   items: UnifiedTaskProgressItem[];
 }
 
-function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatus {
+export function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatus {
   switch (result.status) {
     case "passed":
       return "done";
@@ -44,7 +59,7 @@ function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatu
     case "advisory_failure":
       return "advisory_failure";
     case "skipped":
-      return "skipped";
+      return isWorkflowStepNotRun(result) ? "not_run" : "skipped";
     case "pending":
     default:
       // The graph upserts a `pending` entry when a step starts running. A started-but-not-completed
@@ -57,7 +72,7 @@ function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatu
 function isCompleted(status: UnifiedTaskProgressStatus): boolean {
   // advisory_failure is non-blocking: the step ran and returned feedback, so it counts as completed
   // (overall progress reads complete when only advisory steps returned REVISE).
-  return status === "done" || status === "skipped" || status === "advisory_failure";
+  return status === "done" || status === "skipped" || status === "not_run" || status === "advisory_failure";
 }
 
 /*

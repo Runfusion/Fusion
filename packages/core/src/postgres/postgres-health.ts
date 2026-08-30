@@ -217,6 +217,8 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   { table: "tasks", column: "planning_thinking_level", type: "text" },
   // FNXC:PlannerOversight 2026-07-14-18:11: per-task session advisor override (null/0/1).
   { table: "tasks", column: "session_advisor_enabled", type: "integer" },
+  // FNXC:PlanApproval 2026-08-28-06:24: per-task approval policy override (null/0/1).
+  { table: "tasks", column: "require_plan_approval", type: "integer" },
   { table: "chat_rooms", column: "thinking_level", type: "text" },
 ];
 

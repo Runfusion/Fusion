@@ -132,6 +132,76 @@ describe("splitSettingsSave", () => {
     expect(projectPatch).toEqual({ maxConcurrent: 5 });
   });
 
+  it("keeps Fast & Cheap model and credential selections in the global Models save", () => {
+    const result = splitSettingsSave({
+      payload: {
+        fastCheapGlobalProvider: "openai",
+        fastCheapGlobalModelId: "gpt-fast",
+        fastCheapGlobalCredentialInstanceId: "team-fast",
+      },
+      initialValues: {} as never,
+      initialScopedValues: { global: {}, project: {} } as never,
+      activeSection: "global-models",
+    });
+
+    expect(result.globalPatch).toEqual({
+      fastCheapGlobalProvider: "openai",
+      fastCheapGlobalModelId: "gpt-fast",
+      fastCheapGlobalCredentialInstanceId: "team-fast",
+    });
+    expect(result.projectPatch).toEqual({});
+  });
+
+  it("routes Fast & Cheap project edits and explicit clears through the project patch", () => {
+    const initialScopedValues = {
+      global: {},
+      project: {
+        fastCheapProvider: "anthropic",
+        fastCheapModelId: "claude-haiku",
+        fastCheapCredentialInstanceId: "fast-credential",
+        fastCheapThinkingLevel: "low",
+      },
+    } as never;
+
+    const updated = splitSettingsSave({
+      payload: {
+        fastCheapProvider: "openai",
+        fastCheapModelId: "gpt-fast",
+        fastCheapCredentialInstanceId: "team-fast",
+        fastCheapThinkingLevel: "medium",
+      },
+      initialValues: {} as never,
+      initialScopedValues,
+      activeSection: "project-models",
+    });
+    expect(updated.globalPatch).toEqual({});
+    expect(updated.projectPatch).toEqual({
+      fastCheapProvider: "openai",
+      fastCheapModelId: "gpt-fast",
+      fastCheapCredentialInstanceId: "team-fast",
+      fastCheapThinkingLevel: "medium",
+    });
+
+    const cleared = splitSettingsSave({
+      payload: {
+        fastCheapProvider: undefined,
+        fastCheapModelId: undefined,
+        fastCheapCredentialInstanceId: undefined,
+        fastCheapThinkingLevel: undefined,
+      },
+      initialValues: {} as never,
+      initialScopedValues,
+      activeSection: "project-models",
+    });
+    expect(cleared.globalPatch).toEqual({});
+    expect(cleared.projectPatch).toEqual({
+      fastCheapProvider: null,
+      fastCheapModelId: null,
+      fastCheapCredentialInstanceId: null,
+      fastCheapThinkingLevel: null,
+    });
+  });
+
   it("does not write global values that match the initial global-scoped value", () => {
     const initialScopedValues = {
       global: {

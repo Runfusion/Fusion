@@ -266,6 +266,38 @@ export function resolveValidatorSettingsModel(settings?: Partial<Settings>): Res
   );
 }
 
+/*
+FNXC:FastCheapModelLane 2026-08-29-02:43:
+Fast & Cheap routing needs a dedicated selection before normal execution resolution. Complete pairs only prevent a partial project/global save from stranding a fast task, while the inherited execution lane preserves existing Fast-mode behavior until an operator configures this lane. Thinking follows the same project Fast & Cheap → global Fast & Cheap → execution chain.
+*/
+export function resolveFastCheapSettingsModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.fastCheapProvider,
+        credentialInstanceId: settings?.fastCheapCredentialInstanceId,
+        modelId: settings?.fastCheapModelId,
+      },
+      {
+        provider: settings?.fastCheapGlobalProvider,
+        credentialInstanceId: settings?.fastCheapGlobalCredentialInstanceId,
+        modelId: settings?.fastCheapGlobalModelId,
+      },
+      resolveExecutionSettingsModel(settings),
+    ),
+    settings,
+  );
+}
+
+/** Resolve Fast & Cheap thinking with the same inheritance tail as execution. */
+export function resolveFastCheapThinkingLevel(settings?: Partial<Settings>): string | undefined {
+  return firstThinkingLevel(
+    settings?.fastCheapThinkingLevel,
+    settings?.fastCheapGlobalThinkingLevel,
+    resolvePhaseThinkingLevel("execution", settings),
+  );
+}
+
 export function resolveTitleSummarizerSettingsModel(settings?: Partial<Settings>): ResolvedModelSelection {
   return applyTestModeOverrides(
     pickFirstModelPair(

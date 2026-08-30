@@ -156,6 +156,60 @@ describe("workflow-transition-policy — combined invariants + classification", 
     ).toBe(true);
   });
 
+  it.each(["engine", "scheduler"] as const)(
+    "allows the %s review-to-complete advance when the merge blocker is clear",
+    (moveSource) => {
+      expect(evaluateTransitionInvariants({
+        taskId: "FN-221",
+        from: facts("in-review", HUMAN_REVIEW),
+        to: facts("done", COMPLETE),
+        mergeBlockerReason: null,
+        moveSource,
+      })).toEqual({ allow: true });
+    },
+  );
+
+  it("keeps the merge blocker authoritative on the automated review-to-complete boundary", () => {
+    const decision = evaluateTransitionInvariants({
+      taskId: "FN-221",
+      from: facts("in-review", HUMAN_REVIEW),
+      to: facts("done", COMPLETE),
+      mergeBlockerReason: "required review is still pending",
+      moveSource: "engine",
+    });
+
+    expect(decision.allow).toBe(false);
+    if (!decision.allow) expect(decision.rejection.code).toBe("merge-blocked");
+  });
+
+  it("still rejects an automated review-to-archive completion skip", () => {
+    const decision = evaluateTransitionInvariants({
+      taskId: "FN-221",
+      from: facts("in-review", HUMAN_REVIEW),
+      to: facts("archived", ARCHIVED),
+      mergeBlockerReason: null,
+      moveSource: "engine",
+    });
+
+    expect(decision.allow).toBe(false);
+    if (!decision.allow) {
+      expect(decision.rejection.messageKey).toBe("transition.rejected.forbiddenLifecyclePath");
+    }
+  });
+
+  it.each([undefined, "user"] as const)(
+    "preserves the fail-open operator review-to-complete route for moveSource=%s",
+    (moveSource) => {
+      expect(evaluateTransitionInvariants({
+        taskId: "FN-221",
+        from: facts("in-review", HUMAN_REVIEW),
+        to: facts("done", COMPLETE),
+        mergeBlockerReason: null,
+        moveSource,
+      })).toEqual({ allow: true });
+    },
+  );
+
   it("yields byte-identical rejections for identical facts (scenario 7: same verdict for every mover)", () => {
     const input = {
       taskId: "T4",

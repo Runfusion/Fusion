@@ -721,6 +721,19 @@ describe("Git Management API", () => {
       });
     });
 
+    it("forwards an expected-column compare-and-set precondition", async () => {
+      const movedTask: Task = { ...FAKE_DETAIL, column: "todo" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, movedTask));
+
+      await moveTask("FN-001", "todo", undefined, { expectedColumn: "ideas" });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/move", {
+        headers: API_JSON_HEADERS,
+        method: "POST",
+        body: JSON.stringify({ column: "todo", expectedColumn: "ideas" }),
+      });
+    });
+
     it("throws on error", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Cannot move to same column" }, 400));
 

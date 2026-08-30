@@ -29,6 +29,7 @@ export * from "./workflow-capacity.js";
 export * from "./workflow-definition-types.js";
 export * from "./workflow-extension-registry.js";
 export * from "./workflow-extension-types.js";
+export * from "./workflow-fast-lane.js";
 export * from "./workflow-ir.js";
 export * from "./workflow-ir-resolver.js";
 export * from "./workflow-ir-types.js";

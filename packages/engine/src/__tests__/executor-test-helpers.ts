@@ -243,13 +243,6 @@ vi.mock("../agents/agent-session-helpers.js", async () => {
 
   };
 });
-vi.mock("../worktree/worktree-names.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree/worktree-names.js");
-  return {
-    ...actual,
-    generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
-  };
-});
 vi.mock("../worktree/worktree-pool.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../worktree/worktree-pool.js")>();
   const backend = await vi.importActual<typeof import("../worktree/worktree-backend.js")>("../worktree/worktree-backend.js");
@@ -410,6 +403,14 @@ vi.mock("../execution/step-session-executor.js", () => ({
     const end = nextHeading === -1 ? prompt.length : nextHeading;
     return prompt.slice(start, end).trim();
   },
+  buildFastLanePrompt: (task: { id: string; description?: string; attachments?: Array<{ originalName: string }> }, _rootDir?: string, _settings?: unknown, worktreePath?: string) => [
+    `## Task: ${task.id}`,
+    "## Original Request",
+    task.description ?? "",
+    ...(task.attachments?.map((attachment) => attachment.originalName) ?? []),
+    `Work only inside ${worktreePath ?? "the assigned task worktree"}.`,
+    `fix(${task.id}): <short summary>`,
+  ].join("\n"),
 }));
 
 vi.mock("../errors/rate-limit-retry.js", () => ({
@@ -453,7 +454,6 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
 
 import { createFnAgent } from "../pi.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { findWorktreeUser } from "../merger.js";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
@@ -468,7 +468,6 @@ import { TaskExecutor } from "../executor.js";
 
 export const mockedCreateFnAgent = vi.mocked(createFnAgent);
 export const mockedSessionManager = vi.mocked(SessionManager);
-export const mockedGenerateWorktreeName = vi.mocked(generateWorktreeName);
 export const mockedFindWorktreeUser = vi.mocked(findWorktreeUser);
 export const mockedStepSessionExecutor = vi.mocked(StepSessionExecutor);
 export const mockedWithRateLimitRetry = vi.mocked(withRateLimitRetry);

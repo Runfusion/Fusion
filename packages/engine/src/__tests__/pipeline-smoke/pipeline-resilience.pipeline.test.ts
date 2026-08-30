@@ -51,7 +51,7 @@ describeIfReady("pipeline smoke: resilience scenarios", () => {
   });
   afterAll(pg.afterAll);
 
-  it.each(executableVariants(["S17", "S18", "S19", "S20"]))(
+  it.each(executableVariants(["S17", "S18", "S19", "S20", "S21"]))(
     "$scenario.id runs $workflowId $variant",
     async ({ scenario: selected, workflowId, variant }) => {
       const context = { harness, workflowId, variant };

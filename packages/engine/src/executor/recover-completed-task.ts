@@ -8,17 +8,14 @@ import type { Task, TaskStore } from "@fusion/core";
 import {
   evaluateCompletedPromotionFailureProvenance,
   evaluateSkipBypassTaint,
+  isFastExecutionMode,
 } from "@fusion/core";
 import { resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
-import {
-  areExplicitEnabledWorkflowStepsSatisfied,
-  areEnabledPreMergeWorkflowStepsSatisfied,
-  hasUnsatisfiedExplicitEnabledWorkflowSteps,
-} from "./workflow-step-satisfaction.js";
+import { areEnabledPreMergeWorkflowStepsSatisfied } from "./workflow-step-satisfaction.js";
 
 export type RecoverCompletedTaskDeps = {
   store: TaskStore;
@@ -68,8 +65,8 @@ export async function recoverCompletedTask(
     FNXC:WorkflowOptionalStepFix 2026-06-28-12:00:
     A pre-merge optional/advisory step REVISE (Code Review / Browser Verification) reopens
     plan steps to `pending` and schedules a remediation bounce (sendTaskBackForFix →
-    scheduleWorkflowRerun) that moves the task in-review → todo → in-progress so the executor
-    can finish the reopened steps. Re-entering the workflow graph here while that bounce is
+    scheduleWorkflowRerun) that moves the task directly from review to WIP so the executor
+    can finish the reopened steps without an intermediate Planning stop. Re-entering the workflow graph here while that bounce is
     still scheduled — or while the live task already carries incomplete plan steps — preempts
     the executor's single fix cycle: the re-run re-passes the advisory step (its fix budget is
     now exhausted), advances to the `merge` node, and the merge gate refuses with
@@ -158,12 +155,16 @@ export async function recoverCompletedTask(
         executorLog.log(`${task.id}: recovered ${modifiedFiles.length} modified files`);
       }
 
-      const enabledWorkflowStepsAlreadySatisfied = task.executionMode === "fast"
-        ? areExplicitEnabledWorkflowStepsSatisfied(liveForCompletenessCheck)
+      /*
+      FNXC:FastLane 2026-08-29-03:35:
+      Fast now bypasses every pre-merge optional group, including stale explicit selections. A
+      completed Fast card must not re-enter solely to run a gate its route intentionally omits;
+      its normal graph pass records skipped evidence before merge instead.
+      */
+      const enabledWorkflowStepsAlreadySatisfied = isFastExecutionMode(task)
+        ? true
         : areEnabledPreMergeWorkflowStepsSatisfied(liveForCompletenessCheck);
-      const shouldReenterWorkflowGraph = task.executionMode === "fast"
-        ? hasUnsatisfiedExplicitEnabledWorkflowSteps(liveForCompletenessCheck)
-        : !enabledWorkflowStepsAlreadySatisfied;
+      const shouldReenterWorkflowGraph = !isFastExecutionMode(task) && !enabledWorkflowStepsAlreadySatisfied;
 
       // Run workflow steps before transitioning — fast mode still honors explicit optional-step selections.
       if (enabledWorkflowStepsAlreadySatisfied) {
@@ -217,7 +218,7 @@ export async function recoverCompletedTask(
           ).catch(() => undefined);
           executorLog.log(`✓ ${task.id} auto-recovered completed task via workflow-graph re-entry`);
           return true;
-      } else if (task.executionMode === "fast") {
+      } else if (isFastExecutionMode(task)) {
         /*
         FNXC:FastOptionalSteps 2026-06-30-12:00:
         Fast recovery can hand off completed implementation directly only when the operator did not explicitly enable optional workflow steps, or when those enabled steps already have passed pre-merge results. Explicit optional selections are stronger than the fast default, so completed-task recovery must re-enter the workflow graph before review when any selected optional group is still unsatisfied.

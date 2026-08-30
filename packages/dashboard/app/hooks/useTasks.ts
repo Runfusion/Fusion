@@ -9,6 +9,7 @@ import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueA
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
 import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
+import type { TaskResetOptions } from "../api/tasks/tasks-lifecycle";
 import { subscribeSse } from "../sse-bus";
 import { clearCache, readCache, readCacheSavedAt, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
 import { pushTrace } from "../utils/dashboardTraceBuffer";
@@ -312,14 +313,17 @@ owns a real column transition; within that column, a later `updatedAt` owns stat
 clock evidence retains the already-visible known lifecycle state unless a complete server snapshot is
 newer than the row and resolves an equal legacy move clock; sparse SSE patches never receive that tie-break.
 
-This helper intentionally merges only defined sparse fields and retains a fetched detail's prompt/log
-when a slim board row arrives. Every open-detail host and useTasks ingestion uses this one boundary so
-one provider cannot regress a modal, main panel, split detail, dock, or popup independently.
+This helper intentionally merges only defined sparse fields. A slim or sparse payload's absent, empty, or whitespace-only prompt is not evidence that a loaded plan was cleared, and an empty log is not evidence that a populated journal was cleared; marked full snapshots remain authoritative for both fields. Every open-detail host and useTasks ingestion uses this one boundary so one provider cannot regress a modal, main panel, split detail, dock, or popup independently.
 
 FNXC:TaskDetailStateStability 2026-08-09-07:13:
 `mergeTaskSnapshot` arbitrates server snapshots only. Locally-authored detail patches must use
 `applyLocalTaskPatch`: FN-5148 requires mismatched ids to be ignored while accepting an absent id, and
 FN-8796 showed that an absent or equal local clock is not evidence of staleness.
+
+FNXC:TaskDetailStateStability 2026-08-28-16:07:
+A sparse blank prompt must not add a `prompt` key to a slim task row. Task detail uses key presence to
+distinguish a complete detail from a board snapshot, so synthesizing that key would make a transient
+empty payload look authoritative and could replace the loaded Definition plan with `(no prompt)`.
 */
 export interface TaskSnapshotMergeOptions {
   /** Hook-local, non-persisted evidence captured when GET /api/tasks supplied a release verdict. */
@@ -438,9 +442,37 @@ export function mergeTaskSnapshot<T extends Task>(
     ? incoming.recentAgentActivityAt
     : current.recentAgentActivityAt;
 
-  if ("prompt" in current && incoming.prompt === undefined) {
-    merged.prompt = current.prompt;
-    merged.log = current.log;
+  const currentHasPrompt = "prompt" in current;
+  const incomingPrompt = incoming.prompt;
+  if (currentHasPrompt) {
+    const currentPrompt = current.prompt;
+    const sparseBlankCannotClear = options.fullSnapshot !== true
+      && Boolean(currentPrompt?.trim())
+      && !incomingPrompt?.trim();
+    if (incomingPrompt === undefined || sparseBlankCannotClear) {
+      merged.prompt = currentPrompt;
+    }
+  } else if (options.fullSnapshot !== true && !incomingPrompt?.trim()) {
+    delete merged.prompt;
+  }
+
+  /*
+  FNXC:TaskActivityFeed 2026-08-28-00:13:
+  FN-205 found `stripTaskListHeavyFields` emits `log: []` for every slim SSE/list task payload. The
+  task journal is append-only and trimmed server-side, so an absent or empty slim log is never evidence
+  that a populated journal was cleared. Retain it independently of prompt presence; board-to-board
+  merges remain inert because both slim rows have empty journals.
+
+  A marked full detail snapshot is authoritative, including an honestly empty journal. It also adopts a
+  populated journal over an empty current row even when its clock is older, because the empty stripped
+  row is not competing journal evidence.
+  */
+  const currentLog = current.log;
+  const incomingLog = incoming.log;
+  if (options.fullSnapshot === true) {
+    merged.log = incomingLog;
+  } else if (currentLog && currentLog.length > 0 && (!incomingLog || incomingLog.length === 0)) {
+    merged.log = currentLog;
   }
 
   return merged as T;
@@ -1475,20 +1507,11 @@ export function useTasks(options?: UseTasksOptions) {
     return task;
   }, [projectId]);
 
-  const moveTask = useCallback(async (
-    id: string,
-    column: ColumnId,
-    optionsOrPosition?: { preserveProgress?: boolean } | number,
-  ): Promise<Task> => {
-    return normalizeNonBoardTask(await api.moveTask(id, column, projectId, optionsOrPosition));
-  }, [projectId]);
-
   /*
-  FNXC:DashboardPauseState 2026-08-05-07:18:
-  Every lifecycle surface must publish the server-confirmed pause row to shared state before
-  waiting on SSE or polling. One reconciliation seam advances the fetch version, replaces only
-  the matching task, and safely refreshes the project cache, so detail, board, list, and dock
-  hosts cannot diverge after pause or unpause.
+  FNXC:DashboardTaskReconciliation 2026-08-30-01:40:
+  Start and Reset must publish their server-confirmed rows before SSE or polling so every task host
+  immediately shows the new column. A stale card invited a second Start that could hard-cancel work,
+  so lifecycle mutations share one reconciliation seam rather than waiting for an eventual refresh.
   */
   const reconcileConfirmedTask = useCallback((confirmedTask: Task): Task => {
     const normalizedConfirmedRow = normalizeNonBoardTask(confirmedTask);
@@ -1539,6 +1562,14 @@ export function useTasks(options?: UseTasksOptions) {
     });
     return updatedTask;
   }, [projectId]);
+
+  const moveTask = useCallback(async (
+    id: string,
+    column: ColumnId,
+    optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number,
+  ): Promise<Task> => {
+    return reconcileConfirmedTask(await api.moveTask(id, column, projectId, optionsOrPosition));
+  }, [projectId, reconcileConfirmedTask]);
 
   const pauseTask = useCallback(async (id: string): Promise<Task> => {
     return reconcileConfirmedTask(await api.pauseTask(id, projectId));
@@ -1674,12 +1705,12 @@ export function useTasks(options?: UseTasksOptions) {
     return bypassedTask;
   }, [projectId]);
 
-  const resetTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeNonBoardTask(await api.resetTask(id, projectId));
-  }, [projectId]);
+  const resetTask = useCallback(async (id: string, options?: TaskResetOptions): Promise<Task> => {
+    return reconcileConfirmedTask(await api.resetTask(id, options, projectId));
+  }, [projectId, reconcileConfirmedTask]);
 
-  const duplicateTask = useCallback(async (id: string): Promise<Task> => {
-    const task = normalizeNonBoardTask(await api.duplicateTask(id, projectId));
+  const duplicateTask = useCallback(async (id: string, options?: { workflowId?: string }): Promise<Task> => {
+    const task = normalizeNonBoardTask(await api.duplicateTask(id, options, projectId));
     setTasks((prev) => {
       if (prev.some((t) => t.id === task.id)) return prev;
       return [...prev, task];

@@ -24,7 +24,6 @@ vi.mock("@fusion/core", () => {
     requirePlanApproval: false,
     ntfyEnabled: false,
     ntfyTopic: undefined,
-    worktreeNaming: "random",
     githubTokenConfigured: false,
     defaultProvider: undefined,
     defaultModelId: undefined,
@@ -104,9 +103,10 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
     expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
     expect(VALID_SETTINGS).not.toContain("requirePlanApproval");
+    expect(VALID_SETTINGS).not.toContain("worktreeNaming");
+    expect(VALID_SETTINGS).not.toContain("recycleWorktrees");
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);
-    expect(parseValue("worktreeNaming", "task-id")).toBe("task-id");
     expect(parseValue("worktreesDir", "~/.fn-worktrees/{repo}")).toBe("~/.fn-worktrees/{repo}");
     expect(parseValue("defaultNodeId", "node-abc-123")).toBe("node-abc-123");
     expect(parseValue("unavailableNodePolicy", "block")).toBe("block");
@@ -515,7 +515,6 @@ describe("settings commands", () => {
       requirePlanApproval: false,
       ntfyEnabled: false,
       taskPrefix: "FN",
-      worktreeNaming: "random",
     });
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj-1",

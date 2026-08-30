@@ -4,6 +4,7 @@ import {
   buildConflictMatrix,
   determineParallelWaves,
   buildStepPrompt,
+  buildFastLanePrompt,
   buildReducedStepPrompt,
   StepSessionExecutor,
 } from "../execution/step-session-executor.js";
@@ -474,6 +475,37 @@ Do important work.
 
 ## Review level: 2`;
 
+  it("builds a compact Fast prompt from the original request without step scaffolding", () => {
+    const task = makeTaskDetail({
+      executionMode: "fast",
+      description: "Change the primary button to red.",
+      prompt: fullPrompt,
+      attachments: [{
+        filename: "button.png",
+        originalName: "button.png",
+        mimeType: "image/png",
+        size: 1,
+        createdAt: new Date().toISOString(),
+      }],
+      steeringComments: [{ author: "Operator", text: "Keep the hover state.", createdAt: new Date().toISOString() }],
+    });
+    const result = buildFastLanePrompt(task, "/repo", { testCommand: "pnpm test", buildCommand: "pnpm build" } as Settings, "/repo/.worktrees/fast");
+
+    expect(result).toContain("Change the primary button to red.");
+    expect(result).toContain("button.png");
+    expect(result).toContain("pnpm test");
+    expect(result).toContain("Keep the hover state.");
+    expect(result).toContain("/repo/.worktrees/fast");
+    expect(result).toContain("fix(FN-001): <short summary>");
+    expect(result).not.toContain("Work through each step in order");
+    expect(result).not.toContain("## Review level:");
+    expect(result).not.toContain("## Step Content");
+
+    const routed = buildStepPrompt(task, 0, "/repo", { testCommand: "pnpm test", buildCommand: "pnpm build" } as Settings, "/repo/.worktrees/fast");
+    expect(routed).toContain("Change the primary button to red.");
+    expect(routed).not.toContain("## Step Content");
+  });
+
   it("includes step-specific section text", () => {
     const task = makeTaskDetail({ prompt: fullPrompt });
     const result = buildStepPrompt(task, 1);
@@ -727,6 +759,75 @@ Some freeform text without checkboxes.`;
     expect(result).not.toContain("Project Commands");
   });
 
+  it("synthesizes actionable content for an appended remediation step", () => {
+    const task = makeTaskDetail({
+      prompt: fullPrompt,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "done" },
+        { name: "Test", status: "done" },
+        {
+          name: "Fix: repair retry guard",
+          status: "pending",
+          remediation: {
+            wave: 1,
+            gate: "Code Review",
+            gateStepId: "code-review",
+            detail: "Reverse the retry guard condition",
+            filePath: "packages/engine/src/retry.ts",
+            line: 42,
+          },
+        },
+      ],
+    });
+
+    const result = buildStepPrompt(task, 3);
+    expect(result).toContain("### Appended Step: Fix: repair retry guard");
+    expect(result).toContain("**Gate:** Code Review");
+    expect(result).toContain("**Required fix:** Reverse the retry guard condition");
+    expect(result).toContain("**File:** `packages/engine/src/retry.ts`");
+    expect(result).toContain("**Line:** 42");
+  });
+
+  it("synthesizes a mandatory checklist for an appended verification step", () => {
+    const task = makeTaskDetail({
+      prompt: fullPrompt,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "done" },
+        { name: "Test", status: "done" },
+        { name: "Fix: repair retry guard", status: "done" },
+        { name: "Testing & Verification", status: "pending" },
+      ],
+    });
+    const settings = { testCommand: "pnpm test:gate", buildCommand: "pnpm build" } as Settings;
+
+    const result = buildStepPrompt(task, 4, undefined, settings);
+    expect(result).toContain("### Appended Step: Testing & Verification");
+    expect(result).toContain("Run the project's configured test and build commands listed under Project Commands.");
+    expect(result).toContain("Run the tests impacted by this task's changes.");
+    expect(result).toContain("Fix every failure before completing this step.");
+    expect(result).toContain("Never weaken, skip, or delete assertions merely to make verification pass.");
+    expect(result).toContain("pnpm test:gate");
+    expect(result).toContain("pnpm build");
+  });
+
+  it("does not synthesize over an index inside the authored heading range", () => {
+    const prompt = "### Step 1: Authored first\n\nKeep this authored content.\n\n### Step 2: Authored second";
+    const task = makeTaskDetail({
+      prompt,
+      steps: [{
+        name: "Fix: must not mask authored numbering",
+        status: "pending",
+        remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", detail: "fallback detail" },
+      }],
+    });
+
+    const result = buildStepPrompt(task, 0);
+    expect(result).not.toContain("### Appended Step");
+    expect(result).not.toContain("fallback detail");
+  });
+
   it("includes user steering comments as next-session fallback when no active step session existed", () => {
     const task = makeTaskDetail({
       prompt: fullPrompt,
@@ -920,6 +1021,25 @@ describe("buildReducedStepPrompt", () => {
     expect(result).not.toContain("attachment(s) available");
     expect(result).not.toContain(".fusion/tasks/FN-001/attachments/");
   });
+
+  it("keeps synthesized verification instructions during context-limit recovery", () => {
+    const task = makeTaskDetail({
+      prompt: reducedPrompt,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "done" },
+        { name: "Test", status: "done" },
+        { name: "Fix: repair retry guard", status: "done" },
+        { name: "Testing & Verification", status: "pending" },
+      ],
+    });
+
+    const result = buildReducedStepPrompt(task, 4);
+    expect(result).toContain("### Appended Step: Testing & Verification");
+    expect(result).toContain("Run the tests impacted by this task's changes.");
+    expect(result).toContain("Fix every failure before completing this step.");
+    expect(result).toContain("Never weaken, skip, or delete assertions merely to make verification pass.");
+  });
 });
 
 // ── StepSessionExecutor test helpers ───────────────────────────────────
@@ -950,13 +1070,16 @@ vi.mock("../agents/agent-session-helpers.js", async () => {
       pi.promptWithFallback(session, prompt, options as any),
     ),
     describeAgentModel: vi.fn(async (session: any) => pi.describeModel(session)),
-    resolveExecutorSessionModel: vi.fn((taskModelProvider?: string, taskModelId?: string, settings?: any, assignedAgentRuntimeConfig?: Record<string, unknown>) => {
+    resolveExecutorSessionModel: vi.fn((taskModelProvider?: string, taskModelId?: string, settings?: any, assignedAgentRuntimeConfig?: Record<string, unknown>, _credentialInstanceId?: string, executionMode?: string | null) => {
       const model = typeof assignedAgentRuntimeConfig?.model === "string" ? assignedAgentRuntimeConfig.model : "";
       const slash = model.indexOf("/");
       if (slash > 0 && slash < model.length - 1) {
         return { provider: model.slice(0, slash), modelId: model.slice(slash + 1) };
       }
       if (taskModelProvider && taskModelId) return { provider: taskModelProvider, modelId: taskModelId };
+      if (executionMode === "fast" && settings?.fastCheapProvider && settings?.fastCheapModelId) {
+        return { provider: settings.fastCheapProvider, modelId: settings.fastCheapModelId };
+      }
       if (settings?.executionProvider && settings?.executionModelId) {
         return { provider: settings.executionProvider, modelId: settings.executionModelId };
       }
@@ -1561,6 +1684,41 @@ describe("StepSessionExecutor", () => {
       expect(onStepStart).toHaveBeenNthCalledWith(1, 0);
       expect(onStepStart).toHaveBeenNthCalledWith(2, 1);
       expect(onStepStart).toHaveBeenNthCalledWith(3, 2);
+    });
+
+    it("awaits an asynchronous completion callback before the session run resolves", async () => {
+      const task = makeTaskDetail({
+        prompt: makeStepPrompt("FN-255", 1),
+        steps: [{ name: "Deferred completion", status: "pending" }],
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: makeMockSession() } as any);
+
+      let releaseCompletion!: () => void;
+      const completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+      let markCompletionStarted!: () => void;
+      const completionStarted = new Promise<void>((resolve) => { markCompletionStarted = resolve; });
+      const onStepComplete = vi.fn(async () => {
+        markCompletionStarted();
+        await completionGate;
+      });
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings: makeSettings({ maxParallelSteps: 1 }),
+        onStepComplete,
+      });
+
+      const run = executor.executeAll();
+      await completionStarted;
+      let settled = false;
+      void run.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      releaseCompletion();
+      await expect(run).resolves.toMatchObject([{ stepIndex: 0, success: true }]);
+      expect(onStepComplete).toHaveBeenCalledTimes(1);
     });
 
     it("does not create or complete a step session when the persisted start is rejected", async () => {
@@ -3305,6 +3463,23 @@ describe("StepSessionExecutor executor model lane hierarchy", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("uses the Fast & Cheap pair for a Fast step session while standard keeps execution", async () => {
+    const settings = {
+      executionProvider: "anthropic",
+      executionModelId: "claude-sonnet-4-5",
+      fastCheapProvider: "openai",
+      fastCheapModelId: "gpt-4.1-mini",
+    };
+    await expect(captureAgentModel(settings, { executionMode: "fast" })).resolves.toEqual({
+      provider: "openai",
+      modelId: "gpt-4.1-mini",
+    });
+    await expect(captureAgentModel(settings, { executionMode: "standard" })).resolves.toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
   });
 
   it("uses project default override pair when execution lanes are absent", async () => {
