@@ -218,7 +218,7 @@ jobs:
           && (steps.scan.outputs.status == 'clean' || steps.scan.outputs.status == 'findings')
           && hashFiles('threatcrush.sarif') != ''
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
         with:
           sarif_file: threatcrush.sarif
           category: threatcrush
