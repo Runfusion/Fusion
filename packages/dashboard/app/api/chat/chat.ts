@@ -568,7 +568,8 @@ export interface ChatStreamHandlers {
   onToolStart?: (data: { toolName: string; args?: Record<string, unknown> }) => void;
   onToolEnd?: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback?: (data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => void;
-  onDone?: (data: { messageId: string; message?: ChatMessage; interrupted?: boolean }) => void;
+  onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
+  onDone?: (data: { messageId: string; message?: ChatMessage; interrupted?: boolean; dispatch?: "agents"; failedAgentNames?: string[] }) => void;
   onError?: (data: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => void;
   onConnectionStateChange?: (state: StreamConnectionState) => void;
 }
@@ -656,13 +657,25 @@ export function streamChatResponse(
           // skip malformed event
         }
         break;
+      case "agent_message":
+        try {
+          const parsed = JSON.parse(rawData) as { message?: unknown; senderAgentId?: unknown; senderAgentName?: unknown };
+          if (parsed.message && typeof parsed.message === "object" && typeof parsed.senderAgentId === "string" && typeof parsed.senderAgentName === "string") {
+            handlers.onAgentMessage?.({ message: parsed.message as ChatMessage, senderAgentId: parsed.senderAgentId, senderAgentName: parsed.senderAgentName });
+          }
+        } catch {
+          // skip malformed event
+        }
+        break;
       case "done":
         terminated = true;
         try {
-          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown };
+          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown; dispatch?: unknown; failedAgentNames?: unknown };
           handlers.onDone?.({
             messageId: typeof parsed.messageId === "string" ? parsed.messageId : "",
             ...(parsed.message && typeof parsed.message === "object" ? { message: parsed.message as ChatMessage } : {}),
+            ...(parsed.dispatch === "agents" ? { dispatch: "agents" as const } : {}),
+            ...(Array.isArray(parsed.failedAgentNames) ? { failedAgentNames: parsed.failedAgentNames.filter((name): name is string => typeof name === "string") } : {}),
           });
         } catch {
           handlers.onDone?.({ messageId: "" });
@@ -887,13 +900,25 @@ export function attachChatStream(
           // skip malformed event
         }
         break;
+      case "agent_message":
+        try {
+          const parsed = JSON.parse(rawData) as { message?: unknown; senderAgentId?: unknown; senderAgentName?: unknown };
+          if (parsed.message && typeof parsed.message === "object" && typeof parsed.senderAgentId === "string" && typeof parsed.senderAgentName === "string") {
+            handlers.onAgentMessage?.({ message: parsed.message as ChatMessage, senderAgentId: parsed.senderAgentId, senderAgentName: parsed.senderAgentName });
+          }
+        } catch {
+          // skip malformed event
+        }
+        break;
       case "done":
         terminated = true;
         try {
-          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown };
+          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown; dispatch?: unknown; failedAgentNames?: unknown };
           handlers.onDone?.({
             messageId: typeof parsed.messageId === "string" ? parsed.messageId : "",
             ...(parsed.message && typeof parsed.message === "object" ? { message: parsed.message as ChatMessage } : {}),
+            ...(parsed.dispatch === "agents" ? { dispatch: "agents" as const } : {}),
+            ...(Array.isArray(parsed.failedAgentNames) ? { failedAgentNames: parsed.failedAgentNames.filter((name): name is string => typeof name === "string") } : {}),
           });
         } catch {
           handlers.onDone?.({ messageId: "" });

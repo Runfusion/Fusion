@@ -1424,7 +1424,11 @@
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
     "restore": "",
-    "backToConversations": ""
+    "backToConversations": "",
+    "quoteMessage": "Citar mensaje",
+    "agentRepliesFailed": "Algunos agentes no pudieron responder: {{agents}}",
+    "noDefaultModelConfigured": "Configura un modelo de chat predeterminado en Ajustes antes de crear una conversación.",
+    "newChatOpenInNewWindowHint": ""
   },
   "chatRooms": {
     "error": {
@@ -1511,7 +1515,6 @@
     "autoMerge": "Fusión automática",
     "autoMergeDisabled": "Fusión automática desactivada",
     "autoMergeEnabled": "Fusión automática activada",
-    "cancelMove": "Cancelar movimiento",
     "collapseArchivedLabel": "Contraer tareas archivadas",
     "collapseArchivedTitle": "Contraer tareas archivadas",
     "expandArchivedLabel": "Expandir tareas archivadas",
@@ -1520,41 +1523,25 @@
     "keepProgress": "Preservar progreso",
     "loadMore_one": "",
     "loadMore_other": "",
-    "moveAllToTodo": "Mover todo a Tareas pendientes",
-    "moveAllToTodoMessage_one": "",
-    "moveAllToTodoMessage_other": "",
-    "moveAllToTodoTitle": "Mover todo a Tareas pendientes",
-    "movedToPlanning_one": "",
-    "movedToPlanning_other": "",
-    "movedToTodo_one": "",
-    "movedToTodo_other": "",
-    "movePartialFailure": "Se movieron {{moved}} de {{total}} tareas; {{failed}} fallaron",
-    "moveToTodoHint_one": "",
-    "moveToTodoHint_other": "",
-    "moveToTodoPartialFailure": "Se movieron {{moved}} de {{total}} tareas a Tareas pendientes; {{failed}} fallaron",
     "newTask": "Nueva tarea",
     "noManuallyPausableTasks": "Sin tareas pausables manualmente",
     "noTasks": "Sin tareas",
     "noTasksInColumn": "Sin tareas en esta columna",
     "pauseHint_one": "",
     "pauseHint_other": "",
-    "preserveProgressMessage": "Esta tarea tiene pasos completados. ¿Preservar progreso antes de mover?",
-    "preserveProgressMoveTodoMessage": "Algunas tareas tienen pasos completados. ¿Preservar progreso antes de mover a Tareas pendientes?",
     "preserveProgressTitle": "¿Preservar progreso?",
     "promoteUnplannedCancel": "",
     "promoteUnplannedConfirm": "",
     "promoteUnplannedMessage": "",
     "promoteUnplannedTitle": "",
     "replanAll": "Replanificar todo",
-    "replanAllHint_one": "",
-    "replanAllHint_other": "",
-    "replanAllMessage_one": "",
-    "replanAllMessage_other": "",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "Replanificar todas las tareas",
     "resetProgress": "Restablecer progreso",
     "resetProgressConfirm": "Restablecer progreso",
-    "resetProgressMessage": "¿Restablecer el progreso de todos los pasos antes de mover esta tarea?",
-    "resetProgressMoveTodoMessage": "¿Restablecer el progreso de pasos de las tareas antes de mover a Tareas pendientes?",
     "resetProgressTitle": "¿Restablecer progreso?",
     "stopAll": "Detener todo",
     "stopAllMessage_one": "",
@@ -1567,7 +1554,10 @@
     "sortArrivalDesc": "",
     "sortArrivalDescHint": "",
     "sortTaskIdDesc": "",
-    "sortTaskIdDescHint": ""
+    "sortTaskIdDescHint": "",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -3450,7 +3440,9 @@
     "useProjectDefault": "Usar predeterminado del proyecto",
     "viewOptions": "Opciones de vista",
     "workflowLabel": "",
-    "statusReplan": "Replanificar"
+    "statusReplan": "Replanificar",
+    "statusWaiting": "",
+    "statusWaitingOn": ""
   },
   "mailbox": {
     "agent": "Agente",
@@ -6200,7 +6192,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
-      "autoReloadDashboardOnVersionChange": "",
       "checkForThe": "",
       "checkForUpdatesAutomatically": "",
       "cLIBinaryOnPATH": "",
@@ -6230,7 +6221,6 @@
       "updates": "",
       "weekly": "",
       "whenDisabledToolRowsAreStillLoggedBut": "",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": "",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -7951,7 +7941,14 @@
       "overlapBlocker": "Bloqueador de superposición de ámbito de archivo:",
       "removeTitle": "Eliminar dependencia {{id}}",
       "searchPlaceholder": "Buscar tareas…",
-      "stale": "(desactualizado)"
+      "stale": "(desactualizado)",
+      "overlapFiles": {
+        "loading": "",
+        "error": "",
+        "noScope": "",
+        "none": "",
+        "matches": ""
+      }
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8066,21 +8063,8 @@
       "noBranchToMerge": "sin rama para fusionar",
       "title": "Fusionar tarea"
     },
-    "move": {
-      "backToInProgress": "Volver a En progreso",
-      "backTo": "Volver a {{column}}",
-      "cancelMove": "Cancelar movimiento",
-      "keepProgress": "Conservar progreso",
-      "movedTo": "Movido a {{column}}",
-      "moveTo": "Mover a {{column}}",
-      "preserveProgressMessage": "Esta tarea tiene pasos completados. ¿Conservar el progreso antes de mover?",
-      "preserveProgressTitle": "¿Conservar el progreso?",
-      "resetProgress": "Restablecer progreso",
-      "resetProgressMessage": "¿Restablecer todo el progreso de los pasos antes de mover esta tarea?",
-      "resetProgressTitle": "¿Restablecer el progreso?"
-    },
     "nearDuplicate": {
-      "actions": "Elige Archivar para mover esta tarea a archivadas, o Conservar para continuar con esta tarea.",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "Archivar",
       "archiveConfirm": "Archivar",
       "archived": "{{id}} archivado",
@@ -8088,14 +8072,14 @@
       "archiveTitle": "Archivar tarea casi duplicada",
       "copy": "Esta tarea parece ser un casi-duplicado de",
       "headline": "Posible duplicado detectado",
-      "keepBtn": "Conservar",
-      "kept": "Se conservó {{id}} y se descartó la advertencia de duplicado",
       "deleteBtn": "Eliminar",
       "deleteConfirm": "Eliminar",
       "deleted": "Eliminado {{id}}",
       "deleteMessage": "¿Eliminar {{id}} como duplicado de {{duplicateOf}}?",
       "deleteTitle": "Eliminar tarea duplicada",
-      "triageActions": "Elige Eliminar para quitar este duplicado, o Mantener para continuar de todos modos."
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "Próxima recuperación a las {{time}}",
     "no": "No",
@@ -8288,7 +8272,11 @@
       "workflow": "Flujo de trabajo",
       "summary": "Summary",
       "cost": "",
-      "recommendations": ""
+      "recommendations": "",
+      "dependencies": "",
+      "attachments": "",
+      "details": "",
+      "debug": ""
     },
     "terminal": {
       "loading": ""
@@ -8429,6 +8417,9 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalHint": ""
+    },
+    "debug": {
+      "none": ""
     }
   },
   "taskDocuments": {
@@ -8700,9 +8691,8 @@
     "depsCount_other": "",
     "descriptionPlaceholder": "Descripción de la tarea",
     "descriptionRefined": "Descripción refinada con IA",
-    "doneNoMerge": "Listo (sin fusión)",
     "duplicateCheckFailed": "Falló la comprobación de duplicados; creando la tarea de todos modos.",
-    "duplicateDismissed": "Se conservó {{taskId}}; aviso de duplicado descartado",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "Duplicado de {{id}}",
     "editTask": "Editar tarea",
     "enterDescriptionFirst": "Introduce primero una descripción",
@@ -8738,10 +8728,7 @@
     "issueClosed": "cerrado",
     "issueDeleted": "eliminado",
     "issueLeft": "dejado",
-    "keep": "Conservar",
-    "keepFailed": "Error al conservar {{taskId}}: {{error}}",
     "keepProgress": "Conservar progreso",
-    "keepTaskTitle": "Conservar esta tarea y descartar la advertencia de duplicado",
     "leaveUnchanged": "Dejar sin cambios",
     "lineageConflict": "{{taskId}} tiene elementos secundarios de linaje ({{children}}) que lo referencian como padre de origen.\n\n¿Eliminar de todos modos desvinculando primero estas referencias?",
     "linkedIssueChipAriaLabel": "Issue de GitHub vinculado #{{number}}",
@@ -8765,7 +8752,7 @@
     "moved": "{{taskId}} movido a {{column}}",
     "moveFailed": "Error al mover {{taskId}}: {{error}}",
     "moveTask": "Mover tarea",
-    "nearDuplicateTitle": "Posible duplicado aproximado de {{id}}",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "",
     "noAgentsAvailable": "No hay agentes disponibles",
     "node": "Nodo",
@@ -8870,7 +8857,10 @@
     "refinesOfTitle": "",
     "revertedTasks": "",
     "revertedResolutionActions": "",
-    "revise": ""
+    "revise": "",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9742,7 +9732,9 @@
     "noDetail": "",
     "untitledSection": "",
     "sectionCount": "",
-    "sectionCountPlural": ""
+    "sectionCountPlural": "",
+    "showRaw": "",
+    "showSections": ""
   },
   "artifactImageViewer": {
     "openTask": "",

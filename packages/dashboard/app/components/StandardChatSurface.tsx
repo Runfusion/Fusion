@@ -3,7 +3,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUpToLine, Bot, File, Pencil, Send, TriangleAlert } from "lucide-react";
+import { ArrowUpToLine, Bot, File, Pencil, Reply, Send, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ChatMessageInfo, FailureInfo, ToolCallInfo } from "../hooks/chatTypes";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
@@ -41,6 +41,8 @@ export interface StandardChatMessageItemProps {
   mentionAgentsByName?: Map<string, Agent>;
   roomContext?: StandardRoomContext | null;
   copyAction?: ReactNode;
+  /** Direct-chat callers opt in; task planner intentionally leaves quotes unavailable. */
+  onQuoteMessage?: (message: ChatMessageInfo) => void;
   onScrollToTop?: (messageId: string) => void;
   /**
    * FNXC:ChatMessageScrollToTop 2026-07-12-23:09:
@@ -174,7 +176,7 @@ function StandardThinkingDisclosure({ thinking }: { thinking: string }) {
   const [open, setOpen] = useState(false);
   const handleBodyClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (isInteractiveDisclosureTarget(event.target)) return;
-    // FNXC:ThinkingTrace 2026-08-22-16:56: Per-title bodies own their click-to-collapse action; preserve the host disclosure's established body-click behavior for untitled traces.
+    // FNXC:ThinkingTrace 2026-08-22-16:56: Per-title bodies own collapse clicks; the shared interactive-target guard also keeps the folded-title Raw trace button inside this disclosure.
     if (event.target instanceof Element && event.target.closest(".thinking-trace-section-body")) return;
     setOpen(false);
   }, []);
@@ -625,6 +627,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   mentionAgentsByName = new Map(),
   roomContext = null,
   copyAction,
+  onQuoteMessage,
   onScrollToTop,
   isAwaitingQuestionAnswer = false,
   submittedQuestionAnswer,
@@ -773,8 +776,10 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     }
     return renderStandardAssistantContent(message.content, forcePlain);
   }, [failureInfo, forcePlain, isAssistantMessage, isEmptyAssistantMessage, message.content, message.metadata, t]);
-  const hasAssistantFooterRow = isAssistantMessage && !failureInfo && Boolean(message.thinkingOutput || copyAction || onScrollToTop);
-  const hasVisibleAssistantFooterContent = Boolean(message.thinkingOutput || copyAction || (onScrollToTop && isTopClipped));
+  /* FNXC:ChatQuoteReply 2026-08-23-02:31: A quote action is rendered only for persisted non-empty messages, allowing direct chat to re-mention an agent author without adding controls to streaming or planner surfaces. */
+  const showQuoteAction = Boolean(onQuoteMessage) && !failureInfo && message.content.trim().length > 0;
+  const hasAssistantFooterRow = isAssistantMessage && !failureInfo && Boolean(message.thinkingOutput || copyAction || onScrollToTop || showQuoteAction);
+  const hasVisibleAssistantFooterContent = Boolean(message.thinkingOutput || copyAction || showQuoteAction || (onScrollToTop && isTopClipped));
   const messageTime = <div className="chat-message-time">{formatRelativeTime(message.createdAt, t)}</div>;
   return (
     <div className={`chat-message chat-message--${message.role}${failureInfo ? " chat-message--failure" : ""}${isEditing ? " chat-message--editing" : ""}${isSearchMatch ? " chat-message--search-match" : ""}${isSearchActive ? " chat-message--search-active" : ""}`} data-testid={`chat-message-${message.id}`} data-message-id={message.id}>
@@ -796,9 +801,10 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
       {hasAssistantFooterRow && (
         <div className={`chat-message-thinking-row${hasVisibleAssistantFooterContent ? "" : " chat-message-thinking-row--collapsed"}`}>
           {message.thinkingOutput && <StandardThinkingDisclosure thinking={message.thinkingOutput} />}
-          {(copyAction || onScrollToTop) && (
+          {(copyAction || onScrollToTop || showQuoteAction) && (
             <div className="chat-message-actions">
               {copyAction}
+              {showQuoteAction && <button type="button" className="btn-icon chat-message-quote-action" aria-label={t("chat.quoteMessage", "Quote message")} data-testid={`chat-message-quote-${message.id}`} onClick={() => onQuoteMessage?.(message)}><Reply size={14} /></button>}
               {onScrollToTop && <button type="button" className={`btn-icon chat-message-scroll-to-top-action${isTopClipped ? "" : " chat-message-scroll-to-top-action--hidden"}`} aria-label={t("chat.scrollMessageToTop", "Scroll message to top")} data-testid={`chat-message-scroll-to-top-${message.id}`} onClick={() => onScrollToTop(message.id)}><ArrowUpToLine size={14} /></button>}
             </div>
           )}
@@ -809,6 +815,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
       {isUserMessage ? (
         <div className="chat-message-time-row">
           {messageTime}
+          {showQuoteAction && <button type="button" className="btn-icon chat-message-quote-action" aria-label={t("chat.quoteMessage", "Quote message")} data-testid={`chat-message-quote-${message.id}`} onClick={() => onQuoteMessage?.(message)}><Reply size={14} /></button>}
           {showEditAction && !isEditing && <button type="button" className="btn-icon chat-message-edit-action chat-message-edit-action--inline" aria-label={t("chat.editMessage", "Edit message")} data-testid={`chat-message-edit-${message.id}`} onClick={startEditing}><Pencil size={14} /></button>}
         </div>
       ) : messageTime}

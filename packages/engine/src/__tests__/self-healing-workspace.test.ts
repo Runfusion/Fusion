@@ -740,6 +740,64 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     expect(activeSessionRegistry.isPathActive(leasePath)).toBe(false);
   });
 
+  it("clears an unowned startup contention wait but preserves user-paused and live owners", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const livePath = fx.repoPath("repo-a");
+    const waiting = workspaceTask({}, {
+      id: "FN-179-waiting",
+      column: "todo",
+      status: "contention-hold",
+      sessionContentionWaitReason: "workspace sub-repo Merge acquisition is in progress for task MRG-050",
+    });
+    const userPaused = workspaceTask({}, {
+      id: "FN-179-user-paused",
+      column: "todo",
+      status: "contention-hold",
+      sessionContentionWaitReason: "waiting",
+      paused: true,
+      userPaused: true,
+    });
+    const live = workspaceTask({}, {
+      id: "FN-179-live",
+      column: "in-progress",
+      status: "contention-hold",
+      sessionContentionWaitReason: "waiting",
+    });
+    activeSessionRegistry.registerPath(livePath, { taskId: live.id, kind: "executor", ownerKey: "live-executor" });
+    const store = createStore([waiting, userPaused, live]);
+    const manager = makeManager(store, fx.rootDir);
+
+    expect(await manager.clearOrphanedSessionContentionHolds()).toBe(1);
+    expect(store.tasks.get(waiting.id)).toMatchObject({ status: null, sessionContentionWaitReason: null });
+    expect(store.tasks.get(userPaused.id)).toMatchObject({ status: "contention-hold", sessionContentionWaitReason: "waiting" });
+    expect(store.tasks.get(live.id)).toMatchObject({ status: "contention-hold", sessionContentionWaitReason: "waiting" });
+  });
+
+  it("reclaims a terminal workspace-repo-acquire cache as defence in depth", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const leasePath = fx.repoPath("repo-a");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
+    activeSessionRegistry.registerPath(leasePath, {
+      taskId: TASK_ID,
+      kind: "workspace-repo-acquire",
+      ownerKey: "workspace-repo-acquire",
+    });
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, {
+      column: "in-progress",
+      deletedAt: "2026-08-22T23:00:00.000Z",
+    });
+    const store = createStore([task]);
+    const manager = makeManager(store, fx.rootDir);
+
+    vi.setSystemTime(new Date("2026-08-23T00:10:00.000Z"));
+    expect(await manager.reclaimPhantomWorkspaceLandLeases()).toBe(1);
+    expect(activeSessionRegistry.lookupByPath(leasePath)).toBeNull();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:reclaim-phantom-workspace-acquire-lease",
+    }));
+  });
+
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-22:10:
   `leaseOwnerCompleteColumns` was UNCOVERED on the #3115 map. The case above proves the terminal-owner

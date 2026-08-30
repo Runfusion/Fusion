@@ -68,6 +68,15 @@ export class DashboardTUI {
   logsSeverityFilter: "all" | LogEntry["level"] = "all";
   logsWrapEnabled = false;
   logsExpandedMode = false;
+  /*
+  FNXC:TuiRawLogs 2026-08-26-14:10:
+  Raw mode renders the log lines with NO chrome and releases mouse reporting, so a terminal
+  click-drag selects clean text. Every other view keeps borders, a title and a filter row, and the
+  panel sits between a header and a status bar 2014 a rectangular drag therefore captures box-drawing
+  characters and unrelated rows, which is exactly what makes copied logs unusable. Mouse reporting is
+  the other half: it is enabled for wheel scrolling on this panel and swallows the drag entirely.
+  */
+  logsRawMode = false;
   selectedLogIndex = 0;
   logsViewportStart = 0;
   // True when the narrow single-pane view is split and the bottom log
@@ -202,6 +211,7 @@ export class DashboardTUI {
       logsSeverityFilter: this.logsSeverityFilter,
       logsWrapEnabled: this.logsWrapEnabled,
       logsExpandedMode: this.logsExpandedMode,
+      logsRawMode: this.logsRawMode,
       selectedLogIndex: this.selectedLogIndex,
       logsViewportStart: this.logsViewportStart,
       narrowLogSplitFocused: this.narrowLogSplitFocused,
@@ -556,6 +566,11 @@ export class DashboardTUI {
 
   setLogsExpandedMode(expanded: boolean): void {
     this.logsExpandedMode = expanded;
+    this.notify();
+  }
+
+  setLogsRawMode(raw: boolean): void {
+    this.logsRawMode = raw;
     this.notify();
   }
 

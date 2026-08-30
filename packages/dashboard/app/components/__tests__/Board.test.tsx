@@ -78,6 +78,8 @@ vi.mock("../Column", () => ({
     taskWorkflowBadges,
     onOpenDetail,
     onMoveTask,
+    onDeleteTask,
+    onReviseTask,
   }: {
     column: string;
     tasks: Task[];
@@ -105,6 +107,8 @@ vi.mock("../Column", () => ({
     taskWorkflowBadges?: ReadonlyMap<string, { workflowId: string; workflowName: string }>;
     onOpenDetail?: (task: Task) => void;
     onMoveTask?: (id: string, column: string) => Promise<Task>;
+    onDeleteTask?: unknown;
+    onReviseTask?: (task: Task) => void;
   }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
@@ -124,6 +128,8 @@ vi.mock("../Column", () => ({
           <article key={task.id} className="card" data-id={task.id} data-testid={`board-task-card-${task.id}`} onClick={() => onOpenDetail?.(task)}>
             <span data-testid={`board-task-card-title-${task.id}`}>{task.title ?? task.description ?? task.id}</span>
             <button type="button" data-testid={`board-task-card-control-${task.id}`} onClick={(event) => event.stopPropagation()}>card control</button>
+            {onDeleteTask ? <button type="button">Delete</button> : null}
+            {onReviseTask ? <button type="button" onClick={() => onReviseTask(task)}>Revise</button> : null}
             <span data-has-move-task={String(Boolean(onMoveTask))} />
           </article>
         ))}
@@ -1435,7 +1441,7 @@ describe("Board", () => {
       expect(screen.getByTestId("column-in-progress").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
     });
 
-    it("keeps reverted custom-complete tasks discoverable in All Workflows with resolution actions", async () => {
+    it("keeps reverted custom-complete tasks in their own All Workflows column with resolution actions", async () => {
       const projectId = "project-all-reverted-resolution";
       const shippedWorkflow = {
         id: "wf-shipped",
@@ -1454,15 +1460,40 @@ describe("Board", () => {
       enableFlag({ [reverted.id]: shippedWorkflow.id }, [DEFAULT_WORKFLOW, shippedWorkflow]);
       window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId), ALL_WORKFLOWS_BOARD_VIEW_ID);
 
-      renderBoard({ projectId, tasks: [reverted], onDeleteTask: vi.fn().mockResolvedValue(reverted), onReviseTask: vi.fn() });
+      renderBoard({ projectId, tasks: [reverted, reverted], onDeleteTask: vi.fn().mockResolvedValue(reverted), onReviseTask: vi.fn() });
 
       await waitFor(() => expect(screen.getByTestId("column-shipped")).toBeDefined());
-      expect(screen.getByTestId("column-shipped")).not.toHaveAttribute("data-tasks", expect.stringContaining(reverted.id));
-      const resolution = screen.getByTestId("board-reverted-tasks");
-      expect(screen.getByTestId("board-resolution-card-FN-REVERTED")).toHaveAttribute("data-complete", "true");
-      expect(resolution).toHaveTextContent("Cancelled custom task");
-      expect(within(resolution).getByRole("button", { name: "Delete" })).toBeInTheDocument();
-      expect(within(resolution).getByRole("button", { name: "Revise" })).toBeInTheDocument();
+      const shippedColumn = screen.getByTestId("column-shipped");
+      expect(JSON.parse(shippedColumn.getAttribute("data-tasks") ?? "[]")).toHaveLength(1);
+      expect(shippedColumn).toHaveAttribute("data-tasks", expect.stringContaining(reverted.id));
+      expect(screen.queryByTestId("board-reverted-tasks")).toBeNull();
+      expect(within(shippedColumn).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+      expect(within(shippedColumn).getByRole("button", { name: "Revise" })).toBeInTheDocument();
+    });
+
+    it("deduplicates reverted work in its selected-workflow column", async () => {
+      const projectId = "project-selected-reverted-dedup";
+      const shippedWorkflow = {
+        id: "wf-selected-shipped",
+        name: "Selected Shipped Flow",
+        columns: [
+          { id: "intake", name: "Intake", flags: { intake: true } },
+          { id: "shipped", name: "Shipped", flags: { complete: true } },
+        ],
+      };
+      const reverted = mkTask({
+        id: "FN-SELECTED-REVERTED",
+        column: "shipped",
+        sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
+      });
+      enableFlag({ [reverted.id]: shippedWorkflow.id }, [DEFAULT_WORKFLOW, shippedWorkflow]);
+      window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId), shippedWorkflow.id);
+
+      renderBoard({ projectId, tasks: [reverted, reverted] });
+
+      await waitFor(() => expect(screen.getByTestId("column-shipped")).toBeDefined());
+      expect(JSON.parse(screen.getByTestId("column-shipped").getAttribute("data-tasks") ?? "[]")).toHaveLength(1);
+      expect(screen.queryByTestId("board-reverted-tasks")).toBeNull();
     });
 
     it("passes auto-merge toggle to selected workflow human-review columns", async () => {

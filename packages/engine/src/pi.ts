@@ -88,6 +88,11 @@ import { resolvePermanentAgentToolDecision } from "./agents/permanent-agent-gati
 import type { SystemPromptLayers } from "./execution/prompt-layers.js";
 import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflows/workflow-step-tool-policy.js";
 import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
+import {
+  applyReasoningSummaryToPayload,
+  isReasoningSummaryUnsupportedError,
+  type ReasoningSummaryDetail,
+} from "./execution/reasoning-summary-payload.js";
 import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./errors/transient-error-detector.js";
 import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp/mcp-runtime-support.js";
 import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp/mcp-session-tools.js";
@@ -231,12 +236,14 @@ interface ToolHookResult {
 type AgentToolHookSession = AgentSession & {
   agent?: {
     afterToolCall?: (payload: ToolHookPayload) => Promise<ToolHookResult | undefined>;
+    onPayload?: (payload: unknown, model: { api?: unknown }) => unknown | undefined | Promise<unknown | undefined>;
     state?: {
       messages?: Array<Record<string, unknown>>;
     };
   };
   __fusionToolResultGuardInstalled?: boolean;
   __fusionMessageContentGuardInstalled?: boolean;
+  __fusionReasoningSummaryPayloadHookInstalled?: boolean;
 };
 const FN_MEMORY_APPEND_TOOL_NAME = "fn_memory_append";
 const FUSION_SHUTDOWN_WRAP_FLAG = "__fusionSessionShutdownDisposeWrapped";
@@ -1099,6 +1106,8 @@ export interface AgentOptions {
   fallbackThinkingLevel?: string;
   /** Default thinking effort level (e.g. "medium", "high"). When provided, sets the session's thinking level after creation. */
   defaultThinkingLevel?: string;
+  /** Detail requested for already-enabled Responses reasoning summaries; defaults to detailed. */
+  reasoningSummaryDetail?: ReasoningSummaryDetail;
   /** Optional pre-configured SessionManager. When provided, the agent session
    *  uses this instead of creating an in-memory session. Pass a file-based
    *  SessionManager to enable session persistence and pause/resume. */
@@ -3195,10 +3204,37 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     piLog.debug("Fallback session created successfully");
   }
 
+  const reasoningSummaryDetail = options.reasoningSummaryDetail ?? "detailed";
+  let reasoningSummaryCompatibilityDisabled = reasoningSummaryDetail === "off";
+  /*
+  FNXC:ThinkingTrace 2026-08-27-10:45:
+  Pi may already own an onPayload hook for extension request processing. Chain it so a replacement payload remains authoritative, then upgrade only its existing Responses reasoning; fallback-swapped sessions install the same hook so recovery cannot revert to titles-only summaries.
+  */
+  const installReasoningSummaryPayloadHook = (session: AgentToolHookSession): void => {
+    if (session.__fusionReasoningSummaryPayloadHookInstalled || !session.agent) {
+      return;
+    }
+
+    const agent = session.agent;
+    const previousOnPayload = agent.onPayload;
+    agent.onPayload = async (payload, model) => {
+      const previousResult = previousOnPayload ? await previousOnPayload(payload, model) : undefined;
+      const effectivePayload = previousResult ?? payload;
+      const replacement = applyReasoningSummaryToPayload(
+        effectivePayload,
+        model,
+        reasoningSummaryCompatibilityDisabled ? "off" : reasoningSummaryDetail,
+      );
+      return replacement ?? previousResult;
+    };
+    session.__fusionReasoningSummaryPayloadHookInstalled = true;
+  };
+
   let activeSession = sessionResult.session;
   wrapSessionDisposeWithShutdown(activeSession);
   installToolResultContentGuard(activeSession as AgentToolHookSession);
   installMessageContentGuard(activeSession as AgentToolHookSession, sessionManager as unknown as SessionManagerLike);
+  installReasoningSummaryPayloadHook(activeSession as AgentToolHookSession);
   (activeSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
   const promptableSession = activeSession as PromptableSession;
 
@@ -3232,6 +3268,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       targetSession as unknown as AgentToolHookSession,
       sessionManager as unknown as SessionManagerLike,
     );
+    installReasoningSummaryPayloadHook(targetSession as unknown as AgentToolHookSession);
     (targetSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
     const deltaNormalizer = createStreamingDeltaNormalizer();
     targetSession.subscribe((event) => {
@@ -3415,6 +3452,17 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         piLog.warn(`Prompt failed with thinking/reasoning conflict; retrying without explicit thinking level: ${errorMessage}`);
         const recoveredSession = await swapPromptSession(selectedModel);
         await promptSessionAndCheck(recoveredSession, prompt, effectivePromptOptions);
+        return;
+      }
+
+      /*
+      FNXC:ThinkingTrace 2026-08-27-10:45:
+      Detailed summaries improve traces but are optional request metadata. A provider that rejects the field retries once on this same session with the hook disabled, so a capability mismatch never fails the run or leaks to another session.
+      */
+      if (!reasoningSummaryCompatibilityDisabled && isReasoningSummaryUnsupportedError(errorMessage)) {
+        reasoningSummaryCompatibilityDisabled = true;
+        piLog.warn(`Provider rejected detailed reasoning summary for ${describeModel(activeSession)}; retrying without the summary upgrade`);
+        await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
         return;
       }
 

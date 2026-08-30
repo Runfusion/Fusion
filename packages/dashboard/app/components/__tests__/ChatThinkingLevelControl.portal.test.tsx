@@ -38,7 +38,7 @@ describe("ChatThinkingLevelControl with the real CustomModelDropdown portal", ()
     fireEvent.click(within(portal).getByText("GPT-4o"));
 
     expect(onChangeModel).toHaveBeenCalledWith({ modelProvider: "openai", modelId: "gpt-4o" });
-    await waitFor(() => expect(screen.queryByTestId("chat-thinking-popover")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument());
   });
 
   it("keeps the brain popup open for touchstart inside the portaled model menu", async () => {
@@ -69,9 +69,8 @@ describe("ChatThinkingLevelControl with the real CustomModelDropdown portal", ()
     fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
     fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
     expect(onChangeModel).toHaveBeenCalledWith({ agentId: "agent-002" });
-    expect(screen.queryByTestId("chat-thinking-popover")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
     fireEvent.click(screen.getByTestId("chat-thinking-option-high"));
     expect(onChange).toHaveBeenCalledWith("high");
     expect(screen.queryByTestId("chat-thinking-popover")).not.toBeInTheDocument();

@@ -1,11 +1,10 @@
 import {
-  getMergeConfirmedFinalizationBlocker,
-  getUnfinishedStepTitles,
+  getPostMergeFinalizeBlocker,
+  planConfirmedMergeChecklistReconciliation,
   resolveWorkflowIrForTask,
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
   columnHasFlag,
-  REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   clearMergeConfirmedTransientStatus,
   type MergeResult,
   type Task,
@@ -286,51 +285,37 @@ export async function finalizeProvenAutoMergeTask({
     return { outcome: "blocked", task: latest, previousColumn: latest.column, reason };
   }
 
-  /* FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193): landing is already proven above by
-     `hasDurableMergeProof`, so incomplete steps must not hold the card out of `done` — see the
-     core helper for why that hold was self-defeating. Unfinished steps are logged, not dropped. */
-  const hardBlocker = getMergeConfirmedFinalizationBlocker({
-    ...latest,
-    /*
-    FNXC:WorkflowMerge 2026-06-29-09:15:
-    Proven merge finalization is a recovery path: durable `mergeConfirmed` means the branch already landed, even if a workflow graph crash left the card in `in-progress` or `todo`. Evaluate hard blockers as review-eligible so the column mismatch itself does not block the recovery rehome to `done`; real blockers such as paused/error/incomplete steps still apply.
-    U7 note: `"in-review"` here is getTaskHardMergeBlocker's review-eligible SENTINEL
-    (a core merge-blocker assumption), NOT a lifecycle column — it is intentionally
-    NOT re-keyed to the merge-orchestration column so custom workflows evaluate the
-    same review-eligible blocker set as builtin.
-    */
-    column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
-    paused: false,
+  /*
+  FNXC:ConfirmedMergeFinalization 2026-08-23-07:25:
+  FN-180 forbids re-running the pre-merge checklist after durable merge proof.
+  A concurrent review bounce can leave that checklist stale, so reconcile it
+  before moving to complete; only an independent status may still defer.
+  */
+  const postMergeBlocker = getPostMergeFinalizeBlocker({
     status: clearMergeConfirmedTransientStatus(latest.status),
     error: undefined,
   });
-  const unfinishedSteps = getUnfinishedStepTitles(latest);
-  if (unfinishedSteps.length > 0) {
-    await store.logEntry(
-      taskId,
-      `Finalizing proven merge with ${unfinishedSteps.length} unfinished step(s) — the branch already landed, so these did not run: ${unfinishedSteps.slice(0, 8).join("; ")}`,
-      "MergeConfirmedFinalizeUnfinishedSteps",
-    ).catch(() => undefined);
-  }
-  if (hardBlocker) {
-    // FNXC:MergeReliability 2026-08-11-21:39: A blocker discovered before finalization
-    // still writes task lifecycle state, so an orphan must reject rather than return a blocked result.
-    fence?.assertOwned("finalization");
-    await store.updateTask(taskId, {
-      status: "failed",
-      error: `Merge confirmed but finalization blocked: ${hardBlocker}`,
-    }).catch(() => undefined);
+  if (postMergeBlocker) {
     await recordFinalizationAudit({
       store,
       audit,
       task: latest,
       type: "task:auto-merge-finalize-column-mismatch-no-action",
-      reason: hardBlocker,
+      reason: postMergeBlocker,
       auditAgentId,
       auditPhase,
     });
-    return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: hardBlocker };
+    return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: postMergeBlocker };
   }
+  const checklistReconciliation = planConfirmedMergeChecklistReconciliation(latest);
+  const reconciledSteps = latest.steps.map((step, index) =>
+    checklistReconciliation.skippedStepIndexes.includes(index) ? { ...step, status: "skipped" as const } : step,
+  );
+  const reconciledWorkflowStepResults = (latest.workflowStepResults ?? []).map((result) =>
+    checklistReconciliation.reconciledWorkflowStepIds.includes(result.workflowStepId)
+      ? { ...result, status: "skipped" as const }
+      : result,
+  );
 
   const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails } as Task, {
     result,
@@ -360,7 +345,9 @@ export async function finalizeProvenAutoMergeTask({
     overlapBlockedBy: null,
     mergeRetries: 0,
     mergeDetails,
-  } as unknown as Partial<Task>);
+    steps: reconciledSteps,
+    workflowStepResults: reconciledWorkflowStepResults,
+  } as Pick<Task, "steps" | "workflowStepResults">);
 
   const shouldRecoveryRehome = latest.column !== mergeColumn;
   if (shouldRecoveryRehome) {

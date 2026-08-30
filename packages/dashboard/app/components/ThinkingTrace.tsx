@@ -8,17 +8,22 @@ import "./ThinkingTrace.css";
 
 export type ThinkingSection = { id: string; title: string | null; body: string };
 
+type ParsedThinkingSection = { title: string | null; rawTitleLine?: string; lines: string[] };
+
 function trimBlankEdges(value: string): string {
   return value.replace(/^(?:[\t ]*\r?\n)+|(?:\r?\n[\t ]*)+$/g, "");
 }
 
 /**
  * FNXC:ThinkingTrace 2026-08-22-16:56:
- * Providers can legitimately send consecutive titled thought headings without bodies. Preserve every title as a section so the operator can distinguish that upstream payload from Fusion hiding reasoning.
+ * Providers can legitimately send consecutive titled thought headings without bodies. Preserve every title visibly so the operator can distinguish that upstream payload from Fusion hiding reasoning.
+ *
+ * FNXC:ThinkingTrace 2026-08-23-05:32:
+ * FN-177's operator report showed titles-only payloads as empty accordion rows. Body-less headings now remain inline in flowing text; `inlinedHeadingCount` keeps Raw trace reachable for that exact upstream-only-titles signal without creating empty rows.
  */
-export function parseThinkingSections(text: string): ThinkingSection[] {
+export function parseThinkingTrace(text: string): { sections: ThinkingSection[]; inlinedHeadingCount: number } {
   const lines = text.split(/\r?\n/);
-  const parsed: Array<{ title: string | null; lines: string[] }> = [{ title: null, lines: [] }];
+  const parsed: ParsedThinkingSection[] = [{ title: null, lines: [] }];
   let foundTitle = false;
 
   for (const line of lines) {
@@ -28,16 +33,38 @@ export function parseThinkingSections(text: string): ThinkingSection[] {
     const title = (bold?.[1] ?? atx?.[1])?.trim();
     if (title) {
       foundTitle = true;
-      parsed.push({ title, lines: [] });
+      parsed.push({ title, rawTitleLine: line, lines: [] });
     } else {
       parsed.at(-1)?.lines.push(line);
     }
   }
 
-  if (!foundTitle) return [{ id: "s0", title: null, body: text }];
-  return parsed
-    .map((section, index) => ({ id: `${index}:${section.title ?? ""}`, title: section.title, body: trimBlankEdges(section.lines.join("\n")) }))
-    .filter((section) => section.title !== null || section.body.length > 0);
+  if (!foundTitle) return { sections: [{ id: "s0", title: null, body: text }], inlinedHeadingCount: 0 };
+
+  let inlinedHeadingCount = 0;
+  let foldTargetIndex = 0;
+  for (let index = 1; index < parsed.length; index += 1) {
+    const section = parsed[index];
+    if (section.title !== null && trimBlankEdges(section.lines.join("\n")).length === 0) {
+      parsed[foldTargetIndex].lines.push(section.rawTitleLine ?? "", ...section.lines);
+      section.title = null;
+      section.lines = [];
+      inlinedHeadingCount += 1;
+    } else {
+      foldTargetIndex = index;
+    }
+  }
+
+  return {
+    sections: parsed
+      .map((section, index) => ({ id: `${index}:${section.title ?? ""}`, title: section.title, body: trimBlankEdges(section.lines.join("\n")) }))
+      .filter((section) => section.title !== null || section.body.length > 0),
+    inlinedHeadingCount,
+  };
+}
+
+export function parseThinkingSections(text: string): ThinkingSection[] {
+  return parseThinkingTrace(text).sections;
 }
 
 export function isInteractiveDisclosureTarget(target: EventTarget | null): boolean {
@@ -76,24 +103,41 @@ function ThinkingTraceSection({ section, format, open, onToggle }: {
       <span>{section.title ?? t("thinking.untitledSection", "Untitled reasoning")}</span>
       {!section.body && <span className="thinking-trace-section-empty">{t("thinking.noDetail", "No reasoning captured for this step")}</span>}
     </summary>
-    <div className="thinking-trace-section-body" onClick={handleClick}>
-      {section.body ? <ThinkingTraceBody body={section.body} format={format} /> : <span className="thinking-trace-empty-message">{t("thinking.noDetail", "No reasoning captured for this step")}</span>}
-    </div>
+    {section.body && <div className="thinking-trace-section-body" onClick={handleClick}><ThinkingTraceBody body={section.body} format={format} /></div>}
   </details>;
 }
 
 export function ThinkingTrace({ text, format = "plain", className, testId }: ThinkingTraceProps) {
   const { t } = useTranslation("app");
-  const sections = parseThinkingSections(text);
+  const { sections, inlinedHeadingCount } = parseThinkingTrace(text);
   const [explicitOpen, setExplicitOpen] = useState<Record<string, boolean>>({});
+  const [showRaw, setShowRaw] = useState(false);
   if (text.trim().length === 0) return null;
   const titled = sections.some((section) => section.title !== null);
   const setAll = (open: boolean) => setExplicitOpen(Object.fromEntries(sections.map((section) => [section.id, open])));
   const rootClass = ["thinking-trace", className].filter(Boolean).join(" ");
-  if (!titled) return <div className={rootClass} data-testid={testId}><ThinkingTraceBody body={sections[0]?.body ?? text} format={format} /></div>;
+  const hasHeader = titled || inlinedHeadingCount > 0;
+  const rawToggle = <button type="button" className="btn btn-sm" data-testid="thinking-trace-raw-toggle" aria-pressed={showRaw} onClick={() => setShowRaw((current) => !current)}>{showRaw ? t("thinking.showSections", "Sectioned trace") : t("thinking.showRaw", "Raw trace")}</button>;
+
+  if (!hasHeader) return <div className={rootClass} data-testid={testId}><ThinkingTraceBody body={sections[0]?.body ?? text} format={format} /></div>;
+
   const allOpen = sections.every((section) => explicitOpen[section.id] ?? true);
+  /*
+   * FNXC:ThinkingTrace 2026-08-23-05:32:
+   * Raw trace is gated on inlined headings as well as surviving titled sections. Folding titles-only payloads must not hide the literal upstream capture or remove the operator's diagnostic escape hatch.
+   */
   return <div className={rootClass} data-testid={testId}>
-    <div className="thinking-trace-header"><span>{t("thinking.sectionCount", "{{count}} section", { count: sections.length })}</span><button type="button" className="btn btn-sm" onClick={() => setAll(!allOpen)}>{allOpen ? t("thinking.collapseAll", "Collapse all") : t("thinking.expandAll", "Expand all")}</button></div>
-    {sections.map((section) => <ThinkingTraceSection key={section.id} section={section} format={format} open={explicitOpen[section.id] ?? true} onToggle={(open) => setExplicitOpen((current) => ({ ...current, [section.id]: open }))} />)}
+    <div className="thinking-trace-header">
+      {titled && <span>{t("thinking.sectionCount", "{{count}} section", { count: sections.length })}</span>}
+      <span className="thinking-trace-header-actions">
+        {rawToggle}
+        {titled && !showRaw && <button type="button" className="btn btn-sm" onClick={() => setAll(!allOpen)}>{allOpen ? t("thinking.collapseAll", "Collapse all") : t("thinking.expandAll", "Expand all")}</button>}
+      </span>
+    </div>
+    {showRaw
+      ? <pre className="thinking-trace-plain" data-testid="thinking-trace-raw">{linkifyFilePaths(text)}</pre>
+      : titled
+        ? sections.map((section) => <ThinkingTraceSection key={section.id} section={section} format={format} open={explicitOpen[section.id] ?? true} onToggle={(open) => setExplicitOpen((current) => ({ ...current, [section.id]: open }))} />)
+        : <ThinkingTraceBody body={sections[0]?.body ?? text} format={format} />}
   </div>;
 }

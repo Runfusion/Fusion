@@ -330,7 +330,18 @@ export {
   type WorkflowTaskRuntimeResult,
 } from "./workflows/workflow-task-runtime.js";
 export { collectTaskEvaluationEvidence } from "./eval/evaluator-evidence.js";
-export { Scheduler, type SchedulerOptions } from "./scheduler.js";
+export {
+  Scheduler,
+  findFileScopeOverlaps,
+  type FileScopeOverlapMatch,
+  type SchedulerOptions,
+} from "./scheduler.js";
+export {
+  describeFileScopeOverlapBlocker,
+  type FileScopeOverlapBlockerReason,
+  type FileScopeOverlapBlockerReport,
+  type FileScopeOverlapBlockerStore,
+} from "./execution/file-scope-overlap-report.js";
 export {
   claimDueWorkflowWorkItem,
   type ClaimWorkflowWorkOptions,

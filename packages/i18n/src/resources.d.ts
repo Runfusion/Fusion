@@ -1173,6 +1173,12 @@ export default interface Resources {
       "requestSingular": "request",
       "requests": "Approval requests"
     },
+    "artifactImageViewer": {
+      "close": "Close artifact preview",
+      "loading": "Loading image artifact…",
+      "openTask": "Open task",
+      "retry": "Retry"
+    },
     "auth": {
       "clearAndRetry": "Clear token and retry",
       "pasteToken": "Paste token",
@@ -1249,6 +1255,7 @@ export default interface Resources {
       "toggleWrap": "Toggle word wrap"
     },
     "chat": {
+      "agentRepliesFailed": "Some agents could not reply: {{agents}}",
       "archive": "Archive",
       "attachFiles": "Attach files",
       "cancel": "Cancel",
@@ -1325,10 +1332,12 @@ export default interface Resources {
       "newChat": "New Chat",
       "newChatModeAgent": "Agent",
       "newChatModeModel": "Model",
+      "newChatOpenInNewWindowHint": "Ctrl/Cmd + click to open the new conversation in a separate window",
       "newChatTitle": "New Chat",
       "newNotAllowedForTaskChat": "This chat is tied to a task — /new and /clear can't clear it",
       "noAgentsAvailable": "No agents available",
       "noConversationsYet": "No conversations yet",
+      "noDefaultModelConfigured": "Configure a default chat model in Settings before creating a conversation.",
       "noMessage": "No message",
       "noMessages": "No messages",
       "noMessagesYet": "No messages yet. Start the conversation!",
@@ -1358,6 +1367,7 @@ export default interface Resources {
       "questionTextPlaceholder": "Type your answer here…",
       "queuedMessage": "Queued: {{preview}}",
       "quickChatTitle": "Quick Chat",
+      "quoteMessage": "Quote message",
       "recent": "Recent",
       "relativeTimeDays_one": "{{count}}d ago",
       "relativeTimeDays_other": "{{count}}d ago",
@@ -1512,7 +1522,6 @@ export default interface Resources {
       "autoMerge": "Auto-merge",
       "autoMergeDisabled": "Auto-merge disabled",
       "autoMergeEnabled": "Auto-merge enabled",
-      "cancelMove": "Cancel Move",
       "collapseArchivedLabel": "Collapse archived tasks",
       "collapseArchivedTitle": "Collapse archived tasks",
       "expandArchivedLabel": "Expand archived tasks",
@@ -1521,41 +1530,28 @@ export default interface Resources {
       "keepProgress": "Keep Progress",
       "loadMore_one": "Load {{count}} more ({{remaining}} remaining)",
       "loadMore_other": "Load {{count}} more ({{remaining}} remaining)",
-      "moveAllToTodo": "Move All to Todo",
-      "moveAllToTodoMessage_one": "Move all {{count}} {{columnLabel}} task{{plural}} to Todo?",
-      "moveAllToTodoMessage_other": "Move all {{count}} {{columnLabel}} task{{plural}} to Todo?",
-      "moveAllToTodoTitle": "Move All to Todo",
-      "movePartialFailure": "Moved {{moved}} of {{total}} tasks; {{failed}} failed",
-      "moveToTodoHint_one": "Move {{count}} task{{plural}} to Todo",
-      "moveToTodoHint_other": "Move {{count}} task{{plural}} to Todo",
-      "moveToTodoPartialFailure": "Moved {{moved}} of {{total}} tasks to Todo; {{failed}} failed",
-      "movedToPlanning_one": "Moved {{count}} task{{plural}} to planning for replanning",
-      "movedToPlanning_other": "Moved {{count}} task{{plural}} to planning for replanning",
-      "movedToTodo_one": "Moved {{count}} task{{plural}} to Todo",
-      "movedToTodo_other": "Moved {{count}} task{{plural}} to Todo",
       "newTask": "New Task",
       "noManuallyPausableTasks": "No manually pausable tasks",
       "noTasks": "No tasks",
       "noTasksInColumn": "No tasks in this column",
       "pauseHint_one": "Pause {{count}} active unassigned task{{plural}}",
       "pauseHint_other": "Pause {{count}} active unassigned task{{plural}}",
-      "preserveProgressMessage": "This task has completed steps. Keep progress before moving?",
-      "preserveProgressMoveTodoMessage": "Some tasks have completed steps. Keep progress before moving to Todo?",
       "preserveProgressTitle": "Preserve Progress?",
       "promoteUnplannedCancel": "Keep Waiting",
       "promoteUnplannedConfirm": "Start Anyway",
       "promoteUnplannedMessage": "{{taskId}} is still waiting on planning or plan review. Promoting now starts execution with the current plan and cancels the pending replan.",
       "promoteUnplannedTitle": "Start execution anyway?",
       "replanAll": "Replan All",
-      "replanAllHint_one": "Move {{count}} task{{plural}} to Planning",
-      "replanAllHint_other": "Move {{count}} task{{plural}} to Planning",
-      "replanAllMessage_one": "Move all {{count}} todo task{{plural}} back to planning to be replanned?",
-      "replanAllMessage_other": "Move all {{count}} todo task{{plural}} back to planning to be replanned?",
+      "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+      "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+      "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+      "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
       "replanAllTitle": "Replan All Tasks",
+      "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+      "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+      "replannedTasks_other": "Replanned {{count}} task{{plural}}",
       "resetProgress": "Reset Progress",
       "resetProgressConfirm": "Reset Progress",
-      "resetProgressMessage": "Reset all step progress before moving this task?",
-      "resetProgressMoveTodoMessage": "Reset step progress for tasks before moving to Todo?",
       "resetProgressTitle": "Reset Progress?",
       "sortArrivalDesc": "Arrival in this column — Completion date (newest first)",
       "sortArrivalDescHint": "Show the newest arrivals in this column first",
@@ -3523,6 +3519,8 @@ export default interface Resources {
       "stats_other": "{{count}} of {{total}} tasks",
       "statusMergingFix": "Merging fixes…",
       "statusReplan": "Revising",
+      "statusWaiting": "Waiting",
+      "statusWaitingOn": "Waiting on {{reason}}",
       "stuck": "Stuck",
       "taskCreationUnavailable": "Task creation not available",
       "unpauseSelected": "Unpause selected",
@@ -6334,7 +6332,6 @@ export default interface Resources {
         "agentToolOutputLimit": " Agent tool-output limit ",
         "agentToolOutputLimitHint": " Maximum characters returned from each engine-injected tool result. When unset, inherits the 16,000-character engine default. Leave empty to use the default. ",
         "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
-        "autoReloadDashboardOnVersionChange": " Auto-reload dashboard on version change ",
         "autoRestartAfterUpdate": " Automatically restart after an update ",
         "autoRestartAfterUpdateHelp": "After a dashboard update installs, requests a supervised restart. Without a supervisor, Fusion keeps the manual restart path. Unset: disabled.",
         "autoUpdateAndRestart": " Auto-update and restart ",
@@ -6388,7 +6385,6 @@ export default interface Resources {
         "updates": "Updates",
         "weekly": "Weekly",
         "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
-        "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": " When enabled (default), the dashboard automatically reloads when it detects a new build version — either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. ",
         "whenEnabledFusionChecksNpmForNewVersions": " When enabled, Fusion checks npm for new versions of",
         "whenEnabledTheDashboardProbesForAGlobally": " When enabled, the dashboard probes for a globally-installed"
       },
@@ -6436,6 +6432,7 @@ export default interface Resources {
         "startupModelSync": "Startup Model Sync",
         "syncOpenRouterModelListAtStartup": " Sync OpenRouter model list at startup ",
         "syncOpencodeGoModelListAtStartup": " Sync opencode-go model list at startup ",
+        "syncOrcaRouterModelListAtStartup": " Sync OrcaRouter model list at startup ",
         "text": "text",
         "thinkingEffort": "Thinking Effort",
         "throughput": "throughput",
@@ -6443,6 +6440,7 @@ export default interface Resources {
         "useDefault": "Use default",
         "usedAutomaticallyIfThePrimaryDefaultModelHits": "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default — unset.",
         "whenEnabledStartupFetchesTheLatestAvailableModels": " When enabled, startup fetches the latest available models from the OpenRouter API so model pickers always include the newest catalog. Default: enabled. ",
+        "whenEnabledStartupFetchesTheLatestOrcaRouterModels": " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. ",
         "whenEnabledStartupRefreshesModelsThroughTheLocal": " When enabled, startup refreshes models through the local "
       },
       "header": {
@@ -8046,6 +8044,13 @@ export default interface Resources {
         "unassigned": "Agent unassigned"
       },
       "agentLink": "agent {{id}}",
+      "aiMergeReview": {
+        "approvedWithPending": "Approved — {{count}} prior finding(s) unconfirmed",
+        "candidate": "Candidate:",
+        "dismissFinding": "Dismiss this finding",
+        "terminalGuidance": "Rebase or re-push the branch, dismiss a finding with justification, or land manually.",
+        "title": "AI merge review reconciliation"
+      },
       "attachments": {
         "attachBtn": "Attach Screenshot",
         "attached": "Screenshot attached",
@@ -8101,6 +8106,9 @@ export default interface Resources {
         "totalTokens": "Total tokens",
         "unknownModel": "(unknown)"
       },
+      "debug": {
+        "none": "No debug details available."
+      },
       "delete": {
         "actionClosed": "closed",
         "actionDeleted": "deleted",
@@ -8141,6 +8149,13 @@ export default interface Resources {
         "noAvailableTasks": "No available tasks",
         "none": "(no dependencies)",
         "overlapBlocker": "File scope overlap blocker:",
+        "overlapFiles": {
+          "error": "Could not load overlapping files.",
+          "loading": "Loading overlapping files…",
+          "matches": "matches {{path}}",
+          "noScope": "The blocker declares no file scope.",
+          "none": "No overlapping files found."
+        },
         "removeTitle": "Remove dependency {{id}}",
         "searchPlaceholder": "Search tasks…",
         "stale": "(stale)"
@@ -8287,21 +8302,8 @@ export default interface Resources {
         "noBranchToMerge": "no branch to merge",
         "title": "Merge Task"
       },
-      "move": {
-        "backTo": "Back to {{column}}",
-        "backToInProgress": "Back to In Progress",
-        "cancelMove": "Cancel Move",
-        "keepProgress": "Keep Progress",
-        "moveTo": "Move to {{column}}",
-        "movedTo": "Moved to {{column}}",
-        "preserveProgressMessage": "This task has completed steps. Keep progress before moving?",
-        "preserveProgressTitle": "Preserve Progress?",
-        "resetProgress": "Reset Progress",
-        "resetProgressMessage": "Reset all step progress before moving this task?",
-        "resetProgressTitle": "Reset Progress?"
-      },
       "nearDuplicate": {
-        "actions": "Choose Archive to move this task to archived, or Keep to continue with this task.",
+        "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
         "archiveBtn": "Archive",
         "archiveConfirm": "Archive",
         "archiveMessage": "Archive {{id}} as a duplicate of {{duplicateOf}}?",
@@ -8313,10 +8315,10 @@ export default interface Resources {
         "deleteMessage": "Delete {{id}} as a duplicate of {{duplicateOf}}?",
         "deleteTitle": "Delete duplicate task",
         "deleted": "Deleted {{id}}",
+        "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+        "dismissed": "Duplicate flag cleared for {{id}}",
         "headline": "Potential duplicate detected",
-        "keepBtn": "Keep",
-        "kept": "Kept {{id}} and dismissed duplicate warning",
-        "triageActions": "Choose Delete to remove this duplicate, or Keep to continue anyway."
+        "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered."
       },
       "nextRecoveryAt": "Next recovery at {{time}}",
       "no": "No",
@@ -8544,11 +8546,15 @@ export default interface Resources {
         "workflowResults": "Workflow results"
       },
       "tabs": {
+        "attachments": "Attachments",
         "changes": "Changes",
         "chat": "Chat",
         "comments": "Comments",
         "cost": "Cost",
+        "debug": "Debug",
         "definition": "Definition",
+        "dependencies": "Dependencies",
+        "details": "Details",
         "documents": "Artifacts",
         "logs": "Logs",
         "model": "Model",
@@ -8880,9 +8886,10 @@ export default interface Resources {
       "depsCount_other": "{{count}} deps",
       "descriptionPlaceholder": "Task description",
       "descriptionRefined": "Description refined with AI",
-      "doneNoMerge": "Done (no merge)",
+      "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
       "duplicateCheckFailed": "Duplicate check failed; creating task anyway.",
-      "duplicateDismissed": "Kept {{taskId}}; duplicate warning dismissed",
+      "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+      "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
       "duplicateOf": "Duplicate of {{id}}",
       "editTask": "Edit task",
       "enterDescriptionFirst": "Enter a description first",
@@ -8918,10 +8925,7 @@ export default interface Resources {
       "issueClosed": "closed",
       "issueDeleted": "deleted",
       "issueLeft": "left",
-      "keep": "Keep",
-      "keepFailed": "Failed to keep {{taskId}}: {{error}}",
       "keepProgress": "Keep Progress",
-      "keepTaskTitle": "Keep this task and dismiss duplicate warning",
       "leaveUnchanged": "Leave Unchanged",
       "lineageConflict": "{{taskId}} has lineage children ({{children}}) that reference it as a source parent.\n\nDelete anyway by unlinking these references first?",
       "linkedIssueChipAriaLabel": "Linked GitHub issue #{{number}}",
@@ -8945,7 +8949,8 @@ export default interface Resources {
       "moveFailed": "Failed to move {{taskId}}: {{error}}",
       "moveTask": "Move task",
       "moved": "Moved {{taskId}} to {{column}}",
-      "nearDuplicateTitle": "Potential near-duplicate of {{id}}",
+      "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+      "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
       "needsInput": "Needs input",
       "noAgentsAvailable": "No agents available",
       "noExistingTasks": "No existing tasks",
@@ -9098,6 +9103,8 @@ export default interface Resources {
       "noDetail": "No reasoning captured for this step",
       "sectionCount": "{{count}} section",
       "sectionCountPlural": "{{count}} sections",
+      "showRaw": "Raw trace",
+      "showSections": "Sectioned trace",
       "untitledSection": "Untitled reasoning"
     },
     "todo": {
@@ -10121,6 +10128,7 @@ export default interface Resources {
         "ollama": "Ollama Endpoint",
         "openai": "OpenAI API Key",
         "openrouter": "OpenRouter API Key",
+        "orcarouter": "OrcaRouter API Key",
         "zai": "Zhipu AI API Key"
       },
       "apiKeyPlaceholder": {
@@ -10137,6 +10145,7 @@ export default interface Resources {
         "ollama": "Enter your Ollama endpoint URL (for example http://localhost:11434).",
         "openai": "Create an API key from your OpenAI dashboard under API keys.",
         "openrouter": "Create an API key from your OpenRouter account key management page.",
+        "orcarouter": "Create an API key from your OrcaRouter dashboard.",
         "zai": "Create an API key in the Zhipu AI open platform account settings."
       },
       "apiKeyUsage": {
@@ -10146,6 +10155,7 @@ export default interface Resources {
         "ollama": "Connects to your local Ollama instance",
         "openai": "Used for GPT models in task execution and planning",
         "openrouter": "Routes to multiple AI model providers through a single key",
+        "orcarouter": "Routes to multiple AI model providers through a single key",
         "zai": "Used for GLM models in task execution"
       },
       "providerDesc": {
@@ -10161,6 +10171,7 @@ export default interface Resources {
         "openai": "GPT models — versatile for a wide range of tasks",
         "openaiCodex": "Codex models by OpenAI — optimized for coding tasks",
         "openrouter": "OpenRouter — route requests across multiple AI providers",
+        "orcarouter": "OrcaRouter — one gateway for multiple AI providers with gateway-level agent security",
         "zai": "GLM models by Zhipu AI — strong multilingual support"
       }
     },

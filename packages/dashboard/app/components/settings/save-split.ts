@@ -207,7 +207,6 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     // FNXC:UpdateAutomation 2026-08-21-02:48: only visible controls can enter global save patches; legacy compatibility remains read-only.
     "autoUpdateEnabled",
     "autoRestartAfterUpdate",
-    "autoReloadOnVersionChange",
   ]),
   /*
   FNXC:DashboardShortcuts 2026-07-04-00:00:

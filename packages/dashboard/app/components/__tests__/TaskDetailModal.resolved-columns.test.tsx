@@ -49,7 +49,6 @@ function renderDetail(column: string) {
     <TaskDetailModal
       task={makeTask({ id: "FN-099", column: column as Column, title: "Renamed lane card" })}
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}

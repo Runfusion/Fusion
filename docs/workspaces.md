@@ -19,7 +19,7 @@ You can register a workspace from three surfaces:
 - The project registration API accepts `workspaceMode`. An explicit `true` requests detection; an omitted value also permits automatic detection. The detection endpoint returns `{ repos, isWorkspace }`.
 - The interactive CLI project resolver detects candidates, asks you to confirm workspace mode, initializes the store, then writes the workspace configuration.
 
-`detectWorkspaceRepos` scans only direct children of the selected root. It excludes `node_modules`, `.fusion`, `.git`, and `.pi`; a child must have a `.git` marker and pass a real Git work-tree probe. Nested repositories are not discovered. Registration then prepares every configured or detected member: each member must have a verifiable `HEAD` and the managed `.gitignore` rules (`.fusion/`, `.pi/`, `.worktrees/`, `fusion.db`, `fusion.db-wal`, and `fusion.db-shm`). If a member is non-Git or unborn, Fusion initializes it and creates a baseline; if preparation fails, no workspace project row is registered or activated. When workspace configuration is present, `ensureGitRepositoryForProjectPath` intentionally skips `git init` at the root: do not create a root repository just to make workspace mode work.
+`detectWorkspaceRepos` scans only direct children of the selected root. It excludes `node_modules`, `.fusion`, `.git`, and `.pi`; a child must have a `.git` marker and pass a real Git work-tree probe. Nested repositories are not discovered. Registration then prepares every configured or detected member: each member must have a verifiable `HEAD` and the managed `.gitignore` rules (`.fusion/`, `.pi/`, `.worktrees/`, `fusion.db`, `fusion.db-wal`, and `fusion.db-shm`). Each member independently reconciles its own local integration ref from its own settings and Git refs; a workspace root never supplies one shared default branch. If a member is non-Git or unborn, Fusion initializes it and creates a baseline; if preparation fails, no workspace project row is registered or activated. When workspace configuration is present, `ensureGitRepositoryForProjectPath` intentionally skips `git init` at the root: do not create a root repository just to make workspace mode work.
 
 ## The workspace config file
 
@@ -81,6 +81,8 @@ Fusion captures changes per acquired sub-repository, not from the non-Git root. 
 
 `landWorkspaceTask` processes configured/acquired repositories in a deterministic per-repository loop. Each repository lands on **its own local integration ref**; a shared workspace integration branch is not used. This means the operation is non-atomic: an earlier repository can land before a later repository fails.
 
+Each repository uses the same `landOneRepo` / `landSquash` mechanic as a single-repository project, with that repository's main checkout as `projectRootDir`. When the integration branch is checked out with local edits, `merger.allowDirtyLocalCheckoutSync` applies identically: enabled stashes tracked and untracked edits, fast-forwards, then restores them; disabled refuses the land before the ref advances.
+
 The CLI command `fn task merge` reports each repository as `landed`, `empty`, or `failed`, and exits non-zero for a partial land. Fusion finalizes the task to `done` only after every member has either landed or has no changes to land. A partial result remains recoverable and must be treated as an operator-visible state, not as one atomic merge.
 
 ## landedSha idempotency
@@ -95,7 +97,7 @@ The non-atomic land loop has a partial-land window. The `task:reconcile-workspac
 
 If a member task branch is gone and Fusion has no recorded or otherwise proven `landedSha`, the sweep parks the task as failed with a manual-intervention-required error. Inspect the per-repository integration history and task logs, establish whether the missing work landed or must be recovered, then repair/retry the task only after the workspace is safe. Do not assume a partial land rolled back repositories that already landed.
 
-Additional sweeps emit `task:reconcile-orphaned-workspace-worktree` when they remove a recorded dead member worktree and `task:reclaim-phantom-workspace-land-lease` when they reclaim a leaked member landing lease. Search run-audit records for these event IDs and `task:reconcile-workspace-partial-land` when diagnosing recovery.
+Additional sweeps emit `task:reconcile-orphaned-workspace-worktree` when they remove a recorded dead member worktree and `task:reclaim-phantom-workspace-land-lease` when they reclaim a leaked member landing lease. Acquisition exclusivity is decided by a renewable durable lease; owner deletion or an execution-lane exit releases its acquire claim, while `task:reclaim-phantom-workspace-acquire-lease` and `worktree:workspace-repo-acquire-reclaimed` diagnose defensive leaked-entry recovery. Search run-audit records for these event IDs and `task:reconcile-workspace-partial-land` when diagnosing recovery.
 
 ## Reverting a workspace task
 
@@ -136,7 +138,7 @@ Add the repository in **Settings → General → Workspace repositories** (or th
 
 ### `fn_acquire_repo_worktree` reports busy
 
-Another task is temporarily acquiring or landing that same member. Retry the tool shortly, or continue with a different configured member. Do not edit the shared repository checkout while waiting.
+Another task is temporarily acquiring or landing that same member. Fusion preserves the prepared worktree and shows a bounded Waiting state naming the holder; retry the tool shortly, or continue with a different configured member. Do not edit the shared repository checkout while waiting.
 
 ### A task is failed after partial land
 

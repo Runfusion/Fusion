@@ -22,8 +22,8 @@ introducing a parallel thinking-level list.
 FNXC:Chat-ThinkingLevel 2026-07-12-20:08:
 The Default entry must describe the resolved project/global default supplied by ChatView, while omitted props preserve the legacy isolated fallback label `Default (off)`.
 
-FNXC:Chat-ModelSwitch 2026-07-12-00:00:
-The same brain-icon popup now owns active direct-session targeting too: model-loop sessions can switch provider/model via CustomModelDropdown, and agent sessions can switch to a real agent from the existing list. Selecting either closes the popup and persists immediately through useChat.setSessionModel, while CLI composers stay gated in ChatView.
+FNXC:Chat-ModelSwitch 2026-08-27-12:03:
+Task Chat reuses this one brain-icon popover with model-only targeting, so selecting its model can never impersonate a durable agent. Direct Chat retains the agent lane; hosts that opt out of it render only the model picker and the shared thinking-level list.
 
 FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
 FN-8030 lets room composers reuse this control with showTargetSection={false}. A room's thinking effort is the default reasoning effort for every responder, and rooms have no per-composer model or agent target to switch.
@@ -44,6 +44,16 @@ export interface ChatThinkingLevelControlProps {
   defaultThinkingLevel?: string;
   /** Show direct-chat model/agent targeting controls; rooms render only the thinking-level list. */
   showTargetSection?: boolean;
+  /** Keep the direct-chat agent lane visible; model-only hosts never render agent controls. */
+  showAgentTarget?: boolean;
+  /** Optional accessible label forwarded to the embedded model picker. */
+  modelPickerLabel?: string;
+  /** Optional inherited/default entry label forwarded to the embedded model picker. */
+  modelDefaultOptionLabel?: string;
+  /** Conversation identity; omitted and null are both a stable legacy identity. */
+  targetKey?: string | null;
+  /** Concrete target that this host applies when the picker chooses its default entry. */
+  defaultModelValue?: string;
   models?: ModelInfo[];
   favoriteProviders?: string[];
   favoriteModels?: string[];
@@ -57,11 +67,19 @@ export interface ChatThinkingLevelControlProps {
 
 type TargetMode = "model" | "agent";
 
+type TargetExpectation = { agent: string; model: string };
+type TargetSnapshot = TargetExpectation & { key: string | null; level: string };
+
 export function ChatThinkingLevelControl({
   level,
   onChange,
   defaultThinkingLevel = "off",
   showTargetSection = true,
+  showAgentTarget = true,
+  modelPickerLabel,
+  modelDefaultOptionLabel,
+  targetKey,
+  defaultModelValue,
   models = [],
   favoriteProviders = [],
   favoriteModels = [],
@@ -74,11 +92,19 @@ export function ChatThinkingLevelControl({
 }: ChatThinkingLevelControlProps) {
   const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
-  const [targetMode, setTargetMode] = useState<TargetMode>(() => (agentId && agentId !== FN_AGENT_ID ? "agent" : "model"));
+  const [targetMode, setTargetMode] = useState<TargetMode>(() => (showAgentTarget && agentId && agentId !== FN_AGENT_ID ? "agent" : "model"));
   const rootRef = useRef<HTMLDivElement | null>(null);
   const normalizedLevel = level ?? "";
   const currentModelValue = modelProvider && modelId ? `${modelProvider}/${modelId}` : "";
   const selectedAgentId = agentId && agentId !== FN_AGENT_ID ? agentId : "";
+  const normalizedTargetKey = targetKey ?? null;
+  const pendingTargetRef = useRef<TargetExpectation | null>(null);
+  const lastTargetSnapshotRef = useRef<TargetSnapshot>({
+    key: normalizedTargetKey,
+    level: normalizedLevel,
+    agent: selectedAgentId,
+    model: currentModelValue,
+  });
   const selectedModel = useMemo(() => {
     if (!showTargetSection || selectedAgentId || !currentModelValue) return undefined;
     const slashIdx = currentModelValue.indexOf("/");
@@ -103,6 +129,7 @@ export function ChatThinkingLevelControl({
       */
       const clickedInsideRoot = rootRef.current?.contains(target);
       if (!clickedInsideRoot && !isInsidePortaledModelMenu(target)) {
+        pendingTargetRef.current = null;
         setOpen(false);
       }
     };
@@ -114,13 +141,43 @@ export function ChatThinkingLevelControl({
     };
   }, [open]);
 
-  // Close the popup whenever the underlying level or target changes out from under us
-  // (e.g. the active session switched) so it never leaks open across a
-  // session switch showing the previous session's options.
+  /*
+  FNXC:Chat-ModelSwitch 2026-08-27-12:03:
+  Drop stale options when a host changes the conversation or target underneath an open popover.
+  Conversation identity is structural rather than inferred from target values because another
+  conversation can carry the exact target just selected. Within one identity, only an exact,
+  single-use target echo remains open; every other prop change closes it. Thinking-level picks
+  are the only deliberate selection that dismisses the popover.
+  */
   useEffect(() => {
-    setOpen(false);
-    setTargetMode(selectedAgentId ? "agent" : "model");
-  }, [normalizedLevel, selectedAgentId, currentModelValue]);
+    const previous = lastTargetSnapshotRef.current;
+    const next: TargetSnapshot = {
+      key: normalizedTargetKey,
+      level: normalizedLevel,
+      agent: selectedAgentId,
+      model: currentModelValue,
+    };
+    const targetKeyMoved = previous.key !== next.key;
+    const targetMoved = previous.agent !== next.agent || previous.model !== next.model;
+    const levelMoved = previous.level !== next.level;
+
+    if (targetKeyMoved) {
+      pendingTargetRef.current = null;
+      setOpen(false);
+    } else if (targetMoved) {
+      const pending = pendingTargetRef.current;
+      pendingTargetRef.current = null;
+      if (!pending || pending.agent !== next.agent || pending.model !== next.model) {
+        setOpen(false);
+      }
+    } else if (levelMoved) {
+      pendingTargetRef.current = null;
+      setOpen(false);
+    }
+
+    lastTargetSnapshotRef.current = next;
+    setTargetMode(showAgentTarget && selectedAgentId ? "agent" : "model");
+  }, [currentModelValue, normalizedLevel, normalizedTargetKey, selectedAgentId, showAgentTarget]);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId),
@@ -135,20 +192,28 @@ export function ChatThinkingLevelControl({
   };
 
   const chooseLevel = (value: string) => {
+    pendingTargetRef.current = null;
     setOpen(false);
     void onChange(value);
   };
 
+  const armTargetExpectation = (candidate: TargetExpectation) => {
+    if (!onChangeModel || (candidate.agent === selectedAgentId && candidate.model === currentModelValue)) return;
+    pendingTargetRef.current = candidate;
+  };
+
   const chooseModel = (value: string) => {
     const slashIdx = value.indexOf("/");
-    if (slashIdx <= 0) return;
-    setOpen(false);
-    void onChangeModel?.({ modelProvider: value.slice(0, slashIdx), modelId: value.slice(slashIdx + 1) });
+    if (value !== "" && (slashIdx <= 0 || slashIdx === value.length - 1)) return;
+    armTargetExpectation({ agent: "", model: value === "" ? defaultModelValue ?? "" : value });
+    void onChangeModel?.(value === ""
+      ? { modelProvider: null, modelId: null }
+      : { modelProvider: value.slice(0, slashIdx), modelId: value.slice(slashIdx + 1) });
   };
 
   const chooseAgent = (nextAgentId: string) => {
     if (!nextAgentId) return;
-    setOpen(false);
+    armTargetExpectation({ agent: nextAgentId, model: "" });
     void onChangeModel?.({ agentId: nextAgentId });
   };
 
@@ -166,6 +231,7 @@ export function ChatThinkingLevelControl({
 
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Escape") {
+      pendingTargetRef.current = null;
       setOpen(false);
     }
   };
@@ -173,6 +239,7 @@ export function ChatThinkingLevelControl({
   const handleOptionKeyDown = (event: KeyboardEvent<HTMLButtonElement>, value: string) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      pendingTargetRef.current = null;
       setOpen(false);
       return;
     }
@@ -185,6 +252,7 @@ export function ChatThinkingLevelControl({
   const handleAgentKeyDown = (event: KeyboardEvent<HTMLButtonElement>, nextAgentId: string) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      pendingTargetRef.current = null;
       setOpen(false);
       return;
     }
@@ -206,7 +274,10 @@ export function ChatThinkingLevelControl({
         aria-label={t("chat.thinkingLevelButton", "Thinking level")}
         title={t("chat.thinkingLevelButton", "Thinking level")}
         disabled={disabled}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen((value) => {
+          if (value) pendingTargetRef.current = null;
+          return !value;
+        })}
         onKeyDown={handleTriggerKeyDown}
       >
         <Brain size={16} />
@@ -215,47 +286,50 @@ export function ChatThinkingLevelControl({
       {open ? (
         <div className="chat-thinking-popover" role="presentation" data-testid="chat-thinking-popover">
           {showTargetSection ? (
-          <section className="chat-thinking-target-section" aria-label={t("chat.modelAgentSection", "Model / Agent")}>
-            <div className="chat-thinking-section-title">{t("chat.modelAgentSection", "Model / Agent")}</div>
-            <div className="chat-thinking-mode-toggle" data-testid="chat-thinking-mode-toggle">
-              <button
-                type="button"
-                className={`chat-thinking-mode-btn${targetMode === "model" ? " chat-thinking-mode-btn--active" : ""}`}
-                data-testid="chat-thinking-mode-model"
-                aria-pressed={targetMode === "model"}
-                onPointerDown={(event) => {
-                  if (event.button === 0) activateTargetMode("model");
-                }}
-                onClick={(event) => {
-                  if (event.detail === 0) activateTargetMode("model");
-                }}
-              >
-                {t("chat.newChatModeModel", "Model")}
-              </button>
-              <button
-                type="button"
-                className={`chat-thinking-mode-btn${targetMode === "agent" ? " chat-thinking-mode-btn--active" : ""}`}
-                data-testid="chat-thinking-mode-agent"
-                aria-pressed={targetMode === "agent"}
-                onPointerDown={(event) => {
-                  if (event.button === 0) activateTargetMode("agent");
-                }}
-                onClick={(event) => {
-                  if (event.detail === 0) activateTargetMode("agent");
-                }}
-              >
-                {t("chat.newChatModeAgent", "Agent")}
-              </button>
-            </div>
+          <section className="chat-thinking-target-section" aria-label={showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}>
+            <div className="chat-thinking-section-title">{showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}</div>
+            {showAgentTarget ? (
+              <div className="chat-thinking-mode-toggle" data-testid="chat-thinking-mode-toggle">
+                <button
+                  type="button"
+                  className={`chat-thinking-mode-btn${targetMode === "model" ? " chat-thinking-mode-btn--active" : ""}`}
+                  data-testid="chat-thinking-mode-model"
+                  aria-pressed={targetMode === "model"}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) activateTargetMode("model");
+                  }}
+                  onClick={(event) => {
+                    if (event.detail === 0) activateTargetMode("model");
+                  }}
+                >
+                  {t("chat.newChatModeModel", "Model")}
+                </button>
+                <button
+                  type="button"
+                  className={`chat-thinking-mode-btn${targetMode === "agent" ? " chat-thinking-mode-btn--active" : ""}`}
+                  data-testid="chat-thinking-mode-agent"
+                  aria-pressed={targetMode === "agent"}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) activateTargetMode("agent");
+                  }}
+                  onClick={(event) => {
+                    if (event.detail === 0) activateTargetMode("agent");
+                  }}
+                >
+                  {t("chat.newChatModeAgent", "Agent")}
+                </button>
+              </div>
+            ) : null}
 
-            {targetMode === "model" ? (
+            {targetMode === "model" || !showAgentTarget ? (
               <div className="chat-thinking-model-picker" data-testid="chat-thinking-model-picker">
                 <CustomModelDropdown
                   models={models}
                   value={currentModelValue}
                   onChange={chooseModel}
-                  label={t("chat.newChatModeModel", "Model")}
+                  label={modelPickerLabel ?? t("chat.newChatModeModel", "Model")}
                   placeholder={t("chat.selectModel", "Select a model")}
+                  defaultOptionLabel={modelDefaultOptionLabel}
                   disabled={!onChangeModel || models.length === 0}
                   favoriteProviders={favoriteProviders}
                   favoriteModels={favoriteModels}
@@ -296,7 +370,7 @@ export function ChatThinkingLevelControl({
                 )}
               </div>
             )}
-            {selectedAgent ? (
+            {showAgentTarget && selectedAgent ? (
               <div className="chat-thinking-current-target" data-testid="chat-thinking-current-agent">
                 {t("chat.currentAgentTarget", "Current agent: {{name}}", { name: selectedAgent.name || selectedAgent.id })}
               </div>

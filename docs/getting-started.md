@@ -86,7 +86,7 @@ In each repository you want Fusion to manage, run:
 fn init
 ```
 
-Registration is fail-closed on Git readiness. For a new or unborn repository, Fusion creates a real baseline `HEAD` containing only its managed `.gitignore`; an existing committed repository keeps its history, branch, remotes, configuration, index, and user changes. Fusion adds missing managed ignore rules without committing an existing repository's changes:
+Registration is fail-closed on Git readiness. For a new or unborn repository, Fusion creates a real baseline `HEAD` containing only its managed `.gitignore`; an existing committed repository keeps its history, branch, remotes, configuration, index, and user changes. Registration also reconciles an integration branch ref: it honors an explicit setting, otherwise adopts a usable local branch or an unambiguous `origin` remote-tracking branch, and materializes that ref locally without moving your checked-out `HEAD` or contacting the network. Fusion adds missing managed ignore rules without committing an existing repository's changes:
 
 - `.fusion/`
 - `.pi/`

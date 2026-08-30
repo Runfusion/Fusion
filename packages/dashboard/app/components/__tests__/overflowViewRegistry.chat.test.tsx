@@ -10,13 +10,14 @@ import { readStoredRightDockView, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDo
 import type { ChatViewProps } from "../ChatView";
 
 vi.mock("../ChatView", () => ({
-  ChatView: ({ projectId, addToast, floating, compactLayout, onPopOut, onMaximize, onClose }: ChatViewProps) => (
+  ChatView: ({ projectId, addToast, floating, compactLayout, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow }: ChatViewProps) => (
     <div
       data-testid="mock-chat-view"
       data-project-id={projectId}
       data-has-toast={String(typeof addToast === "function")}
       data-compact-layout={String(compactLayout === true)}
       data-has-dock-chrome-props={String(Boolean(floating || onPopOut || onMaximize || onClose))}
+      data-has-open-window={String(typeof onOpenSessionInNewWindow === "function")}
     >
       Chat dock view
     </div>
@@ -26,6 +27,7 @@ vi.mock("../ChatView", () => ({
 const renderProps: OverflowViewRenderProps = {
   projectId: "project-chat",
   addToast: vi.fn(),
+  onOpenSessionInNewWindow: vi.fn(),
 };
 
 describe("overflowViewRegistry chat entry", () => {
@@ -68,6 +70,7 @@ describe("overflowViewRegistry chat entry", () => {
     expect(compactChat).toHaveAttribute("data-has-toast", "true");
     expect(compactChat).toHaveAttribute("data-compact-layout", "true");
     expect(compactChat).toHaveAttribute("data-has-dock-chrome-props", "false");
+    expect(compactChat).toHaveAttribute("data-has-open-window", "true");
     compact.unmount();
 
     const wideDock = render(<>{chatEntry.render({ ...renderProps, surface: "dock", dockWidth: 900 })}</>);
@@ -81,6 +84,7 @@ describe("overflowViewRegistry chat entry", () => {
     expect(expandedChat).toHaveAttribute("data-has-toast", "true");
     expect(expandedChat).toHaveAttribute("data-compact-layout", "false");
     expect(expandedChat).toHaveAttribute("data-has-dock-chrome-props", "false");
+    expect(expandedChat).toHaveAttribute("data-has-open-window", "true");
   });
 
   it("keeps Files as the default right-dock view when no selection is persisted", () => {

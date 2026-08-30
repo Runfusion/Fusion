@@ -426,7 +426,7 @@ describe("resolveAgentPrompt", () => {
 
     const standardTransformationIdx = standardPrompt.indexOf("## Before → After Transformation");
     const standardReviewLevelIdx = standardPrompt.indexOf("## Review Level");
-    const standardMissionIdx = standardPrompt.indexOf("## Mission");
+    const standardMissionIdx = standardPrompt.indexOf("\n## Mission");
     expect(standardTransformationIdx).toBeGreaterThan(-1);
     expect(standardReviewLevelIdx).toBeGreaterThan(-1);
     expect(standardMissionIdx).toBeGreaterThan(-1);
@@ -457,13 +457,43 @@ describe("resolveAgentPrompt", () => {
       expect(prompt.toLowerCase()).toMatch(/verbatim/);
     }
 
-    // Template order: Original Description before Before → After and Mission
+    const implementationOnly = builtinSeamPrompt("planning-implementation-only");
+    for (const prompt of [standardPrompt, fastPrompt, implementationOnly, concise]) {
+      expect(prompt).toContain("## What This Delivers");
+    }
+
+    // Template order: Original Description, product summary, transformation, then Mission.
     const originalIdx = standardPrompt.indexOf("## Original Description");
+    const summaryIdx = standardPrompt.indexOf("## What This Delivers");
     const transformIdx = standardPrompt.indexOf("## Before → After Transformation");
-    const missionIdx = standardPrompt.indexOf("## Mission");
+    const missionIdx = standardPrompt.indexOf("\n## Mission");
     expect(originalIdx).toBeGreaterThan(-1);
-    expect(originalIdx).toBeLessThan(transformIdx);
-    expect(originalIdx).toBeLessThan(missionIdx);
+    expect(originalIdx).toBeLessThan(summaryIdx);
+    expect(summaryIdx).toBeLessThan(transformIdx);
+    expect(transformIdx).toBeLessThan(missionIdx);
+
+    const fastOriginalIdx = fastPrompt.indexOf("## Original Description");
+    const fastSummaryIdx = fastPrompt.indexOf("## What This Delivers");
+    const fastTransformIdx = fastPrompt.indexOf("## Before → After Transformation");
+    expect(fastOriginalIdx).toBeLessThan(fastSummaryIdx);
+    expect(fastSummaryIdx).toBeLessThan(fastTransformIdx);
+    expect(standardPrompt).toContain("plain product language");
+    expect(standardPrompt).toContain("verify at a glance");
+    expect(fastPrompt).toContain("plain product language");
+    expect(fastPrompt).toContain("verify at a glance");
+  });
+
+  it("requires reviewers to block missing or jargon-only product summaries", () => {
+    const defaultReviewer = resolveAgentPrompt("reviewer");
+    const strictReviewer = resolveAgentPrompt("reviewer", {
+      roleAssignments: { reviewer: "strict-reviewer" },
+    });
+
+    for (const prompt of [defaultReviewer, strictReviewer]) {
+      expect(prompt).toContain("**Product summary:**");
+      expect(prompt).toContain("`## What This Delivers`");
+      expect(prompt).toContain("blocking REVISE");
+    }
   });
 
   it("triage planning prompt is sourced from workflow IR without an engine duplicate", () => {

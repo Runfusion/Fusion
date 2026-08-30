@@ -78,6 +78,16 @@ function logText(store: ReturnType<typeof createMockStore>): string {
   return store.logEntry.mock.calls.map((call: unknown[]) => call[1]).join("\n");
 }
 
+/*
+FNXC:PausedAbortProvenance 2026-08-26-09:52:
+The operator-facing breadcrumb now waits until a surface was genuinely aborted, so a test that asserts
+the LABEL must give the abort something to abort. That is also the honest fixture: these cases are
+about what an operator is told when work is interrupted, and nothing was being interrupted here.
+*/
+function withActiveSession(executor: TaskExecutor, taskId: string): void {
+  (executor as any).activeSessions.set(taskId, { session: { dispose: () => {} } });
+}
+
 /** Every write the executor made to the row, so `userPaused` can be asserted negatively. */
 function updatePatches(store: ReturnType<typeof createMockStore>): Record<string, unknown>[] {
   return store.updateTask.mock.calls.map((call: unknown[]) => (call[1] ?? {}) as Record<string, unknown>);
@@ -96,6 +106,7 @@ describe("pause-abort provenance truthfulness (KB-PROV)", () => {
   describe("awaitAbortInFlightTaskWork derives provenance from userCanceled", () => {
     it("labels an engine-initiated abort `engine-abort`, never `hard-cancel`", async () => {
       const { store, task, executor } = makeExecutor();
+      withActiveSession(executor, task.id);
 
       await executor.awaitAbortInFlightTaskWork(task.id, "parent moved from in-progress to todo");
 
@@ -107,8 +118,31 @@ describe("pause-abort provenance truthfulness (KB-PROV)", () => {
       expect((executor as any).userCanceledTaskIds.has(task.id)).toBe(false);
     });
 
+    /*
+    FNXC:PausedAbortProvenance 2026-08-26-09:52:
+    THE REPORTED DEFECT: the breadcrumb was written before any surface was inspected, so a card with no
+    session at all still announced an interruption. Every newly created task logged
+    `Pause abort marked: provenance=hard-cancel` a second or two after creation — creation moves the
+    card out of the planning lane, and that move is user-sourced. Nothing was interrupted and the
+    operator withdrew nothing; the line was false on both counts. The in-memory marker still records,
+    because the graph-failure classifiers depend on it and it must be claimed before any await.
+    */
+    it("says nothing to the operator when there was nothing to abort", async () => {
+      const { store, task, executor } = makeExecutor();
+
+      await executor.awaitAbortInFlightTaskWork(task.id, "task moved out of planning to todo", {
+        userCanceled: true,
+      });
+
+      expect(logText(store)).not.toContain("Pause abort marked");
+      expect(logText(store)).not.toContain("Pause abort cleanup completed");
+      // The marker itself is still recorded for the classifiers that consume it.
+      expect(provenanceOf(executor, task.id)).toBe("hard-cancel");
+    });
+
     it("keeps `hard-cancel` for an operator-canceled abort", async () => {
       const { store, task, executor } = makeExecutor();
+      withActiveSession(executor, task.id);
 
       await executor.awaitAbortInFlightTaskWork(task.id, "user moved task from in-progress to todo", {
         userCanceled: true,
@@ -142,6 +176,7 @@ describe("pause-abort provenance truthfulness (KB-PROV)", () => {
   describe("surface enumeration: each abort caller gets a truthful label", () => {
     it("FN-8596 repro — an ENGINE-sourced in-progress -> todo move labels the abort `engine-abort`", async () => {
       const { store, task, executor } = makeExecutor();
+      withActiveSession(executor, task.id);
 
       await store._triggerAsync("task:moved", { task, from: "in-progress", to: "todo", source: "engine" });
       await (executor as any).pendingTaskDisposals.get(task.id);

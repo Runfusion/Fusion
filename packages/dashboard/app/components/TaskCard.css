@@ -1178,8 +1178,14 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   text-decoration: none;
 }
 
-.card-duplicate-chip,
-.card-duplicate-keep {
+.card-duplicate-chip-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.card-duplicate-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -1216,30 +1222,41 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   color: var(--color-warning);
 }
 
-.card-duplicate-keep {
-  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
-  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
-  color: var(--text);
+.card-duplicate-dismiss {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  padding: var(--space-xs);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
   cursor: pointer;
-  appearance: none;
-  background-image: none;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    box-shadow var(--transition-fast);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.card-duplicate-keep:hover {
+.card-duplicate-dismiss::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--space-sm) * -1);
+}
+
+.card-duplicate-dismiss:hover {
   background: var(--card-hover);
 }
 
-.card-duplicate-keep:focus-visible {
+.card-duplicate-dismiss:focus-visible {
   box-shadow: var(--focus-ring-strong);
   outline: none;
 }
 
 @media (max-width: 768px) {
-  .card-duplicate-chip {
+  .card-duplicate-chip,
+  .card-duplicate-chip-group,
+  .card-duplicate-dismiss {
     max-width: 100%;
   }
 
@@ -1409,6 +1426,11 @@ the established compact mobile interaction rhythm while the card remains the pri
   margin-top: var(--space-sm);
   max-height: 200px;
   overflow-y: auto;
+}
+
+.card-review-gates-separator {
+  border-top: var(--border-width) solid color-mix(in srgb, var(--border) 70%, transparent);
+  margin-block: var(--space-xs);
 }
 
 .card-step-item {
@@ -2174,4 +2196,3 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
 
 /* FNXC:TaskRevert 2026-08-01-19:51: Reverted tasks require visible resolution controls, not hover-only menu actions. */
 .card-reverted-actions { display: inline-flex; gap: var(--space-1); }
-.reverted-tasks-section { display: grid; gap: var(--space-2); padding: var(--space-3); }

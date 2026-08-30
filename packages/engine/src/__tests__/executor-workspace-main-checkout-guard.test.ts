@@ -2,6 +2,11 @@
  * FNXC:Workspace 2026-08-15-07:05:
  * Real git fixtures prove the guard sees configured main checkouts, including repos with no
  * acquired worktree; mocking status would not exercise the bypass completion previously missed.
+ *
+ * FNXC:WorkspaceFinalization 2026-08-27-08:42:
+ * The guard's blocking subject is now COMMITS only. These cases pin both halves: uncommitted main
+ * checkout entries surface as `uncommitted-only` warnings and complete, while task-attributed
+ * commits and undelivered work still refuse (`main_checkout_edit` / `no_commits`).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execSync } from "node:child_process";
@@ -19,16 +24,21 @@ function task(overrides: Partial<Task> = {}): Task {
   return { id: "FN-1001", title: "guard", description: "", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: start, updatedAt: start, firstExecutionAt: start, executionStartedAt: start, ...overrides } as Task;
 }
 
-function invariantDeps(fixture: WorkspaceFixture, declaredScope: string[] = []) {
+function invariantDeps(
+  fixture: WorkspaceFixture,
+  declaredScope: string[] = [],
+  options: { recordRunAuditEvent?: ReturnType<typeof vi.fn>; runContext?: { runId: string; agentId: string; taskId: string } } = {},
+) {
   return {
     rootDir: fixture.rootDir,
     store: {
       getSettings: vi.fn().mockResolvedValue(settings),
       parseFileScopeFromPrompt: vi.fn().mockResolvedValue(declaredScope),
+      ...(options.recordRunAuditEvent ? { recordRunAuditEvent: options.recordRunAuditEvent } : {}),
     } as unknown as TaskStore,
     workspaceConfig: { repos: fixture.repos },
     getActiveWorktreePaths: () => [],
-    getRunContextFor: () => undefined,
+    getRunContextFor: () => options.runContext,
     emitWorktreeReanchoredAudit: async () => undefined,
   };
 }
@@ -44,7 +54,7 @@ describeIfGit("workspace main-checkout guard", () => {
   let fixture: WorkspaceFixture;
   afterEach(() => fixture?.cleanup());
 
-  it("blocks staged, untracked, out-of-scope, and zero-acquire main-checkout edits", async () => {
+  it("reports staged, untracked, out-of-scope, and zero-acquire main-checkout edits without blocking", async () => {
     fixture = await createWorkspaceFixture();
     mkdirSync(path.join(fixture.repoPath("repo-a"), "src"), { recursive: true });
     writeFileSync(path.join(fixture.repoPath("repo-a"), "src", "outside.ts"), "export {};\n");
@@ -58,8 +68,9 @@ describeIfGit("workspace main-checkout guard", () => {
       utimes(path.join(fixture.repoPath("repo-b"), "src", "new.ts"), changed, changed),
     ]));
     const result = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, ["repo-a/docs/**"]);
-    expect(result.violations.find((finding) => finding.repo === "repo-a")?.files).toContain("src/outside.ts");
-    expect(result.violations.find((finding) => finding.repo === "repo-b")?.files).toContain("src/new.ts");
+    expect(result.violations).toEqual([]);
+    expect(result.warnings.find((finding) => finding.repo === "repo-a" && finding.reason === "uncommitted-only")?.files).toContain("src/outside.ts");
+    expect(result.warnings.find((finding) => finding.repo === "repo-b" && finding.reason === "uncommitted-only")?.files).toContain("src/new.ts");
   });
 
   it("treats repo-local File Scope as declared scope for a single workspace repository", async () => {
@@ -72,7 +83,8 @@ describeIfGit("workspace main-checkout guard", () => {
     await import("node:fs/promises").then(({ utimes }) => utimes(file, changed, changed));
 
     const result = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, ["src/**"]);
-    expect(result.violations).toContainEqual(expect.objectContaining({ repo: "repo-a", files: ["src/local.ts"], evidence: "declared-scope-change" }));
+    expect(result.violations).toEqual([]);
+    expect(result.warnings).toContainEqual(expect.objectContaining({ repo: "repo-a", files: ["src/local.ts"], reason: "uncommitted-only", evidence: "declared-scope-change" }));
   });
 
   it("uses firstExecutionAt instead of the later retry attempt anchor", async () => {
@@ -85,29 +97,89 @@ describeIfGit("workspace main-checkout guard", () => {
     const retry = new Date(Date.now() + 60_000).toISOString();
     const result = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, task({ firstExecutionAt: first, executionStartedAt: retry }), fixture.repos, []);
     expect(workspaceExecutionAnchor(task({ firstExecutionAt: first, executionStartedAt: retry }))).toBeLessThan(Date.parse(retry));
-    expect(result.violations[0]).toMatchObject({ repo: "repo-a", evidence: "task-era-change" });
+    expect(result.warnings[0]).toMatchObject({ repo: "repo-a", reason: "uncommitted-only", evidence: "task-era-change" });
   });
 
-  it("runs before no_commits in the production completion invariant and clears after remediation", async () => {
+  it("completes through uncommitted main-checkout dirt but still refuses undelivered work", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const acquired = addEmptyWorktree(fixture);
     const activeTask = task({
       workspaceWorktrees: { "repo-a": { ...acquired, branch: "fusion/fn-1001" } },
     });
-    writeFileSync(path.join(acquired.worktreePath, "proper-worktree.ts"), "export const proper = true;\n");
-    execSync('git config user.email "test@example.com" && git config user.name "Test" && git add proper-worktree.ts && git commit -m "feat: proper worktree edit"', { cwd: acquired.worktreePath });
     const mainFile = path.join(fixture.repoPath("repo-a"), "main-checkout.ts");
     writeFileSync(mainFile, "export const bypass = true;\n");
     const changed = new Date(Date.parse(activeTask.firstExecutionAt!) + 10_000);
     await import("node:fs/promises").then(({ utimes }) => utimes(mainFile, changed, changed));
 
-    const blocked = await verifyWorktreeInvariants(invariantDeps(fixture), activeTask);
-    expect(blocked).toMatchObject({ ok: false, reason: "main_checkout_edit", repo: "repo-a" });
-    expect(blocked.ok ? "" : blocked.observed).toContain("main-checkout.ts");
+    // Work exists ONLY in the main checkout: completion is still refused, by the invariant that
+    // actually proves delivery (an acquired worktree with commits) rather than by the dirt itself.
+    const undelivered = await verifyWorktreeInvariants(invariantDeps(fixture), activeTask);
+    expect(undelivered).toMatchObject({ ok: false, reason: "no_commits" });
+
+    writeFileSync(path.join(acquired.worktreePath, "proper-worktree.ts"), "export const proper = true;\n");
+    execSync('git config user.email "test@example.com" && git config user.name "Test" && git add proper-worktree.ts && git commit -m "feat: proper worktree edit"', { cwd: acquired.worktreePath });
+
+    // Same dirt, delivery committed in the acquired worktree: the land path stashes and restores
+    // that checkout, so completion must not stop for a state the merger is built to absorb.
+    expect(await verifyWorktreeInvariants(invariantDeps(fixture), activeTask)).toEqual({ ok: true });
 
     unlinkSync(mainFile);
-    const remediated = await verifyWorktreeInvariants(invariantDeps(fixture), activeTask);
-    expect(remediated).toEqual({ ok: true });
+    expect(await verifyWorktreeInvariants(invariantDeps(fixture), activeTask)).toEqual({ ok: true });
+  });
+
+  it("reproduces the MRG-055 declared-scope main-checkout wedge without blocking completion", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const acquired = addEmptyWorktree(fixture);
+    const activeTask = task({
+      workspaceWorktrees: { "repo-a": { ...acquired, branch: "fusion/fn-1001" } },
+    });
+    const auditEvents = vi.fn().mockResolvedValue(undefined);
+    const deps = invariantDeps(fixture, ["src/**"], {
+      recordRunAuditEvent: auditEvents,
+      runContext: { runId: "run-fn-1001", agentId: "agent-fn-1001", taskId: activeTask.id },
+    });
+    const engineFile = path.join(fixture.repoPath("repo-a"), "src", "lib", "server", "engine", "engine.ts");
+    const localeFile = path.join(fixture.repoPath("repo-a"), "src", "lib", "i18n", "locales", "en.json");
+    mkdirSync(path.dirname(engineFile), { recursive: true });
+    mkdirSync(path.dirname(localeFile), { recursive: true });
+    writeFileSync(engineFile, "export const mainCheckoutEngine = true;\n");
+    writeFileSync(localeFile, '{"mainCheckout":true}\n');
+    const changed = new Date(Date.parse(activeTask.firstExecutionAt!) + 10_000);
+    await import("node:fs/promises").then(({ utimes }) => Promise.all([
+      utimes(engineFile, changed, changed),
+      utimes(localeFile, changed, changed),
+    ]));
+
+    // FNXC:WorkspaceFinalization 2026-08-27-15:50:
+    // MRG-055 had delivery in its acquired worktree but status-only files matching File Scope in
+    // the shared main checkout. Delivery remains independently required; status-only dirt warns.
+    expect(await verifyWorktreeInvariants(deps, activeTask)).toMatchObject({ ok: false, reason: "no_commits" });
+
+    writeFileSync(path.join(acquired.worktreePath, "delivery.ts"), "export const delivered = true;\n");
+    execSync('git add delivery.ts && git commit -m "feat(FN-1001): deliver workspace change"', { cwd: acquired.worktreePath });
+    auditEvents.mockClear();
+
+    expect(await verifyWorktreeInvariants(deps, activeTask)).toEqual({ ok: true });
+    expect(auditEvents).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "worktree:workspace-main-checkout-edit",
+      metadata: expect.objectContaining({ outcome: "warned", reason: "uncommitted-only", evidence: "declared-scope-change" }),
+    }));
+    expect(auditEvents).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "worktree:workspace-main-checkout-edit",
+      metadata: expect.objectContaining({ outcome: "blocked" }),
+    }));
+
+    const directCommit = path.join(fixture.repoPath("repo-a"), "direct-main.ts");
+    writeFileSync(directCommit, "export const bypass = true;\n");
+    fixture.git("repo-a", "git add direct-main.ts");
+    fixture.git("repo-a", `GIT_AUTHOR_DATE='${changed.toISOString()}' GIT_COMMITTER_DATE='${changed.toISOString()}' git commit -m 'fix(FN-1001): direct main edit'`);
+
+    expect(await verifyWorktreeInvariants(deps, activeTask)).toMatchObject({
+      ok: false,
+      reason: "main_checkout_edit",
+      repo: "repo-a",
+      observed: expect.stringContaining("task-attributed-commit"),
+    });
   });
 
   it("detects clean-tree direct main commits without a base range", async () => {
@@ -145,6 +217,89 @@ describeIfGit("workspace main-checkout guard", () => {
     expect(direct.skipped).toContain("repo-a/not-a-repo");
   });
 
+  /*
+  FNXC:WorkspaceFinalization 2026-08-27-16:07:
+  FN-202 retains the commit-only refusal while locking every degraded main-checkout evidence path.
+  Uncertain attribution must warn or skip, not revive the status-only completion wedge.
+  */
+  it("warns on an unresolved execution anchor without reintroducing a completion refusal", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const acquired = addEmptyWorktree(fixture);
+    writeFileSync(path.join(acquired.worktreePath, "delivered.ts"), "export const delivered = true;\n");
+    execSync('git add delivered.ts && git commit -m "feat(FN-1001): deliver workspace change"', { cwd: acquired.worktreePath });
+    const activeTask = task({
+      createdAt: "not-a-date",
+      firstExecutionAt: "not-a-date",
+      executionStartedAt: "not-a-date",
+      workspaceWorktrees: { "repo-a": { ...acquired, branch: "fusion/fn-1001" } },
+    });
+    const operatorFile = path.join(fixture.repoPath("repo-a"), "operator-draft.ts");
+    writeFileSync(operatorFile, "export const operatorDraft = true;\n");
+
+    expect(workspaceExecutionAnchor(activeTask)).toBeNull();
+    const evidence = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, []);
+    expect(evidence.violations).toEqual([]);
+    expect(evidence.warnings).toContainEqual(expect.objectContaining({
+      repo: "repo-a",
+      files: ["operator-draft.ts"],
+      reason: "anchor-unresolved",
+    }));
+    expect(await verifyWorktreeInvariants(invariantDeps(fixture), activeTask)).toEqual({ ok: true });
+  });
+
+  it("warns rather than blocks a foreign post-anchor main-checkout commit", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const acquired = addEmptyWorktree(fixture);
+    writeFileSync(path.join(acquired.worktreePath, "delivered.ts"), "export const delivered = true;\n");
+    execSync('git add delivered.ts && git commit -m "feat(FN-1001): deliver workspace change"', { cwd: acquired.worktreePath });
+    const activeTask = task({ workspaceWorktrees: { "repo-a": { ...acquired, branch: "fusion/fn-1001" } } });
+    const foreignFile = path.join(fixture.repoPath("repo-a"), "operator-commit.ts");
+    writeFileSync(foreignFile, "export const operatorCommit = true;\n");
+    const committedAt = new Date(Date.parse(activeTask.firstExecutionAt!) + 10_000).toISOString();
+    fixture.git("repo-a", "git add operator-commit.ts");
+    fixture.git("repo-a", `GIT_AUTHOR_DATE='${committedAt}' GIT_COMMITTER_DATE='${committedAt}' git commit -m 'operator: direct main edit'`);
+    const sha = fixture.git("repo-a", "git rev-parse HEAD");
+
+    const evidence = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, []);
+    expect(evidence.violations).toEqual([]);
+    expect(evidence.warnings).toContainEqual(expect.objectContaining({
+      repo: "repo-a",
+      commits: [sha],
+      reason: "pre-existing-dirt",
+    }));
+    expect(await verifyWorktreeInvariants(invariantDeps(fixture), activeTask)).toEqual({ ok: true });
+  });
+
+  it("warns on commit-scan failure without turning unreadable history into a refusal", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const activeTask = task();
+    writeFileSync(path.join(fixture.repoPath("repo-a"), "operator-draft.ts"), "export const operatorDraft = true;\n");
+    // An unborn main ref leaves status readable while `git log HEAD` fails, exercising the guard's
+    // read-error fallback without mocking the production subprocess boundary.
+    fixture.git("repo-a", "git update-ref -d refs/heads/main");
+
+    const evidence = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, []);
+    expect(evidence.violations).toEqual([]);
+    expect(evidence.warnings).toContainEqual(expect.objectContaining({ repo: "repo-a", reason: "commit-scan-unavailable" }));
+  });
+
+  it("skips a recorded workspace worktree that is the configured main checkout", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const activeTask = task({
+      workspaceWorktrees: {
+        "repo-a": {
+          worktreePath: fixture.repoPath("repo-a"),
+          branch: "fusion/fn-1001",
+          baseCommitSha: fixture.git("repo-a", "git rev-parse HEAD"),
+        },
+      },
+    });
+    writeFileSync(path.join(fixture.repoPath("repo-a"), "operator-draft.ts"), "export const operatorDraft = true;\n");
+
+    const evidence = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, []);
+    expect(evidence).toEqual({ violations: [], warnings: [], skipped: ["repo-a"] });
+  });
+
   it("classifies task-era deletions from their parent directory mtime", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const activeTask = task();
@@ -156,7 +311,8 @@ describeIfGit("workspace main-checkout guard", () => {
     const changed = new Date(Date.parse(activeTask.firstExecutionAt!) + 10_000);
     await import("node:fs/promises").then(({ utimes }) => utimes(parent, changed, changed));
     const result = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, []);
-    expect(result.violations).toContainEqual(expect.objectContaining({ repo: "repo-a", files: ["deleted.ts"], evidence: "task-era-change" }));
+    expect(result.violations).toEqual([]);
+    expect(result.warnings).toContainEqual(expect.objectContaining({ repo: "repo-a", files: ["deleted.ts"], reason: "uncommitted-only", evidence: "task-era-change" }));
   });
 
   it("warns rather than blocks provably old operator dirt and ignores nested worktrees", async () => {

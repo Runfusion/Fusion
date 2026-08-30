@@ -46,13 +46,16 @@ export function registerPluginsAutomationRoutes(ctx: ApiRoutesContext, deps: Plu
 
   // GET /automations — list all scheduled tasks (optionally filtered by scope)
   router.get("/automations", async (req: Request, res: Response) => {
-    // Return empty array when no store available (legacy backward-compatible behavior)
-    if (!options?.automationStore) {
-      return res.json([]);
-    }
-
     try {
       const scope = parseScopeParam(req);
+      /*
+      FNXC:PluginsAutomationRoutes 2026-08-27-14:40:
+      The legacy empty-list fallback applies only to omitted/global reads. Project reads must
+      resolve the engine-backed store used by creates, surfacing 503 when none is available.
+      */
+      if (!options?.automationStore && scope !== "project") {
+        return res.json([]);
+      }
       const automationStore = resolveAutomationStore(req, scope);
 
       // Get all schedules and filter by scope if specified
@@ -403,13 +406,16 @@ export function registerPluginsAutomationRoutes(ctx: ApiRoutesContext, deps: Plu
 
   // GET /routines — list all routines (optionally filtered by scope)
   router.get("/routines", async (req: Request, res: Response) => {
-    // Return empty array when no store available (legacy backward-compatible behavior)
-    if (!options?.routineStore) {
-      return res.json([]);
-    }
-
     try {
       const scope = parseScopeParam(req);
+      /*
+      FNXC:PluginsAutomationRoutes 2026-08-27-14:40:
+      The legacy empty-list fallback applies only to omitted/global reads. Project reads must
+      resolve the engine-backed store used by creates, surfacing 503 when none is available.
+      */
+      if (!options?.routineStore && scope !== "project") {
+        return res.json([]);
+      }
       const routineStore = resolveRoutineStore(req, scope);
 
       // Get all routines and filter by scope if specified

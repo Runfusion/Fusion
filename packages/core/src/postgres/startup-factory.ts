@@ -42,6 +42,7 @@ import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { isValidSqliteDatabaseFile } from "../db/sqlite-validation.js";
 import { createLogger } from "../process/logger.js";
+import { describeErrorChain as describeSharedErrorChain } from "../process/error-message.js";
 import { TaskStore } from "../store.js";
 import {
   resolveBackend,
@@ -101,18 +102,13 @@ reports (Windows desktop boot failures) were undiagnosable because every
 surfaced log was query text with no error message. Walk the cause chain and
 truncate giant messages so the actual failure always survives into the log.
 */
-function describeErrorChain(err: unknown): string {
-  const parts: string[] = [];
-  let current: unknown = err;
-  for (let depth = 0; current !== undefined && current !== null && depth < 5; depth += 1) {
-    const message = current instanceof Error ? current.message : String(current);
-    parts.push(
-      message.length > 1200 ? `${message.slice(0, 600)} … [truncated] … ${message.slice(-300)}` : message,
-    );
-    current = current instanceof Error ? current.cause : undefined;
-  }
-  return parts.join(" ⇐ caused by: ");
-}
+/*
+FNXC:ErrorCauseChain 2026-08-26-08:14:
+The walker moved to process/error-message.ts so every surface can use it — the dashboard's API error
+path was still reporting `err.message` alone and dropping the same cause this function exists to
+recover. Behaviour here is unchanged: outer-to-inner, 1200-char truncation, for LOGS.
+*/
+const describeErrorChain = (err: unknown): string => describeSharedErrorChain(err, { maxMessageLength: 1200 });
 
 /**
  * FNXC:ProjectDataIsolation 2026-07-14-12:10:

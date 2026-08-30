@@ -1004,6 +1004,28 @@ describe("MilestoneSliceInterviewModal", () => {
       expect(container.querySelector("[data-testid='thinking-trace-section']")).toBe(first);
     });
 
+    it("keeps titles-only milestone interview thinking visible with a raw trace escape hatch", async () => {
+      mockFetchAiSession.mockResolvedValue({ ...mockSessionGenerating, thinkingOutput: "**One**\n\n**Two**\n\n**Three**" });
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+          resumeSessionId="session-resume-titles-only"
+        />,
+      );
+      await waitFor(() => expect(screen.getByTestId("thinking-trace-raw-toggle")).toBeInTheDocument());
+      const container = document.querySelector<HTMLElement>(".planning-thinking-output")!;
+      expect(container.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(0);
+      expect(container.querySelectorAll(".thinking-trace-section-empty")).toHaveLength(0);
+      fireEvent.click(screen.getByTestId("thinking-trace-raw-toggle"));
+      expect(screen.getByTestId("thinking-trace-raw")).toHaveTextContent("**One**");
+    });
+
     it("shows error state for error session when resumeSessionId is provided", async () => {
       mockFetchAiSession.mockResolvedValue(mockSessionError);
 

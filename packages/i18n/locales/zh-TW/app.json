@@ -1424,7 +1424,11 @@
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
     "restore": "",
-    "backToConversations": ""
+    "backToConversations": "",
+    "quoteMessage": "引用訊息",
+    "agentRepliesFailed": "部分代理無法回覆：{{agents}}",
+    "noDefaultModelConfigured": "請先在設定中設定預設聊天模型，再建立對話。",
+    "newChatOpenInNewWindowHint": ""
   },
   "chatRooms": {
     "error": {
@@ -1511,7 +1515,6 @@
     "autoMerge": "自動合併",
     "autoMergeDisabled": "自動合併已停用",
     "autoMergeEnabled": "自動合併已啟用",
-    "cancelMove": "取消移動",
     "collapseArchivedLabel": "收起已存檔的工作",
     "collapseArchivedTitle": "收起已存檔的工作",
     "expandArchivedLabel": "展開已存檔的工作",
@@ -1520,41 +1523,25 @@
     "keepProgress": "保留進度",
     "loadMore_one": "",
     "loadMore_other": "",
-    "moveAllToTodo": "全部移至待辦",
-    "moveAllToTodoMessage_one": "",
-    "moveAllToTodoMessage_other": "",
-    "moveAllToTodoTitle": "全部移至待辦",
-    "movedToPlanning_one": "",
-    "movedToPlanning_other": "",
-    "movedToTodo_one": "",
-    "movedToTodo_other": "",
-    "movePartialFailure": "已移動 {{total}} 個工作中的 {{moved}} 個；{{failed}} 個失敗",
-    "moveToTodoHint_one": "",
-    "moveToTodoHint_other": "",
-    "moveToTodoPartialFailure": "已將 {{total}} 個工作中的 {{moved}} 個移至待辦；{{failed}} 個失敗",
     "newTask": "新工作",
     "noManuallyPausableTasks": "沒有可手動暫停的工作",
     "noTasks": "沒有工作",
     "noTasksInColumn": "此欄中沒有工作",
     "pauseHint_one": "",
     "pauseHint_other": "",
-    "preserveProgressMessage": "此工作已完成步驟。在移動前保留進度？",
-    "preserveProgressMoveTodoMessage": "某些工作已完成步驟。在移至待辦前保留進度？",
     "preserveProgressTitle": "保留進度？",
     "promoteUnplannedCancel": "",
     "promoteUnplannedConfirm": "",
     "promoteUnplannedMessage": "",
     "promoteUnplannedTitle": "",
     "replanAll": "全部重新規劃",
-    "replanAllHint_one": "",
-    "replanAllHint_other": "",
-    "replanAllMessage_one": "",
-    "replanAllMessage_other": "",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "重新規劃所有工作",
     "resetProgress": "重設進度",
     "resetProgressConfirm": "重設進度",
-    "resetProgressMessage": "在移動此工作之前重設所有步驟進度？",
-    "resetProgressMoveTodoMessage": "在移至待辦前重設工作的步驟進度？",
     "resetProgressTitle": "重設進度？",
     "stopAll": "全部停止",
     "stopAllMessage_one": "",
@@ -1567,7 +1554,10 @@
     "sortArrivalDesc": "",
     "sortArrivalDescHint": "",
     "sortTaskIdDesc": "",
-    "sortTaskIdDescHint": ""
+    "sortTaskIdDescHint": "",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -3450,7 +3440,9 @@
     "useProjectDefault": "使用專案預設",
     "viewOptions": "檢視選項",
     "workflowLabel": "",
-    "statusReplan": "重新規劃"
+    "statusReplan": "重新規劃",
+    "statusWaiting": "",
+    "statusWaitingOn": ""
   },
   "mailbox": {
     "agent": "代理",
@@ -6200,7 +6192,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
-      "autoReloadDashboardOnVersionChange": "",
       "checkForThe": "",
       "checkForUpdatesAutomatically": "",
       "cLIBinaryOnPATH": "",
@@ -6230,7 +6221,6 @@
       "updates": "",
       "weekly": "",
       "whenDisabledToolRowsAreStillLoggedBut": "",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": "",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -7951,7 +7941,14 @@
       "overlapBlocker": "文件範圍重疊阻斷器：",
       "removeTitle": "移除依賴 {{id}}",
       "searchPlaceholder": "搜尋任務…",
-      "stale": "（已過期）"
+      "stale": "（已過期）",
+      "overlapFiles": {
+        "loading": "",
+        "error": "",
+        "noScope": "",
+        "none": "",
+        "matches": ""
+      }
     },
     "description": {
       "showLess": "顯示更少",
@@ -8066,21 +8063,8 @@
       "noBranchToMerge": "沒有可合併的分支",
       "title": "合併任務"
     },
-    "move": {
-      "backToInProgress": "返回進行中",
-      "backTo": "返回{{column}}",
-      "cancelMove": "取消移動",
-      "keepProgress": "保留進度",
-      "movedTo": "已移至 {{column}}",
-      "moveTo": "移至 {{column}}",
-      "preserveProgressMessage": "此任務有已完成的步驟。移動前保留進度？",
-      "preserveProgressTitle": "保留進度？",
-      "resetProgress": "重置進度",
-      "resetProgressMessage": "在移動此任務之前重置所有步驟進度？",
-      "resetProgressTitle": "重置進度？"
-    },
     "nearDuplicate": {
-      "actions": "選擇「封存」將此任務封存，或選擇「保留」繼續使用此任務。",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "封存",
       "archiveConfirm": "封存",
       "archived": "已封存 {{id}}",
@@ -8088,14 +8072,14 @@
       "archiveTitle": "封存近似重複任務",
       "copy": "此任務看起來是以下任務的近似重複：",
       "headline": "檢測到潛在重複",
-      "keepBtn": "保留",
-      "kept": "保留了 {{id}} 並關閉了重複警告",
       "deleteBtn": "刪除",
       "deleteConfirm": "刪除",
       "deleted": "已刪除 {{id}}",
       "deleteMessage": "將 {{id}} 作為 {{duplicateOf}} 的重複項刪除？",
       "deleteTitle": "刪除重複任務",
-      "triageActions": "選擇刪除以移除此重複項，或選擇保留以繼續。"
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "下次恢復時間：{{time}}",
     "no": "否",
@@ -8288,7 +8272,11 @@
       "workflow": "工作流程",
       "summary": "Summary",
       "cost": "",
-      "recommendations": ""
+      "recommendations": "",
+      "dependencies": "",
+      "attachments": "",
+      "details": "",
+      "debug": ""
     },
     "terminal": {
       "loading": ""
@@ -8429,6 +8417,9 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalHint": ""
+    },
+    "debug": {
+      "none": ""
     }
   },
   "taskDocuments": {
@@ -8700,9 +8691,8 @@
     "depsCount_other": "",
     "descriptionPlaceholder": "任務描述",
     "descriptionRefined": "已用 AI 優化說明",
-    "doneNoMerge": "完成（不合併）",
     "duplicateCheckFailed": "重複檢查失敗，仍然建立任務。",
-    "duplicateDismissed": "已保留 {{taskId}}；重複警告已忽略",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "{{id}} 的重複項目",
     "editTask": "編輯任務",
     "enterDescriptionFirst": "請先輸入說明",
@@ -8738,10 +8728,7 @@
     "issueClosed": "已關閉",
     "issueDeleted": "已刪除",
     "issueLeft": "保留",
-    "keep": "保留",
-    "keepFailed": "保留 {{taskId}} 失敗：{{error}}",
     "keepProgress": "保留進度",
-    "keepTaskTitle": "保留此任務並忽略重複警告",
     "leaveUnchanged": "保持不變",
     "lineageConflict": "{{taskId}} 有子項目（{{children}}）將其參照為來源父項。\n\n仍要先解除這些參照並刪除嗎？",
     "linkedIssueChipAriaLabel": "關聯的 GitHub Issue #{{number}}",
@@ -8765,7 +8752,7 @@
     "moved": "已將 {{taskId}} 移動至 {{column}}",
     "moveFailed": "移動 {{taskId}} 失敗：{{error}}",
     "moveTask": "移動任務",
-    "nearDuplicateTitle": "疑似與 {{id}} 重複",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "",
     "noAgentsAvailable": "目前沒有可用的代理程式",
     "node": "節點",
@@ -8870,7 +8857,10 @@
     "refinesOfTitle": "",
     "revertedTasks": "",
     "revertedResolutionActions": "",
-    "revise": ""
+    "revise": "",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9742,7 +9732,9 @@
     "noDetail": "",
     "untitledSection": "",
     "sectionCount": "",
-    "sectionCountPlural": ""
+    "sectionCountPlural": "",
+    "showRaw": "",
+    "showSections": ""
   },
   "artifactImageViewer": {
     "openTask": "",

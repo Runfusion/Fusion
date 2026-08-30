@@ -607,6 +607,8 @@ export function clearDoneTransientFieldsImpl(store: TaskStore, task: Task): bool
       || task.blockedBy !== undefined
       || task.overlapBlockedBy !== undefined
       || task.recoveryRetryCount !== undefined
+      || task.sessionContentionHoldCount !== undefined
+      || task.sessionContentionWaitReason !== undefined
       || task.nextRecoveryAt !== undefined
       || task.paused !== undefined
       || task.userPaused !== undefined
@@ -619,6 +621,8 @@ export function clearDoneTransientFieldsImpl(store: TaskStore, task: Task): bool
     task.blockedBy = undefined;
     task.overlapBlockedBy = undefined;
     task.recoveryRetryCount = undefined;
+    task.sessionContentionHoldCount = 0;
+    task.sessionContentionWaitReason = undefined;
     task.nextRecoveryAt = undefined;
     task.paused = undefined;
     task.userPaused = undefined;

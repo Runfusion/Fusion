@@ -38,6 +38,8 @@ Events that close a task's delivery: blocked/advanced completion parks, already-
 | `task:merge-boundary-unproven-parked` | A workflow merge boundary could not be proven and its terminal park is recorded with best-effort, time-bounded telemetry that never blocks or stalls the park. |
 | `task:finalize-lost-work-blocked` | Finalize is blocked because it would discard work (lost-work guard). |
 | `task:auto-recover-stale-merger-status` | Self-healing clears a stale merger status left on a finalize path. |
+| `task:merge-admission-deferred-live-execution` | Merge admission found a live executor session, execution lock, or active task signal and deferred without parking the task. Metadata contains task ID plus fixed source, signal, and outcome values only. |
+| `task:reconcile-confirmed-merge-checklist` | A confirmed merge reconciled stale non-terminal checklist steps or pending pre-merge results before terminal finalization. Metadata contains task ID, source, counts, prior column, and fixed outcome only. |
 
 ## Self-healing reconciliation events
 
@@ -96,3 +98,8 @@ All `recordRunAuditEventWithinTransaction(tx, ...)` calls and the `recordRunAudi
 ### Review convergence events
 
 `task:review-finding-disputed`, `task:review-convergence-escalation`, `task:review-arbitration`, and `task:review-convergence-human-escalation` record review-cycle progression. Their metadata contains only ids, counts, and fixed outcomes; dispute rationales, findings, reviewer feedback, and arbiter output are never recorded. All five emission sites use the FN-9175 bounded best-effort seam, so hostile telemetry cannot alter or block the ladder, arbitration release, or dispute result.
+
+| Event | Metadata |
+| --- | --- |
+| `review-remediation-appended` | Task id, gate id, wave, and count only. |
+| `review-remediation-parked` | Task id and fixed park outcome only. |

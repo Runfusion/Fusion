@@ -450,7 +450,11 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           // Best-effort stamp only.
         }
 
-        return { activeProject, outcome: ensured.outcome };
+        return {
+          activeProject,
+          outcome: ensured.outcome,
+          integrationBranches: ensured.integrationBranches ?? [],
+        };
       });
 
       /*
@@ -520,6 +524,31 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           });
         } catch {
           // Non-fatal: project registration succeeded; settings can be configured later
+        }
+      }
+
+      /*
+      FNXC:IntegrationBranchReadiness 2026-08-24-00:53:
+      FN-183 exposes the single-repository reconciliation result at every dashboard registration
+      outcome, including existing and reattached projects. Persist it only into a blank project
+      scope and never for active workspace mode, so an operator's explicit integrationBranch or
+      legacy baseBranch remains authoritative and per-member workspace defaults do not bleed here.
+      */
+      const [integrationBranch] = activeProjectWithOutcome.integrationBranches;
+      if (activeProjectWithOutcome.integrationBranches.length === 1 && integrationBranch?.action !== "unavailable") {
+        try {
+          const store = await getOrCreateProjectStore(activeProjectWithOutcome.activeProject.id);
+          const scopedSettings = await store.getSettingsByScope();
+          const projectSettings = scopedSettings.project as typeof scopedSettings.project & { baseBranch?: unknown };
+          const integrationBranchIsBlank = typeof projectSettings.integrationBranch !== "string"
+            || projectSettings.integrationBranch.trim().length === 0;
+          const baseBranchIsBlank = typeof projectSettings.baseBranch !== "string"
+            || projectSettings.baseBranch.trim().length === 0;
+          if (projectSettings.workspaceMode !== true && integrationBranchIsBlank && baseBranchIsBlank) {
+            await store.updateSettings({ integrationBranch: integrationBranch.branch });
+          }
+        } catch {
+          // FNXC:IntegrationBranchReadiness 2026-08-24-00:53: Settings persistence is non-fatal after registration.
         }
       }
 

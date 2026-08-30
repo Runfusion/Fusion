@@ -340,6 +340,7 @@ export type {
 } from "./agents/column-agent-resolver.js";
 export { BUILTIN_CODING_WORKFLOW_IR } from "./workflows/builtin-coding-workflow-ir.js";
 export { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./workflows/builtin-coding-ideas-workflow-ir.js";
+export { BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR } from "./workflows/builtin-coding-ideas-v2-workflow-ir.js";
 export { PLAN_REVIEW_GROUP_ID } from "./workflows/builtin-plan-review-group.js";
 export { BUILTIN_MARKETING_WORKFLOW_IR } from "./workflows/builtin-marketing-workflow-ir.js";
 export { evaluateForeachMergeProof } from "./workflow-merge-proof.js";
@@ -348,9 +349,15 @@ export {
   resolveWorkflowOptionalSteps,
   resolveDefaultOnOptionalGroupIds,
   isWorkflowOptionalGroupEnabled,
+  isReportingOnlyOptionalGroup,
 } from "./workflows/workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional-steps.js";
-export { resolveRequiredPreMergeStepIds } from "./merge/required-pre-merge-steps.js";
+export { resolveRequiredPreMergeStepIds, resolvePreMergeGateForTask } from "./merge/required-pre-merge-steps.js";
+export type { ResolvedPreMergeGate } from "./merge/required-pre-merge-steps.js";
+export { resolveStepReopenPolicy } from "./workflows/workflow-step-reopen-policy.js";
+/* FNXC:ReviewLaneRecommendations 2026-08-26-07:34: shared with the engine so a review-lane projection is screened by the same rule as the store boundary. */
+export { normalizeTaskRecommendations } from "./tasks/recommendation-validation.js";
+export type { StepReopenPolicy } from "./workflows/workflow-step-reopen-policy.js";
 export {
   classifyMergeSweepAdmission,
   DEFAULT_MERGE_SWEEP_QUIESCENCE_MS,
@@ -405,6 +412,7 @@ export {
 } from "./config/moved-settings.js";
 export {
   ensureGitRepositoryForProjectPath,
+  ensureProjectGitReadiness,
   GitRepositoryInitializationError,
   WorkspaceRepoValidationError,
   detectWorkspaceRepos,
@@ -421,11 +429,24 @@ export type {
   GitRepositoryCommandRunner,
   GitRepositoryEnsureOutcome,
   EnsureGitRepositoryOptions,
+  ProjectGitReadiness,
   WorkspaceConfig,
   WorkspaceRepoValidationReason,
   WorkspaceModeToggleOps,
   WorkspaceModeToggleResult,
 } from "./git/git-repository.js";
+export {
+  WELL_KNOWN_INTEGRATION_BRANCHES,
+  selectIntegrationBranch,
+  ensureIntegrationBranchLocalRef,
+} from "./git/integration-branch-readiness.js";
+export type {
+  IntegrationBranchSource,
+  IntegrationBranchSelectionInput,
+  IntegrationBranchSelection,
+  IntegrationBranchReconciliation,
+  EnsureIntegrationBranchLocalRefOptions,
+} from "./git/integration-branch-readiness.js";
 
 // ── Trait model (U2) ─────────────────────────────────────────────────
 export type {
@@ -997,6 +1018,15 @@ export {
   type NoOpCompletionMarker,
   type NoOpCompletionMarkerKind,
 } from "./merge/no-op-completion-marker.js";
+export {
+  formatRemediationStepName,
+  isRemediationStep,
+  remediationWaveCount,
+  hasOpenEquivalentRemediationStep,
+  remediationDeclaredFiles,
+} from "./tasks/remediation-steps.js";
+export type { RemediationStepInput } from "./tasks/remediation-steps.js";
+export type { AppendRemediationStepsOptions, AppendRemediationStepsResult } from "./task-store/remediation-step-ops.js";
 export { evaluateNoCommitsNoOpFinalize } from "./merge/no-commits-finalize-guard.js";
 export type { NoCommitsNoOpFinalizeEvaluation } from "./merge/no-commits-finalize-guard.js";
 export { evaluateCompletedPromotionFailureProvenance, CLEAN_COMPLETION_MARKERS } from "./merge/completed-promotion-failure-provenance.js";
@@ -1273,6 +1303,7 @@ export {
   getTaskHardMergeBlocker,
   getMergeConfirmedFinalizationBlocker,
   getUnfinishedStepTitles,
+  hasNonTerminalSteps,
   REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   MERGE_CONFIRMED_TRANSIENT_STATUSES,
   clearMergeConfirmedTransientStatus,
@@ -1295,6 +1326,12 @@ export {
   type MergeTargetResolution,
   type MergeTargetResolverOptions,
 } from "./merge/task-merge.js";
+export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
+export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
+export { evaluatePreMergeApprovals } from "./merge/pre-merge-approval.js";
+export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,
@@ -2667,7 +2704,7 @@ export {
 export type { ProviderInstanceRef } from "./provider-instance.js";
 
 // ── Error helpers ─────────────────────────────────────────
-export { getErrorMessage } from "./process/error-message.js";
+export { getErrorMessage, describeErrorChain, summarizeErrorForOperator } from "./process/error-message.js";
 
 // ── Secrets crypto ───────────────────────────────────────
 export {

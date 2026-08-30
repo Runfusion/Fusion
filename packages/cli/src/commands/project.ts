@@ -105,6 +105,25 @@ function formatDisplayPath(projectPath: string): string {
   return basename(projectPath) || ".";
 }
 
+/*
+FNXC:IntegrationBranchReadiness 2026-08-24-00:57:
+FN-183 keeps `fn project add` transparent about the shared registration result. Only a root
+single-repository entry has one project-level branch to report; a workspace's member entries are
+intentionally not flattened into misleading root output, and unavailable actions stay visible.
+*/
+function logIntegrationBranchReconciliation(integrationBranches: unknown): void {
+  if (!Array.isArray(integrationBranches) || integrationBranches.length !== 1) return;
+  const [entry] = integrationBranches as Array<{ repoRelPath?: unknown; branch?: unknown; action?: unknown }>;
+  if (
+    entry?.repoRelPath !== "."
+    || typeof entry.branch !== "string"
+    || entry.branch.trim().length === 0
+    || typeof entry.action !== "string"
+    || entry.action.trim().length === 0
+  ) return;
+  console.log(`    ✓ Integration branch: ${entry.branch} (${entry.action})`);
+}
+
 /**
  * Format a timestamp for display (relative or absolute).
  */
@@ -482,6 +501,7 @@ export async function runProjectAdd(
     if (ensured.gitRepository === "initialized") {
       console.log(`    Git: initialized`);
     }
+    logIntegrationBranchReconciliation(ensured.integrationBranches);
     if (memoryInitialized) {
       console.log(`    Memory: initialized`);
     }

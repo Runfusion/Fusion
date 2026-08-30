@@ -6,31 +6,10 @@ const RELOAD_FLAG = "fusion:version-reload";
 const VERSION_UPDATE_FLAG = "fusion:version-update";
 const RELOADED_REMOTE_VERSION_FLAG = "fusion:version-reloaded-remote";
 
-/**
- * Module-level guard for auto-reload behavior.
- * Default true (auto-reload enabled). Set to false when the user disables
- * the `autoReloadOnVersionChange` setting.
- */
-let autoReloadEnabled = true;
-
-/**
- * Allow the React app to toggle the auto-reload guard at runtime
- * (e.g. when the user changes the setting in the Settings modal).
- */
-export function setAutoReloadEnabled(enabled: boolean): void {
-  autoReloadEnabled = enabled;
-}
-
-/** Exported for testing — reads the current guard value. */
-export function _isAutoReloadEnabled(): boolean {
-  return autoReloadEnabled;
-}
-
 /** Exported for testing — resets internal state and clears installed polling. */
 export function _resetState(): void {
   lastCheckTime = 0;
   checkInFlight = false;
-  autoReloadEnabled = true;
   try {
     sessionStorage.removeItem(RELOADED_REMOTE_VERSION_FLAG);
   } catch {
@@ -63,10 +42,10 @@ export function reloadOnce(reason: string): void {
     return;
   }
   sessionStorage.setItem(RELOAD_FLAG, "1");
-  if (!autoReloadEnabled) {
-    console.info("[versionCheck] auto-reload disabled by setting, skipping reload:", reason);
-    return;
-  }
+  /*
+   FNXC:VersionAutoReload 2026-08-23-04:03:
+   Reloading after a version change is mandatory with no operator opt-out. The session and per-remote-version flags prevent loops; they do not disable the behavior.
+  */
   console.info("[versionCheck] reloading:", reason);
   window.location.reload();
 }
@@ -126,31 +105,6 @@ async function fetchRemoteVersion(): Promise<string | null> {
     return typeof data.version === "string" ? data.version : null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Bootstrap: fetch global settings to check `autoReloadOnVersionChange`.
- * Runs once during `installVersionCheck()`. If the fetch fails or times out,
- * the default (true = auto-reload enabled) is kept.
- */
-async function bootstrapAutoReloadSetting(): Promise<void> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch("/api/settings", {
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (res.ok) {
-      const data = (await res.json()) as { autoReloadOnVersionChange?: unknown };
-      if (data.autoReloadOnVersionChange === false) {
-        autoReloadEnabled = false;
-      }
-    }
-  } catch {
-    // Network error, timeout, etc. — keep default (true).
   }
 }
 
@@ -241,7 +195,7 @@ export async function checkVersion(trigger: VersionCheckTrigger = "initial"): Pr
       // ignore
     }
     const alreadyAttempted = Boolean((() => { try { return sessionStorage.getItem(RELOAD_FLAG); } catch { return null; } })());
-    if (autoReloadEnabled && !alreadyAttempted) {
+    if (!alreadyAttempted) {
       setReloadedRemoteVersion(remote);
     }
     reloadOnce(`build version changed: ${__BUILD_VERSION__} -> ${remote}`);
@@ -261,8 +215,6 @@ export async function checkVersion(trigger: VersionCheckTrigger = "initial"): Pr
  */
 export function installVersionCheck(): void {
   if (!import.meta.env.PROD) return;
-  // Fetch settings to apply auto-reload guard before first version check.
-  void bootstrapAutoReloadSetting();
   // Clear stale flag once a fresh page has rendered successfully.
   window.setTimeout(() => sessionStorage.removeItem(RELOAD_FLAG), 5_000);
   document.addEventListener("visibilitychange", () => {

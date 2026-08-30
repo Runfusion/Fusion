@@ -10,6 +10,17 @@ export function isPlanningLifecycleLockTransportError(error: unknown): error is 
 }
 
 /**
+ * FNXC:PlanningLifecycleLock 2026-08-23-06:25:
+ * Graph boundaries can flatten a typed transport rejection to text. Keep the
+ * recovery fallback anchored to the lock's five canonical messages so a generic
+ * timeout never changes executor retry classification.
+ */
+export function isPlanningLifecycleLockTransportFailure(error: unknown, message: string): boolean {
+  if (isPlanningLifecycleLockTransportError(error)) return true;
+  return /^Planning lifecycle lock (?:acquisition timed out after \d+ms|acquisition failed|cleanup timed out after \d+ms|cleanup failed|transport unavailable: .+)$/i.test(message);
+}
+
+/**
  * Shared persisted-state classifier for planning handoff recovery. It deliberately
  * excludes graph work-item/step-instance evidence, which callers must check at
  * their own store boundary before acting on a `legacy-null` result.

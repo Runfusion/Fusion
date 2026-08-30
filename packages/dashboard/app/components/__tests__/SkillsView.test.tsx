@@ -196,14 +196,15 @@ describe("SkillsView", () => {
       });
     });
 
-    it("renders install buttons only for catalog entries with a source repo", async () => {
+    it("renders Installed without an interactive control for catalog skills already present", async () => {
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Install Test Skill" })).toBeTruthy();
-        expect(screen.getByRole("button", { name: "Install Another Skill" })).toBeTruthy();
+        expect(screen.getByText("Installed")).toBeTruthy();
       });
 
+      expect(screen.queryByRole("button", { name: "Install Another Skill" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Install Missing Source" })).toBeNull();
     });
 
@@ -397,6 +398,7 @@ describe("SkillsView", () => {
       });
 
       mockFetchDiscoveredSkills.mockClear();
+      mockFetchSkillsCatalog.mockClear();
 
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Install Test Skill" }));
@@ -405,6 +407,7 @@ describe("SkillsView", () => {
       await waitFor(() => {
         expect(mockInstallSkill).toHaveBeenCalledWith("owner/test-repo", "test-skill", undefined);
         expect(mockFetchDiscoveredSkills).toHaveBeenCalledTimes(1);
+        expect(mockFetchSkillsCatalog).toHaveBeenCalledTimes(1);
         expect(mockAddToast).toHaveBeenCalledWith("Installed Test Skill", "success");
       });
     });

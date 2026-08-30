@@ -1300,6 +1300,7 @@
     "modeAgent": "Agent",
     "modeModel": "Modèle",
     "newChat": "Nouvelle discussion",
+    "newChatOpenInNewWindowHint": "Ctrl/Cmd + clic pour ouvrir la nouvelle conversation dans une fenêtre séparée",
     "newChatModeAgent": "Agent",
     "newChatModeModel": "Modèle",
     "newChatTitle": "Nouvelle discussion",
@@ -1424,7 +1425,10 @@
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
     "restore": "",
-    "backToConversations": ""
+    "backToConversations": "",
+    "quoteMessage": "Citer le message",
+    "agentRepliesFailed": "Certains agents n’ont pas pu répondre : {{agents}}",
+    "noDefaultModelConfigured": "Configurez un modèle de chat par défaut dans les Paramètres avant de créer une conversation."
   },
   "chatRooms": {
     "error": {
@@ -1511,7 +1515,6 @@
     "autoMerge": "Fusion automatique",
     "autoMergeDisabled": "Fusion automatique désactivée",
     "autoMergeEnabled": "Fusion automatique activée",
-    "cancelMove": "Annuler le déplacement",
     "collapseArchivedLabel": "Réduire les tâches archivées",
     "collapseArchivedTitle": "Réduire les tâches archivées",
     "expandArchivedLabel": "Développer les tâches archivées",
@@ -1520,41 +1523,25 @@
     "keepProgress": "Conserver la progression",
     "loadMore_one": "",
     "loadMore_other": "",
-    "moveAllToTodo": "Déplacer tout vers À faire",
-    "moveAllToTodoMessage_one": "",
-    "moveAllToTodoMessage_other": "",
-    "moveAllToTodoTitle": "Déplacer tout vers À faire",
-    "movedToPlanning_one": "",
-    "movedToPlanning_other": "",
-    "movedToTodo_one": "",
-    "movedToTodo_other": "",
-    "movePartialFailure": "{{moved}} tâche(s) sur {{total}} déplacée(s) ; {{failed}} échouée(s)",
-    "moveToTodoHint_one": "",
-    "moveToTodoHint_other": "",
-    "moveToTodoPartialFailure": "{{moved}} tâche(s) sur {{total}} déplacée(s) vers À faire ; {{failed}} échouée(s)",
     "newTask": "Nouvelle tâche",
     "noManuallyPausableTasks": "Aucune tâche pouvant être mise en pause manuellement",
     "noTasks": "Aucune tâche",
     "noTasksInColumn": "Aucune tâche dans cette colonne",
     "pauseHint_one": "",
     "pauseHint_other": "",
-    "preserveProgressMessage": "Cette tâche a des étapes terminées. Conserver la progression avant de déplacer ?",
-    "preserveProgressMoveTodoMessage": "Certaines tâches ont des étapes terminées. Conserver la progression avant de déplacer vers À faire ?",
     "preserveProgressTitle": "Conserver la progression ?",
     "promoteUnplannedCancel": "",
     "promoteUnplannedConfirm": "",
     "promoteUnplannedMessage": "",
     "promoteUnplannedTitle": "",
     "replanAll": "Replanifier tout",
-    "replanAllHint_one": "",
-    "replanAllHint_other": "",
-    "replanAllMessage_one": "",
-    "replanAllMessage_other": "",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "Replanifier toutes les tâches",
     "resetProgress": "Réinitialiser la progression",
     "resetProgressConfirm": "Réinitialiser la progression",
-    "resetProgressMessage": "Réinitialiser la progression de toutes les étapes avant de déplacer cette tâche ?",
-    "resetProgressMoveTodoMessage": "Réinitialiser la progression des étapes des tâches avant de déplacer vers À faire ?",
     "resetProgressTitle": "Réinitialiser la progression ?",
     "stopAll": "Arrêter tout",
     "stopAllMessage_one": "",
@@ -1567,7 +1554,10 @@
     "sortArrivalDesc": "",
     "sortArrivalDescHint": "",
     "sortTaskIdDesc": "",
-    "sortTaskIdDescHint": ""
+    "sortTaskIdDescHint": "",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -3450,7 +3440,9 @@
     "useProjectDefault": "Utiliser le défaut du projet",
     "viewOptions": "Options d'affichage",
     "workflowLabel": "",
-    "statusReplan": "Replanifier"
+    "statusReplan": "Replanifier",
+    "statusWaiting": "",
+    "statusWaitingOn": ""
   },
   "mailbox": {
     "agent": "Agent",
@@ -6200,7 +6192,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
-      "autoReloadDashboardOnVersionChange": "",
       "checkForThe": "",
       "checkForUpdatesAutomatically": "",
       "cLIBinaryOnPATH": "",
@@ -6230,7 +6221,6 @@
       "updates": "",
       "weekly": "",
       "whenDisabledToolRowsAreStillLoggedBut": "",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": "",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -7951,7 +7941,14 @@
       "overlapBlocker": "Bloqueur de chevauchement de portée de fichier :",
       "removeTitle": "Supprimer la dépendance {{id}}",
       "searchPlaceholder": "Rechercher des tâches…",
-      "stale": "(obsolète)"
+      "stale": "(obsolète)",
+      "overlapFiles": {
+        "loading": "",
+        "error": "",
+        "noScope": "",
+        "none": "",
+        "matches": ""
+      }
     },
     "description": {
       "showLess": "Afficher moins",
@@ -8066,21 +8063,8 @@
       "noBranchToMerge": "aucune branche à fusionner",
       "title": "Fusionner la tâche"
     },
-    "move": {
-      "backToInProgress": "Retour à En cours",
-      "backTo": "Retour à {{column}}",
-      "cancelMove": "Annuler le déplacement",
-      "keepProgress": "Conserver la progression",
-      "movedTo": "Déplacé vers {{column}}",
-      "moveTo": "Déplacer vers {{column}}",
-      "preserveProgressMessage": "Cette tâche a des étapes terminées. Conserver la progression avant de déplacer ?",
-      "preserveProgressTitle": "Conserver la progression ?",
-      "resetProgress": "Réinitialiser la progression",
-      "resetProgressMessage": "Réinitialiser toute la progression des étapes avant de déplacer cette tâche ?",
-      "resetProgressTitle": "Réinitialiser la progression ?"
-    },
     "nearDuplicate": {
-      "actions": "Choisissez Archiver pour déplacer cette tâche vers les archives, ou Conserver pour continuer avec cette tâche.",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "Archiver",
       "archiveConfirm": "Archiver",
       "archived": "{{id}} archivé",
@@ -8088,14 +8072,14 @@
       "archiveTitle": "Archiver la tâche quasi-dupliquée",
       "copy": "Cette tâche semble être un quasi-doublon de",
       "headline": "Doublon potentiel détecté",
-      "keepBtn": "Conserver",
-      "kept": "{{id}} conservé et avertissement de doublon ignoré",
       "deleteBtn": "Supprimer",
       "deleteConfirm": "Supprimer",
       "deleted": "Supprimé {{id}}",
       "deleteMessage": "Supprimer {{id}} comme doublon de {{duplicateOf}} ?",
       "deleteTitle": "Supprimer la tâche en double",
-      "triageActions": "Choisissez Supprimer pour retirer ce doublon, ou Conserver pour continuer."
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "Prochaine récupération à {{time}}",
     "no": "Non",
@@ -8288,7 +8272,11 @@
       "workflow": "Workflow",
       "summary": "Summary",
       "cost": "",
-      "recommendations": ""
+      "recommendations": "",
+      "dependencies": "",
+      "attachments": "",
+      "details": "",
+      "debug": ""
     },
     "terminal": {
       "loading": ""
@@ -8429,6 +8417,9 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalHint": ""
+    },
+    "debug": {
+      "none": ""
     }
   },
   "taskDocuments": {
@@ -8700,9 +8691,8 @@
     "depsCount_other": "",
     "descriptionPlaceholder": "Description de la tâche",
     "descriptionRefined": "Description affinée par l'IA",
-    "doneNoMerge": "Terminé (sans fusion)",
     "duplicateCheckFailed": "Vérification des doublons échouée ; création de la tâche quand même.",
-    "duplicateDismissed": "{{taskId}} conservé ; avertissement de doublon ignoré",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "Doublon de {{id}}",
     "editTask": "Modifier la tâche",
     "enterDescriptionFirst": "Saisir d'abord une description",
@@ -8738,10 +8728,7 @@
     "issueClosed": "fermé",
     "issueDeleted": "supprimé",
     "issueLeft": "laissé",
-    "keep": "Conserver",
-    "keepFailed": "Impossible de conserver {{taskId}} : {{error}}",
     "keepProgress": "Conserver la progression",
-    "keepTaskTitle": "Conserver cette tâche et ignorer l'avertissement de doublon",
     "leaveUnchanged": "Laisser intact",
     "lineageConflict": "{{taskId}} a des enfants de lignée ({{children}}) qui le référencent comme parent source.\n\nSupprimer quand même en dissociant d'abord ces références ?",
     "linkedIssueChipAriaLabel": "Issue GitHub liée #{{number}}",
@@ -8765,7 +8752,7 @@
     "moved": "{{taskId}} déplacé vers {{column}}",
     "moveFailed": "Impossible de déplacer {{taskId}} : {{error}}",
     "moveTask": "Déplacer la tâche",
-    "nearDuplicateTitle": "Potentiel quasi-doublon de {{id}}",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "",
     "noAgentsAvailable": "Aucun agent disponible",
     "node": "Nœud",
@@ -8870,7 +8857,10 @@
     "refinesOfTitle": "",
     "revertedTasks": "",
     "revertedResolutionActions": "",
-    "revise": ""
+    "revise": "",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9742,7 +9732,9 @@
     "noDetail": "Aucun raisonnement capturé pour cette étape",
     "untitledSection": "Raisonnement sans titre",
     "sectionCount": "{{count}} section",
-    "sectionCountPlural": "{{count}} sections"
+    "sectionCountPlural": "",
+    "showRaw": "",
+    "showSections": ""
   },
   "artifactImageViewer": {
     "openTask": "",

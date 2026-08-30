@@ -14,7 +14,6 @@ import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/par
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ProviderIcon } from "./ProviderIcon";
-import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { useModelsCache } from "../hooks/useModelsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
@@ -1669,32 +1668,26 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         </div>
       )}
       <div className="task-planner-chat-composer">
-        <div className="task-planner-chat-target-controls" data-testid="task-planner-chat-target-controls">
-          <CustomModelDropdown
-            id="task-planner-chat-model-selector"
-            label={t("taskDetail.plannerChat.modelLabel", "Chat model")}
-            models={models}
-            value={displayedModelProvider && displayedModelId ? `${displayedModelProvider}/${displayedModelId}` : ""}
-            onChange={(value) => void handleTaskChatModelChange(value)}
-            placeholder={t("model.selectPlaceholder", "Select a model…")}
-            defaultOptionLabel={t("models.useDefault", "Use project default")}
-            /*
-            FNXC:TaskChatModelMenu 2026-08-21-01:12:
-            Task Chat keeps its compact composer trigger, but long provider/model names need Direct Chat's readable, viewport-clamped portaled menu on desktop and mobile.
-            */
-            menuWidth="readable"
-            favoriteProviders={favoriteProviders}
-            favoriteModels={favoriteModels}
-            disabled={queueActionPending || composerState === "sending"}
-          />
-          <ChatThinkingLevelControl
-            level={displayedModel.thinkingLevel}
-            defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
-            showTargetSection={false}
-            onChange={(level) => void handleTaskChatThinkingChange(level)}
-            disabled={queueActionPending || composerState === "sending"}
-          />
-        </div>
+        <ChatThinkingLevelControl
+          level={displayedModel.thinkingLevel}
+          defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
+          showTargetSection
+          showAgentTarget={false}
+          targetKey={plannerChatScopeKey}
+          models={models}
+          favoriteProviders={favoriteProviders}
+          favoriteModels={favoriteModels}
+          modelProvider={displayedModelProvider ?? null}
+          modelId={displayedModelId ?? null}
+          modelPickerLabel={t("taskDetail.plannerChat.modelLabel", "Chat model")}
+          modelDefaultOptionLabel={t("models.useDefault", "Use project default")}
+          defaultModelValue={taskChatModel.provider && taskChatModel.modelId ? `${taskChatModel.provider}/${taskChatModel.modelId}` : ""}
+          onChange={(level) => void handleTaskChatThinkingChange(level)}
+          onChangeModel={(selection) => void handleTaskChatModelChange(
+            selection.modelProvider && selection.modelId ? `${selection.modelProvider}/${selection.modelId}` : "",
+          )}
+          disabled={queueActionPending || composerState === "sending"}
+        />
         <textarea
           ref={handleComposerRef}
           className="input task-planner-chat-input"

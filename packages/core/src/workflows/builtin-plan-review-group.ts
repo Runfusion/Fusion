@@ -1,4 +1,8 @@
 import type { WorkflowIrNode } from "./workflow-ir-types.js";
+
+/** The single definition of the implementation-only criterion, shared by the builder and by
+ *  derived workflows that clone an already-built plan-review node. */
+const IMPLEMENTATION_ONLY_STEPS_CRITERION = "\n\n## Review-gated implementation steps\nREVISE when the proposed task-step list includes testing, verification, documentation, or delivery work. Those are review-column gates in this workflow, not implementation steps.";
 import { PLAN_REVIEW_COMPLETENESS_POLICY } from "../agents/planning-review-policy.js";
 import { REVIEW_REREVIEW_POLICY, REVIEW_SEVERITY_POLICY } from "../agents/review-severity-policy.js";
 
@@ -62,10 +66,27 @@ a wip slot.
 so those call sites omit it and `assignLinearNodeColumns` places the group in whatever planning
 column the preceding node established — `todo` in practice, the same lane by a different route.
 */
+/*
+FNXC:ReviewGatedPlanning 2026-08-24-06:30:
+Setting `requireImplementationOnlySteps` on an ALREADY-BUILT plan-review node is inert: the prompt
+is assembled here, so a later `template.nodes[0].config.requireImplementationOnlySteps = true`
+changes a flag no engine code reads and leaves the reviewer prompt without its criterion. Both
+builtin:review-gated-coding and builtin:coding-ideas-v2 did exactly that. Derived workflows that
+clone a base IR must call this instead so the prompt and the flag stay together.
+*/
+export function applyImplementationOnlyStepReview(node: WorkflowIrNode): void {
+  const template = node.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
+  const reviewConfig = template?.nodes?.[0]?.config;
+  if (!reviewConfig || typeof reviewConfig.prompt !== "string") return;
+  if (reviewConfig.requireImplementationOnlySteps === true) return;
+  reviewConfig.prompt = `${reviewConfig.prompt}${IMPLEMENTATION_ONLY_STEPS_CRITERION}`;
+  reviewConfig.requireImplementationOnlySteps = true;
+}
+
 /** Build the `plan-review` optional-group node placed between planning and execution. */
 export function planReviewOptionalGroupNode(
   column?: string,
-  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded"; requireExternalIntegrationEvidence?: boolean } = {},
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded"; requireExternalIntegrationEvidence?: boolean; requireImplementationOnlySteps?: boolean } = {},
 ): WorkflowIrNode {
   const promptConfig: Record<string, unknown> = {
     name: PLAN_REVIEW_NAME,
@@ -74,6 +95,15 @@ export function planReviewOptionalGroupNode(
     toolMode: "readonly",
     gateMode: "gate",
   };
+  if (options.requireImplementationOnlySteps === true) {
+    /*
+     * FNXC:ReviewGatedCoding 2026-08-23-04:52:
+     * A reviewer can distinguish implementation work from a legitimate name containing
+     * "verification"; parser regexes cannot, so only this workflow opts into the criterion.
+     */
+    promptConfig.prompt = `${PLAN_REVIEW_PROMPT}${IMPLEMENTATION_ONLY_STEPS_CRITERION}`;
+    promptConfig.requireImplementationOnlySteps = true;
+  }
   if (options.requireExternalIntegrationEvidence === true) {
     /*
      * FNXC:PlanValidation 2026-06-30-08:56:

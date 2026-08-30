@@ -38,7 +38,6 @@ function renderDetail(task = makeTask({ id: "FN-7813", worktree: "/repo/.worktre
       task={task}
       projectId="proj-123"
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -89,7 +88,6 @@ describe("TaskDetailModal worktree terminal tab", () => {
         task={makeTask({ id: "FN-7813", worktree: undefined })}
         projectId="proj-123"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -227,7 +225,6 @@ describe("TaskDetailModal worktree terminal tab", () => {
         task={makeTask({ id: "FN-OTHER", worktree: "/repo/.worktrees/FN-OTHER" })}
         projectId="proj-123"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -269,7 +266,6 @@ describe("TaskDetailModal worktree terminal tab", () => {
     const contentProps = {
       task,
       projectId: "proj-123",
-      onMoveTask: noopMove,
       onDeleteTask: noopDelete,
       onMergeTask: noopMerge,
       onOpenDetail: noopOpenDetail,

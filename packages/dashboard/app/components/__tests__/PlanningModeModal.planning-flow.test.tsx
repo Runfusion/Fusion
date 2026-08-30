@@ -1795,6 +1795,32 @@ describe("PlanningModeModal sequential flow", () => {
     expect(container.querySelector("[data-testid='thinking-trace-section']")).toBe(first);
   });
 
+  it("keeps titles-only and partial thinking streams readable in the planning loader", async () => {
+    mockFetchAiSession.mockResolvedValue({ ...base, status: "generating", currentQuestion: null, result: null, inputPayload: "{}" });
+    renderSession();
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
+    const handlers = mockConnectPlanningStream.mock.calls[0]?.[2];
+    act(() => handlers?.onThinking?.("**One**\n\n**Two**\n\n**Three**"));
+    await waitFor(() => expect(screen.getByTestId("thinking-trace-raw-toggle")).toBeInTheDocument());
+    const container = document.querySelector<HTMLElement>(".planning-thinking-output")!;
+    expect(container.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(0);
+    expect(container.querySelectorAll(".thinking-trace-section-empty")).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("thinking-trace-raw-toggle"));
+    expect(screen.getByTestId("thinking-trace-raw")).toHaveTextContent("**One**");
+    fireEvent.click(screen.getByTestId("thinking-trace-raw-toggle"));
+
+    cleanup();
+    mockConnectPlanningStream.mockClear();
+    renderSession();
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
+    const partialHandlers = mockConnectPlanningStream.mock.calls[0]?.[2];
+    act(() => partialHandlers?.onThinking?.("**A**\n\nBody A\n\n**B**"));
+    const partialContainer = document.querySelector<HTMLElement>(".planning-thinking-output")!;
+    expect(partialContainer.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(1);
+    act(() => partialHandlers?.onThinking?.("\n\nBody B"));
+    expect(partialContainer.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(2);
+  });
+
   it("streams thinking in the workspace loader during follow-up generations", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
