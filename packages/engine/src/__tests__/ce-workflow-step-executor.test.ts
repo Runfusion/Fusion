@@ -105,7 +105,7 @@ type CapturedSession = {
  * that emits the given output line, then resolves. Returns the capture holder.
  */
 function captureSession(
-  output = '{"verdict":"APPROVE","notes":""}',
+  output = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}',
   questionTool?: { name: string; args: Record<string, unknown> },
 ): { last?: CapturedSession; all: CapturedSession[] } {
   const holder: { last?: CapturedSession; all: CapturedSession[] } = { all: [] };

@@ -86,7 +86,7 @@ If you have just finished a step's work, immediately call \`fn_task_update\` to 
 
 The user is not watching this conversation in real-time. They will read the final result. Asking permission wastes a full retry cycle and may orphan committed work.
 
-If the work genuinely cannot proceed (an upstream API break, a missing prerequisite task, an unresolvable external error), call \`fn_task_done(outcome="blocked", reason="<concrete blocker + what would unblock it>", blockedBy=["FN-XXXX"])\`. This parks the task as failed with no completion claim, leaves your steps in their true statuses, preserves your worktree/branch, and records \`blockedBy\` as dependencies so the task requeues once the blocker completes. Do NOT mark the remaining steps \`skipped\` and call \`fn_task_done\` to fake completion — that launders a failure into \`done\`. Never write the blocker as plain prose.
+If the work genuinely cannot proceed because of a host-resource, network, model-provider, or credential failure, or because a prerequisite Fusion task is incomplete, call \`fn_task_done(outcome="blocked", reason="<concrete blocker + what would unblock it>", blockedBy=["FN-XXXX"])\`. Missing tooling, optional services, and unrunnable commands must be resolved, replaced with a runnable check, or recorded as deferred verification after achievable work completes; they are not blocked exits. A classified external block freezes in place, while task dependencies park failed with no completion claim, preserve worktree/branch/steps, and requeue after the dependency completes. Do NOT mark the remaining steps \`skipped\` and call \`fn_task_done\` to fake completion — that launders a failure into \`done\`. Never write the blocker as plain prose.
 
 ## How to work
 1. Read the PROMPT.md carefully — it contains your mission, steps, file scope, and acceptance criteria
@@ -111,8 +111,13 @@ FNXC:TaskRecommendations 2026-08-09-04:06:
 FN-125 requires task-execution sessions to preserve optional, non-blocking discoveries only at the
 accepted completion boundary. Durable Workflow Executor sessions cannot create or delegate tasks;
 in-scope work remains in the current task and external blockers use the honest blocked exit.
+
+FNXC:HonestBlockedExit 2026-08-28-22:15:
+FN-243's executor followed broad prompt guidance into a freeze for a missing interpreter. Executor
+prompts now reserve external blocks for host-resource, network, model-provider, and credential causes;
+missing capabilities follow the resolve, substitute, or complete-and-recommend ladder.
 */
-**Out-of-scope findings at completion:** This task-execution session cannot create or delegate tasks. When recommendation capture is enabled, at the final accepted \`fn_task_done(outcome="completed")\` checkpoint evaluate optional, non-blocking findings as genuine task-ready \`recommendations\` (or \`recommendations: []\` when none qualify). Each recommendation needs a stable unique \`id\`, \`title\`, \`description\`, and \`category\`; never use it for a required current-task fix, blocker, secret, executable command, reasoning transcript, or filler. Implement required in-scope work directly in this task.
+**Out-of-scope findings at completion:** This task-execution session cannot create or delegate tasks. When recommendation capture is enabled, at the final accepted \`fn_task_done(outcome="completed")\` checkpoint evaluate optional, non-blocking findings as genuine task-ready \`recommendations\` (or \`recommendations: []\` when none qualify). Each recommendation needs a stable unique \`id\`, \`title\`, \`description\`, and \`category\`; never use it for a required current-task fix, blocker, secret, executable command, reasoning transcript, or filler. Deferred-verification recommendations must be plain prose without backticked command names. Implement required in-scope work directly in this task; resolve missing tooling or optional services, substitute a runnable check, or complete achievable work and recommend the deferred verification. Only host-resource, network, model-provider, and credential failures qualify for an external blocked exit.
 **Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
 
 ## Task Documents
@@ -333,6 +338,12 @@ If the requested outcome is only to decide, route, or coordinate work, include \
 ## Output
 Write PROMPT.md directly and stop. Do not call \`fn_review_spec()\`; workflow Plan Review is the single optional plan review gate before execution.`;
 
+/*
+FNXC:PlanValidation 2026-08-28-22:15:
+FN-243 showed that Plan Review could approve a required verification whose runtime did not exist on
+its host. Standard planning must treat the injected capability inventory as authoring truth, choose
+a runnable substitute, and keep impossible ideal checks explicitly non-blocking.
+*/
 const TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn", an AI-orchestrated task board.
 
 ${PLANNING_COMPLETENESS_POLICY}
@@ -345,6 +356,9 @@ The quality of your spec directly determines execution quality, review churn, an
 ## What you receive
 - A raw task title and optional description (the user's rough idea)
 - Access to the project's files so you can understand context
+
+## Environment feasibility
+When an \`## Environment Capabilities\` section is supplied, no acceptance criterion, completion criterion, or required verification command may depend on a runtime listed unavailable. Specify a runnable substitute instead and record the ideal-but-impossible check under an \`## Environment Constraints\` heading marked explicitly non-blocking. Never state that a plan is blocked because a runtime is missing.
 
 ## What you produce
 Write a complete PROMPT.md specification to the given path using the write tool.
@@ -928,7 +942,7 @@ You have tools to report progress. The board updates in real-time.
 
 **Logging important actions:** \`task_log(message="what happened")\`
 
-**Out-of-scope findings at completion:** This task-execution session cannot create or delegate tasks. When recommendation capture is enabled, retain optional, non-blocking discoveries as task-ready \`fn_task_done\` recommendations at accepted completion, or send \`recommendations: []\` when none qualify. Implement required in-scope work directly here; use the honest blocked exit only for a real external blocker. Never recommend required current-task work, blockers, secrets, commands, reasoning, or filler.
+**Out-of-scope findings at completion:** This task-execution session cannot create or delegate tasks. When recommendation capture is enabled, retain optional, non-blocking discoveries as task-ready \`fn_task_done\` recommendations at accepted completion, or send \`recommendations: []\` when none qualify. Deferred-verification recommendations must be plain prose without backticked command names. Implement required in-scope work directly here; resolve missing tooling or optional services, substitute a runnable check, or complete achievable work and recommend the deferred verification. Only host-resource, network, model-provider, and credential failures qualify for an external blocked exit. Never recommend required current-task work, blockers, secrets, commands, reasoning, or filler.
 
 **Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
 

@@ -4,36 +4,41 @@
  *
  * FNXC:WorkflowStepReopenAuthority 2026-08-23-08:51:
  * FN-180 requires the workflow-resolved replay policy to be the only authority after a review
- * rejection. Step-title heuristics reopened Testing and Documentation steps by name, creating a
- * second authority that could make a confirmed merge's checklist stale. A permitted replay reopens
- * exactly the last actionable completed step; workflows that must preserve remediation steps select
- * the `none` policy before reaching this helper.
+ * rejection. Step-title heuristics created a second authority that could make a confirmed merge's
+ * checklist stale. A permitted replay targets exactly the last actionable completed step; workflows
+ * that must preserve remediation steps select the `none` policy before reaching this helper.
+ *
+ * FNXC:WorkflowStepReopenAuthority 2026-08-28-15:11:
+ * A completed step is immutable execution history. The single replay authority appends a new pending
+ * occurrence instead of rewriting the completed occurrence, while existing pending work prevents
+ * duplicate growth.
  */
 import type { Task, TaskStore } from "@fusion/core";
 
 export async function reopenLastStepForRevision(
   store: TaskStore,
   taskId: string,
-  task: Task,
+  _task: Task,
 ): Promise<{ index: number; name: string; indexes: number[] } | null> {
-  const steps = task.steps;
-  if (steps.length === 0) return null;
+  let replay: { index: number; name: string; indexes: number[] } | null = null;
 
-  let lastNonPendingIndex = -1;
-  for (let i = steps.length - 1; i >= 0; i--) {
-    if (steps[i].status !== "pending") {
-      lastNonPendingIndex = i;
-      break;
+  await store.updateTaskAtomic(taskId, (current) => {
+    const steps = current.steps ?? [];
+    if (steps.length === 0 || steps.every((step) => step.status === "pending")) {
+      return { currentStep: 0 };
     }
-  }
+    if (steps.some((step) => step.status === "pending")) {
+      return null;
+    }
 
-  if (lastNonPendingIndex === -1) {
-    await store.updateTask(taskId, { currentStep: 0 });
-    return null;
-  }
+    const trailing = steps.at(-1)!;
+    const index = steps.length;
+    replay = { index, name: trailing.name, indexes: [index] };
+    return {
+      steps: [...steps, { name: trailing.name, status: "pending" }],
+      currentStep: index,
+    };
+  });
 
-  const index = lastNonPendingIndex;
-  await store.updateStep(taskId, index, "pending");
-  await store.updateTask(taskId, { currentStep: index });
-  return { index, name: steps[index].name, indexes: [index] };
+  return replay;
 }

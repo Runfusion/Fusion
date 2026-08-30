@@ -19,6 +19,8 @@ export interface PipelineScriptedMergeBehavior {
   readonly codeReviewModes?: readonly PipelineReviewMode[];
   /** False models S14's empty task branch; every other production drive commits through its executor session. */
   readonly commitImplementation?: boolean;
+  /** Opt-in MULT-040 coverage: commit the implementation in every direct workspace child that is a Git worktree. */
+  readonly commitImplementationInEveryWorkspaceRepository?: boolean;
   /** Optional tracked task-branch write used by S13 to create a real clean-room conflict. */
   readonly implementationFile?: { readonly path: string; readonly content: string };
   /** Explicit merger-owned content proves S13 took the conflict-resolution branch. */
@@ -258,7 +260,7 @@ export function installPipelineMockScripts(input: {
       therefore skipped the whole block on a workspace task, the executor produced no commit, and
       Code Review reported "No changes — not reviewed" on a scoped repository that was genuinely
       untouched. Resolve the repository the session can actually commit in, exactly as a real
-      executor does through fn_acquire_repo_worktree.
+      executor does through task-start workspace provisioning.
       */
       const implementationRepoDir = existsSync(join(context.options.cwd, ".git"))
         ? context.options.cwd
@@ -266,7 +268,22 @@ export function installPipelineMockScripts(input: {
           .filter((entry) => entry.isDirectory())
           .map((entry) => join(context.options.cwd, entry.name))
           .find((candidate) => existsSync(join(candidate, ".git")));
-      if (!state.implementationCommitted && behavior.commitImplementation !== false && implementationRepoDir) {
+      /*
+      FNXC:PipelineSmoke 2026-08-29-12:48:
+      FN-259 must reproduce MULT-040 with two modified workspace repositories. Keep the default
+      first-child selection byte-identical for existing single-repository scenarios; the opt-in
+      flag writes one real task-branch commit in every direct Git child so Code Review must publish
+      evidence for both repositories before the workspace merge can complete.
+      */
+      const implementationRepoDirs = behavior.commitImplementationInEveryWorkspaceRepository
+        ? (existsSync(join(context.options.cwd, ".git"))
+          ? [context.options.cwd]
+          : readdirSync(context.options.cwd, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => join(context.options.cwd, entry.name))
+            .filter((candidate) => existsSync(join(candidate, ".git"))))
+        : implementationRepoDir ? [implementationRepoDir] : [];
+      if (!state.implementationCommitted && behavior.commitImplementation !== false && implementationRepoDirs.length > 0) {
         /*
         FNXC:PipelineSmoke 2026-08-23-21:45:
         Most rows use an isolated output file, while S13 deliberately writes README.md so the
@@ -277,10 +294,12 @@ export function installPipelineMockScripts(input: {
           path: "pipeline-smoke-output.txt",
           content: `pipeline smoke implementation for ${input.taskId}\n`,
         };
-        writeFileSync(join(implementationRepoDir, implementation.path), implementation.content, "utf8");
-        git(implementationRepoDir, ["add", "--", implementation.path]);
-        if (git(implementationRepoDir, ["diff", "--cached", "--name-only"])) {
-          git(implementationRepoDir, ["commit", "-m", `feat(${input.taskId}): mock executor implementation`]);
+        for (const implementationRepoDir of implementationRepoDirs) {
+          writeFileSync(join(implementationRepoDir, implementation.path), implementation.content, "utf8");
+          git(implementationRepoDir, ["add", "--", implementation.path]);
+          if (git(implementationRepoDir, ["diff", "--cached", "--name-only"])) {
+            git(implementationRepoDir, ["commit", "-m", `feat(${input.taskId}): mock executor implementation`]);
+          }
         }
         state.implementationCommitted = true;
       }

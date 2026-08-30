@@ -939,8 +939,8 @@ describe("TaskChatTab", () => {
   it("counts a tool call plus result as one collapsed invocation and shows the tool name", async () => {
     const user = userEvent.setup();
     mockLogs([
-      makeEntry({ agent: "executor", type: "tool", text: "bash", detail: "pnpm test" }),
-      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: "ok" }),
+      makeEntry({ agent: "executor", type: "tool", text: "fn_run_verification", detail: "command=pnpm test, allowFullSuite=false" }),
+      makeEntry({ agent: "executor", type: "tool_result", text: "fn_run_verification", detail: "ok" }),
     ]);
 
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
@@ -953,10 +953,10 @@ describe("TaskChatTab", () => {
     expect(toolGroup).not.toHaveAttribute("open");
     expect(within(summary as HTMLElement).getByText("1 tool call")).toHaveClass("task-chat-tool-group-count");
     expect(within(summary as HTMLElement).getByText("1 tool call")).toBeVisible();
-    expect(within(summary as HTMLElement).getByText("bash")).toHaveClass("task-chat-tool-group-names");
-    expect(within(summary as HTMLElement).getByText("bash")).toBeVisible();
+    expect(within(summary as HTMLElement).getByText("fn_run_verification")).toHaveClass("task-chat-tool-group-names");
+    expect(within(summary as HTMLElement).getByText("fn_run_verification")).toBeVisible();
     expect(screen.queryByText("2 tool calls")).not.toBeInTheDocument();
-    expect(screen.getByText("pnpm test")).not.toBeVisible();
+    expect(screen.getByText("command=pnpm test, allowFullSuite=false")).not.toBeVisible();
     expect(screen.getByText("ok")).not.toBeVisible();
 
     await user.click(within(summary as HTMLElement).getByText("1 tool call"));
@@ -969,7 +969,7 @@ describe("TaskChatTab", () => {
     expect(kicker).toBeVisible();
     expect(screen.getByText("Arguments")).toBeVisible();
     expect(screen.getByText("Result")).toBeVisible();
-    expect(screen.getByText("pnpm test")).toBeVisible();
+    expect(screen.getByText("command=pnpm test, allowFullSuite=false")).toBeVisible();
     expect(screen.getByText("ok")).toBeVisible();
   });
 
@@ -987,6 +987,55 @@ describe("TaskChatTab", () => {
     const invocation = screen.getByTestId("task-chat-tool-invocation");
     expect(invocation).toHaveTextContent("TASK_ACTIVITY_COMMAND_SUFFIX");
     expect(invocation).toHaveTextContent("TASK_ACTIVITY_RESULT_SUFFIX");
+  });
+
+  it("previews a long task tool payload and reveals its complete value on request", async () => {
+    const user = userEvent.setup();
+    const longResult = `line one\nline two\nline three\nline four\nline five\nline six\nline seven\n${"x".repeat(601)}`;
+    mockLogs([
+      makeEntry({ agent: "executor", type: "tool", text: "bash", detail: "pnpm test" }),
+      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: longResult }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    await user.click(screen.getByText("1 tool call"));
+
+    const preview = document.querySelector(".tool-call-details-value--clamped");
+    expect(preview).toHaveTextContent("line seven");
+    const reveal = screen.getByRole("button", { name: "Show more (8 lines)" });
+    expect(reveal).toHaveAttribute("aria-expanded", "false");
+    expect(reveal).toHaveAttribute("aria-controls");
+
+    await user.click(reveal);
+
+    expect(document.querySelector(".tool-call-details-value--clamped")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows one host-level missing-detail hint for historical tool entries", async () => {
+    const user = userEvent.setup();
+    mockLogs([
+      makeEntry({ agent: "executor", type: "tool", text: "bash", detail: undefined }),
+      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: undefined }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    await user.click(screen.getByText("1 tool call"));
+
+    expect(screen.getByTestId("task-chat-tool-details-missing")).toHaveTextContent("may have been recorded while detail saving was disabled");
+  });
+
+  it("keeps task tool preview clamping and its mobile host spacing tokenized", () => {
+    const detailCss = readFileSync(resolve(__dirname, "../ToolCallDetails.css"), "utf8");
+    const chatCss = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+
+    const clampedRule = getCssRuleBlock(detailCss, ".tool-call-details-value--clamped");
+    expect(clampedRule).toContain("max-block-size");
+    expect(clampedRule).toContain("overflow: hidden");
+    expect(clampedRule).not.toContain("display: none");
+    expect(getCssRuleBlock(detailCss, ".tool-call-details-reveal")).toContain("margin-top: var(--space-xs)");
+    expect(chatCss).toContain(".task-chat-tool-details-missing");
+    expect(chatCss.slice(chatCss.indexOf("@media (max-width: 768px)"))).toContain(".task-chat-tool-details-missing");
   });
 
   it("shows Bash tool duration in the expanded invocation and omits legacy timing labels", async () => {
@@ -1830,6 +1879,38 @@ describe("TaskChatTab", () => {
     expect(mockedRefineTask).not.toHaveBeenCalled();
     expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
     expect(input).toHaveValue("");
+  });
+
+  it("submits a long Activity steering draft without the former message-length error", async () => {
+    const user = userEvent.setup();
+    const longText = "a".repeat(5_000);
+    const addToast = vi.fn();
+    mockedAddSteeringComment.mockResolvedValue(makeTask());
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={addToast} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: longText } });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).toHaveBeenCalledWith("FN-001", longText, "project-1");
+    });
+    expect(addToast.mock.calls.some(([message]) => typeof message === "string" && message.includes("Unable to send message"))).toBe(false);
+  });
+
+  it("submits a long done-task refinement draft without the former message-length error", async () => {
+    const user = userEvent.setup();
+    const longText = "a".repeat(5_000);
+    const addToast = vi.fn();
+    mockedRefineTask.mockResolvedValue(makeTask({ id: "FN-257-refinement", column: "todo" }));
+    render(<TaskChatTab task={makeTask({ column: "done" })} projectId="project-1" active addToast={addToast} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: longText } });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(mockedRefineTask).toHaveBeenCalledWith("FN-001", longText, "project-1");
+    });
+    expect(addToast.mock.calls.some(([message]) => typeof message === "string" && message.includes("Unable to send message"))).toBe(false);
   });
 
   it("sends Activity steering exactly once on the first mobile tap while the textarea is focused", async () => {

@@ -1078,6 +1078,7 @@ export const RemovalReason = {
   PoolPrune: "pool-prune",
   TaskReset: "task-reset",
   WorkspaceAcquireRollback: "workspace-acquire-rollback",
+  CompletionLandedCleanup: "completion-landed-cleanup",
 } as const;
 
 export type RemovalReason = typeof RemovalReason[keyof typeof RemovalReason];
@@ -1099,12 +1100,24 @@ const DEFENSIVE_REMOVAL_REASONS = new Set<RemovalReason>([
   RemovalReason.SelfHealingReclaim,
   RemovalReason.SelfHealingStaleActiveBranch,
   RemovalReason.StepSessionCleanup,
+  RemovalReason.CompletionLandedCleanup,
+]);
+
+const POST_LANDING_PROOF_REASONS = new Set<RemovalReason>([
+  RemovalReason.CompletionLandedCleanup,
 ]);
 
 export class InvalidForceUsageError extends Error {
   constructor(reason: RemovalReason) {
     super(`force=true is not allowed for removal reason '${reason}'`);
     this.name = "InvalidForceUsageError";
+  }
+}
+
+export class InvalidPostLandingProofUsageError extends Error {
+  constructor(reason: RemovalReason) {
+    super(`postLandingProof is not allowed for removal reason '${reason}'`);
+    this.name = "InvalidPostLandingProofUsageError";
   }
 }
 
@@ -1121,15 +1134,22 @@ export class ActiveSessionWorktreeRemovalError extends Error {
   }
 }
 
+/** Classify porcelain output without allowing ignored entries to mask deliverable content. */
+export function classifyWorktreeRemovalContent(porcelain: string): "clean" | "ignored-only" | "deliverable" {
+  const entries = porcelain.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (entries.length === 0) return "clean";
+  return entries.every((line) => line.startsWith("!!")) ? "ignored-only" : "deliverable";
+}
+
 /** Fail closed when an automatic sweep cannot prove the checkout is empty of user content. */
-async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<void> {
+async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<"clean" | "ignored-only"> {
   // Nothing on disk means nothing to preserve — stale registrations prune normally below.
   if (!existsSync(worktreePath)) {
-    return;
+    return "clean";
   }
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync("git", ["status", "--porcelain", "--ignored", "--untracked-files=all"], {
+    ({ stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "--ignored", "--untracked-files=normal"], {
       cwd: worktreePath,
       encoding: "utf-8",
       timeout: 15_000,
@@ -1138,9 +1158,11 @@ async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<voi
   } catch (error) {
     throw new Error(`preserving ${worktreePath}: status probe failed (${error instanceof Error ? error.message : String(error)})`);
   }
-  if (stdout.trim().length > 0) {
+  const classification = classifyWorktreeRemovalContent(stdout);
+  if (classification === "deliverable") {
     throw new Error(`preserving ${worktreePath}: uncommitted or ignored content present`);
   }
+  return classification;
 }
 
 /**
@@ -1155,6 +1177,8 @@ export async function removeWorktree(input: {
   reason: RemovalReason;
   taskId?: string;
   audit?: RunAuditor;
+  /** Durable landing proof permits ignored-only content, never force removal. */
+  postLandingProof?: { landedSha?: string; source: string };
   force?: boolean;
   timeout?: number;
   expectedOwnerTaskId?: string;
@@ -1170,15 +1194,63 @@ export async function removeWorktree(input: {
   if (input.force === true && !ALLOWED_FORCE_REASONS.has(input.reason)) {
     throw new InvalidForceUsageError(input.reason);
   }
+  if (input.postLandingProof && !POST_LANDING_PROOF_REASONS.has(input.reason)) {
+    throw new InvalidPostLandingProofUsageError(input.reason);
+  }
 
   const requiresCleanWorktree = DEFENSIVE_REMOVAL_REASONS.has(input.reason);
 
-  // FNXC:WorktreeCleanup:
-  // Defensive sweeps must prove cleanliness before destroying anything. Dirty or
-  // unverifiable content is preserved (fail closed) — callers treat the throw as "kept".
+  /*
+  FNXC:WorktreeCleanup 2026-08-29-00:51:
+  FN-251 requires cleanup after a proven landing to discard ignored-only checkout content, matching
+  Git's own `git worktree remove` boundary: no-force removal already deletes ignored-only content and
+  refuses untracked or modified content. Deliverable, unverifiable, and live-session content remain
+  fail-closed for every caller; only a caller carrying durable landing proof may discard ignored-only
+  content.
+  */
+  let contentClassification: "clean" | "ignored-only" | undefined;
   if (requiresCleanWorktree) {
-    await assertCleanForDefensiveRemoval(input.worktreePath);
+    try {
+      contentClassification = await assertCleanForDefensiveRemoval(input.worktreePath);
+    } catch (error) {
+      const classification = error instanceof Error && error.message.includes(": status probe failed (")
+        ? "unverifiable"
+        : "deliverable";
+      await input.audit?.git({
+        type: "worktree:removal-preserved",
+        target: input.worktreePath,
+        metadata: {
+          taskId: input.taskId,
+          reason: input.reason,
+          source: input.postLandingProof?.source,
+          classification,
+          hasPostLandingProof: input.postLandingProof !== undefined,
+        },
+      }).catch(() => undefined);
+      throw error;
+    }
+    if (contentClassification === "ignored-only" && !input.postLandingProof) {
+      throw new Error(`preserving ${input.worktreePath}: uncommitted or ignored content present`);
+    }
   }
+
+  const recordIgnoredOnlyDiscard = async (): Promise<void> => {
+    if (contentClassification !== "ignored-only" || !input.postLandingProof) return;
+    try {
+      await input.audit?.git({
+        type: "worktree:post-landing-ignored-content-discarded",
+        target: input.worktreePath,
+        metadata: {
+          taskId: input.taskId,
+          reason: input.reason,
+          source: input.postLandingProof.source,
+          landedSha: input.postLandingProof.landedSha,
+        },
+      });
+    } catch {
+      // Audit persistence must not change worktree cleanup outcomes.
+    }
+  };
 
   if (input.expectedOwnerTaskId && input.liveOwnerProbe) {
     const reconciled = reconcileSelfOwnedActiveSessionForRemoval(
@@ -1239,6 +1311,7 @@ export async function removeWorktree(input: {
 
   try {
     await backend.remove(removeInput);
+    await recordIgnoredOnlyDiscard();
     if (input.audit) {
       await input.audit.git({
         type: backend.kind === "worktrunk" ? "worktree:worktrunk-remove" : "worktree:remove",
@@ -1269,6 +1342,7 @@ export async function removeWorktree(input: {
     const native = new NativeWorktreeBackend({ logger, settings: input.settings });
     try {
       await native.remove(removeInput);
+      await recordIgnoredOnlyDiscard();
       await input.audit?.git({ type: "worktree:remove", target: input.worktreePath });
       return { removed: true, classification: "removed" };
     } catch (nativeError) {

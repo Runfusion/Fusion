@@ -427,6 +427,107 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
     }
   });
 
+  it("duplicateTask inherits the source workflow and its intake column", async () => {
+    const h = await makeHarness();
+    try {
+      const workflow = await h.store.createWorkflowDefinition({
+        name: "Duplicate source workflow",
+        kind: "workflow",
+        ir: {
+          version: "v2",
+          name: "Duplicate source workflow",
+          columns: [
+            { id: "source-capture", name: "Capture", traits: [{ trait: "intake", config: { autoTriage: true } }] },
+            { id: "source-done", name: "Done", traits: [{ trait: "complete" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "source-capture" },
+            { id: "end", kind: "end", column: "source-done" },
+          ],
+          edges: [{ from: "start", to: "end" }],
+        },
+      } as never);
+      const source = await h.store.createTask({
+        description: "Task pinned away from the project default",
+        workflowId: workflow.id,
+      });
+
+      const duplicate = await h.store.duplicateTask(source.id);
+
+      expect(duplicate.column).toBe("source-capture");
+      expect(await h.store.getTaskWorkflowSelectionAsync(duplicate.id)).toEqual({
+        workflowId: workflow.id,
+        stepIds: [],
+      });
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("duplicateTask honors an explicit workflow including intake and default-on groups", async () => {
+    const h = await makeHarness();
+    try {
+      const target = await h.store.createWorkflowDefinition({
+        name: "Explicit duplicate target",
+        kind: "workflow",
+        ir: {
+          version: "v2",
+          name: "Explicit duplicate target",
+          columns: [
+            { id: "target-capture", name: "Capture", traits: [{ trait: "intake", config: { autoTriage: true } }] },
+            { id: "target-done", name: "Done", traits: [{ trait: "complete" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "target-capture" },
+            {
+              id: "target-review",
+              kind: "optional-group",
+              config: {
+                name: "Target review",
+                defaultOn: true,
+                template: { nodes: [{ id: "review", kind: "prompt", config: { prompt: "Review" } }], edges: [] },
+              },
+            },
+            { id: "end", kind: "end", column: "target-done" },
+          ],
+          edges: [
+            { from: "start", to: "target-review" },
+            { from: "target-review", to: "end" },
+          ],
+        },
+      } as never);
+      const source = await h.store.createTask({ description: "Source on the default workflow" });
+
+      const duplicate = await h.store.duplicateTask(source.id, { workflowId: target.id });
+
+      expect(duplicate.column).toBe("target-capture");
+      expect(duplicate.enabledWorkflowSteps).toEqual(["target-review"]);
+      expect(await h.store.getTaskWorkflowSelectionAsync(duplicate.id)).toEqual({
+        workflowId: target.id,
+        stepIds: ["target-review"],
+      });
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("duplicateTask rejects an unknown explicit workflow before creating a row", async () => {
+    const h = await makeHarness();
+    try {
+      const source = await h.store.createTask({ description: "Do not duplicate onto a retired workflow" });
+      const beforeIds = (await h.store.listTasks({ includeArchived: true })).map((task) => task.id);
+
+      await expect(h.store.duplicateTask(source.id, { workflowId: "WF-UNKNOWN" })).rejects.toMatchObject({
+        name: "DuplicateWorkflowSelectionError",
+        requestedWorkflowId: "WF-UNKNOWN",
+      });
+
+      expect((await h.store.listTasks({ includeArchived: true })).map((task) => task.id)).toEqual(beforeIds);
+    } finally {
+      await teardown();
+    }
+  });
+
   it("duplicateTask duplicates a task in backend mode", async () => {
     const h = await makeHarness();
     try {

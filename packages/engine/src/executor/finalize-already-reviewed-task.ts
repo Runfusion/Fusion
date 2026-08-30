@@ -37,7 +37,7 @@ export async function finalizeAlreadyReviewedTask(
   const resumeReviewLane = (await deps.resolveResumeLanes(taskId)).review;
   let mergeGate;
   try {
-    mergeGate = await resolvePreMergeGateForTask(deps.store, taskId, latestTask.enabledWorkflowSteps);
+    mergeGate = await resolvePreMergeGateForTask(deps.store, taskId, latestTask.enabledWorkflowSteps, latestTask);
   } catch {
     await deps.store.logEntry(taskId, "Task already in-review; merge deferred", "merge gate could not resolve the task workflow", deps.getRunContextFor(taskId));
     return "blocked";

@@ -29,8 +29,8 @@ vi.mock("../BranchGroupCard", () => ({
 FNXC:TaskDetailTabs 2026-06-17-08:20:
 FN-7306 labels the stable internal `chat` tab as Activity, while later Chat-first detail work keeps that legacy `chat` id only for explicit Activity requests. Definition-tab regression coverage must prove omitted non-done task details now land on planner Chat and Activity remains selectable.
 
-FNXC:TaskDetailTabs 2026-08-27-11:31:
-FN-197 reserves Definition for task steps and PROMPT.md. Dependencies, attachments, and task metadata now have dedicated tabs, so Definition-specific coverage must reject those relocated sections rather than preserve the old mixed surface.
+FNXC:TaskDetailTabs 2026-08-28-23:05:
+FN-244 reserves Definition for task steps and PROMPT.md. Dependencies and task metadata keep dedicated tabs, while attachments now live with Artifacts, so Definition-specific coverage must reject those relocated sections rather than preserve the old mixed surface.
 
 FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
 Omitted non-done TaskDetailModal renders open the top-level planner Chat first/default. Activity controls (`Live`, `Feed`, `Raw`, Live/Feed Activity expand, and Raw fullscreen) are intentionally mounted only after selecting Activity or using an explicit legacy Activity tab request.
@@ -836,26 +836,24 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // For an in-progress task (no workflow steps, no merge commit), the
-      // top-level tabs are: Activity, Chat, Plan, Dependencies, Attachments, Changes, Review,
-      // Comments, Terminal, Cost, Artifacts, Model, Workflow, Stats, Routing, Details, Debug.
-      const tabTexts = ["Activity", "Chat", "Plan", "Dependencies", "Attachments", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug"];
-      const tabs = screen.getAllByRole("button").filter((b) =>
-        tabTexts.includes(b.textContent || "")
+      const tabTexts = ["Activity", "Chat", "Plan", "Changes", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal"];
+      const tabs = screen.getAllByRole("button").filter((button) =>
+        tabTexts.includes(button.textContent || ""),
       );
       expect(tabs.map((tab) => tab.textContent)).toEqual(tabTexts);
-      expect(tabs[0].textContent).toBe("Activity");
-      expect(tabs[1].textContent).toBe("Chat");
-      expect(tabs[2].textContent).toBe("Plan");
-      expect(tabs[7].textContent).toBe("Comments");
-      expect(tabs[8].textContent).toBe("Terminal");
-      expect(tabs[9].textContent).toBe("Cost");
       expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "History" })).toBeNull();
+      for (const removedTab of ["Cost", "Routing", "Debug", "Attachments", "Recommendations"]) {
+        expect(screen.queryByRole("button", { name: removedTab })).toBeNull();
+      }
 
-      expect(container.querySelectorAll(".detail-tab").length).toBe(17);
-      // Workflow tab should always appear even when no workflow steps are configured
+      expect(container.querySelectorAll(".detail-tab")).toHaveLength(14);
+      fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+      expect(screen.getByTestId("task-history-stage-plan")).toBeInTheDocument();
+      expect(screen.getByTestId("task-history-stage-code")).toBeInTheDocument();
+      expect(screen.getByTestId("task-history-stage-review")).toBeInTheDocument();
+      expect(screen.queryByTestId("task-history-stage-merge")).not.toBeInTheDocument();
       expect(screen.getByText("Workflow")).toBeInTheDocument();
-      // Commits tab should NOT appear for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
     });
   });

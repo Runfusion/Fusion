@@ -10,6 +10,11 @@
       "file": "packages/core/src/__tests__/postgres/mission-store.pg.test.ts",
       "reason": "Load-sensitive wall-clock race: 'serializes concurrent claims on the same task (Greptile P1 race)' holds a transaction open, sleeps 250ms, then asserts the competing claim has not settled. Under parallel machine load the second claimant settles (its `settled` flag flips on EITHER success or failure), so the assertion fails with no serialization bug. Observed twice on 2026-08-23 while three dashboard suites ran concurrently (a subagent's 180-file core run, then a full-core run plus an isolated run); passes 65/65 three consecutive times once the machine is calmer. An A/B against the projectTableNames registry change looked causal on one run and did NOT reproduce - the coincidence is the flake itself. Rescue needs a deterministic block-detection signal (e.g. pg_locks / a lock-wait probe) instead of a sleep, not a longer sleep.",
       "quarantinedAt": "2026-08-23"
+    },
+    {
+      "file": "packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts",
+      "reason": "SECOND sighting of the sequence-only reliability failure recorded in docs/solutions/test-failures/suite-only-flakes-observed-register.md entry 14. FN-249's selected engine-reliability file run failed 13 sibling recovery assertions after prior cases, while the exact benign merge-abort subject passed immediately in isolation. The user-cancellation path is not enabled by this fixture; no timeout, retry, or assertion was changed. Quarantined under AGENTS.md's mandatory deletion ratchet until a root-cause repair proves the file's recovery coverage can be rescued.",
+      "quarantinedAt": "2026-08-29"
     }
   ]
 }

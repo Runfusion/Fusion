@@ -148,21 +148,17 @@ The process supervisor logs when it registers a supervised child, starts teardow
   - Log prefix shape: `[<stage-name>] <taskId>: triple-proof not satisfied — no action (operator-decides)`
   - Representative stage names: `no-progress-no-task-done`, `partial-progress-no-task-done`, `stale-incomplete-review`, `ghost-review`, `missing-worktree-review`, `stuck-merge-deadlock`, `finalize-no-op-review`, `reclaim-pr-conflict`, `reclaim-self-owned-branch-conflict`, `auto-rebound-paused-scope-decay`.
 
-## No-progress churn stuck-task escalation (`[executor]`, `[stuck-detector]`, `[self-healing]`)
+## Stuck-session in-place recovery (`[executor]`, `[stuck-detector]`)
 
-Time-based stuck/stalled/stale surfaces now floor activity timestamps using `settings.engineActiveSinceMs` plus `settings.engineActivationGraceMs` (default `300000`). The runtime stamps `engineActiveSinceMs` on startup and each unpause transition so engine pause/downtime does not count as quiet time.
+Time-based stuck detection floors activity timestamps using `settings.engineActiveSinceMs` plus `settings.engineActivationGraceMs` (default `300000`). The runtime stamps `engineActiveSinceMs` on startup and each unpause transition so engine pause/downtime does not count as quiet time.
 
-- Trigger shape: one loop classification/compact-and-resume has already fired for the current `execute()` lifecycle, then ignored `fn_task_update` rebuffs accumulate to `ignoredStepUpdateCount >= 25` without intervening progress.
-- Executor diagnostic: `[executor] <taskId>: no-progress churn detected (ignoredStepUpdates=N, stuckKillStreak=M) — escalating to STUCK_NO_PROGRESS_CHURN`.
-- Self-healing diagnostic: `<taskId> no-progress churn detected (ignoredStepUpdates=N, stuckKillStreak=M) — marking failed`.
-- Audit event: `task:stuck-no-progress-churn-terminalized` with `{ taskId, ignoredStepUpdateCount, stuckKillStreak, lastReason: "no-progress-churn" }`.
-- Outcome: task is marked `status: "failed"`, moved to `in-review`, and not requeued; operators should decompose/rescope the task instead of waiting for more automatic stuck-kill retries.
+A silent or repetitive session is disposed and the same task is re-dispatched after the old execution lock unwinds. Recovery preserves the current column, workflow node, current step, worktree, branch, and completed-step progress. Repeated silence remains automatically recoverable; no stuck-kill budget, terminal failure, decompose instruction, or human approval hold is emitted. User-paused tasks remain untouched.
 
 ## Dispatch oscillation breaker (`[scheduler]`, `[self-healing]`)
 
 FN-5941 adds a convergence backstop for repeated `todo↔in-progress` churn.
 
-- Suppressed false-positive backward recoveries emit `task:reclaim-self-owned-branch-conflict-no-action`, `task:auto-recover-in-progress-limbo-no-action`, or `task:stuck-loop-exhausted-no-action` with liveness metadata (`taskId`, `branch`, `worktree`, `checkedOutBy`, `executionStartedAt`, `executionAgeMs`, `graceMs`, `liveWorktreeBoundBranch`, `reason`).
+- Suppressed false-positive branch-conflict recovery emits `task:reclaim-self-owned-branch-conflict-no-action` with liveness metadata (`taskId`, `branch`, `worktree`, `checkedOutBy`, `executionStartedAt`, `executionAgeMs`, `graceMs`, `liveWorktreeBoundBranch`, `reason`). In-progress-limbo and stuck-budget terminal recovery events were removed by FN-217.
 - Scheduler settle-window diagnostic: `Task <id> was engine-requeued <age>ms ago — waiting <settleMs>ms settle window before redispatch`.
 - Terminal audit event: `task:dispatch-oscillation-terminalized` with `{ taskId, cycleCount, windowMs, lastMoveSource }`.
 - Outcome: task stays in `todo`, is auto-paused with `pausedReason: "dispatch-oscillation"`, and requires operator unpause/forward progress to reset the counter.
@@ -201,11 +197,11 @@ Direct-report stale decisions in `HeartbeatMonitor.buildReportsHealthSection()` 
 Dashboard Phase 1 resume instrumentation adds observation-only client/server traces for refetch/reconnect attribution. It does not change visibility/pageshow/SSE behavior; FN-5392 consumes this data for fixes.
 
 - Client event shape (`ResumeEvent`): `{ ts, view, trigger, projectId?, gapMs?, replayAttempted, replayFromEventId?, lastEventId?, sseChannel?, reason?, detail? }`.
-- Trigger taxonomy: `visibility`, `pageshow`, `sse-error`, `sse-reconnect`, `sse-open`, `remount`, `route-active`, `route-inactive`, `project-context-change`.
+- Trigger taxonomy: `visibility`, `focus`, `pageshow`, `sse-error`, `sse-reconnect`, `sse-open`, `remount`, `route-active`, `route-inactive`, `project-context-change`. The browser and diagnostics route both import this accepted vocabulary from `packages/dashboard/src/shared/resume-triggers.ts`; `focus` is accepted for tab-return diagnostics.
 - Sources:
   - `sse-bus` (`pageshow`, visible `visibilitychange`, `openChannel`, `forceReconnect`, EventSource `error`)
-  - Hooks: `useTasks` (`visibility`, `sse-reconnect`), `useChatRooms` (`sse-reconnect`), `useChat` (`sse-open`, `project-context-change`)
-  - Components: `Board` and `ChatView` mount/unmount route markers (`remount` / `route-active` / `route-inactive`)
+  - Hooks: `useTasks` (`visibility`, `focus`, `sse-reconnect`), `useChatRooms` (`sse-reconnect`), `useChat` (`sse-open`, `project-context-change`)
+  - Components: `Board` and `ChatView` mount/unmount route markers (`remount` / `route-active` / `route-inactive`), and `taskActivityFeed` when Feed becomes visible or its stream reconnects
 - Access paths:
   - Client ring (500): `window.__fusionDebug.resumeInstrumentation.get()` / `.clear()`
   - Server ring (5000, in-memory): `GET /api/diagnostics/resume-events?limit=&since=&view=` returns `{ events, droppedSinceLastRead }`

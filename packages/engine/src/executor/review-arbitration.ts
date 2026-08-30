@@ -14,6 +14,7 @@ import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { reviewStep } from "../execution/reviewer.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 
 export type ReviewArbitrationReleaseDeps = {
   store: TaskStore;
@@ -25,6 +26,7 @@ export type ReviewArbitrationDeps = ReviewArbitrationReleaseDeps & {
     task: Task, worktreePath: string, failureFeedback: string, stepName: string, reason: string,
     preserveResumeState: boolean, mergeVerificationFailure: boolean,
     retryPresentation?: { attempt: number; max?: number }, findings?: WorkflowReviewFinding[],
+    persistWorktreePath?: boolean,
   ) => Promise<void>;
 };
 
@@ -152,6 +154,7 @@ export async function runReviewArbitration(
   const failed = (task.workflowStepResults ?? []).find((result) =>
     result.workflowStepId === workflowStepId && result.status === "failed");
   if (!failed) return "declined";
+  const remediationCheckout = resolveRemediationCheckout(task, failed);
   const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
   const configuredTarget = resolveReviewArbitrationTarget(settings);
   if (settings.reviewArbitrationEnabled === false) return "declined";
@@ -163,7 +166,7 @@ export async function runReviewArbitration(
   const prompt = `${task.prompt ?? ""}\n\n## Review arbitration\nDecide this disagreement using the code and the complete same-gate ledger below. Return exactly one trailing JSON object: {"decision":"UPHOLD_REVIEW"|"UPHOLD_IMPLEMENTER"|"SPLIT","notes":"...","bindingFindingIds":["..."]}.\n\n${JSON.stringify(history)}`;
   let raw: string;
   try {
-    const result = await reviewStep(task.worktree ?? process.cwd(), task.id, 0, `Arbitration: ${stepName}`, "code", prompt, undefined, {
+    const result = await reviewStep(remediationCheckout?.path ?? process.cwd(), task.id, 0, `Arbitration: ${stepName}`, "code", prompt, undefined, {
       store: deps.store,
       taskId: task.id,
       settings,
@@ -182,6 +185,7 @@ export async function runReviewArbitration(
     const release = await applyReviewArbitrationRelease(deps, task.id, fence);
     return release.applied ? "arbitrated" : "declined";
   }
+  if (!remediationCheckout) return "declined";
   const obligations = bindingObligations(failed.findings, ruling.bindingFindingIds, ruling.decision);
   /*
   FNXC:ReviewConvergence 2026-08-22-05:56:
@@ -226,8 +230,8 @@ export async function runReviewArbitration(
     });
     return "declined";
   }
-  await deps.sendTaskBackForFix(task, task.worktree ?? "", feedback, stepName,
+  await deps.sendTaskBackForFix(task, remediationCheckout.path, feedback, stepName,
     "Review arbitration upheld remaining review obligations", true, false,
-    { attempt: attempt + 1, max }, obligations ?? failed.findings);
+    { attempt: attempt + 1, max }, obligations ?? failed.findings, remediationCheckout.persist);
   return "arbitrated";
 }

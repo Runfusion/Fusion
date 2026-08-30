@@ -285,7 +285,7 @@ describe("FN-9060 — zero-acquire workspace completion invariant", () => {
     (executor as any).workspaceConfig = { repos: ["repo-a"] } as WorkspaceConfig;
     const unproven = await (executor as any).verifyWorktreeInvariants(makeTask({ workspaceWorktrees: {} }));
     expect(unproven).toMatchObject({ ok: false, reason: "no_commits", observed: "0 acquired sub-repo worktrees" });
-    expect((unproven as any).expected).toContain("fn_acquire_repo_worktree");
+    expect((unproven as any).expected).toContain("configured sub-repo task worktree");
 
     const eligible = await (executor as any).verifyWorktreeInvariants(makeTask({ workspaceWorktrees: {}, noCommitsExpected: true }));
     expect(eligible).toEqual({ ok: true });

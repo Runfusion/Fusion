@@ -377,6 +377,46 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("pnpm build");
   });
 
+  it("includes a healthy environment capability inventory for planning", () => {
+    const prompt = buildSpecificationPrompt(
+      baseTask,
+      ".fusion/tasks/KB-001/PROMPT.md",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        environmentCapabilities: {
+          capabilities: [
+            { name: "node", available: true },
+            { name: "python3", available: false },
+          ],
+          degraded: false,
+        },
+      },
+    );
+
+    expect(prompt).toContain("## Environment Capabilities");
+    expect(prompt).toContain("Unavailable commands: python3");
+    expect(prompt).toContain("## Environment Constraints");
+  });
+
+  it("omits environment capabilities when the probe is degraded or absent", () => {
+    const degraded = buildSpecificationPrompt(
+      baseTask,
+      ".fusion/tasks/KB-001/PROMPT.md",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { environmentCapabilities: { capabilities: [], degraded: true } },
+    );
+    const absent = buildSpecificationPrompt(baseTask, ".fusion/tasks/KB-001/PROMPT.md");
+
+    expect(degraded).not.toContain("## Environment Capabilities");
+    expect(absent).not.toContain("## Environment Capabilities");
+  });
+
   describe("completionDocumentationMode setting", () => {
     it("omits completion documentation guidance when mode is off", () => {
       const settings: Settings = {
@@ -1067,20 +1107,17 @@ describe("FN-5893 invariant regression wording", () => {
   });
 });
 
-describe("fast-mode triage", () => {
-  it("exports a lean FAST_PLANNING_PROMPT", () => {
+describe("lean-planning and Fast admission", () => {
+  it("keeps the lean planning prompt available independently of Fast task execution", () => {
     expect(typeof FAST_PLANNING_PROMPT).toBe("string");
     expect(FAST_PLANNING_PROMPT.length).toBeGreaterThan(0);
-    expect(FAST_PLANNING_PROMPT).toContain("This task is running in **fast mode**");
-    expect(FAST_PLANNING_PROMPT).toContain("workflow Plan Review");
-    expect(FAST_PLANNING_PROMPT).toContain("Do not call `fn_review_spec()`");
     expect(FAST_PLANNING_PROMPT).not.toContain("## Review Level");
     expect(FAST_PLANNING_PROMPT).not.toContain("## Triage subtask breakdown");
     expect(FAST_PLANNING_PROMPT).not.toContain("## Proactive Subtask Breakdown");
     expect(FAST_PLANNING_PROMPT).not.toContain("Frontend UX Criteria");
   });
 
-  it("documents explicit-request-only workflow routing in standard and fast prompts", () => {
+  it("documents explicit-request-only workflow routing in standard and lean prompts", () => {
     const required = ["## Workflow Routing", "Keep the project default workflow", "unless the user explicitly requested a specific workflow", "or you created that task yourself", "When you create a task via `fn_task_create`", "do not move a task you did not create unless the user asked", "Do NOT call `fn_workflow_select` or pass `workflow_id`", "If the user explicitly", "fn_workflow_list", "fn_workflow_select", "workflow_id", "**No commits expected:** true", "builtin:coding"];
     const forbidden = ["use workflow descriptions as the routing signal", "select an appropriate lightweight workflow", "prefer `builtin:quick-fix` or a custom investigation workflow", "Match the task nature to the workflow description", "descriptions are authoritative for routing decisions"];
     for (const prompt of [RENDERED_TRIAGE_POLICY_PROMPT, FAST_PLANNING_PROMPT]) {
@@ -1100,10 +1137,11 @@ describe("fast-mode triage", () => {
     expect(FAST_PLANNING_PROMPT).toContain("forensic");
   });
 
-  it("selects FAST_PLANNING_PROMPT for fast tasks", async () => {
-    const task = createTriageTask({ id: "FN-FAST-001", executionMode: "fast" });
+  it("selects FAST_PLANNING_PROMPT when leanPlanning is enabled", async () => {
+    const task = createTriageTask({ id: "FN-LEAN-001", executionMode: "standard" });
     const store = createMockStore({
       getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: task.id, attachments: [], comments: [] }),
+      getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10_000, autoMerge: true, leanPlanning: true } as Settings),
     });
 
     let capturedSystemPrompt = "";
@@ -1123,7 +1161,7 @@ describe("fast-mode triage", () => {
     const processor = new TriageProcessor(store, "/tmp/root");
     await processor.specifyTask(task);
 
-    expect(capturedSystemPrompt).toContain("This task is running in **fast mode**");
+    expect(capturedSystemPrompt).toContain("Do not call `fn_review_spec()`");
     expect(capturedSystemPrompt).not.toContain("## Review Level");
   });
 
@@ -1285,10 +1323,11 @@ describe("fast-mode triage", () => {
     expect(capturedSystemPrompt).not.toContain("## Plugin:");
   });
 
-  it("applies triage plugin contributions in fast mode too", async () => {
-    const task = createTriageTask({ id: "FN-FAST-PLUGIN-003", executionMode: "fast" });
+  it("applies triage plugin contributions in lean planning", async () => {
+    const task = createTriageTask({ id: "FN-LEAN-PLUGIN-003", executionMode: "standard" });
     const store = createMockStore({
       getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: task.id, attachments: [], comments: [] }),
+      getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10_000, autoMerge: true, leanPlanning: true } as Settings),
     });
     const pluginRunner = {
       getPromptContributionsForSurface: vi.fn().mockReturnValue([
@@ -1314,69 +1353,22 @@ describe("fast-mode triage", () => {
     const processor = new TriageProcessor(store, "/tmp/root", { pluginRunner: pluginRunner as any });
     await processor.specifyTask(task);
 
-    expect(capturedSystemPrompt).toContain("This task is running in **fast mode**");
     expect(capturedSystemPrompt).toContain("## Plugin: plugin-fast");
   });
 
-  it("finalizes fast planning without exposing a separate spec-review tool", async () => {
-    const rootDir = await createTriageFixtureRoot("fusion-triage-fast-gate-");
-    try {
-      const task = createTriageTask({ id: "FN-FAST-004", executionMode: "fast" });
-      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
-      await mkdir(join(rootDir, ".fusion", "tasks", task.id), { recursive: true });
+  it("does not start a planning session for a Fast task", async () => {
+    mockCreateFnAgent.mockClear();
+    const task = createTriageTask({ id: "FN-FAST-004", executionMode: "fast" });
+    const store = createMockStore();
 
-      const store = createMockStore({
-        getSettings: vi.fn().mockResolvedValue({
-          maxConcurrent: 2,
-          maxWorktrees: 4,
-          pollIntervalMs: 10000,
-          groupOverlappingFiles: false,
-          autoMerge: true,
-          experimentalFeatures: { researchView: true },
-        } as Settings),
-        getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: task.id, attachments: [], comments: [] }),
-        parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
-        parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
-        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
-      });
+    await new TriageProcessor(store, "/tmp/root").specifyTask(task);
 
-      let capturedTools: any[] = [];
-      mockCreateFnAgent.mockImplementationOnce(async (opts: any) => {
-        capturedTools = opts.customTools;
-        return {
-          session: {
-            state: {},
-            sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
-            prompt: vi.fn().mockResolvedValue(undefined),
-            dispose: vi.fn(),
-            navigateTree: vi.fn(),
-          },
-        };
-      });
-
-      const { promptWithFallback } = await import("../pi.js");
-      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
-        expect(capturedTools.some((tool: any) => tool.name === "fn_research_run")).toBe(true);
-        expect(capturedTools.some((tool: any) => tool.name === "fn_research_list")).toBe(true);
-        expect(capturedTools.some((tool: any) => tool.name === "fn_research_get")).toBe(true);
-        expect(capturedTools.some((tool: any) => tool.name === "fn_research_cancel")).toBe(true);
-        expect(capturedTools.some((tool: any) => tool.name === "fn_research_retry")).toBe(true);
-        expect(capturedTools.some((tool: any) => tool.name === "fn_review_spec")).toBe(false);
-        await writeFile(promptPath, "# Task: FN-FAST-004 - Fast\n\n## Mission\n\nShip it.");
-      });
-
-      const processor = new TriageProcessor(store, rootDir);
-      await processor.specifyTask(task);
-
-      expect(mockReviewStep).not.toHaveBeenCalled();
-      expect(store.moveTask).toHaveBeenCalledWith("FN-FAST-004", "todo");
-    } finally {
-      await cleanupTriageFixtureRoot(rootDir);
-    }
+    expect(mockCreateFnAgent).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Fast mode intentionally skips specification planning");
   });
 
   it("omits research tools and prompt guidance when researchView experimental flag is disabled", async () => {
-    const task = createTriageTask({ id: "FN-FAST-005", executionMode: "fast" });
+    const task = createTriageTask({ id: "FN-LEAN-005", executionMode: "standard" });
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -1384,6 +1376,7 @@ describe("fast-mode triage", () => {
         pollIntervalMs: 10000,
         groupOverlappingFiles: false,
         autoMerge: true,
+        leanPlanning: true,
         experimentalFeatures: { researchView: false },
       } as Settings),
       getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: task.id, attachments: [], comments: [] }),
@@ -1417,7 +1410,7 @@ describe("fast-mode triage", () => {
   });
 
   it("includes research prompt guidance when researchView experimental flag is enabled", async () => {
-    const task = createTriageTask({ id: "FN-FAST-006", executionMode: "fast" });
+    const task = createTriageTask({ id: "FN-LEAN-006", executionMode: "standard" });
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -1425,6 +1418,7 @@ describe("fast-mode triage", () => {
         pollIntervalMs: 10000,
         groupOverlappingFiles: false,
         autoMerge: true,
+        leanPlanning: true,
         experimentalFeatures: { researchView: true },
       } as Settings),
       getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: task.id, attachments: [], comments: [] }),

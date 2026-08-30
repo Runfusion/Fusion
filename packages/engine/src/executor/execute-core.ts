@@ -37,6 +37,7 @@ export type ExecuteCoreDeps = {
   releaseSemaphore: () => void;
   clearStalePauseAbortBeforeDispatch: (task: Task) => Promise<void>;
   blockOuterDispatchWhenDependenciesUnmet: (task: Task) => Promise<boolean>;
+  blockOuterDispatchWhenFileScopeLeaseHeld: (task: Task) => Promise<boolean>;
   executeWorkflowGraph: (task: Task, options: { alreadyClaimed: true }) => Promise<void>;
 };
 
@@ -95,6 +96,11 @@ export async function executeCore(deps: ExecuteCoreDeps, task: Task): Promise<vo
     await deps.clearStalePauseAbortBeforeDispatch(task);
     if (await deps.blockOuterDispatchWhenDependenciesUnmet(task)) {
       // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
+      if (dropPreHeldExecutorSlot(task.id)) deps.releaseSemaphore();
+      return;
+    }
+    if (await deps.blockOuterDispatchWhenFileScopeLeaseHeld(task)) {
+      // The overlap hold is in-place, so the scheduler reservation has no downstream owner either.
       if (dropPreHeldExecutorSlot(task.id)) deps.releaseSemaphore();
       return;
     }

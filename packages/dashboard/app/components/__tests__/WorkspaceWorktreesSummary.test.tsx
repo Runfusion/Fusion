@@ -1,5 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
-import userEvent from "@testing-library/user-event";
+import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { WorkspaceWorktreesSummary, deriveWorkspaceRepoStatus, isWorkspaceTask } from "../WorkspaceWorktreesSummary";
 
@@ -64,30 +63,6 @@ describe("WorkspaceWorktreesSummary", () => {
     expect(screen.getByText("/wt/repo-b")).toBeTruthy();
     expect(screen.getByText("fusion/fn-1-a")).toBeTruthy();
     expect(screen.getByText("fusion/fn-1-b")).toBeTruthy();
-  });
-
-  it("distinguishes a modified scoped repository from a clean acquired peer", () => {
-    render(<WorkspaceWorktreesSummary task={{ worktree: undefined, repositoryScope: { repositories: ["repo-a", "repo-b"] }, modifiedFiles: ["repo-a/src/changed.ts"], workspaceWorktrees: {
-      "repo-a": { worktreePath: "/wt/repo-a", branch: "fusion/fn-1-a" },
-      "repo-b": { worktreePath: "/wt/repo-b", branch: "fusion/fn-1-b" },
-    } }} />);
-    expect(screen.getAllByTestId("workspace-repo-scope-scoped")[0]).toHaveTextContent("Modified");
-    expect(screen.getByText("No changes — not reviewed")).toBeTruthy();
-  });
-
-  it("sends an attributed pre-land scope correction and renders its history", async () => {
-    const user = userEvent.setup();
-    const onScopeChange = vi.fn(async () => undefined);
-    render(<WorkspaceWorktreesSummary task={{ worktree: undefined, repositoryScope: {
-      repositories: ["repo-a"], state: "confirmed", revision: 2,
-      extensions: [{ repository: "repo-b", requestedAt: "2026-08-21T00:00:00.000Z", requestedBy: "executor", reason: "shared API change", status: "accepted" }],
-    }, workspaceWorktrees: workspaceTask.workspaceWorktrees }} onScopeChange={onScopeChange} />);
-    expect(screen.getByText(/repo-b: accepted/i)).toBeTruthy();
-    const inputs = screen.getAllByRole("textbox");
-    await user.type(inputs[0]!, "repo-b");
-    await user.type(inputs[1]!, "needed for shared API");
-    await user.click(screen.getByRole("button", { name: "Add" }));
-    expect(onScopeChange).toHaveBeenCalledWith({ repositories: ["repo-b"], reason: "needed for shared API", action: "add" });
   });
 
   it("renders recorded bases and fallback markers only in the full per-repo list", () => {

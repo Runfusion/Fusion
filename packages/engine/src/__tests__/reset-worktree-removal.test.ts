@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SELF_OWNED_MIN_IDLE_MS, activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
 import { registerPlanningLivenessProbe } from "../agents/planning-liveness.js";
 import { ActiveSessionWorktreeRemovalError } from "../worktree/worktree-backend.js";
-import { removeTaskResetWorktree, ResetWorktreeForeignSessionError } from "../worktree/remove-reset-worktree.js";
+import { reconcileTaskResetSessionRoot, removeTaskResetWorktree, ResetWorktreeForeignSessionError } from "../worktree/remove-reset-worktree.js";
 
 const PATH = "/tmp/fn-151-reset-worktree";
 const TASK = "FN-151";
@@ -23,6 +23,76 @@ function input(overrides: Partial<Parameters<typeof removeTaskResetWorktree>[0]>
     ...overrides,
   };
 }
+
+describe("reconcileTaskResetSessionRoot", () => {
+  it("resolves when the coordinator has no registry entry", async () => {
+    await expect(reconcileTaskResetSessionRoot({ sessionRootPath: PATH, taskId: TASK })).resolves.toBeUndefined();
+  });
+
+  it("reconciles an aged dead self-owned coordinator entry", async () => {
+    activeSessionRegistry.registerPath(PATH, { taskId: TASK, kind: "executor", ownerKey: TASK });
+
+    await reconcileTaskResetSessionRoot({
+      sessionRootPath: PATH,
+      taskId: TASK,
+      now: () => Date.now() + DEFAULT_SELF_OWNED_MIN_IDLE_MS + 1,
+    });
+
+    expect(activeSessionRegistry.lookupByPath(PATH)).toBeNull();
+  });
+
+  it("refuses a live self-owned coordinator entry and leaves it registered", async () => {
+    activeSessionRegistry.registerPath(PATH, { taskId: TASK, kind: "planning", ownerKey: `planning:${TASK}` });
+    const unregister = registerPlanningLivenessProbe((id) => id === TASK);
+    try {
+      await expect(reconcileTaskResetSessionRoot({
+        sessionRootPath: PATH,
+        taskId: TASK,
+        now: () => Date.now() + DEFAULT_SELF_OWNED_MIN_IDLE_MS + 1,
+      })).rejects.toBeInstanceOf(ActiveSessionWorktreeRemovalError);
+      expect(activeSessionRegistry.lookupByPath(PATH)?.taskId).toBe(TASK);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("reports a foreign coordinator holder", async () => {
+    activeSessionRegistry.registerPath(PATH, { taskId: "FN-OTHER", kind: "workflow-step", ownerKey: "FN-OTHER#workflow-step" });
+
+    const rejection = reconcileTaskResetSessionRoot({ sessionRootPath: PATH, taskId: TASK });
+
+    await expect(rejection).rejects.toMatchObject({
+      details: { holderTaskId: "FN-OTHER", holderKind: "workflow-step" },
+    });
+    await expect(rejection).rejects.toBeInstanceOf(ResetWorktreeForeignSessionError);
+  });
+
+  it("waits once for a recent coordinator entry by default", async () => {
+    activeSessionRegistry.registerPath(PATH, { taskId: TASK, kind: "executor", ownerKey: TASK });
+    let now = Date.now();
+    const wait = vi.fn().mockImplementation(async (ms: number) => { now += ms + 1; });
+
+    await reconcileTaskResetSessionRoot({ sessionRootPath: PATH, taskId: TASK, now: () => now, wait });
+
+    expect(wait).toHaveBeenCalledOnce();
+    expect(activeSessionRegistry.lookupByPath(PATH)).toBeNull();
+  });
+
+  it("immediately refuses a recent point-of-use entry without waiting", async () => {
+    activeSessionRegistry.registerPath(PATH, { taskId: TASK, kind: "executor", ownerKey: TASK });
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    await expect(reconcileTaskResetSessionRoot({
+      sessionRootPath: PATH,
+      taskId: TASK,
+      settleTooRecent: false,
+      wait,
+    })).rejects.toBeInstanceOf(ActiveSessionWorktreeRemovalError);
+
+    expect(wait).not.toHaveBeenCalled();
+    expect(activeSessionRegistry.lookupByPath(PATH)?.taskId).toBe(TASK);
+  });
+});
 
 describe("removeTaskResetWorktree", () => {
   it("reconciles an aged dead self-owned planning entry before removal", async () => {

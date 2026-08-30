@@ -63,4 +63,27 @@ describeIfReady("pipeline smoke: multi-repository workspace", () => {
     expect(live.workspaceWorktrees?.repo1?.branch).toMatch(/^fusion\//);
     expect(live.mergeDetails?.mergeConfirmed).toBe(true);
   });
+
+  it("merges the MULT-040 shape after Code Review publishes evidence for both modified repositories", async () => {
+    const task = await harness.createPipelineTask("builtin:coding-ideas-v2", {
+      idPrefix: "WS-BOTH",
+      initialColumn: "hold",
+      repositoryScope: ["repo1", "repo2"],
+    });
+
+    const result = await harness.driveToDeclaredTerminal(task.id, "merged-done", {
+      commitImplementationInEveryWorkspaceRepository: true,
+    });
+
+    expect(result.observedTerminal).toBe("merged-done");
+    expect(result.wedge).toBeUndefined();
+    const live = await harness.store.getTask(task.id);
+    expect(live.workspaceWorktrees?.repo1?.branch).toMatch(/^fusion\//);
+    expect(live.workspaceWorktrees?.repo2?.branch).toMatch(/^fusion\//);
+    expect(live.repositoryScope?.reviewEvidence).toEqual(expect.objectContaining({
+      repo1: expect.objectContaining({ fingerprint: expect.any(String), approvedAt: expect.any(String) }),
+      repo2: expect.objectContaining({ fingerprint: expect.any(String), approvedAt: expect.any(String) }),
+    }));
+    expect(live.mergeDetails?.mergeConfirmed).toBe(true);
+  });
 });

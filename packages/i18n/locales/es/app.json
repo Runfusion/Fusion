@@ -137,7 +137,10 @@
     "toolEntriesHidden_other": "",
     "toolsOff": "Herramientas: Desactivado",
     "toolsOn": "Herramientas: Activado",
-    "usingDefault": "Usando predeterminado"
+    "usingDefault": "Usando predeterminado",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "Miembros de #{{roomName}}",
@@ -1200,10 +1203,10 @@
       "capacityExhausted": "",
       "guardRejected": "",
       "mergeBlocked": "",
-      "promoteRejected": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "staleMovePrecondition": ""
     },
     "todo": "Por hacer",
     "triage": "Triaje",
@@ -1528,10 +1531,6 @@
     "pauseHint_one": "",
     "pauseHint_other": "",
     "preserveProgressTitle": "¿Preservar progreso?",
-    "promoteUnplannedCancel": "",
-    "promoteUnplannedConfirm": "",
-    "promoteUnplannedMessage": "",
-    "promoteUnplannedTitle": "",
     "replanAll": "Replanificar todo",
     "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
     "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
@@ -1947,6 +1946,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3725,7 +3725,11 @@
     "shortstatTitle": "Estadísticas cortas finales del commit; para ver la diferencia completa de todos los commits de tareas, consulta la pestaña Cambios.",
     "smartPull": "Pull inteligente",
     "status": "Estado",
-    "title": "Detalles de la combinación"
+    "title": "Detalles de la combinación",
+    "targetBranch": "",
+    "strategy": "",
+    "method": "",
+    "noOpReason": ""
   },
   "mesh": {
     "ariaLabel": "Visualización de topología de malla de nodos",
@@ -4224,7 +4228,8 @@
     "terminal": "Terminal",
     "todos": "Pendientes",
     "usage": "Uso",
-    "workflows": "Flujos de trabajo"
+    "workflows": "Flujos de trabajo",
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "Añadir dependencias",
@@ -6192,7 +6197,7 @@
       "saveToolOutputInAgentLogs": "",
       "updates": "",
       "weekly": "",
-      "whenDisabledToolRowsAreStillLoggedBut": "",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -6275,7 +6280,9 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "fastAndCheapModel": "Modelo rápido y económico",
+      "fastAndCheapModelHelp": "Seleccione aquí un modelo económico para ediciones rápidas. Se utiliza para el modo rápido al crear una tarea."
     },
     "header": {
       "discord": "Discord",
@@ -7010,27 +7017,21 @@
       "maxWorktrees": "",
       "worktreeLimitEnabled": "",
       "worktreeLimitEnabledHelp": "",
-      "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "Abrir aprobaciones",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
       "optionalSupports": "",
       "pnpmInstallFrozenLockfile": "",
-      "randomNamesEGSwiftFalcon": "",
       "rebaseFromRemoteBeforeMerge": "",
       "rebaseRemote": "",
-      "recycleWorktrees": "",
       "selectWorktreesDir": "Seleccionar directorio de worktrees",
       "shellCommandToRunInEachNewWorktree": "",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": "",
-      "taskIDEGFN042": "",
-      "taskTitleEGFixLoginBug": "",
       "tryAgain": "Intentar de nuevo",
       "useGitDefault": "",
       "whenEnabledTheMergerFetchesFromTheConfigured": "",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": "",
       "whichRemoteToFetchForThePreMerge": "",
       "worktreeInitCommand": "",
-      "worktreeNamingStyle": "",
       "worktrees": "",
       "worktreesDirectory": "",
       "worktrunk": "",
@@ -7039,10 +7040,7 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": "",
-      "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "copyFilesHelp": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7945,7 +7943,8 @@
       "btn": "Duplicar",
       "message": "¿Duplicar {{id}}? Esto creará una nueva tarea en Triage con la misma descripción e indicación.",
       "success": "{{id}} duplicado → {{newId}}",
-      "title": "Duplicar tarea"
+      "title": "Duplicar tarea",
+      "workflowLabel": ""
     },
     "edit": {
       "autosaveHint": "Los cambios se guardan automáticamente al editar",
@@ -8151,7 +8150,7 @@
       "createBtn": "Crear tarea de refinamiento",
       "creating": "Creando...",
       "feedbackRequired": "Por favor ingresa comentarios que describan qué necesita refinamiento",
-      "feedbackTooLong": "Los comentarios deben tener 2000 caracteres o menos",
+      "feedbackTooLong": "",
       "help": "Describe qué necesita ser refinado o mejorado...",
       "modalTitle": "Refinar",
       "placeholder": "Ingresa tus comentarios aquí...",
@@ -8159,11 +8158,13 @@
     },
     "reset": {
       "btn": "Restablecer",
-      "confirmMessage": "Esto borrará todo el progreso de {{id}} y comenzará la tarea desde cero. ¿Continuar?",
-      "resetSuccess": "{{id}} restablecido — se asignará una nueva ejecución"
-    },
-    "respecify": {
-      "btn": "Reespecificar"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "resetSuccess": "{{id}} restablecido — se asignará una nueva ejecución",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "",
+      "descriptionLabel": "",
+      "descriptionRequired": "",
+      "submitting": ""
     },
     "retries": {
       "branchConflict": "Recuperación por conflicto de rama",
@@ -8194,7 +8195,18 @@
     "retriesLabel": "Reintentos (recuperación / flujo de trabajo / fusión / tarea completada)",
     "retry": {
       "btn": "Reintentar",
-      "retried": "{{id}} reintentado"
+      "retried": "{{id}} reintentado",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "Vínculos en tiempo de ejecución",
     "runtimeStatus": "Estado en tiempo de ejecución",
@@ -8258,10 +8270,8 @@
       "worktreeTerminal": "Terminal",
       "workflow": "Flujo de trabajo",
       "summary": "Summary",
-      "cost": "",
       "recommendations": "",
       "dependencies": "",
-      "attachments": "",
       "details": "",
       "debug": ""
     },
@@ -8296,30 +8306,7 @@
     "workflowTimedSteps": "Pasos cronometrados del flujo de trabajo",
     "yes": "Sí",
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "gitlabTracking": {
       "collapse": "",
@@ -8400,6 +8387,12 @@
     },
     "debug": {
       "none": ""
+    },
+    "details": {
+      "expandRouting": "",
+      "collapseRouting": "",
+      "expandDebug": "",
+      "collapseDebug": ""
     }
   },
   "taskDocuments": {
@@ -8627,7 +8620,16 @@
     "attachFileFailed": "Error al adjuntar {{fileName}}: {{error}}",
     "awaitingApproval": "Esperando aprobación",
     "baseBranch": "Base",
-    "blockedByTooltip": "Bloqueado por {{taskId}} (superposición de archivos)",
+    "blockedByTooltip": "Esperando a {{taskId}} (superposición de archivos)",
+    "externalBlock": {
+      "title": "Bloqueada",
+      "unknownCode": "SIN_CLASIFICAR",
+      "genericMessage": "Un obstáculo externo requiere la intervención del operador",
+      "explain": "Explicar este error",
+      "explainPrompt": "Explica este error {{error}} y cómo resolverlo.",
+      "resuming": "Reanudando…",
+      "retry": "Reintentar"
+    },
     "branch": "Rama",
     "branchMetadata": "Metadatos de rama",
     "branchProgress": "",
@@ -8752,9 +8754,6 @@
     "prNodeTitle": "",
     "prNodeWithNumber": "",
     "projectDefaultLocal": "Predeterminado del proyecto / local",
-    "promote": "",
-    "promoteTask": "",
-    "promoting": "",
     "queued": "En cola",
     "refine": "Refinar",
     "refineAddDetails": "Añadir detalles",
@@ -8840,7 +8839,15 @@
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
-    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "planApproval": {
+      "approve": "",
+      "approveFailed": "",
+      "approving": "",
+      "copy": "",
+      "replanCapCopy": "",
+      "title": ""
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9088,7 +9095,15 @@
     "statusSkipped": "",
     "submitAndResume": "",
     "submitting": "",
-    "waitingForOutput": ""
+    "waitingForOutput": "",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "",
@@ -9541,7 +9556,8 @@
     "missingOutput": "",
     "missingOutputTimestamp": "",
     "statusUpdate": "",
-    "statusUpdateTimestamp": ""
+    "statusUpdateTimestamp": "",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9721,5 +9737,73 @@
     "close": "",
     "loading": "",
     "retry": ""
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "empty": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "entry": {
+      "noBody": "",
+      "completionSummary": "",
+      "stepReport": "",
+      "merged": "",
+      "noOpMerge": "",
+      "verdictNoNotes": "",
+      "duration": ""
+    },
+    "meta": {
+      "commit": "",
+      "targetBranch": "",
+      "strategy": "",
+      "method": "",
+      "files": "",
+      "insertions": "",
+      "deletions": "",
+      "pr": "",
+      "noOpReason": ""
+    },
+    "loading": "",
+    "verdict": {
+      "approve": "",
+      "approve-with-notes": "",
+      "revise": "",
+      "close-no-op": "",
+      "passed": "",
+      "failed": "",
+      "advisory-failure": "",
+      "skipped": "",
+      "pending": ""
+    }
+  },
+  "patchnode": {
+    "cancelled": "",
+    "empty": "",
+    "entryCount_one": "",
+    "entryCount_other": "",
+    "error": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "noResults": "",
+    "retry": "",
+    "reverted": "",
+    "searchAriaLabel": "",
+    "searchPlaceholder": "",
+    "title": "",
+    "today": "",
+    "yesterday": ""
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

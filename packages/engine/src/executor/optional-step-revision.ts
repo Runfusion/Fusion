@@ -47,7 +47,7 @@ while prompt prose uses the separately bounded, deduplicated same-episode decisi
 */
 export function buildReviewConvergenceContext(
   task: Pick<Task, "workflowStepResults">,
-  options: { revisionKey: string; reviewKind: WorkflowReviewKind },
+  options: { revisionKey: string; reviewKind: WorkflowReviewKind; changeSummaryBlock?: string },
 ): string {
   const revisionKey = options.revisionKey;
   const priorAttemptCount = countPlanReviewRevisionAttempts(task.workflowStepResults, { revisionKey });
@@ -57,10 +57,13 @@ export function buildReviewConvergenceContext(
   const history = collectPlanReviewFeedbackHistory(task.workflowStepResults, { revisionKey });
   const lines = [
     `## Convergence — ${options.reviewKind === "plan" ? "Plan Review" : "Code Review"} attempt ${attempt}`,
+  ];
+  if (options.changeSummaryBlock?.trim()) lines.push("", options.changeSummaryBlock.trim());
+  lines.push(
     "Treat the cumulative prior feedback below as a decision primer. Verify each prior blocker against the current PROMPT.md before looking for new findings.",
     "- Do not re-raise a resolved or semantically duplicate blocker.",
     "- A newly blocking finding must identify the revision that introduced it, the prior blocker that genuinely masked it, or why it is independently delivery-blocking for correctness, security, data safety, or executability. Record an earlier reviewer miss explicitly; never demote a critical defect merely because it was missed before.",
-  ];
+  );
   if (attempt >= 3) {
     lines.push(
       "- Severity ratchet (attempt 3+): only delivery-blocking critical defects may return REVISE; important/minor wording or implementation-detail findings are advisory.",

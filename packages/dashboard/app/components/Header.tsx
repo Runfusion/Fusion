@@ -959,6 +959,18 @@ export function Header({
                         <span>{t("header.documentsView", "Artifacts view")}</span>
                       </button>
                     )}
+                    <button
+                      className={`view-toggle-overflow-item${view === "patchnode" ? " active" : ""}`}
+                      onClick={() => {
+                        onChangeView("patchnode");
+                        setIsViewOverflowOpen(false);
+                      }}
+                      role="menuitem"
+                      data-testid="view-overflow-patchnode"
+                    >
+                      <History size={14} />
+                      <span>{t("nav.patchnode", "History")}</span>
+                    </button>
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}

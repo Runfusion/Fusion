@@ -1042,25 +1042,22 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-timestamps")).toBeTruthy();
       expect(container.querySelectorAll(".detail-timestamp-item").length).toBe(2);
       const tabs = container.querySelectorAll(".detail-tab");
-      // FNXC:TaskDetailTabs 2026-07-15-23:23: Keep this responsive-order expectation aligned with peer tab tests: the always-available Terminal (FN-7826) and Cost (FN-7820) tabs belong between Comments and Artifacts.
+      // FN-244 keeps the responsive strip aligned with the consolidated desktop inventory.
       expect(Array.from(tabs).map((tab) => tab.textContent?.trim())).toEqual([
         "Activity",
         "Chat",
         "Plan",
-        "Dependencies",
-        "Attachments",
         "Changes",
+        "Summary",
+        "Stats",
         "Review",
         "Comments",
-        "Terminal",
-        "Cost",
+        "Dependencies",
         "Artifacts",
         "Model",
         "Workflow",
-        "Stats",
-        "Routing",
         "Details",
-        "Debug",
+        "Terminal",
       ]);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true);
       expect(Array.from(tabs).slice(1).every((t) => !t.classList.contains("detail-tab-active"))).toBe(true);
@@ -1154,13 +1151,15 @@ describe("TaskDetailModal", () => {
       expect(standardFooter?.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
     });
 
-    it("keeps the triage footer usable when Actions is absent", () => {
+    it("keeps the triage footer recoverable through Actions", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ column: "triage" as Column })}
           onClose={noop}
           onDeleteTask={noopDelete}
+          onRetryTask={async () => makeTask()}
+          onResetTask={async () => makeTask()}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
           addToast={noop}
@@ -1168,10 +1167,13 @@ describe("TaskDetailModal", () => {
       );
       const footer = container.querySelector(".modal-actions");
 
-      expect(footer?.querySelector(".detail-actions-dropdown")).toBeNull();
+      expect(footer?.querySelector(".detail-actions-dropdown")).toBeTruthy();
       expect(footer?.querySelector(".modal-actions-spacer")).toBeTruthy();
       expect(footer?.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
-      expect(screen.getByRole("button", { name: "Delete task" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      expect(screen.getByRole("menuitem", { name: "Retry" })).toBeTruthy();
+      expect(screen.getByRole("menuitem", { name: "Reset" })).toBeTruthy();
+      expect(screen.getAllByRole("menuitem", { name: "Delete" })).toHaveLength(1);
     });
 
     it("modal-actions contains Delete and Pause buttons for non-done tasks (via Actions dropdown)", () => {
@@ -1901,7 +1903,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(summary.baseElement.querySelector(".merge-details-card a")).toHaveAttribute("href", "https://github.com/owner/repo/pull/42");
+      expect(summary.baseElement.querySelector(".detail-section--summary .merge-details-card a")).toHaveAttribute("href", "https://github.com/owner/repo/pull/42");
       summary.unmount();
 
       render(

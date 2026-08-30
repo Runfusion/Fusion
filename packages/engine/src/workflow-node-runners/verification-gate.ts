@@ -27,12 +27,11 @@ export type DeterministicVerificationGateResult = {
  * path treats it as not-applicable. Reusing the primitive means the timeout handling, per-command
  * logging, and settings precedence can only be fixed in one place.
  *
- * KNOWN GAP (FN-189): with no command configured and none inferable, this returns success and the
- * card still shows a green "completed" for a check that never ran. The step OUTPUT says so in
- * capitals, which is the honest signal available without changing merge gating. Recording it as
- * `skipped` is the correct answer and was attempted here: `pre-merge-approval` then refuses a
- * `skipped` step that carries no operator bypass, so every task on a project without a test command
- * became unmergeable. That belongs to FN-189 with its own coverage, not to a follow-on edit here.
+ * FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+ * FN-226 closes the false-green gap for an unconfigured gate. The success edge still advances the
+ * graph, while the context patch records `not-configured`; graph recorders persist it as `skipped`
+ * plus `notRunReason`. Pre-merge approval admits only non-code, non-plan not-run gates, preserving
+ * the non-blocking default without presenting missing verification as a pass.
  */
 export async function runDeterministicVerificationGate(
   deps: DeterministicVerificationGateDeps,
@@ -45,7 +44,10 @@ export async function runDeterministicVerificationGate(
     return {
       outcome: "success",
       value: "not-configured",
-      contextPatch: { output: "No test or build command is configured for this project — NOTHING WAS VERIFIED." },
+      contextPatch: {
+        notRunReason: "not-configured",
+        output: "No test or build command is configured for this project — NOTHING WAS VERIFIED.",
+      },
     };
   }
 

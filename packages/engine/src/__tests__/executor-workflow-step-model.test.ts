@@ -18,9 +18,11 @@ type CapturedSession = {
   fallbackThinkingLevel?: string;
 };
 
-function captureSession(output = '{"verdict":"APPROVE","notes":""}'): { last?: CapturedSession } {
+function captureSession(output: string | string[] = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}'): { last?: CapturedSession } {
   const holder: { last?: CapturedSession } = {};
+  let sessionCount = 0;
   mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+    const response = Array.isArray(output) ? output[Math.min(sessionCount++, output.length - 1)]! : output;
     holder.last = {
       sessionPurpose: opts.sessionPurpose,
       defaultProvider: opts.defaultProvider,
@@ -44,9 +46,9 @@ function captureSession(output = '{"verdict":"APPROVE","notes":""}'): { last?: C
             type: "message_update",
             assistantMessageEvent: {
               type: "text_delta",
-              partial: output,
+              partial: response,
               contentIndex: 0,
-              delta: output,
+              delta: response,
             },
           });
         }
@@ -109,12 +111,14 @@ async function runStepWithSettings(
   options: {
     task?: Record<string, unknown>;
     step?: Record<string, unknown>;
+    stepOptions?: Record<string, unknown>;
+    output?: string | string[];
   } = {},
 ) {
   const store = createMockStore();
   store.getSettings.mockResolvedValue(settings);
   const executor = makeExecutor(store);
-  const captured = captureSession();
+  const captured = captureSession(options.output);
 
   await (executor as any).executeWorkflowStep(
     baseTask(options.task),
@@ -122,6 +126,7 @@ async function runStepWithSettings(
     "/tmp/wt",
     settings,
     undefined,
+    options.stepOptions,
   );
 
   return { ...captured.last, logCalls: store.logEntry.mock.calls };
@@ -448,6 +453,73 @@ describe("executor workflow-step model resolution", () => {
     await expect(
       runStepWithSettings({ defaultThinkingLevel: "low" }),
     ).resolves.toMatchObject({ defaultThinkingLevel: "low" });
+  });
+
+  it("labels a workspace repository dispatch without changing the single-checkout marker", async () => {
+    const labeled = await runStepWithSettings(
+      { defaultProvider: "openai", defaultModelId: "gpt-5.6" },
+      { stepOptions: { dispatchLabel: "repo1" } },
+    );
+
+    const marker = labeled.logCalls.find(([, action]) => typeof action === "string" && action.startsWith("Workflow step 'Model Step'"))?.[1];
+    expect(marker).toBe("Workflow step 'Model Step' [repo1] using model: mock-provider/mock-model");
+    // Dashboard runtime-model parsing intentionally recognizes only top-level lane markers.
+    expect(marker).not.toMatch(/^(Planning|Triage|Executor|Reviewer) using model:/);
+
+    const unlabelled = await runStepWithSettings({ defaultProvider: "openai", defaultModelId: "gpt-5.6" });
+    expect(unlabelled.logCalls).toContainEqual([
+      "FN-MODEL-1",
+      "Workflow step 'Model Step' using model: mock-provider/mock-model",
+    ]);
+  });
+
+  it("deduplicates a same-model malformed-output self-retry and records its reason", async () => {
+    const result = await runStepWithSettings(
+      { validatorProvider: "openai", validatorModelId: "gpt-5.6" },
+      {
+        output: "The review completed without a verdict token.",
+        step: { name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" },
+      },
+    );
+
+    const modelMarkers = result.logCalls
+      .map(([, action]) => action)
+      .filter((action): action is string => typeof action === "string" && action.startsWith("Workflow step 'Code Review' using model:"));
+    expect(modelMarkers).toHaveLength(1);
+    expect(result.logCalls).toContainEqual([
+      "FN-MODEL-1",
+      "Workflow step 'Code Review' retrying the primary model after malformed output — no fallback model is configured",
+    ]);
+  });
+
+  it("emits a distinct marker when malformed output falls back to a different model", async () => {
+    const result = await runStepWithSettings(
+      {
+        validatorProvider: "primary-provider",
+        validatorModelId: "primary-model",
+        validatorFallbackProvider: "fallback-provider",
+        validatorFallbackModelId: "fallback-model",
+      },
+      {
+        output: [
+          "The review completed without a verdict token.",
+          '{"verdict":"APPROVE","notes":"Fallback review approved."}',
+        ],
+        step: { name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" },
+      },
+    );
+
+    const modelMarkers = result.logCalls
+      .map(([, action]) => action)
+      .filter((action): action is string => typeof action === "string" && action.startsWith("Workflow step 'Code Review' using model:"));
+    expect(mockedCreateFnAgent.mock.calls.map(([options]) => [options.defaultProvider, options.defaultModelId])).toEqual([
+      ["primary-provider", "primary-model"],
+      ["fallback-provider", "fallback-model"],
+    ]);
+    expect(modelMarkers).toEqual([
+      "Workflow step 'Code Review' using model: mock-provider/mock-model",
+      "Workflow step 'Code Review' using model: mock-provider/mock-model (fallback after timeout)",
+    ]);
   });
 
   it("logs workflow-step model rows with thinking effort before override annotations", async () => {

@@ -31,6 +31,8 @@ Each event has these 12 fields, in the shape exported as `AgentActivityEvent`:
 
 `agent:state-changed` remains a valid event enum value and `type` filter value so historical durable rows remain readable through this unchanged wire shape. No current writer produces that type; agent roster state is instead observed through the roster and its separate live state channel. Consumers that present work activity hide historical state-change rows without treating the enum as invalid.
 
+`workflow:gate-passed` remains the terminal, non-blocking event channel for a skipped gate. When the persisted workflow result carries a valid `notRunReason`, its metadata additionally carries `notRun: true`; consumers must present that event as not executed rather than passed. Genuinely passed and operator-bypassed rows omit the key.
+
 ## Bounds and ordering
 
 `before` is an **exclusive** upper bound and `since` is an **exclusive** lower bound. Supplying both selects the **open interval `(since, before)`**. It is not a half-open interval: neither endpoint is returned.

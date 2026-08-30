@@ -91,10 +91,18 @@
   flex-direction: column;
 }
 
+/*
+FNXC:DesktopWindowInteraction 2026-08-30-06:27:
+Responsive dashboard controls can move into the native title bar's screen-space
+at narrow desktop widths. Explicitly mark the content region as non-draggable so
+Electron always routes pointer input to dashboard buttons instead of treating an
+overlapping hit target as a window-drag gesture.
+*/
 .desktop-app-content {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 
 body.fusion-desktop {

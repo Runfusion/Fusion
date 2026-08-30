@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   ActiveSessionWorktreeRemovalError,
+  classifyWorktreeRemovalContent,
+  InvalidPostLandingProofUsageError,
   NativeWorktreeBackend,
   WorktrunkOperationError,
   WorktrunkWorktreeBackend,
@@ -80,6 +82,22 @@ vi.mock("../worktree/worktree-stale-registration.js", () => ({
 vi.mock("../worktree/worktree-prune.js", () => ({
   pruneWorktreeAdminEntries: pruneWorktreeAdminEntriesMock,
 }));
+
+describe("classifyWorktreeRemovalContent", () => {
+  it.each([
+    { name: "classifies empty output as clean", porcelain: "", expected: "clean" },
+    { name: "classifies whitespace-only output as clean", porcelain: "  \n\t\n", expected: "clean" },
+    { name: "classifies one ignored directory as ignored-only", porcelain: "!! node_modules/\n", expected: "ignored-only" },
+    { name: "classifies multiple ignored entries as ignored-only", porcelain: "!! dist/\n!! .env\n", expected: "ignored-only" },
+    { name: "classifies an untracked file as deliverable", porcelain: "?? untracked.txt\n", expected: "deliverable" },
+    { name: "classifies a modified tracked file as deliverable", porcelain: " M tracked.ts\n", expected: "deliverable" },
+    { name: "does not let ignored entries mask an untracked file", porcelain: "!! node_modules/\n?? untracked.txt\n", expected: "deliverable" },
+    { name: "classifies an unmerged file as deliverable", porcelain: "UU conflicted.ts\n", expected: "deliverable" },
+    { name: "preserves ignored paths containing spaces", porcelain: "!! generated output/\n", expected: "ignored-only" },
+  ])("$name", ({ porcelain, expected }) => {
+    expect(classifyWorktreeRemovalContent(porcelain)).toBe(expected);
+  });
+});
 
 beforeEach(() => {
   execMock.mockReset();
@@ -982,6 +1000,100 @@ describe("removeWorktree", () => {
       expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
     );
     expect(audit.git).toHaveBeenCalledWith({ type: "worktree:remove", target: "/repo/.worktrees/fn-1" });
+  });
+
+  it("permits ignored-only content after a proven landing without force", async () => {
+    execFileMock.mockResolvedValueOnce({ stdout: "!! node_modules/\n", stderr: "" });
+    execMock.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+
+    await removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: {},
+      audit,
+      taskId: "FN-251",
+      reason: RemovalReason.CompletionLandedCleanup,
+      postLandingProof: { landedSha: "abc123", source: "ai-merge-finalize" },
+    });
+
+    expect(execFileMock).toHaveBeenCalledWith(
+      "git",
+      ["status", "--porcelain=v1", "--ignored", "--untracked-files=normal"],
+      expect.objectContaining({ cwd: "/repo/.worktrees/fn-251" }),
+    );
+    expect(execMock).toHaveBeenCalledWith(
+      'git worktree remove "/repo/.worktrees/fn-251"',
+      expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
+    );
+    expect(audit.git).toHaveBeenCalledWith({
+      type: "worktree:post-landing-ignored-content-discarded",
+      target: "/repo/.worktrees/fn-251",
+      metadata: {
+        taskId: "FN-251",
+        reason: RemovalReason.CompletionLandedCleanup,
+        source: "ai-merge-finalize",
+        landedSha: "abc123",
+      },
+    });
+  });
+
+  it("rejects landing proof for every pre-existing removal reason", async () => {
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: {},
+      taskId: "FN-251",
+      reason: RemovalReason.PoolPrune,
+      postLandingProof: { source: "test" },
+    })).rejects.toBeInstanceOf(InvalidPostLandingProofUsageError);
+
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("records deliverable and unverifiable defensive refusals", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+    execFileMock.mockResolvedValueOnce({ stdout: "?? wip.txt\n", stderr: "" });
+
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: {},
+      audit,
+      taskId: "FN-251",
+      reason: RemovalReason.PoolPrune,
+    })).rejects.toThrow(/preserving/);
+
+    expect(audit.git).toHaveBeenCalledWith({
+      type: "worktree:removal-preserved",
+      target: "/repo/.worktrees/fn-251",
+      metadata: {
+        taskId: "FN-251",
+        reason: RemovalReason.PoolPrune,
+        source: undefined,
+        classification: "deliverable",
+        hasPostLandingProof: false,
+      },
+    });
+  });
+
+  it("routes proof-gated removal through worktrunk without force", async () => {
+    execMock.mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    await removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any },
+      taskId: "FN-251",
+      reason: RemovalReason.CompletionLandedCleanup,
+      postLandingProof: { source: "test" },
+    });
+
+    expect(execMock).toHaveBeenCalledWith(
+      '"worktrunk" "remove" "--foreground" "/repo/.worktrees/fn-251"',
+      expect.objectContaining({ cwd: "/repo" }),
+    );
   });
 
   it("classifies FN-343 nonstandard temp merge worktree remove failures as harmless when porcelain is absent after prune", async () => {

@@ -14,7 +14,6 @@ import { groupByWorktree } from "../utils/worktreeGrouping";
 import {
   isArchivedColumnRole,
   isCompleteColumnRole,
-  isHoldColumnRole,
   isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
@@ -85,6 +84,11 @@ export function translateRejection(t: TFn, rejection: TransitionRejectionDetail)
         "board.rejection.unplannedForExecution",
         "This task isn't ready for execution yet — planning or plan review is still outstanding.",
       );
+    case "stale-move-precondition":
+      return t(
+        "board.rejection.staleMovePrecondition",
+        "This card already moved on. Refresh to see where it is now.",
+      );
     default:
       return t(rejection.messageKey, rejection.messageKey);
   }
@@ -109,6 +113,11 @@ export function translateRejectionKey(t: TFn, messageKey: string): string {
         "board.rejection.unplannedForExecution",
         "This task isn't ready for execution yet — planning or plan review is still outstanding.",
       );
+    case "board.rejection.staleMovePrecondition":
+      return t(
+        "board.rejection.staleMovePrecondition",
+        "This card already moved on. Refresh to see where it is now.",
+      );
     default:
       return t(messageKey, messageKey);
   }
@@ -122,11 +131,11 @@ interface ColumnProps {
   /** Effective engine ceiling, including a binding worktree limit when enabled. */
   effectiveMaxConcurrent?: number;
   showWorktreeGrouping: boolean;
-  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetail: (task: Task | TaskDetail) => void;
   onOpenRefine?: (task: Task | TaskDetail) => void;
@@ -146,6 +155,7 @@ interface ColumnProps {
     updates: { title?: string; description?: string; dependencies?: string[]; githubTracking?: { enabled?: boolean } }
   ) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
   /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
@@ -231,12 +241,9 @@ interface ColumnProps {
   workflowContextMenuColumns?: readonly TaskContextMenuColumnMetadata[];
   /** Per-task workflow columns for aggregate Board cards whose tasks come from different workflows. */
   taskContextMenuColumnsByTaskId?: ReadonlyMap<string, readonly TaskContextMenuColumnMetadata[]>;
-  /** Manually promote a held card out of this hold column (workflow mode). */
-  /** `force` waives the unplanned-for-execution gate after operator confirmation. */
-  onPromote?: (taskId: string, options?: { force?: boolean }) => Promise<void>;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMaxConcurrent = maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMaxConcurrent = maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -247,16 +254,13 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
     unknownColumn: t("board.rejection.unknownColumn", "That column doesn't exist in this task's workflow."),
     workflowMismatch: t("board.rejection.workflowMismatch", "Drag can't move a card between workflows. Use the workflow switcher instead."),
     mergeBlocked: t("board.rejection.mergeBlocked", "This task is blocked from completing until its merge step finishes."),
-    promoteRejected: t("board.rejection.promoteRejected", "This card could not be promoted."),
+    staleMovePrecondition: t("board.rejection.staleMovePrecondition", "This card already moved on. Refresh to see where it is now."),
   }), [t]);
   void rejectionCopy;
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isReplanning, setIsReplanning] = useState(false);
   const [isPausingAll, setIsPausingAll] = useState(false);
-  // Workflow mode: per-card promote in-flight ids + inline capacity feedback.
-  const [promotingIds, setPromotingIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [inlineFeedback, setInlineFeedback] = useState<string | null>(null);
   /*
   FNXC:WorkflowColumnDescriptions 2026-07-22-12:30:
   Whitespace-only values can exist in pre-editor/custom IR. Treat them as
@@ -296,16 +300,6 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
     return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
   }, [allTasks, getTaskColumnFlags]);
 
-  // Clear the inline capacity-exhausted banner once the column's task list
-  // changes via SSE (e.g. an occupant moves out and capacity frees up). The
-  // banner reflects a point-in-time promote rejection; a changed roster means
-  // the stale constraint may no longer hold. Keyed on the task-id signature so
-  // it only fires on real membership changes, not every parent re-render.
-  const taskIdSignature = useMemo(() => tasks.map((task) => task.id).join(","), [tasks]);
-  useEffect(() => {
-    setInlineFeedback(null);
-  }, [taskIdSignature]);
-
   // Close the column dropdown menu when the user clicks anywhere else.
   useEffect(() => {
     if (!isMenuOpen) return;
@@ -341,7 +335,6 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
   behaviour change, documented rather than silent; covered by column-role-degraded-flags.test.ts.
   */
   const isArchived = isArchivedColumnRole(columnFlags, column);
-  const isHoldColumn = isHoldColumnRole(columnFlags, column);
   const isCollapsed = isArchived && collapsed;
   const isWipProcessingColumn = isWipColumnRole(columnFlags, column);
   /*
@@ -421,64 +414,6 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
   useEffect(() => {
     setVisibleTaskCount(VISIBLE_TASKS_INITIAL);
   }, [isSearchActive, searchResultSignature]);
-
-  /*
-  FNXC:BoardPromote 2026-07-25-04:55:
-  Promote is a two-attempt flow for the `unplanned-for-execution` rejection only.
-  The first attempt never forces; if the server refuses because a replan / plan
-  review is still outstanding, the operator is asked whether to start execution
-  anyway and the retry carries `{ force: true }`. Every other rejection (capacity,
-  guard) stays a plain inline message with no override — those are not the
-  operator's call to waive. Inline feedback rather than a toast, so several holds
-  can promote concurrently without toast spam.
-  */
-  const handlePromote = useCallback(async (taskId: string) => {
-    if (!onPromote) return;
-    setInlineFeedback(null);
-    setPromotingIds((prev) => {
-      const next = new Set(prev);
-      next.add(taskId);
-      return next;
-    });
-    try {
-      try {
-        await onPromote(taskId);
-      } catch (err) {
-        const rejection = extractTransitionRejection(err);
-        if (rejection?.code !== "unplanned-for-execution") throw err;
-
-        const forceConfirmed = await confirm({
-          title: t("column.promoteUnplannedTitle", "Start execution anyway?"),
-          message: t(
-            "column.promoteUnplannedMessage",
-            "{{taskId}} is still waiting on planning or plan review. Promoting now starts execution with the current plan and cancels the pending replan.",
-            { taskId },
-          ),
-          confirmLabel: t("column.promoteUnplannedConfirm", "Start Anyway"),
-          cancelLabel: t("column.promoteUnplannedCancel", "Keep Waiting"),
-          danger: true,
-        });
-        if (!forceConfirmed) {
-          setInlineFeedback(translateRejection(t, rejection));
-          return;
-        }
-        await onPromote(taskId, { force: true });
-      }
-    } catch (err) {
-      const rejection = extractTransitionRejection(err);
-      if (rejection) {
-        setInlineFeedback(translateRejection(t, rejection));
-      } else {
-        setInlineFeedback(getErrorMessage(err));
-      }
-    } finally {
-      setPromotingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(taskId);
-        return next;
-      });
-    }
-  }, [confirm, onPromote, t]);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — my own inert conversion):
@@ -892,11 +827,6 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
       {!isCollapsed && resolvedColumnDescription && (
         <p className="column-desc">{resolvedColumnDescription}</p>
       )}
-      {!isCollapsed && inlineFeedback && (
-        <p className="column-inline-feedback" role="status" data-testid="column-inline-feedback">
-          {inlineFeedback}
-        </p>
-      )}
       {!isCollapsed && (
         <div className="column-body">
           {canCreateInColumn && (
@@ -951,6 +881,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
                   onUpdateTask={onUpdateTask}
                   onPauseTask={onPauseTask}
                   onRetryTask={onRetryTask}
+                  onOpenChatWithPrefill={onOpenChatWithPrefill}
                   onUnpauseTask={onUnpauseTask}
                   onResetTask={onResetTask}
                   onDuplicateTask={onDuplicateTask}
@@ -993,6 +924,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
                   onUpdateTask={onUpdateTask}
                   onPauseTask={onPauseTask}
                   onRetryTask={onRetryTask}
+                  onOpenChatWithPrefill={onOpenChatWithPrefill}
                   onUnpauseTask={onUnpauseTask}
                   onResetTask={onResetTask}
                   onDuplicateTask={onDuplicateTask}
@@ -1007,8 +939,6 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
                   onMoveTask={onMoveTask}
                   taskColumnFlags={getTaskColumnFlags(task)}
                   taskMoveColumns={getTaskContextMenuColumns(task)}
-                  onPromote={isHoldColumn && onPromote ? handlePromote : undefined}
-                  isPromoting={isHoldColumn && onPromote ? promotingIds.has(task.id) : undefined}
                   lastFetchTimeMs={lastFetchTimeMs}
                   cardFieldDefs={taskCardFieldDefs?.get(task.id)}
                   workflowBadge={taskWorkflowBadges?.get(task.id)}

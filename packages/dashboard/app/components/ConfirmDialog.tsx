@@ -17,6 +17,8 @@ export interface ConfirmDialogProps {
   checkboxDescription?: string;
   checkboxChecked?: boolean;
   onCheckboxChange?: (next: boolean) => void;
+  selectValue?: string;
+  onSelectChange?: (next: string) => void;
 }
 
 export function ConfirmDialog({
@@ -29,6 +31,8 @@ export function ConfirmDialog({
   checkboxDescription,
   checkboxChecked = false,
   onCheckboxChange,
+  selectValue,
+  onSelectChange,
 }: ConfirmDialogProps) {
   const { t } = useTranslation("app");
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -125,6 +129,23 @@ export function ConfirmDialog({
         </div>
 
         <div className="confirm-dialog__body">{options.message}</div>
+
+        {options.select ? (
+          <div className="confirm-dialog__select">
+            <label htmlFor="confirm-dialog-select">{options.select.label}</label>
+            <select
+              id="confirm-dialog-select"
+              className="select"
+              data-testid="confirm-dialog-select"
+              value={selectValue}
+              onChange={(event) => onSelectChange?.(event.target.value)}
+            >
+              {options.select.options.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
 
         {checkboxLabel ? (
           <label className="checkbox-label confirm-dialog__checkbox">

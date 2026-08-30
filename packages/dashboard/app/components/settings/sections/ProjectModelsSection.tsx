@@ -34,6 +34,7 @@ const PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS = {
     default: "defaultCredentialInstanceIdOverride",
     merger: "mergerCredentialInstanceId",
     "import-translate": "importTranslateCredentialInstanceId",
+    "fast-cheap": "fastCheapCredentialInstanceId",
 } as const satisfies Partial<Record<string, keyof Settings>>;
 /*
 FNXC:SettingsModels 2026-06-16-19:58:
@@ -332,13 +333,19 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         registerWorkflowLaneSaver?.(saveWorkflowLanes);
         return () => registerWorkflowLaneSaver?.(null);
     }, [registerWorkflowLaneSaver, saveWorkflowLanes]);
-    // The project DEFAULT, title-summarizer, and merger lanes remain editable
+    // The project DEFAULT, title-summarizer, merger, import-translate, and Fast & Cheap lanes remain editable
     // here. Execution/planning/validator workflow-specific lanes still redirect to
     // workflow settings below.
     // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
     // FNXC:GitHubImportTranslate 2026-07-15-09:30: The import-translate lane is project-scoped (like merger/summarization), so its project override must be editable here — otherwise the lane's projectProviderKey/projectModelKey would be unreachable and only the global lane could ever be set.
+    /*
+    FNXC:FastLane 2026-08-29-02:51:
+    Fast tasks resolve a project Fast & Cheap override before the global lane. Keep this lane in the
+    project picker list; defining it only in MODEL_LANES would render it globally but make the
+    documented project override impossible to save through the UI.
+    */
     // FNXC:SettingsModels 2026-08-18-06:41: Summarization remains project-scoped but stays with its AI summarization enable toggles instead of the Model Overrides group.
-    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate"].includes(lane.laneId));
+    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate", "fast-cheap"].includes(lane.laneId));
     const credentialInstanceKeyForLane = (lane: ModelLane): keyof Settings | undefined => PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId as keyof typeof PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS];
     const credentialInstanceValueForLane = (lane: ModelLane): string => {
         const key = credentialInstanceKeyForLane(lane);
@@ -470,7 +477,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         const thinkingValue = getLaneThinkingValue(lane);
         const isOverridden = status === "overridden" || Boolean(thinkingValue) || Boolean(credentialInstanceValueForLane(lane));
         const laneLabel = getProjectLaneLabel(lane);
-        return (<div className="form-group" key={lane.laneId}>
+        return (<div className="form-group" key={lane.laneId} data-settings-key={lane.projectModelKey}>
         {/*
         FNXC:SettingsHelp 2026-07-15-23:10:
         Lane help rides the same "?" as every other row. It reads as an exception — a lane is a label + inherited/override badge + dropdown + conditional Reset, and its copy ends in the resolved fallback CHAIN — but that argues for WHERE the tip hangs (the label row, beside the badge), not for keeping a paragraph. Left inline, Project Models was the one section still showing prose under every control while its neighbours showed an icon; the global lanes next door already use the tip.
@@ -577,7 +584,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         />
       </SettingsFieldRow>
       {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
-          {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger").map(renderProjectLane)}
+          {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger" || lane.laneId === "fast-cheap").map(renderProjectLane)}
           {renderMergerFallbackLane()}
           {projectModelLanes.filter((lane) => lane.laneId === "import-translate").map(renderProjectLane)}
         </>)}

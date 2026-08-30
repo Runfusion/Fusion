@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import { isFusionDeletableBranch, type Task, type TaskStore } from "@fusion/core";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
-import { resolveReboundTargetForTask } from "@fusion/core";
+import { moveTaskToContainedBackwardTarget } from "../execution/lifecycle-move.js";
 import {
   classifyForeignOnlyContamination,
   reanchorBranchToBase,
@@ -73,17 +73,17 @@ export async function recoverForeignOnlyContamination(
       taskId: task.id,
     });
 
-    /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
-       DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
-       #1411 `recoveryRehome` escape, so an undeclared destination is REJECTED and the recovery never completes:
-       that is what the hardcoded `todo` used to cause on any board without that column. The destination now
-       comes from the task's own workflow, and the legacy id remains only as the unresolvable fallback. */
-    await deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(deps.taskStore, task.id), {
+    /*
+    FNXC:LifecycleContainment 2026-08-28-03:03:
+    Foreign-only contamination recovery moves only to the adjacent backward lifecycle role. Missing
+    targets and capacity refusal stay in place, preserving the repaired branch/worktree metadata.
+    */
+    await moveTaskToContainedBackwardTarget(deps.taskStore, task.id, "contamination-recovery", {
       moveSource: "engine",
       preserveResumeState: true,
       preserveProgress: true,
       preserveWorktree: true,
-    });
+    }, task.column);
     await deps.taskStore.updateTask(task.id, {
       recoveryRetryCount: 0,
       nextRecoveryAt: null,
@@ -113,17 +113,17 @@ export async function recoverForeignOnlyContamination(
     await execAsync(`git branch -D ${quote(task.branch)}`, { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
   }
 
-  /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
-       DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
-       #1411 `recoveryRehome` escape, so an undeclared destination is REJECTED and the recovery never completes:
-       that is what the hardcoded `todo` used to cause on any board without that column. The destination now
-       comes from the task's own workflow, and the legacy id remains only as the unresolvable fallback. */
-  await deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(deps.taskStore, task.id), {
+  /*
+    FNXC:LifecycleContainment 2026-08-28-03:03:
+    Foreign-only contamination recovery moves only to the adjacent backward lifecycle role. Missing
+    targets and capacity refusal stay in place, preserving the repaired branch/worktree metadata.
+    */
+  await moveTaskToContainedBackwardTarget(deps.taskStore, task.id, "contamination-recovery", {
     moveSource: "engine",
     preserveResumeState: true,
     preserveProgress: true,
     preserveWorktree: false,
-  });
+  }, task.column);
   await deps.taskStore.updateTask(task.id, {
     recoveryRetryCount: 0,
     nextRecoveryAt: null,

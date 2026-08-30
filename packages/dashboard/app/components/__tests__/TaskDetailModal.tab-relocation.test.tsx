@@ -74,6 +74,30 @@ describe("TaskDetailModal tab relocation", () => {
     expect(screen.getByRole("button", { name: "Details" })).toHaveClass("detail-tab-active");
   });
 
+  it("folds Routing and Debug into Details as collapsed disclosures", async () => {
+    render(
+      <TaskDetailContent
+        {...sharedProps}
+        embedded
+        initialTab="details"
+        task={makeTask()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Expand routing details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Expand debug details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Task Routing")).toBeNull();
+    expect(screen.queryByTestId("spec-lock-report")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand routing details" }));
+    expect(await screen.findByText("Task Routing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse routing details" })).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand debug details" }));
+    expect(await screen.findByTestId("spec-lock-report")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse debug details" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("renders every overlap pair and identifies a matched blocker glob in Dependencies", async () => {
     mockFetchOverlapBlockerReport.mockResolvedValue({
       taskId: "FN-099",

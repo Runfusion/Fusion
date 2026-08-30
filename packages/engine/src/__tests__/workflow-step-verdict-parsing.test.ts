@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { inferWorkflowStepVerdictFromProse, parseWorkflowStepOutput, parseWorkflowStepVerdict } from "../executor.js";
+import {
+  MAX_DERIVED_WORKFLOW_STEP_NOTES_CHARS,
+  inferWorkflowStepVerdictFromProse,
+  parseWorkflowStepOutput,
+  parseWorkflowStepVerdict,
+  workflowStepVerdictNoNotesNotice,
+  type WorkflowStepVerdictNoNotesReason,
+} from "../executor.js";
 import { proseSignalsClearApproval, extractJsonObjectCandidates, classifyReviewVerdictToken } from "../execution/reviewer.js";
 
 describe("parseWorkflowStepVerdict", () => {
@@ -17,6 +24,96 @@ describe("parseWorkflowStepVerdict", () => {
 
   it("returns null for invalid verdict", () => {
     expect(parseWorkflowStepVerdict('{"verdict":"PASS"}')).toBeNull();
+  });
+
+  it.each<WorkflowStepVerdictNoNotesReason>([
+    "empty",
+    "timed-out",
+    "failed-soft",
+    "unavailable",
+    "reused-empty",
+  ])("narrates a missing-note %s outcome without fabricating reviewer reasoning", (reason) => {
+    const notice = workflowStepVerdictNoNotesNotice("APPROVE", reason);
+    expect(notice.trim()).not.toBe("");
+    expect(notice).toContain("APPROVE");
+    expect(notice).toMatch(/without a rationale/);
+    expect(notice).not.toMatch(/checked|correct|complete|passed|satisf(?:y|ied)/i);
+  });
+
+  it("mirrors structured verdict notes into human-readable output", () => {
+    const parsed = parseWorkflowStepOutput('{"verdict":"APPROVE","notes":"The plan is internally consistent."}');
+    expect(parsed.output).toBe("The plan is internally consistent.");
+    expect(parsed.notes).toBe(parsed.output);
+  });
+
+  it("mirrors inferred REQUEST REVISION notes into output", () => {
+    const parsed = parseWorkflowStepOutput("REQUEST REVISION\nPlease add the missing verification.");
+    expect(parsed).toMatchObject({ verdict: "REVISE", notes: "Please add the missing verification." });
+    expect(parsed.output).toBe(parsed.notes);
+  });
+
+  it("keeps explicit approval prose in both output and notes", () => {
+    const prose = "Verdict: APPROVE\n\nThe plan is ready.";
+    const parsed = parseWorkflowStepOutput(prose);
+    expect(parsed).toMatchObject({ verdict: "APPROVE", notes: prose, output: prose });
+  });
+
+  it("derives notes from prose surrounding an empty structured verdict", () => {
+    const prose = "I read PROMPT.md and the cited files; scope and verification are adequate.";
+    expect(parseWorkflowStepOutput(`${prose}\n{\"verdict\":\"APPROVE\",\"notes\":\"\"}`)).toEqual({
+      output: prose,
+      verdict: "APPROVE",
+      notes: prose,
+    });
+  });
+
+  it("strips fenced verdict payload markers while retaining surrounding prose", () => {
+    const prose = "The implementation and targeted checks are complete.";
+    expect(parseWorkflowStepOutput(`${prose}\n\`\`\`json\n{\"verdict\":\"APPROVE\",\"notes\":\"\"}\n\`\`\``)).toEqual({
+      output: prose,
+      verdict: "APPROVE",
+      notes: prose,
+    });
+  });
+
+  it("derives notes from finding titles when no prose is available", () => {
+    expect(parseWorkflowStepOutput('{"verdict":"REVISE","notes":"","findings":[{"id":"a","title":"Fix auth","body":"detail"},{"id":"b","title":"Add coverage","body":"detail"}]}')).toMatchObject({
+      output: "- Fix auth\n- Add coverage",
+      verdict: "REVISE",
+      notes: "- Fix auth\n- Add coverage",
+    });
+  });
+
+  it.each([
+    '{"verdict":"APPROVE","notes":"","findings":[]}',
+    '{"verdict":"APPROVE_WITH_NOTES"}',
+  ])("marks a structured verdict with no recoverable notes as transiently missing: %s", (payload) => {
+    expect(parseWorkflowStepOutput(payload)).toEqual({
+      output: "",
+      verdict: payload.includes("APPROVE_WITH_NOTES") ? "APPROVE_WITH_NOTES" : "APPROVE",
+      notes: "",
+      notesMissing: true,
+    });
+  });
+
+  it("does not derive or request notes for CLOSE_NO_OP", () => {
+    expect(parseWorkflowStepOutput('{"verdict":"CLOSE_NO_OP","notes":""}', { optionalGroupId: "plan-review" })).toEqual({
+      output: "",
+      verdict: "CLOSE_NO_OP",
+      notes: "",
+    });
+  });
+
+  it("bounds derived notes on a whitespace boundary", () => {
+    const longProse = `${"checked ".repeat(400)}finished`;
+    const parsed = parseWorkflowStepOutput(`${longProse}\n{"verdict":"APPROVE","notes":""}`);
+    expect(parsed.notes!.length).toBeLessThanOrEqual(MAX_DERIVED_WORKFLOW_STEP_NOTES_CHARS);
+    expect(parsed.notes).toMatch(/…$/);
+    expect(parsed.notes).not.toMatch(/check…$/);
+  });
+
+  it("does not mark non-verdict skill output as missing notes", () => {
+    expect(parseWorkflowStepOutput("native skill output", { requireVerdict: false })).toEqual({ output: "native skill output" });
   });
 
   it("preserves normalized supersession claims with resolved finding receipts", () => {

@@ -45,12 +45,13 @@ export interface RightDockControllerInput {
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): threaded through so the right-dock host renders the same TaskDetailContent bypass affordance as the full modal/floating hosts. */
   onBypassReview?: (id: string, reason: string) => Promise<Task>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
   openSettings: (section?: string) => void;
   onOpenUsage?: (anchorRect?: DOMRect | null) => void;
@@ -186,6 +187,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       taskColumnFlags={input.columnFlagsByTaskId?.get(task.id)}
       projectId={input.projectId}
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
+      onOpenChatWithPrefill={input.onOpenChatWithPrefill}
       onDeleteTask={input.onDeleteTask}
       onUpdateTask={input.onUpdateTask}
       addToast={input.addToast}
@@ -246,6 +248,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     */
     onReviseTask: (task: Task | TaskDetail) => input.onSendSelectionToTask(task.description),
     onDeleteTask: input.onDeleteTask,
+    onOpenChatWithPrefill: input.onOpenChatWithPrefill,
     onOpenDetail: input.openDetailTask,
     onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
     onSendSelectionToTask: input.onSendSelectionToTask,
@@ -277,6 +280,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onRevertTask={input.onRevertTask}
       onMergeTask={input.onMergeTask}
       onRetryTask={input.onRetryTask}
+      onOpenChatWithPrefill={input.onOpenChatWithPrefill}
       onPauseTask={input.onPauseTask}
       onUnpauseTask={input.onUnpauseTask}
       onBypassReview={input.onBypassReview}

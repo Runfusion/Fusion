@@ -8,3 +8,4 @@ export * from "./task-review.js";
 export * from "./task-tracking.js";
 export * from "./documents-artifacts.js";
 export * from "./todo-list.js";
+export * from "./patchnode.js";

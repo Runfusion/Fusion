@@ -42,42 +42,73 @@ import {
 import type { EngineRunContext } from "../util/run-audit.js";
 import { executorLog, reviewerLog } from "../logger.js";
 import { normalizeWorkspaceTaskRouting } from "./workspace-config-resolver.js";
+import { isApprovalFamilyVerdict } from "./workspace-review-per-repo.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method surface
 type AnyFn = (...args: any[]) => any;
 
+export type WorkspaceCodeReviewApprovalPublication = {
+  expected: boolean;
+  published: boolean;
+  superseded: boolean;
+  emptyApprovalFingerprints: boolean;
+  reason?: "scope-superseded" | "scope-absent" | "writer-unavailable" | "writer-failed" | "not-published";
+};
+
 /*
-FNXC:WorkspaceReviewEvidence 2026-08-21-19:52:
-Both authoritative and graph review producers must publish the exact approval shape landing reads.
-Keep this fenced writer exported so the real producer-to-consumer regression cannot recreate it in a test.
+FNXC:WorkspaceReviewEvidence 2026-08-29-12:17:
+FN-259 gives both workspace Code Review producers one durable primitive. FN-258 removed
+repositoryScope from updateTask, so an approval that only reaches updateTaskAtomic is silently
+lost; a writer failure now returns an explicit failed publication so callers cannot record APPROVE.
 */
 export async function persistWorkspaceCodeReviewApproval(
   store: TaskStore,
   taskId: string,
   review: Pick<ReviewResult, "verdict" | "repositoryScopeRevision" | "repositoryDiffFingerprints" | "repositoryModifiedFiles">,
-): Promise<boolean> {
-  if (review.repositoryScopeRevision === undefined) return false;
-  let superseded = false;
-  const approvedAt = new Date().toISOString();
-  await store.updateTaskAtomic(taskId, (current) => {
-    const scope = current.repositoryScope;
-    if (!scope || scope.revision !== review.repositoryScopeRevision) {
-      superseded = true;
-      return null;
+): Promise<WorkspaceCodeReviewApprovalPublication> {
+  const repositoryScopeRevision = review.repositoryScopeRevision;
+  const fingerprintEntries = Object.entries(review.repositoryDiffFingerprints ?? {});
+  const emptyApprovalFingerprints = repositoryScopeRevision !== undefined
+    && isApprovalFamilyVerdict(review.verdict)
+    && review.repositoryDiffFingerprints !== undefined
+    && fingerprintEntries.length === 0;
+  if (repositoryScopeRevision === undefined || !isApprovalFamilyVerdict(review.verdict) || fingerprintEntries.length === 0) {
+    if (repositoryScopeRevision !== undefined) {
+      const current = await store.getTask(taskId);
+      if (current.repositoryScope?.revision !== repositoryScopeRevision) {
+        return { expected: false, published: false, superseded: true, emptyApprovalFingerprints };
+      }
     }
-    if (review.verdict !== "APPROVE" || !review.repositoryDiffFingerprints || Object.keys(review.repositoryDiffFingerprints).length === 0) return null;
+    return { expected: false, published: false, superseded: false, emptyApprovalFingerprints };
+  }
+
+  const publish = (store as Partial<Pick<TaskStore, "publishWorkspaceCodeReviewEvidence">>).publishWorkspaceCodeReviewEvidence;
+  if (typeof publish !== "function") {
+    return { expected: true, published: false, superseded: false, emptyApprovalFingerprints: false, reason: "writer-unavailable" };
+  }
+
+  try {
+    const published = await publish.call(store, taskId, {
+      expectedScopeRevision: repositoryScopeRevision,
+      reviewEvidence: Object.fromEntries(fingerprintEntries.map(([repository, fingerprint]) => [
+        repository,
+        { fingerprint, approvedAt: new Date().toISOString() },
+      ])),
+      clearReviewRemediation: true,
+      ...(review.repositoryModifiedFiles !== undefined ? { modifiedFiles: review.repositoryModifiedFiles } : {}),
+    });
     return {
-      repositoryScope: {
-        ...scope,
-        reviewEvidence: Object.fromEntries(Object.entries(review.repositoryDiffFingerprints).map(([repo, fingerprint]) => [repo, { fingerprint, approvedAt }])),
-        ...(scope.reviewRemediation?.scopeRevision === review.repositoryScopeRevision ? { reviewRemediation: undefined } : {}),
-      },
-      ...(review.repositoryModifiedFiles ? { modifiedFiles: review.repositoryModifiedFiles } : {}),
+      expected: true,
+      published: published.published,
+      superseded: published.reason === "scope-superseded",
+      emptyApprovalFingerprints: false,
+      ...(published.published ? {} : { reason: published.reason ?? "not-published" }),
     };
-  });
-  return superseded;
+  } catch {
+    return { expected: true, published: false, superseded: false, emptyApprovalFingerprints: false, reason: "writer-failed" };
+  }
 }
 
 export type CreateAuthoritativeWorkflowSeamsDeps = {
@@ -545,15 +576,40 @@ export function createAuthoritativeWorkflowSeams(
         per-repository diff evidence. Check that generation under the task lock before persisting
         approval or advancing the graph: an operator scope change supersedes the whole callback.
         */
-        const reviewSuperseded = workspaceConfig && config.type === "code"
+        const workspaceApprovalPublication = workspaceConfig && config.type === "code"
           ? await persistWorkspaceCodeReviewApproval(deps.store, seamTask.id, review)
-          : false;
-        if (reviewSuperseded) {
+          : undefined;
+        if (workspaceApprovalPublication?.superseded) {
           review = {
             verdict: "UNAVAILABLE",
             retryable: false,
             review: "Workspace Code Review result superseded by a repository scope change.",
             summary: "Unavailable: repository scope changed during review",
+            repositoryReviewOutcomes: review.repositoryReviewOutcomes,
+            repositoryScopeRevision: review.repositoryScopeRevision,
+          };
+        } else if (workspaceApprovalPublication?.expected && !workspaceApprovalPublication.published) {
+          const repositories = Object.keys(review.repositoryDiffFingerprints ?? {}).sort();
+          const reason = workspaceApprovalPublication.reason ?? "not-published";
+          await deps.store.logEntry(
+            seamTask.id,
+            `Workspace Code Review approval unavailable for ${seamTask.id}: ${repositories.join(", ")}`,
+            `Durable workspace review evidence was not published: ${reason}`,
+          );
+          review = {
+            verdict: "UNAVAILABLE",
+            retryable: true,
+            review: `Workspace Code Review approval could not be persisted for ${repositories.join(", ")}: ${reason}.`,
+            summary: `Unavailable: workspace review approval could not be persisted (${reason})`,
+            repositoryReviewOutcomes: review.repositoryReviewOutcomes,
+            repositoryScopeRevision: review.repositoryScopeRevision,
+          };
+        } else if (workspaceApprovalPublication?.emptyApprovalFingerprints) {
+          review = {
+            verdict: "UNAVAILABLE",
+            retryable: false,
+            review: "Workspace Code Review returned approval without repository diff fingerprints.",
+            summary: "Unavailable: no workspace review fingerprints were published",
             repositoryReviewOutcomes: review.repositoryReviewOutcomes,
             repositoryScopeRevision: review.repositoryScopeRevision,
           };

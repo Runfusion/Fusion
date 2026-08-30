@@ -116,6 +116,7 @@ describe("NotificationService deferred failure notifications", () => {
     });
     const service = new NotificationService(store as any, { wedgeNotificationSettleMs: 0 });
     await service.start();
+    const exhaustedAt = new Date().toISOString();
     const exhausted = task({
       id: "FN-suppressed-exhaustion",
       status: "failed",
@@ -124,14 +125,14 @@ describe("NotificationService deferred failure notifications", () => {
         reasonKey: "terminal-failed",
         episodeId: "active",
         status: "active",
-        transitionedAt: "2026-08-10T20:00:00.000Z",
-        lastNotifiedAtByReason: { "terminal-failed": "2026-08-10T20:01:00.000Z" },
+        transitionedAt: exhaustedAt,
+        lastNotifiedAtByReason: { "terminal-failed": exhaustedAt },
         autoRecovery: {
           attempts: 3,
-          lastAttemptAt: "2026-08-10T20:00:00.000Z",
-          budgetStartedAt: "2026-08-10T20:00:00.000Z",
-          exhaustedAt: "2026-08-10T20:01:00.000Z",
-          lastBudgetWriteAt: "2026-08-10T20:01:00.000Z",
+          lastAttemptAt: exhaustedAt,
+          budgetStartedAt: exhaustedAt,
+          exhaustedAt,
+          lastBudgetWriteAt: exhaustedAt,
         },
       },
     });

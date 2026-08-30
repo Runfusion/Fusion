@@ -305,7 +305,7 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-030",
-      "queued — blocked by active file-scope lease FN-039 (column=in-progress)",
+      "queued — waiting for active file-scope lease FN-039 (column=in-progress, lease=active)",
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-031", "in-progress", expect.objectContaining({ allocateWorktree: expect.any(Function) }));
   });
@@ -400,7 +400,7 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-045",
-      "queued — blocked by active file-scope lease FN-033 (column=in-progress)",
+      "queued — waiting for active file-scope lease FN-033 (column=in-progress, lease=active)",
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-078", "in-progress", expect.anything());
     expect(store.logEntry).not.toHaveBeenCalledWith(
@@ -471,7 +471,7 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-045",
-      "queued — blocked by active file-scope lease FN-033 (column=in-progress)",
+      "queued — waiting for active file-scope lease FN-033 (column=in-progress, lease=active)",
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-078", "in-progress", expect.anything());
     expect(store.logEntry).not.toHaveBeenCalledWith(
@@ -578,7 +578,7 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-900",
-      "queued — blocked by active file-scope lease FN-NEW (column=in-progress)",
+      "queued — waiting for active file-scope lease FN-NEW (column=in-progress, lease=active)",
     );
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-900", "in-progress", expect.anything());
   });
@@ -698,6 +698,203 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-901", { overlapBlockedBy: null });
     expect(store.moveTask).toHaveBeenCalledWith("FN-901", "in-progress", expect.anything());
+  });
+
+  it("holds an overlapping candidate behind a failed review task until its work lands", async () => {
+    const tasks = [
+      makeTask({
+        id: "FN-A",
+        column: "in-review",
+        status: "failed",
+        worktree: "/wt/a",
+        priority: "normal",
+      }),
+      makeTask({ id: "FN-B", column: "todo", priority: "normal" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+    expect(tasks.find((task) => task.id === "FN-B")).toMatchObject({
+      status: "queued",
+      overlapBlockedBy: "FN-A",
+    });
+  });
+
+  it("holds an overlapping candidate behind a replan-bounced task with a preserved worktree", async () => {
+    const tasks = [
+      makeTask({
+        id: "FN-A",
+        column: "triage",
+        worktree: "/wt/a",
+        priority: "urgent",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      makeTask({
+        id: "FN-B",
+        column: "todo",
+        priority: "normal",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      }),
+    ];
+    const store = createStore(tasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+    expect(tasks.find((task) => task.id === "FN-B")).toMatchObject({
+      status: "queued",
+      overlapBlockedBy: "FN-A",
+    });
+  });
+
+  it("releases a queued overlap only after the failed review holder reaches a terminal lane", async () => {
+    const blocker = makeTask({
+      id: "FN-A",
+      column: "in-review",
+      status: "failed",
+      worktree: "/wt/a",
+    });
+    const candidate = makeTask({ id: "FN-B", column: "todo" });
+    const tasks = [blocker, candidate];
+    const store = createStore(tasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+
+    blocker.column = "done";
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+    expect(candidate.overlapBlockedBy).toBeNull();
+  });
+
+  it("releases a candidate when a review holder no longer owns a worktree", async () => {
+    const tasks = [
+      makeTask({ id: "FN-A", column: "in-review", status: "failed" }),
+      makeTask({ id: "FN-B", column: "todo" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+  });
+
+  it("does not let a lower-priority dormant holder delay a higher-priority candidate", async () => {
+    const tasks = [
+      makeTask({ id: "FN-A", column: "triage", worktree: "/wt/a", priority: "low" }),
+      makeTask({ id: "FN-B", column: "todo", priority: "normal" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+  });
+
+  it("chooses one deterministic winner when two dormant holders overlap", async () => {
+    const tasks = [
+      makeTask({ id: "FN-NEWER", column: "todo", worktree: "/wt/newer", priority: "normal", createdAt: "2026-01-02T00:00:00.000Z" }),
+      makeTask({ id: "FN-OLDER", column: "todo", worktree: "/wt/older", priority: "normal", createdAt: "2026-01-01T00:00:00.000Z" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-NEWER": ["packages/core/src/store.ts"],
+      "FN-OLDER": ["packages/core/src/store.ts"],
+    }, { maxConcurrent: 2 });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-OLDER", "in-progress", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NEWER", "in-progress", expect.anything());
+    expect(tasks.find((task) => task.id === "FN-NEWER")).toMatchObject({ overlapBlockedBy: "FN-OLDER" });
+  });
+
+  it("does not let a dormant task block itself", async () => {
+    const tasks = [makeTask({ id: "FN-A", column: "todo", worktree: "/wt/a" })];
+    const store = createStore(tasks, { "FN-A": ["packages/core/src/store.ts"] });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-A", "in-progress", expect.anything());
+  });
+
+  it("bypasses file-scope leases when grouping is disabled or the holder is coordination-only", async () => {
+    const disabledTasks = [
+      makeTask({ id: "FN-A", column: "in-review", status: "failed", worktree: "/wt/a" }),
+      makeTask({ id: "FN-B", column: "todo" }),
+    ];
+    const disabledStore = createStore(disabledTasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    }, { groupOverlappingFiles: false });
+    const disabledScheduler = new Scheduler(disabledStore);
+    (disabledScheduler as any).running = true;
+
+    await disabledScheduler.schedule();
+    expect(disabledStore.moveTask).toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+
+    const coordinationTasks = [
+      makeTask({ id: "FN-C", column: "in-review", worktree: "/wt/c", noCommitsExpected: true }),
+      makeTask({ id: "FN-D", column: "todo" }),
+    ];
+    const coordinationStore = createStore(coordinationTasks, {
+      "FN-C": ["docs/architecture.md"],
+      "FN-D": ["docs/architecture.md"],
+    });
+    const coordinationScheduler = new Scheduler(coordinationStore);
+    (coordinationScheduler as any).running = true;
+
+    await coordinationScheduler.schedule();
+    expect(coordinationStore.moveTask).toHaveBeenCalledWith("FN-D", "in-progress", expect.anything());
+  });
+
+  it("keeps the WIP dispatch-to-worktree window serialized", async () => {
+    const tasks = [
+      makeTask({ id: "FN-A", column: "in-progress", paused: true }),
+      makeTask({ id: "FN-B", column: "todo" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-A": ["packages/core/src/store.ts"],
+      "FN-B": ["packages/core/src/store.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
+    expect(tasks.find((task) => task.id === "FN-B")).toMatchObject({ overlapBlockedBy: "FN-A" });
   });
 
 });

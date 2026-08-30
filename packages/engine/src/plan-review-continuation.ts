@@ -4,6 +4,7 @@ import {
   isTaskBlockedOnApproval,
   isPlanReviewSatisfied,
   isUnplannedSeedPrompt,
+  isFastExecutionMode,
   type Task,
   type TaskStore,
   type WorkflowIr,
@@ -16,7 +17,7 @@ import {
 } from "./planning-handoff-recovery.js";
 
 export type StrandedHoldContinuationReason =
-  | "not-hold-column" | "no-pre-release-review" | "active-continuation"
+  | "not-hold-column" | "fast-lane" | "no-pre-release-review" | "active-continuation"
   | "plan-review-passed" | "seed-prompt" | "prompt-missing" | "triage-owned"
   | "planning-recovery-owned"
   | "awaiting-approval"
@@ -175,7 +176,7 @@ export async function resumeApprovedPlanReviewHandoff(
  */
 export function evaluateStrandedHoldContinuation(input: {
   task: Pick<Task,
-    | "id" | "title" | "description" | "column" | "status" | "paused" | "userPaused" | "pausedReason"
+    | "id" | "title" | "description" | "column" | "status" | "executionMode" | "paused" | "userPaused" | "pausedReason"
     | "approvedPlanFingerprint" | "awaitingApprovalReason" | "workflowStepResults" | "updatedAt" | "steps"
     | "worktree" | "firstExecutionAt" | "executionStartedAt"
   >;
@@ -192,6 +193,12 @@ export function evaluateStrandedHoldContinuation(input: {
   now?: number;
 }): { stranded: boolean; candidate: boolean; reason: StrandedHoldContinuationReason } {
   if (!input.columnFlags.hold) return { stranded: false, candidate: false, reason: "not-hold-column" };
+  /*
+  FNXC:FastLane 2026-08-29-02:55:
+  A Fast card is deliberately plan-less. Stranded-hold recovery must never seed its Plan Review
+  continuation merely because its bootstrap prompt looks unlike a completed specification.
+  */
+  if (isFastExecutionMode(input.task)) return { stranded: false, candidate: false, reason: "fast-lane" };
   const review = resolvePreReleasePlanReviewNode(input.ir);
   if (!review || review.column !== input.task.column) return { stranded: false, candidate: false, reason: "no-pre-release-review" };
   if (input.continuations.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) return { stranded: false, candidate: false, reason: "active-continuation" };

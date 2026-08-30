@@ -28,7 +28,7 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
     expect(isTerminalMergeGraphFailureValue(MERGE_BOUNDARY_UNPROVEN_VALUE)).toBe(true);
   });
 
-  it("parks an unprovable retry once without requesting merge and releases its lease", async () => {
+  it("parks an unprovable retry once without requesting merge and keeps its worktree-backed lease", async () => {
     const live = { ...task, worktree: "/worktree", status: undefined };
     const updateTask = vi.fn(async (_id, patch) => ({ ...live, ...patch }));
     const logEntry = vi.fn();
@@ -44,7 +44,8 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(updateTask).toHaveBeenCalledWith("FN-9157", expect.objectContaining({ status: "failed", error: expect.stringContaining("MERGE_BOUNDARY_UNPROVEN:") }), undefined);
     expect(logEntry).toHaveBeenCalledWith("FN-9157", expect.stringContaining("retry parked task"), undefined, undefined);
-    expect(shouldHoldActiveFileScopeLease({ ...live, status: "failed" }, [])).toBe(false);
+    expect(shouldHoldActiveFileScopeLease({ ...live, status: "failed" }, [])).toBe(true);
+    expect(shouldHoldActiveFileScopeLease({ ...live, status: "failed", worktree: undefined }, [])).toBe(false);
   });
 
   it("emits redacted audit metadata for parked and already-terminal retry boundaries", async () => {

@@ -3,6 +3,7 @@ import {
   applyReviewSeverityGate,
   formatFindingsByPriority,
   formatResolvedFindings,
+  isActionableReviewFinding,
   isBlockingFinding,
   resolveReviewBlockingSeverity,
   DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
@@ -117,16 +118,14 @@ describe("applyReviewSeverityGate", () => {
       .toBe("APPROVE_WITH_NOTES");
   });
 
-  /*
-   * The fail-closed contract is the reason this gate is safe to enable by default: every reviewer that
-   * does not opt into the structured findings schema keeps its full blocking power.
-   */
-  it("never downgrades a REVISE with no findings at all (prose-only reviewer)", () => {
-    for (const findings of [undefined, []]) {
-      const result = applyReviewSeverityGate({ verdict: "REVISE", findings, threshold: "critical" });
-      expect(result.verdict).toBe("REVISE");
-      expect(result.downgraded).toBe(false);
-    }
+  it("downgrades a prose-only REVISE with undefined findings", () => {
+    const result = applyReviewSeverityGate({ verdict: "REVISE", findings: undefined, threshold: "critical" });
+    expect(result).toMatchObject({ verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking: [], advisory: [] });
+  });
+
+  it("downgrades a REVISE with an empty findings array", () => {
+    const result = applyReviewSeverityGate({ verdict: "REVISE", findings: [], threshold: "critical" });
+    expect(result).toMatchObject({ verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking: [], advisory: [] });
   });
 
   it("never downgrades when any finding is unclassified", () => {
@@ -150,13 +149,11 @@ describe("applyReviewSeverityGate", () => {
     expect(result.downgraded).toBe(false);
   });
 
-  it("keeps an all-resolved REVISE fail-closed while exposing only audit receipts", () => {
-    const result = applyReviewSeverityGate({
-      verdict: "REVISE",
-      findings: [finding({ id: "receipt", severity: "critical", resolution: "resolved-in-review" })],
-      threshold: "any",
-    });
-    expect(result).toMatchObject({ verdict: "REVISE", downgraded: false, blocking: [], advisory: [] });
+  it("downgrades an all-resolved REVISE while exposing only audit receipts", () => {
+    const receipt = finding({ id: "receipt", severity: "critical", resolution: "resolved-in-review" });
+    expect(isActionableReviewFinding(receipt)).toBe(false);
+    const result = applyReviewSeverityGate({ verdict: "REVISE", findings: [receipt], threshold: "any" });
+    expect(result).toMatchObject({ verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking: [], advisory: [] });
     expect(result.resolved.map((item) => item.id)).toEqual(["receipt"]);
   });
 

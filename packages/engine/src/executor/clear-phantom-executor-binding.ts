@@ -64,8 +64,13 @@ export type ClearPhantomExecutorBindingDeps = {
 export function clearPhantomExecutorBinding(
   deps: ClearPhantomExecutorBindingDeps,
   taskId: string,
-  options: { preserveWorktrees?: boolean } = {},
+  options: { preserveWorktrees?: boolean; externallyBlocked?: boolean } = {},
 ): boolean {
+  /* FNXC:ExternalBlock 2026-08-28-04:20: durable freeze callers must never detach the executor/worktree binding they are preserving for exact Retry. */
+  if (options.externallyBlocked) {
+    executorLog.warn(`${taskId}: refusing to clear phantom executor binding because the task is externally blocked`);
+    return false;
+  }
   if (deps.hasLiveSessionSurface(taskId)) {
     executorLog.warn(`${taskId}: refusing to clear phantom executor binding because a live session surface is still registered`);
     return false;

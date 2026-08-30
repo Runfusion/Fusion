@@ -137,7 +137,10 @@
     "toolEntriesHidden_other": "",
     "toolsOff": "도구: 끔",
     "toolsOn": "도구: 켬",
-    "usingDefault": "기본값 사용 중"
+    "usingDefault": "기본값 사용 중",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "#{{roomName}} 멤버",
@@ -1200,10 +1203,10 @@
       "capacityExhausted": "",
       "guardRejected": "",
       "mergeBlocked": "",
-      "promoteRejected": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "staleMovePrecondition": ""
     },
     "todo": "할 일",
     "triage": "트리아지",
@@ -1528,10 +1531,6 @@
     "pauseHint_one": "",
     "pauseHint_other": "",
     "preserveProgressTitle": "진행 상황을 유지하시겠습니까?",
-    "promoteUnplannedCancel": "",
-    "promoteUnplannedConfirm": "",
-    "promoteUnplannedMessage": "",
-    "promoteUnplannedTitle": "",
     "replanAll": "모두 재계획",
     "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
     "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
@@ -1947,6 +1946,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3725,7 +3725,11 @@
     "shortstatTitle": "최종 커밋 요약; 모든 작업 커밋에 걸친 전체 랜딩 diff는 변경 탭을 참조하세요.",
     "smartPull": "스마트 풀",
     "status": "상태",
-    "title": "병합 세부 정보"
+    "title": "병합 세부 정보",
+    "targetBranch": "",
+    "strategy": "",
+    "method": "",
+    "noOpReason": ""
   },
   "mesh": {
     "ariaLabel": "노드 메시 토폴로지 시각화",
@@ -4224,7 +4228,8 @@
     "terminal": "터미널",
     "todos": "할 일",
     "usage": "사용량",
-    "workflows": "워크플로"
+    "workflows": "워크플로",
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "의존성 추가",
@@ -6192,7 +6197,7 @@
       "saveToolOutputInAgentLogs": "",
       "updates": "",
       "weekly": "",
-      "whenDisabledToolRowsAreStillLoggedBut": "",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -6275,7 +6280,9 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "fastAndCheapModel": "빠르고 저렴한 모델",
+      "fastAndCheapModelHelp": "빠른 편집을 위해 저렴한 모델을 선택하세요. 작업을 만들 때 빠른 모드에 사용됩니다."
     },
     "header": {
       "discord": "Discord",
@@ -7010,27 +7017,21 @@
       "maxWorktrees": "",
       "worktreeLimitEnabled": "",
       "worktreeLimitEnabledHelp": "",
-      "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "승인 열기",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
       "optionalSupports": "",
       "pnpmInstallFrozenLockfile": "",
-      "randomNamesEGSwiftFalcon": "",
       "rebaseFromRemoteBeforeMerge": "",
       "rebaseRemote": "",
-      "recycleWorktrees": "",
       "selectWorktreesDir": "Worktrees 디렉터리 선택",
       "shellCommandToRunInEachNewWorktree": "",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": "",
-      "taskIDEGFN042": "",
-      "taskTitleEGFixLoginBug": "",
       "tryAgain": "다시 시도",
       "useGitDefault": "",
       "whenEnabledTheMergerFetchesFromTheConfigured": "",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": "",
       "whichRemoteToFetchForThePreMerge": "",
       "worktreeInitCommand": "",
-      "worktreeNamingStyle": "",
       "worktrees": "",
       "worktreesDirectory": "",
       "worktrunk": "",
@@ -7039,10 +7040,7 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": "",
-      "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "copyFilesHelp": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7945,7 +7943,8 @@
       "btn": "복제",
       "message": "{{id}}를 복제하시겠습니까? 같은 설명과 프롬프트로 Triage에 새 작업이 생성됩니다.",
       "success": "{{id}} 복제됨 → {{newId}}",
-      "title": "작업 복제"
+      "title": "작업 복제",
+      "workflowLabel": ""
     },
     "edit": {
       "autosaveHint": "편집 시 변경 사항이 자동 저장됩니다",
@@ -8151,7 +8150,7 @@
       "createBtn": "개선 작업 생성",
       "creating": "생성 중...",
       "feedbackRequired": "개선이 필요한 내용을 설명하는 피드백을 입력하세요",
-      "feedbackTooLong": "피드백은 2000자 이하여야 합니다",
+      "feedbackTooLong": "",
       "help": "개선하거나 향상시킬 내용을 설명하세요...",
       "modalTitle": "개선",
       "placeholder": "피드백을 입력하세요...",
@@ -8159,11 +8158,13 @@
     },
     "reset": {
       "btn": "초기화",
-      "confirmMessage": "{{id}}의 모든 진행 상태가 삭제되고 작업이 처음부터 다시 시작됩니다. 계속하시겠습니까?",
-      "resetSuccess": "{{id}} 초기화됨 — 새 실행이 할당됩니다"
-    },
-    "respecify": {
-      "btn": "재명세"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "resetSuccess": "{{id}} 초기화됨 — 새 실행이 할당됩니다",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "",
+      "descriptionLabel": "",
+      "descriptionRequired": "",
+      "submitting": ""
     },
     "retries": {
       "branchConflict": "브랜치 충돌 복구",
@@ -8194,7 +8195,18 @@
     "retriesLabel": "재시도 (복구 / 워크플로 / 병합 / task_done)",
     "retry": {
       "btn": "재시도",
-      "retried": "{{id}} 재시도됨"
+      "retried": "{{id}} 재시도됨",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "런타임 링크",
     "runtimeStatus": "런타임 상태",
@@ -8258,10 +8270,8 @@
       "worktreeTerminal": "터미널",
       "workflow": "워크플로",
       "summary": "Summary",
-      "cost": "",
       "recommendations": "",
       "dependencies": "",
-      "attachments": "",
       "details": "",
       "debug": ""
     },
@@ -8296,30 +8306,7 @@
     "workflowTimedSteps": "워크플로 시간 측정 단계",
     "yes": "예",
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "gitlabTracking": {
       "collapse": "",
@@ -8400,6 +8387,12 @@
     },
     "debug": {
       "none": ""
+    },
+    "details": {
+      "expandRouting": "",
+      "collapseRouting": "",
+      "expandDebug": "",
+      "collapseDebug": ""
     }
   },
   "taskDocuments": {
@@ -8627,7 +8620,16 @@
     "attachFileFailed": "{{fileName}} 첨부에 실패했습니다: {{error}}",
     "awaitingApproval": "승인 대기 중",
     "baseBranch": "베이스",
-    "blockedByTooltip": "{{taskId}}에 의해 차단됨 (파일 충돌)",
+    "blockedByTooltip": "{{taskId}} 대기 중 (파일 충돌)",
+    "externalBlock": {
+      "title": "차단됨",
+      "unknownCode": "미분류",
+      "genericMessage": "외부 장애로 운영자 조치가 필요합니다",
+      "explain": "이 오류 설명",
+      "explainPrompt": "이 오류 {{error}}의 원인과 해결 방법을 설명해 주세요.",
+      "resuming": "재개 중…",
+      "retry": "다시 시도"
+    },
     "branch": "브랜치",
     "branchMetadata": "브랜치 메타데이터",
     "branchProgress": "",
@@ -8752,9 +8754,6 @@
     "prNodeTitle": "",
     "prNodeWithNumber": "",
     "projectDefaultLocal": "프로젝트 기본값 / 로컬",
-    "promote": "",
-    "promoteTask": "",
-    "promoting": "",
     "queued": "대기 중",
     "refine": "다듬기",
     "refineAddDetails": "세부 사항 추가",
@@ -8840,7 +8839,15 @@
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
-    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "planApproval": {
+      "approve": "",
+      "approveFailed": "",
+      "approving": "",
+      "copy": "",
+      "replanCapCopy": "",
+      "title": ""
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9088,7 +9095,15 @@
     "statusSkipped": "",
     "submitAndResume": "",
     "submitting": "",
-    "waitingForOutput": ""
+    "waitingForOutput": "",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "",
@@ -9541,7 +9556,8 @@
     "missingOutput": "",
     "missingOutputTimestamp": "",
     "statusUpdate": "",
-    "statusUpdateTimestamp": ""
+    "statusUpdateTimestamp": "",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9721,5 +9737,73 @@
     "close": "",
     "loading": "",
     "retry": ""
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "empty": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "entry": {
+      "noBody": "",
+      "completionSummary": "",
+      "stepReport": "",
+      "merged": "",
+      "noOpMerge": "",
+      "verdictNoNotes": "",
+      "duration": ""
+    },
+    "meta": {
+      "commit": "",
+      "targetBranch": "",
+      "strategy": "",
+      "method": "",
+      "files": "",
+      "insertions": "",
+      "deletions": "",
+      "pr": "",
+      "noOpReason": ""
+    },
+    "loading": "",
+    "verdict": {
+      "approve": "",
+      "approve-with-notes": "",
+      "revise": "",
+      "close-no-op": "",
+      "passed": "",
+      "failed": "",
+      "advisory-failure": "",
+      "skipped": "",
+      "pending": ""
+    }
+  },
+  "patchnode": {
+    "cancelled": "",
+    "empty": "",
+    "entryCount_one": "",
+    "entryCount_other": "",
+    "error": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "noResults": "",
+    "retry": "",
+    "reverted": "",
+    "searchAriaLabel": "",
+    "searchPlaceholder": "",
+    "title": "",
+    "today": "",
+    "yesterday": ""
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

@@ -13,6 +13,12 @@ function shortSha(sha?: string, t?: (key: string, defaultValue: string) => strin
   return sha.slice(0, 7);
 }
 
+/*
+FNXC:TaskDetailSummary 2026-08-29-05:45:
+Summary is the sole task-detail home for landed commit facts and renders this panel last. Keep every
+recorded target, resolution, and no-op field here rather than rebuilding a partial synthetic merge
+report in History or duplicating it beside Changes diffs.
+*/
 export function MergeDetails({ task, columnFlags }: MergeDetailsProps) {
   const { t } = useTranslation("app");
   /*
@@ -69,6 +75,38 @@ export function MergeDetails({ task, columnFlags }: MergeDetailsProps) {
             <div className="detail-log-header">
               <span className="detail-log-action">{t("merge.mergedAt", "Merged at")}</span>
               <span className="detail-log-outcome">{new Date(details.mergedAt).toLocaleString()}</span>
+            </div>
+          </div>
+        ) : null}
+        {details.mergeTargetBranch ? (
+          <div className="detail-log-entry">
+            <div className="detail-log-header">
+              <span className="detail-log-action">{t("merge.targetBranch", "Target branch")}</span>
+              <span className="detail-log-outcome">{details.mergeTargetBranch}</span>
+            </div>
+          </div>
+        ) : null}
+        {details.resolutionStrategy ? (
+          <div className="detail-log-entry">
+            <div className="detail-log-header">
+              <span className="detail-log-action">{t("merge.strategy", "Strategy")}</span>
+              <span className="detail-log-outcome">{details.resolutionStrategy}</span>
+            </div>
+          </div>
+        ) : null}
+        {details.resolutionMethod ? (
+          <div className="detail-log-entry">
+            <div className="detail-log-header">
+              <span className="detail-log-action">{t("merge.method", "Method")}</span>
+              <span className="detail-log-outcome">{details.resolutionMethod}</span>
+            </div>
+          </div>
+        ) : null}
+        {details.noOpReason ? (
+          <div className="detail-log-entry">
+            <div className="detail-log-header">
+              <span className="detail-log-action">{t("merge.noOpReason", "No-op reason")}</span>
+              <span className="detail-log-outcome">{details.noOpReason}</span>
             </div>
           </div>
         ) : null}

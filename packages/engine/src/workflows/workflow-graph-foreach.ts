@@ -1,5 +1,5 @@
 import type { TaskDetail, TaskStep, WorkflowIrEdge, WorkflowIrNode } from "@fusion/core";
-import { WorkflowIrError, instanceNodeId, resolveMaxReworkCycles } from "@fusion/core";
+import { FAST_LANE_STEP_REVIEW_ROUTE_VALUE, WorkflowIrError, instanceNodeId, isFastExecutionMode, isFastLaneBypassedTemplateNode, resolveMaxReworkCycles } from "@fusion/core";
 
 import type { WorkflowNodeOutcome, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import {
@@ -357,11 +357,14 @@ interface TemplatePlan {
    *  from any node (overrides the default rework routing — KTD-11). */
   hasExplicitIntegrationConflictEdge: boolean;
   templateHasStepReview: boolean;
+  /** Fast execution routes past step-review without writing a verdict. */
+  fastLane: boolean;
 }
 
 function compileTemplate(
   foreachNode: WorkflowIrNode,
   template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] },
+  fastLane: boolean,
 ): TemplatePlan {
   const templateById = new Map(template.nodes.map((n) => [n.id, n]));
   const templateOutgoing = new Map<string, WorkflowIrEdge[]>();
@@ -374,8 +377,8 @@ function compileTemplate(
   const hasExplicitIntegrationConflictEdge = template.edges.some(
     (e) => e.condition === "outcome:integration-conflict",
   );
-  const templateHasStepReview = template.nodes.some((n) => n.kind === "step-review");
-  return { templateById, templateOutgoing, entry, hasExplicitIntegrationConflictEdge, templateHasStepReview };
+  const templateHasStepReview = !fastLane && template.nodes.some((n) => n.kind === "step-review");
+  return { templateById, templateOutgoing, entry, hasExplicitIntegrationConflictEdge, templateHasStepReview, fastLane };
 }
 
 /**
@@ -393,11 +396,24 @@ export async function runForeach(
   env: ForeachEnvironment,
 ): Promise<ForeachRunResult> {
   const config = resolveForeachConfig(foreachNode);
+  const fastLane = isFastExecutionMode(env.task);
 
-  // Pin the count at expansion (KTD-3). Zero steps → success edge (no instances).
+  // Pin the count at expansion (KTD-3). Standard no-commit paths may take a zero-step success edge.
   const pinnedStepCount = env.steps.length;
   const visitedNodeIds: string[] = [];
+  /*
+  FNXC:FastLane 2026-08-29-04:10:
+  Fast parse-steps must synthesize one implementation occurrence before foreach expansion. A malformed
+  or resumed Fast route with no steps must fail through a routable graph outcome rather than silently
+  take the ordinary zero-step success edge and reach merge without executing work.
+  */
   if (pinnedStepCount === 0) {
+    if (fastLane) {
+      schedulerLog.warn(
+        `foreach ${foreachNode.id} for Fast task ${env.task.id}: no synthesized implementation step — failing expansion`,
+      );
+      return { outcome: "failure", value: "fast-lane-empty-steps", visitedNodeIds };
+    }
     return { outcome: "success", visitedNodeIds };
   }
 
@@ -410,7 +426,13 @@ export async function runForeach(
     return { outcome: "failure", value: "dependency-cycle", visitedNodeIds };
   }
 
-  const plan = compileTemplate(foreachNode, config.template);
+  /*
+  FNXC:FastLane 2026-08-29-03:15:
+  A Fast foreach removes per-step review. Suppressing deferDoneToReview alone would still dispatch
+  step-review, while routing only the review node would leave step-execute in progress forever.
+  Compile and walk the template with both halves of the no-review contract together.
+  */
+  const plan = compileTemplate(foreachNode, config.template, fastLane);
 
   if (config.isolation === "worktree") {
     return runForeachWorktree(foreachNode, env, config, plan, pinnedStepCount, visitedNodeIds);
@@ -461,6 +483,7 @@ export async function runForeach(
       env,
       visitedNodeIds,
       plan.templateHasStepReview,
+      plan.fastLane,
     );
 
     if (instanceResult.outcome === "failure") {
@@ -851,7 +874,15 @@ async function runWorktreeInstanceSubWalk(
 
     visitedNodeIds.push(instanceNodeId(foreachNode.id, stepIndex, currentId));
 
-    lastResult = await env.runTemplateNode(node, env.signal, instanceContext);
+    /*
+    FNXC:FastLane 2026-08-29-03:15:
+    Worktree-isolated Fast instances route across the existing approve edge instead of dispatching
+    step-review. This is graph-edge routing only: do not write active.verdict or fabricate review
+    evidence while step-execute marks the step done under the compiled no-review posture.
+    */
+    lastResult = plan.fastLane && isFastLaneBypassedTemplateNode(node)
+      ? { outcome: "success", value: FAST_LANE_STEP_REVIEW_ROUTE_VALUE }
+      : await env.runTemplateNode(node, env.signal, instanceContext);
     syncActiveFromContext(instanceContext, active);
     // Persist captured baseline/checkpoint back onto the instance (survives rework).
     inst.baselineSha = active.baselineSha;
@@ -919,6 +950,7 @@ async function runInstance(
   env: ForeachEnvironment,
   visitedNodeIds: string[],
   templateHasStepReview: boolean,
+  fastLane: boolean,
 ): Promise<InstanceResult> {
   // Per-instance rework budget (KTD-5) — NOT shared across instances.
   let reworkBudget = maxReworkCycles;
@@ -978,7 +1010,15 @@ async function runInstance(
 
       visitedNodeIds.push(instanceNodeId(foreachNode.id, stepIndex, currentId));
 
-      lastResult = await env.runTemplateNode(node, env.signal);
+      /*
+      FNXC:FastLane 2026-08-29-03:15:
+      Shared-isolation Fast instances use the same paired no-review behavior as worktree instances:
+      step-review is never dispatched and its authored approve edge reaches the template exit, while
+      deferDoneToReview is false so step-execute remains the only done-marking authority.
+      */
+      lastResult = fastLane && isFastLaneBypassedTemplateNode(node)
+        ? { outcome: "success", value: FAST_LANE_STEP_REVIEW_ROUTE_VALUE }
+        : await env.runTemplateNode(node, env.signal);
       // step-execute (and U5 nodes) write captured baseline/checkpoint into the
       // active context via their contextPatch; mirror them onto `active` so the
       // reserved key stays the single source of truth for later nodes.

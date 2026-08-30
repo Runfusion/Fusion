@@ -4,6 +4,7 @@ import {
   pgDescribe,
   type SharedPgTaskStoreHarness,
 } from "../../../../core/src/__test-utils__/pg-test-harness.js";
+import { resolveTrailingVerificationStepIndex } from "@fusion/core";
 import { hasGit } from "./_pipeline-git-fixture.js";
 import { PipelineSmokeHarness } from "./_pipeline-harness.js";
 
@@ -20,10 +21,8 @@ current approval) and gets there by racing the background auto-merge, which is w
 intermittent under full-lane load. This drive is explicit and turn-by-turn — it never depends on when
 a background merge happens to land — so it measures remediation instead of scheduling luck.
 
-The mechanism it guards is easy to break silently and was broken until recently: `review-remediation-steps`
-appends steps AFTER the foreach expanded, so without `FNXC:WorkflowForeachGrowth` those steps never
-receive an instance and sit `pending` forever while the card marches on to a merge boundary that can
-never be satisfied.
+FNXC:ReviewGatedRemediation 2026-08-28-15:11:
+The remediation checklist is also operator-visible execution history. A rejected review must leave every completed occurrence intact, append named fixes, and finish with a fresh verification occurrence that executes before the card can converge back through review and merge.
 */
 describeIfReady("pipeline smoke: code review remediation", () => {
   const pg: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -58,24 +57,44 @@ describeIfReady("pipeline smoke: code review remediation", () => {
 
     let sawRemediationStep = false;
     let remediationStepName = "";
+    let historyBeforeRemediation: string[] = [];
+    let prior = await harness.freshTask(task.id);
     for (let turn = 0; turn < 24; turn += 1) {
       await harness.runProductionTurn(task.id, behavior as never);
       const live = await harness.freshTask(task.id);
       const remediation = (live.steps ?? []).find((step) => (step as { remediation?: unknown }).remediation !== undefined);
-      if (remediation) {
+      if (remediation && !sawRemediationStep) {
+        historyBeforeRemediation = (prior.steps ?? []).map((step) => step.name);
+        for (const [index, step] of (prior.steps ?? []).entries()) {
+          if (step.status === "done") {
+            expect(live.steps?.[index]).toMatchObject({ name: step.name, status: "done" });
+          }
+        }
         sawRemediationStep = true;
         remediationStepName = remediation.name;
       }
+      prior = live;
       if (live.mergeDetails?.mergeConfirmed === true) break;
     }
 
-    // 1. The rejection produced NAMED work, not a bare bounce.
-    expect(sawRemediationStep, "a Code Review REVISE must append a named remediation step").toBe(true);
-    expect(remediationStepName.length).toBeGreaterThan(0);
-
     const live = await harness.freshTask(task.id);
 
-    // 2. That work was actually executed — the defect this guards left it `pending` forever.
+    // 1. The rejection produced NAMED work, not a bare bounce.
+    const diagnostic = JSON.stringify({
+      column: live.column,
+      status: live.status,
+      steps: live.steps,
+      workflowStepResults: live.workflowStepResults,
+      log: live.log,
+      mergeConfirmed: live.mergeDetails?.mergeConfirmed,
+    });
+    expect(sawRemediationStep, `a Code Review REVISE must append a named remediation step: ${diagnostic}`).toBe(true);
+    expect(remediationStepName.length).toBeGreaterThan(0);
+
+    // 2. The original history remains in order, and the appended verification occurrence executed.
+    expect((live.steps ?? []).slice(0, historyBeforeRemediation.length).map((step) => step.name))
+      .toEqual(historyBeforeRemediation);
+    expect(resolveTrailingVerificationStepIndex(live.steps ?? [])).toBe((live.steps ?? []).length - 1);
     const pending = (live.steps ?? []).filter((step) => step.status !== "done" && step.status !== "skipped");
     expect(pending.map((step) => `${step.name}:${step.status}`)).toEqual([]);
 

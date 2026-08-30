@@ -236,20 +236,37 @@ describe("WorkflowGraphExecutor optional-group → task.workflowStepResults (pla
     expect(entry.notes).toBe("please fix the null check");
   });
 
-  it("emits parity [pre-merge] logs for the enabled group via logTaskEntry", async () => {
-    const logs: string[] = [];
+  it("emits parity [pre-merge] logs with the review note as completion detail", async () => {
+    const logs: Array<[string, string | undefined]> = [];
     const recorder = makeRecorder();
+    const note = "Reviewed the scoped diff and focused verification; both satisfy the task.";
     const executor = new WorkflowGraphExecutor({
-      handlers: { prompt: innerHandler({ outcome: "success", value: "APPROVE" }) },
+      handlers: { prompt: innerHandler({ outcome: "success", value: "APPROVE", contextPatch: { output: note, notes: note } }) },
       recordWorkflowStepResult: recorder.record,
-      logTaskEntry: (summary: string) => {
-        logs.push(summary);
+      logTaskEntry: (summary: string, detail?: string) => {
+        logs.push([summary, detail]);
       },
     });
 
     await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
 
-    expect(logs).toContain("[pre-merge] Starting workflow step: Code review");
-    expect(logs).toContain("[pre-merge] Workflow step completed: Code review");
+    expect(logs).toContainEqual(["[pre-merge] Starting workflow step: Code review", undefined]);
+    expect(logs).toContainEqual(["[pre-merge] Workflow step completed: Code review", note]);
+    expect(recorder.results[0]).toMatchObject({ output: note, notes: note, verdict: "APPROVE" });
+  });
+
+  it("does not fabricate completion detail for a legacy note-less passed result", async () => {
+    const logs: Array<[string, string | undefined]> = [];
+    const recorder = makeRecorder();
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: innerHandler({ outcome: "success", value: "APPROVE" }) },
+      recordWorkflowStepResult: recorder.record,
+      logTaskEntry: (summary: string, detail?: string) => { logs.push([summary, detail]); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    expect(logs).toContainEqual(["[pre-merge] Workflow step completed: Code review", undefined]);
+    expect(recorder.results[0]).not.toHaveProperty("notes");
   });
 });

@@ -6,6 +6,7 @@ Dashboard view ids, English fallback labels, and translation keys have one sourc
 export const DASHBOARD_VIEW_IDS = [
   "board",
   "list",
+  "patchnode",
   "graph",
   "agents",
   "missions",
@@ -53,6 +54,14 @@ export interface DashboardViewMetadata {
 export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   { id: "board", label: "Board", labelKey: "nav.board" },
   { id: "list", label: "List", labelKey: "nav.list" },
+  /*
+  FNXC:PatchnoteNaming 2026-08-30-01:40:
+  Operators call the delivery history Patchnote. Keep the stable `patchnode` identifier and translation key unchanged because routes, storage, and integrations depend on them.
+
+  FNXC:PatchnoteNaming 2026-08-30-06:36:
+  Operators now call the delivery history History. The stable `patchnode` identifier and translation key remain unchanged for routes, storage, persisted mobile-nav preferences, and integrations.
+  */
+  { id: "patchnode", label: "History", labelKey: "nav.patchnode" },
   { id: "graph", label: "Graph" },
   { id: "agents", label: "Agents", labelKey: "nav.agents" },
   { id: "missions", label: "Missions", labelKey: "nav.missions" },

@@ -1,0 +1,29 @@
+.planning-session-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.planning-session-prompt-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.planning-session-prompt-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-md);
+  border: solid var(--btn-border-width) color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  resize: none;
+  cursor: default;
+}
