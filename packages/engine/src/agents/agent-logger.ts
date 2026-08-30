@@ -109,59 +109,85 @@ function summarizeToolResultDetail(result: unknown): string | undefined {
   }
 }
 
-/** Bound structured-arg fallback summaries so agent-log detail stays dashboard-safe. */
-const STRUCTURED_ARG_SUMMARY_MAX = 240;
-/** Hex prefix of sha256 of the full structured JSON when the log summary is truncated. */
+/** Maximum visible characters for the primary argument in a multi-argument tool call. */
+const TOOL_ARG_PRIMARY_VALUE_MAX = 1_000;
+/** Maximum visible characters for each secondary argument in a multi-argument tool call. */
+const TOOL_ARG_SECONDARY_VALUE_MAX = 200;
+/** Maximum visible characters for a rendered multi-argument tool-call summary. */
+const TOOL_ARG_SUMMARY_MAX = 1_200;
+/** Hex prefix of sha256 of the full argument JSON when the log summary is truncated. */
 const STRUCTURED_ARG_HASH_HEX_LEN = 12;
+
+function compactToolArgValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized !== undefined) return serialized;
+  } catch {
+    // Tool schemas normally yield JSON values; preserve an inspectable fallback for unusual input.
+  }
+  return JSON.stringify(String(value));
+}
+
+function clipToolArgValue(value: string, maximum: number): string {
+  return value.length > maximum ? `${value.slice(0, maximum)}…` : value;
+}
+
+function resolvePrimaryToolArgKey(name: string, args: Record<string, unknown>, keys: string[]): string {
+  const lowerName = name.toLowerCase();
+  const preferredKey = lowerName === "bash"
+    ? "command"
+    : lowerName === "read" || lowerName === "edit" || lowerName === "write"
+      ? "path"
+      : undefined;
+  if (preferredKey && keys.includes(preferredKey)) return preferredKey;
+  return keys.find((key) => typeof args[key] === "string") ?? keys[0]!;
+}
 
 /**
  * Produce a human-readable summary from tool arguments.
- * Returns the full argument value without truncation for common string primaries.
+ * A sole string argument remains byte-identical for common command/path calls.
  * Returns `undefined` when no args or only empty objects.
  *
- * FNXC:StuckDetector 2026-07-22-20:20:
- * Prefer a compact JSON fallback for custom tools whose args are only numbers/bools/objects.
- * Without that, every call collapses to a bare tool name and the stuck detector can false-positive
- * productive structured-arg work as a loop (Greptile P1 on PR #2404).
+ * FNXC:AgentLogging 2026-08-29-04:21:
+ * FN-253 requires task logs to preserve complete tool-call arguments rather than only one primary value.
+ * Keep the primary argument first so the most useful command or path survives bounded previews and the
+ * shared stuck-detector fingerprint always matches the persisted row.
  *
  * FNXC:StuckDetector 2026-07-22-20:25:
- * When truncating long structured JSON for logs, append a short hash of the FULL payload so
- * differences past the visible prefix remain distinct for stuck-loop fingerprints.
+ * When truncating long argument summaries, append a short hash of the FULL payload so differences past
+ * the visible prefix remain distinct for stuck-loop fingerprints.
  */
 export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
   if (!args) return undefined;
-  const lowerName = name.toLowerCase();
-
-  if (lowerName === "bash") {
-    const cmd = args.command;
-    if (typeof cmd === "string") return cmd;
-  }
-
-  if (lowerName === "read" || lowerName === "edit" || lowerName === "write") {
-    const p = args.path;
-    if (typeof p === "string") return p;
-  }
-
-  // Fallback: return first string-valued arg
-  for (const val of Object.values(args)) {
-    if (typeof val === "string") return val;
-  }
-
-  // Structured-arg fallback: distinct non-string payloads stay distinguishable.
   const keys = Object.keys(args);
   if (keys.length === 0) return undefined;
+
+  const onlyKey = keys[0]!;
+  if (keys.length === 1 && typeof args[onlyKey] === "string") {
+    return args[onlyKey] as string;
+  }
+
+  let fullArgsJson: string;
   try {
-    const json = JSON.stringify(args);
-    if (!json || json === "{}" || json === "[]") return undefined;
-    if (json.length <= STRUCTURED_ARG_SUMMARY_MAX) return json;
-    const hash = createHash("sha256").update(json).digest("hex").slice(0, STRUCTURED_ARG_HASH_HEX_LEN);
-    // Reserve room for "…#" + hash so the suffix always survives.
-    const suffix = `…#${hash}`;
-    const keep = Math.max(0, STRUCTURED_ARG_SUMMARY_MAX - suffix.length);
-    return `${json.slice(0, keep)}${suffix}`;
+    fullArgsJson = JSON.stringify(args) ?? "{}";
   } catch {
     return undefined;
   }
+
+  const primaryKey = resolvePrimaryToolArgKey(name, args, keys);
+  const orderedKeys = [primaryKey, ...keys.filter((key) => key !== primaryKey)];
+  const rendered = orderedKeys.map((key) => {
+    const maximum = key === primaryKey ? TOOL_ARG_PRIMARY_VALUE_MAX : TOOL_ARG_SECONDARY_VALUE_MAX;
+    return `${key}=${clipToolArgValue(compactToolArgValue(args[key]), maximum)}`;
+  }).join(", ");
+
+  if (rendered.length <= TOOL_ARG_SUMMARY_MAX) return rendered;
+  const hash = createHash("sha256").update(fullArgsJson).digest("hex").slice(0, STRUCTURED_ARG_HASH_HEX_LEN);
+  // Reserve room for "…#" + hash so the suffix always survives.
+  const suffix = `…#${hash}`;
+  const keep = Math.max(0, TOOL_ARG_SUMMARY_MAX - suffix.length);
+  return `${rendered.slice(0, keep)}${suffix}`;
 }
 
 /**
@@ -194,7 +220,7 @@ export interface AgentLoggerOptions {
   onAgentText?: (taskId: string, delta: string) => void;
   /**
    * Optional callback invoked alongside tool logging (e.g. for SSE streaming / stuck detection).
-   * `detail` is the primary-arg summary from {@link summarizeToolArgs} when available.
+   * `detail` is the complete bounded, secret-redacted argument summary from {@link summarizeToolArgs}.
    */
   onAgentTool?: (taskId: string, toolName: string, detail?: string) => void;
   /*
@@ -294,8 +320,10 @@ export class AgentLogger {
     this.flushSizeBytes = options.flushSizeBytes ?? FLUSH_SIZE_BYTES;
     this.flushIntervalMs = options.flushIntervalMs ?? FLUSH_INTERVAL_MS;
     /*
-    FNXC:AgentLogging 2026-07-15-16:00:
-    Verbose tool arguments and successful result payloads remain default-off unless persistAgentToolOutput is enabled. Failed tool_error detail is bounded diagnostic signal, so it must persist regardless of that setting for Activity-feed diagnosis (FN-7995).
+    FNXC:AgentLogging 2026-08-29-05:25:
+    Bare logger construction remains conservative when no setting is supplied. Production construction
+    sites pass resolved settings, whose FN-253 global default persists tool arguments and successful
+    results; failed tool_error detail remains bounded diagnostic signal regardless of an explicit false.
     */
     this.persistAgentToolOutput = options.persistAgentToolOutput === true;
     this.persistAgentThinkingLog = options.persistAgentThinkingLog === true;
@@ -413,12 +441,18 @@ export class AgentLogger {
     this.flushThinkingBuffer();
     const detail = summarizeToolArgs(name, args);
     /*
+    FNXC:AgentLogging 2026-08-29-05:45:
+    FN-253 makes complete tool arguments visible by default. Redact before forwarding to onAgentTool
+    because its stuck-detector and telemetry subscribers are external sinks too; writeEntry remains the
+    canonical durable-sink redaction boundary and independently protects every persisted entry.
+
     FNXC:StuckDetector 2026-07-22-18:05:
-    Pass primary-arg detail so StuckTaskDetector can fingerprint tool novelty for loop classification.
-    Call after summarizeToolArgs so detail matches the agent-log row.
+    Pass the complete bounded argument detail so StuckTaskDetector can fingerprint tool novelty for loop classification.
+    Call after summarizeToolArgs so the detector input matches the agent-log row.
     */
-    this.externalToolCb?.(this.taskId, name, detail);
-    this.writeEntry(name, "tool", detail, `Failed to log tool start "${name}" for ${this.taskId}`);
+    const redactedDetail = detail === undefined ? undefined : redactSecrets(detail);
+    this.externalToolCb?.(this.taskId, name, redactedDetail);
+    this.writeEntry(name, "tool", redactedDetail, `Failed to log tool start "${name}" for ${this.taskId}`);
     // agent-log type "tool" maps to usage_events kind "tool_call". meta carries
     // only non-sensitive descriptors (category) — never the tool arguments.
     const starts = this.toolStartedAt.get(name) ?? [];

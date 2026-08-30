@@ -35,6 +35,7 @@ import {
   AiMergeBlockedError,
 } from "../merge/merger-ai.js";
 import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
+import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();
@@ -49,13 +50,14 @@ function git(cwd: string, args: string): string {
 }
 
 /** A repo on `main` with one base commit + a task branch carrying one change. */
-function initRepoWithBranch(opts: { branch: string; conflict?: boolean } = { branch: "fusion/fn-1" }): { dir: string } {
+function initRepoWithBranch(opts: { branch: string; conflict?: boolean; gitignore?: string } = { branch: "fusion/fn-1" }): { dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "fusion-ai-merge-test-"));
   tracked.add(dir);
   git(dir, "init -q -b main");
   git(dir, "config user.email t@t.t");
   git(dir, "config user.name t");
   writeFileSync(join(dir, "base.txt"), "base\n");
+  if (opts.gitignore) writeFileSync(join(dir, ".gitignore"), opts.gitignore);
   git(dir, "add -A");
   git(dir, "commit -q -m base");
 
@@ -72,6 +74,28 @@ function initRepoWithBranch(opts: { branch: string; conflict?: boolean } = { bra
     git(dir, "commit -q -m 'main: divergent'");
   }
   return { dir };
+}
+
+function createTaskWorktreeWithIgnoredContent(dir: string, branch: string): string {
+  const worktree = mkdtempSync(join(tmpdir(), "fusion-fn-251-worktree-"));
+  rmSync(worktree, RM);
+  tracked.add(worktree);
+  git(dir, `worktree add -q ${JSON.stringify(worktree)} ${branch}`);
+  mkdirSync(join(worktree, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(join(worktree, "dist"), { recursive: true });
+  writeFileSync(join(worktree, "node_modules", "pkg", "index.js"), "module.exports = {};\n");
+  writeFileSync(join(worktree, "dist", "bundle.js"), "generated\n");
+  writeFileSync(join(worktree, ".env"), "TOKEN=ignored\n");
+  return worktree;
+}
+
+function branchExists(dir: string, branch: string): boolean {
+  try {
+    git(dir, `show-ref --verify --quiet refs/heads/${branch}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function makeStore(
@@ -107,7 +131,7 @@ function makeStore(
   const store: any = {
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
-    updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; }),
+    updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; })),
     updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
       const patch = await updater(task);
       if (patch) Object.assign(task, patch);
@@ -436,6 +460,154 @@ describe("runAiMerge", () => {
   });
 
   it.each([
+    ["manual waiting-caller dispatch", { manual: true }],
+    ["automatic dispatch", {}],
+  ])("skips a second clean-room merge after interrupted finalization for %s", async (_label, retryOptions) => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({ branch });
+    const branchTip = git(dir, `rev-parse ${branch}`);
+    const { store, task } = makeStore(dir);
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent(branch),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    const landedDetails = { ...task.mergeDetails };
+    task.column = "in-review";
+    task.status = null;
+    git(dir, `branch ${branch} ${branchTip}`);
+    const mainBeforeRetry = git(dir, "rev-parse main");
+    store.recordRunAuditEvent.mockClear();
+    const mergeAgent = vi.fn(async () => undefined);
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    const result = await runAiMerge(store, dir, "FN-1", retryOptions, { mergeAgent, reviewAgent });
+
+    expect(result.merged).toBe(true);
+    expect(mergeAgent).not.toHaveBeenCalled();
+    expect(reviewAgent).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "merge:ai-clean-room" }),
+    );
+    expect(git(dir, "rev-parse main")).toBe(mainBeforeRetry);
+    expect(task.column).toBe("done");
+    expect(task.mergeDetails?.commitSha).toBe(landedDetails.commitSha);
+    expect(task.mergeDetails?.mergedAt).toBe(landedDetails.mergedAt);
+  });
+
+  it("falls through to a full merge when the branch advances after recorded-landing proof", async () => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({ branch });
+    const branchTip = git(dir, `rev-parse ${branch}`);
+    const { store, task, logs } = makeStore(dir);
+
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent(branch),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    task.column = "in-review";
+    task.status = null;
+    git(dir, `branch ${branch} ${branchTip}`);
+    let branchAdvancedAfterProof = false;
+    store.logEntry.mockImplementation(async (_id: string, message: string) => {
+      logs.push(message);
+      if (!branchAdvancedAfterProof && message.includes("has a recorded landing")) {
+        branchAdvancedAfterProof = true;
+        git(dir, `checkout -q ${branch}`);
+        writeFileSync(join(dir, "post-landing.txt"), "new work after recorded landing\n");
+        git(dir, "add post-landing.txt");
+        git(dir, "commit -q -m 'feat: post-landing work'");
+        git(dir, "checkout -q main");
+      }
+    });
+    store.recordRunAuditEvent.mockClear();
+    const mergeAgent = realMergeAgent(branch);
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+
+    expect(branchAdvancedAfterProof).toBe(true);
+    expect(result.merged).toBe(true);
+    expect(mergeAgent).toHaveBeenCalledOnce();
+    expect(reviewAgent).toHaveBeenCalled();
+    expect(readFileSync(join(dir, "post-landing.txt"), "utf-8")).toBe("new work after recorded landing\n");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "merge:ai-clean-room" }),
+    );
+    expect(logs).toContainEqual(expect.stringContaining("advanced after its recorded landing was proven"));
+  });
+
+  it.each([
+    "no mergeDetails",
+    "missing commitSha",
+    "mergeConfirmed false",
+    "commit not reachable from target",
+    "commit absent locally",
+    "merge target mismatch",
+    "live branch advanced beyond pinned tip",
+    "missing pinned branch tip",
+  ])("runs the full merge when already-landed proof is incomplete: %s", async (proofCase) => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({ branch });
+    const integrationBranch = proofCase === "merge target mismatch" ? "integration/v2" : "main";
+    if (integrationBranch !== "main") git(dir, `branch ${integrationBranch} main`);
+    const integrationTip = git(dir, `rev-parse ${integrationBranch}`);
+    const branchTip = git(dir, `rev-parse ${branch}`);
+    const mergeDetails: Record<string, unknown> | undefined = proofCase === "no mergeDetails"
+      ? undefined
+      : {
+          mergeConfirmed: true,
+          commitSha: integrationTip,
+          mergeTargetBranch: integrationBranch,
+          landedBranchTipSha: branchTip,
+        };
+    if (proofCase === "missing commitSha") delete mergeDetails!.commitSha;
+    if (proofCase === "mergeConfirmed false") mergeDetails!.mergeConfirmed = false;
+    if (proofCase === "commit not reachable from target") mergeDetails!.commitSha = branchTip;
+    if (proofCase === "commit absent locally") mergeDetails!.commitSha = "f".repeat(40);
+    if (proofCase === "merge target mismatch") mergeDetails!.mergeTargetBranch = "main";
+    if (proofCase === "live branch advanced beyond pinned tip") mergeDetails!.landedBranchTipSha = integrationTip;
+    if (proofCase === "missing pinned branch tip") delete mergeDetails!.landedBranchTipSha;
+    const { store } = makeStore(dir, {
+      ...(mergeDetails ? { mergeDetails } : {}),
+      ...(integrationBranch !== "main" ? { baseBranch: integrationBranch } : {}),
+    });
+    const mergeAgent = realMergeAgent(branch);
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+
+    expect(result.merged).toBe(true);
+    expect(mergeAgent).toHaveBeenCalled();
+    expect(reviewAgent).toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "merge:ai-clean-room" }),
+    );
+  });
+
+  it("records a durable diagnostic and preserves the original post-landing finalization error", async () => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({ branch });
+    const { store, task, logs } = makeStore(dir);
+    const finalizationError = new Error("simulated task move failure");
+    store.moveTask.mockRejectedValue(finalizationError);
+
+    await expect(runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent(branch),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    })).rejects.toBe(finalizationError);
+
+    const landedSha = git(dir, "rev-parse main");
+    expect(task.mergeDetails?.commitSha).toBe(landedSha);
+    expect(logs).toContainEqual(expect.stringMatching(
+      new RegExp(`landed ${landedSha.slice(0, 8)} on main, but post-landing finalization failed: simulated task move failure`),
+    ));
+    expect(logs).toContainEqual(expect.stringContaining("The landing is durable; a retry will finalize without re-merging."));
+  });
+
+  it.each([
     ["modern repo-local root", "FN-1", (dir: string) => join(dir, ".worktrees", ".ai-merge")],
     ["legacy .fusion root", "FN-2", (dir: string) => join(dir, ".fusion", "ai-merge")],
     ["direct tmpdir root", "FN-3", (_dir: string) => tmpdir()],
@@ -654,6 +826,159 @@ describe("runAiMerge", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
+  it("clears only a removed worktree pointer when an operator branch survives early no-op finalization", async () => {
+    const { dir } = initRepoWithBranch({ branch: "operator/fn-213" });
+    git(dir, "merge -q operator/fn-213");
+    const worktree = mkdtempSync(join(tmpdir(), "fusion-fn-213-operator-worktree-"));
+    rmSync(worktree, RM);
+    tracked.add(worktree);
+    git(dir, `worktree add -q ${JSON.stringify(worktree)} operator/fn-213`);
+    const branchOverride = { by: "operator", at: "2026-08-28T06:41:00.000Z", branch: "operator/fn-213" };
+    const { store, task } = makeStore(dir, {
+      branch: "operator/fn-213",
+      branchContext: { branchOverride },
+      worktree,
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => undefined),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    const pointerClear = (store.updateTask as any).mock.calls.find((call: any[]) => call[1]?.worktree === null);
+    expect(pointerClear?.[1]).toEqual({ worktree: null });
+    expect(pointerClear?.[1]).not.toHaveProperty("branch");
+    expect(task.worktree).toBeNull();
+    expect(result.task.worktree).toBeNull();
+    expect(task.branch).toBe("operator/fn-213");
+    expect(result.task.branch).toBe("operator/fn-213");
+    expect(task.branchContext?.branchOverride).toEqual(branchOverride);
+  });
+
+  it("removes ignored-only worktree content before done and deletes the Fusion branch after a landing", async () => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({
+      branch,
+      gitignore: "node_modules/\ndist/\n.env\n",
+    });
+    const worktree = createTaskWorktreeWithIgnoredContent(dir, branch);
+    const { store, task, logs } = makeStore(dir, { branch, worktree });
+    const callOrder: string[] = [];
+    const updateTask = store.updateTask.getMockImplementation();
+    const moveTask = store.moveTask.getMockImplementation();
+    store.updateTask.mockImplementation(async (id: string, patch: Record<string, unknown>) => {
+      if (patch.worktree === null) callOrder.push("cleanup");
+      return await updateTask(id, patch);
+    });
+    store.moveTask.mockImplementation(async (id: string, column: string, options?: unknown) => {
+      callOrder.push("move");
+      return await moveTask(id, column, options);
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent(branch),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(true);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(existsSync(worktree)).toBe(false);
+    expect(branchExists(dir, branch)).toBe(false);
+    const pointerPatches = store.updateTask.mock.calls
+      .map(([, patch]: [string, Record<string, unknown>]) => patch)
+      .filter((patch: Record<string, unknown>) => patch.worktree === null);
+    expect(pointerPatches).toEqual([{ worktree: null }]);
+    expect(store.recordRunAuditEvent.mock.calls.filter(([event]: [{ mutationType?: string }]) => event?.mutationType === "worktree:remove")).toHaveLength(1);
+    expect(task.column).toBe("done");
+    expect(callOrder.indexOf("cleanup")).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf("cleanup")).toBeLessThan(callOrder.indexOf("move"));
+    expect(logs.some((line) => /post-landing finalization failed|preserving .*uncommitted or ignored content present/i.test(line))).toBe(false);
+  });
+
+  it("removes ignored-only worktree content on an intentional no-op finalize", async () => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({
+      branch,
+      gitignore: "node_modules/\ndist/\n.env\n",
+    });
+    const worktree = createTaskWorktreeWithIgnoredContent(dir, branch);
+    git(dir, `merge -q ${branch}`);
+    const { store, task } = makeStore(dir, { branch, worktree });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => undefined),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(existsSync(worktree)).toBe(false);
+    expect(branchExists(dir, branch)).toBe(false);
+    expect(task.column).toBe("done");
+  });
+
+  it("cleans the recorded-landing short circuit before deleting its pinned branch", async () => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({
+      branch,
+      gitignore: "node_modules/\ndist/\n.env\n",
+    });
+    const worktree = createTaskWorktreeWithIgnoredContent(dir, branch);
+    git(dir, `merge -q ${branch}`);
+    const branchTip = git(dir, `rev-parse ${branch}`);
+    const landedSha = git(dir, "rev-parse main");
+    const { store, task } = makeStore(dir, {
+      branch,
+      worktree,
+      mergeDetails: {
+        mergeConfirmed: true,
+        commitSha: landedSha,
+        landedBranchTipSha: branchTip,
+        mergeTargetBranch: "main",
+      },
+    });
+    const mergeAgent = vi.fn(async () => undefined);
+    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+
+    expect(result.merged).toBe(true);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(existsSync(worktree)).toBe(false);
+    expect(branchExists(dir, branch)).toBe(false);
+    expect(mergeAgent).not.toHaveBeenCalled();
+    expect(reviewAgent).not.toHaveBeenCalled();
+    expect(task.column).toBe("done");
+  });
+
+  it("preserves real unmerged content without preventing durable-landing finalization", async () => {
+    const branch = "fusion/fn-1";
+    const { dir } = initRepoWithBranch({ branch });
+    const worktree = mkdtempSync(join(tmpdir(), "fusion-fn-251-deliverable-"));
+    rmSync(worktree, RM);
+    tracked.add(worktree);
+    git(dir, `worktree add -q ${JSON.stringify(worktree)} ${branch}`);
+    writeFileSync(join(worktree, "wip.txt"), "must survive\n");
+    const { store, task, logs } = makeStore(dir, { branch, worktree });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent(branch),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(true);
+    expect(result.worktreeRemoved).toBe(false);
+    expect(task.column).toBe("done");
+    expect(task.worktree).toBe(worktree);
+    expect(existsSync(worktree)).toBe(true);
+    expect(readFileSync(join(worktree, "wip.txt"), "utf-8")).toBe("must survive\n");
+    expect(logs.some((line) => line.includes(`Post-landing worktree cleanup preserved ${worktree}: deliverable`))).toBe(true);
+    expect(logs.some((line) => /post-landing finalization failed/i.test(line))).toBe(false);
+  });
+
   it("short-circuits a zero-commits-ahead branch before the clean-room/merge-agent churn (empty-branch wedge)", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     // Move the task branch back onto main's tip → 0 commits ahead of the
@@ -706,9 +1031,8 @@ describe("runAiMerge", () => {
     // A skipped verification/QA step (here "Verify"/"Testing") blocks with a
     // precise reason naming the skipped step(s).
     expect(result.error).toContain("skipped verification step");
-    expect(task.column).toBe("todo");
-    expect(task.error).toContain("skipped verification step");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(task).toMatchObject({ column: "in-review", status: "failed", error: expect.stringContaining("skipped verification step") });
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-1",
@@ -747,8 +1071,8 @@ describe("runAiMerge", () => {
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
     expect(result.error).toContain("Testing & Verification");
-    expect(task.column).toBe("todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(task).toMatchObject({ column: "in-review", status: "failed", error: expect.stringContaining("Testing & Verification") });
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
@@ -841,9 +1165,8 @@ describe("runAiMerge", () => {
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
     expect(result.error).toContain("operator review required");
-    expect(task.column).toBe("todo");
-    expect(task.error).toContain("operator review required");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(task).toMatchObject({ column: "in-review", status: "failed", error: expect.stringContaining("operator review required") });
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
@@ -960,8 +1283,8 @@ describe("runAiMerge", () => {
     // Vetoed to todo — NOT laundered to done.
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
-    expect(task.column).toBe("todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(task).toMatchObject({ column: "in-review", status: "failed" });
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-1",
@@ -1006,7 +1329,8 @@ describe("runAiMerge", () => {
     // Vetoed to todo — NOT laundered to done.
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
-    expect(task.column).toBe("todo");
+    expect(task).toMatchObject({ column: "in-review", status: "failed" });
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-1",
@@ -1111,8 +1435,8 @@ describe("runAiMerge", () => {
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
     expect(result.error).toContain("skipped verification step");
-    expect(task.column).toBe("todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(task.column).toBe("in-review");
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
   });
 

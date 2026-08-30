@@ -3,6 +3,7 @@
 import express from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { request as performRequest } from "../../test-request.js";
+import { RESUME_TRIGGERS } from "../../shared/resume-triggers.js";
 import {
   __resetResumeDiagnosticsForTests,
   __setResumeDiagnosticsCapForTests,
@@ -73,6 +74,34 @@ describe("register-diagnostics-routes", () => {
     expect(response.body).toEqual({ ok: true, accepted: 1 });
   });
 
+  it.each(RESUME_TRIGGERS)("accepts the shared %s resume trigger", async (trigger) => {
+    const { app } = createApp();
+    const response = await performRequest(
+      app,
+      "POST",
+      "/api/diagnostics/resume-events",
+      JSON.stringify({ events: [{ ...validEvent, trigger }] }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true, accepted: 1 });
+  });
+
+  it("accepts focus, the tab-return trigger reported by operators", async () => {
+    const { app } = createApp();
+    const response = await performRequest(
+      app,
+      "POST",
+      "/api/diagnostics/resume-events",
+      JSON.stringify({ events: [{ ...validEvent, trigger: "focus" }] }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true, accepted: 1 });
+  });
+
   it("rejects invalid payloads", async () => {
     const { app } = createApp();
 
@@ -93,6 +122,16 @@ describe("register-diagnostics-routes", () => {
       { "Content-Type": "application/json" },
     );
     expect(badTrigger.status).toBe(400);
+
+    const mixedTriggerBatch = await performRequest(
+      app,
+      "POST",
+      "/api/diagnostics/resume-events",
+      JSON.stringify({ events: [validEvent, { ...validEvent, trigger: "unknown" }] }),
+      { "Content-Type": "application/json" },
+    );
+    expect(mixedTriggerBatch.status).toBe(400);
+    expect(mixedTriggerBatch.body).toEqual({ error: "Invalid resume event entry" });
 
     const hugeDetail = await performRequest(
       app,

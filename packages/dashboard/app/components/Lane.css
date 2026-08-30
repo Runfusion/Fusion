@@ -123,18 +123,6 @@
   text-align: center;
 }
 
-/* Inline column feedback (capacity-exhausted promote, deterministic drag
- * rejection) — rendered in-column, not a toast (R17 / promote spec). */
-.column-inline-feedback {
-  margin: 4px 12px 0;
-  padding: 6px 8px;
-  font-size: 0.8rem;
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
-  border-radius: var(--radius-sm, 6px);
-}
-
 
 @media (max-width: 1024px) {
   .board.board-lanes {

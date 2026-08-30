@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { applySupersededFindingIds, archiveArbitratedWorkflowStepFailure, archiveTerminalWorkflowStepFailures, closeUnrebuttedDisputedFindings, isArchivedRemediationCarrier, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult } from "../workflows/workflow-step-results.js";
+import { isWorkflowStepNotRun as isWorkflowStepNotRunFromGateBarrel } from "../index.gate.js";
+import { isWorkflowStepNotRun as isWorkflowStepNotRunFromMainBarrel } from "../index.js";
+import { applySupersededFindingIds, archiveArbitratedWorkflowStepFailure, archiveTerminalWorkflowStepFailures, closeUnrebuttedDisputedFindings, isArchivedRemediationCarrier, isWorkflowStepNotRun, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult, WORKFLOW_STEP_NOT_RUN_REASONS } from "../workflows/workflow-step-results.js";
 import type { WorkflowStepResult } from "../types.js";
 
 function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepResult {
@@ -10,6 +12,22 @@ function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepRe
     ...overrides,
   };
 }
+
+describe("workflow step not-run classification", () => {
+  const notRun = makeResult({ status: "skipped", notRunReason: "not-configured" });
+
+  it("recognizes only skipped rows carrying a fixed not-run reason through both core barrels", () => {
+    expect(WORKFLOW_STEP_NOT_RUN_REASONS).toContain("repository-context-unresolved");
+    for (const predicate of [isWorkflowStepNotRun, isWorkflowStepNotRunFromMainBarrel, isWorkflowStepNotRunFromGateBarrel]) {
+      expect(predicate(notRun)).toBe(true);
+      expect(predicate(makeResult({ status: "skipped", notRunReason: "repository-context-unresolved" }))).toBe(true);
+      expect(predicate(makeResult({ status: "skipped", bypassedBy: "operator" }))).toBe(false);
+      expect(predicate(makeResult({ status: "skipped", remediationArchivedAt: "2026-08-28T00:00:00.000Z" }))).toBe(false);
+      expect(predicate(makeResult({ status: "passed", notRunReason: "not-configured" }))).toBe(false);
+      expect(predicate(makeResult({ status: "skipped" }))).toBe(false);
+    }
+  });
+});
 
 describe("normalizeWorkflowReviewFindings", () => {
   it("normalizes bounded populated findings with stable collision-free ids", () => {

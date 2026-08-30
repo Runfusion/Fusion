@@ -150,6 +150,24 @@ describe("evaluateNoCommitsNoOpFinalize", () => {
       .toMatchObject({ blocked: false });
   });
 
+  it("accepts the passed empty Code Review gate required by no-op finalization", () => {
+    const task = {
+      noCommitsExpected: true,
+      steps: namedSteps([["Implementation", "done"], ["Testing & Verification", "done"]]),
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        status: "passed" as const,
+        verdict: "APPROVE" as const,
+        reviewKind: "code" as const,
+        reviewInputFingerprint: "empty-review-input:v1",
+      }],
+    };
+
+    expect(evaluateNoCommitsNoOpFinalize(task, {
+      requiredVerificationStepIds: new Set(["code-review"]),
+    })).toMatchObject({ blocked: false });
+  });
+
   it("does not block skip-free ordinary tasks (all-done handled by lineage proof)", () => {
     expect(evaluateNoCommitsNoOpFinalize({
       noCommitsExpected: false,

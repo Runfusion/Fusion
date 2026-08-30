@@ -8,15 +8,7 @@ import type { BoardWorkflowDefinition } from "../../api";
 // Keep the test focused on Lane + Column (real) — mock the leaf TaskCard and
 // the confirm hook, matching the Column test harness.
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, onPromote, isPromoting }: { task: Task; onPromote?: (taskId: string) => Promise<void>; isPromoting?: boolean }) => (
-    <div data-testid={`task-${task.id}`} data-id={task.id}>
-      {onPromote && (
-        <button type="button" data-testid={`card-promote-${task.id}`} disabled={isPromoting} onClick={() => void onPromote(task.id)}>
-          {isPromoting ? "Promoting…" : "Promote"}
-        </button>
-      )}
-    </div>
-  ),
+  TaskCard: ({ task }: { task: Task }) => <div data-testid={`task-${task.id}`} data-id={task.id} />,
 }));
 vi.mock("../WorktreeGroup", () => ({
   WorktreeGroup: ({ label, kind, activeTasks }: { label: string; kind: string; activeTasks: Task[] }) => (
@@ -73,7 +65,6 @@ const baseProps = () => ({
   onToggleCollapse: vi.fn(),
   maxConcurrent: 2,
   onMoveTask: vi.fn().mockResolvedValue({} as Task),
-  onPromote: vi.fn().mockResolvedValue(undefined),
   onOpenDetail: vi.fn(),
   addToast: vi.fn(),
 });
@@ -175,29 +166,6 @@ describe("Lane", () => {
   it("shows the auto-merge toggle for human-review workflow columns", () => {
     render(<Lane {...baseProps()} autoMerge={false} onToggleAutoMerge={vi.fn()} />);
     expect(screen.getByText("Auto-merge")).toBeDefined();
-  });
-
-  it("shows a Promote button on hold-column cards and calls onPromote", async () => {
-    const props = baseProps();
-    render(<Lane {...props} tasks={[mkTask({ id: "FN-7", column: "todo" })]} />);
-    const promoteBtn = screen.getByTestId("card-promote-FN-7");
-    expect(promoteBtn).toBeDefined();
-    fireEvent.click(promoteBtn);
-    await waitFor(() => expect(props.onPromote).toHaveBeenCalledWith("FN-7"));
-  });
-
-  it("shows inline capacity-exhausted feedback (not a toast) when promote rejects, then re-enables", async () => {
-    const props = baseProps();
-    props.onPromote = vi.fn().mockRejectedValue({
-      details: { code: "capacity-exhausted", messageKey: "board.rejection.capacityExhausted", retryable: true },
-    });
-    render(<Lane {...props} tasks={[mkTask({ id: "FN-8", column: "todo" })]} />);
-    fireEvent.click(screen.getByTestId("card-promote-FN-8"));
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    // No toast was used for the inline capacity feedback.
-    expect(props.addToast).not.toHaveBeenCalled();
-    // Button re-enabled after the call resolves.
-    await waitFor(() => expect((screen.getByTestId("card-promote-FN-8") as HTMLButtonElement).disabled).toBe(false));
   });
 
 

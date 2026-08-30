@@ -177,7 +177,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, ArchivedTaskDocumentPublicationRejectedError, Database, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
+import { AgentStore, ArchivedTaskDocumentPublicationRejectedError, Database, MAX_TASK_MESSAGE_LENGTH, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -4045,6 +4045,72 @@ describe("Pause/Unpause endpoints", () => {
       expect(store.updateTaskComment).toHaveBeenCalledWith("KB-001", "c1", "Updated");
     });
 
+    it.each([
+      { name: "add-comment", method: "POST" as const, path: "/api/tasks/KB-001/comments", field: "text", status: 200, call: "addTaskComment" as const },
+      { name: "edit-comment", method: "PATCH" as const, path: "/api/tasks/KB-001/comments/comment-1", field: "text", status: 200, call: "updateTaskComment" as const },
+      { name: "refine", method: "POST" as const, path: "/api/tasks/KB-001/refine", field: "feedback", status: 201, call: "refineTask" as const },
+    ])("$name accepts the shared upper boundary and rejects the next character", async (route) => {
+      const task = { ...FAKE_TASK_DETAIL, id: "KB-001", comments: [], steeringComments: [] };
+      const store = createMockStore({
+        addTaskComment: vi.fn().mockResolvedValue(task),
+        updateTaskComment: vi.fn().mockResolvedValue(task),
+        refineTask: vi.fn().mockResolvedValue({ ...task, id: "KB-002" }),
+      });
+      const app = express();
+      app.use(express.json({ limit: "2mb" }));
+      app.use("/api", createApiRoutes(store));
+      const accepted = "a".repeat(MAX_TASK_MESSAGE_LENGTH);
+      const rejected = "a".repeat(MAX_TASK_MESSAGE_LENGTH + 1);
+
+      const acceptedResponse = await REQUEST(app, route.method, route.path, JSON.stringify({ [route.field]: accepted }), {
+        "Content-Type": "application/json",
+      });
+      const rejectedResponse = await REQUEST(app, route.method, route.path, JSON.stringify({ [route.field]: rejected }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(acceptedResponse.status).toBe(route.status);
+      if (route.call === "addTaskComment") {
+        expect(store.addTaskComment).toHaveBeenCalledWith("KB-001", accepted, "user");
+      } else if (route.call === "updateTaskComment") {
+        expect(store.updateTaskComment).toHaveBeenCalledWith("KB-001", "comment-1", accepted);
+      } else {
+        expect(store.refineTask).toHaveBeenCalledWith("KB-001", accepted);
+      }
+      expect(rejectedResponse.status).toBe(400);
+      const fieldName = route.field === "feedback" ? "feedback" : "text";
+      expect(rejectedResponse.body).toEqual({ error: `${fieldName} must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters` });
+    });
+
+    it.each([
+      { name: "add-comment", method: "POST" as const, path: "/api/tasks/KB-001/comments", field: "text" as const },
+      { name: "edit-comment", method: "PATCH" as const, path: "/api/tasks/KB-001/comments/comment-1", field: "text" as const },
+      { name: "refine", method: "POST" as const, path: "/api/tasks/KB-001/refine", field: "feedback" as const },
+      { name: "steer", method: "POST" as const, path: "/api/tasks/KB-001/steer", field: "text" as const },
+    ])("$name rejects whitespace-only task text before persistence", async (route) => {
+      const task = { ...FAKE_TASK_DETAIL, id: "KB-001", comments: [], steeringComments: [] };
+      const addTaskComment = vi.fn().mockResolvedValue(task);
+      const updateTaskComment = vi.fn().mockResolvedValue(task);
+      const refineTask = vi.fn().mockResolvedValue({ ...task, id: "KB-002" });
+      const addSteeringComment = vi.fn().mockResolvedValue(task);
+      const store = createMockStore({ addTaskComment, updateTaskComment, refineTask, addSteeringComment });
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+
+      const response = await REQUEST(app, route.method, route.path, JSON.stringify({ [route.field]: " \t\n " }), {
+        "Content-Type": "application/json",
+      });
+
+      const fieldName = route.field === "feedback" ? "feedback" : "text";
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: `${fieldName} must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters` });
+      expect(addTaskComment).not.toHaveBeenCalled();
+      expect(updateTaskComment).not.toHaveBeenCalled();
+      expect(refineTask).not.toHaveBeenCalled();
+      expect(addSteeringComment).not.toHaveBeenCalled();
+    });
+
     it("DELETE /tasks/:id/comments/:commentId — deletes a task comment", async () => {
       const updatedTask = { ...FAKE_TASK_DETAIL, comments: [] };
       const store = createMockStore({ deleteTaskComment: vi.fn().mockResolvedValue(updatedTask) });
@@ -4220,8 +4286,11 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.body.error).toContain("text is required");
     });
 
-    it("returns 400 when text exceeds 2000 characters", async () => {
+    it("accepts the reported 2001-character steering message without truncation", async () => {
       const longText = "a".repeat(2001);
+      const task = { ...FAKE_TASK_DETAIL, id: "KB-001", steeringComments: [] };
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+
       const res = await REQUEST(
         buildApp(),
         "POST",
@@ -4230,8 +4299,35 @@ describe("Pause/Unpause endpoints", () => {
         { "Content-Type": "application/json" }
       );
 
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain("text must be between 1 and 2000 characters");
+      expect(res.status).toBe(200);
+      expect(store.addSteeringComment).toHaveBeenCalledWith("KB-001", longText, "user");
+    });
+
+    it("enforces the shared steering-message boundary", async () => {
+      const task = { ...FAKE_TASK_DETAIL, id: "KB-001", steeringComments: [] };
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+      const accepted = "a".repeat(MAX_TASK_MESSAGE_LENGTH);
+      const rejected = "a".repeat(MAX_TASK_MESSAGE_LENGTH + 1);
+
+      const acceptedResponse = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: accepted }),
+        { "Content-Type": "application/json" },
+      );
+      const rejectedResponse = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: rejected }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(acceptedResponse.status).toBe(200);
+      expect(store.addSteeringComment).toHaveBeenCalledWith("KB-001", accepted, "user");
+      expect(rejectedResponse.status).toBe(400);
+      expect(rejectedResponse.body).toEqual({ error: `text must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters` });
     });
 
     it("returns 404 when task not found", async () => {

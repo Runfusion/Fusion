@@ -12,7 +12,7 @@ import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../config/moved-settings.js";
 import "../builtin-traits.js";
-import {validateLocale, assertWorktreeNamingRecycleExclusive} from "../config/settings-validation.js";
+import {validateLocale} from "../config/settings-validation.js";
 import { isTaskOutputLanguage } from "../ai/ai-output-language.js";
 import {hasSyncPassphraseConfigured} from "../secrets/secrets-sync-passphrase.js";
 import {ensureMemoryFileWithBackend} from "../memory/project-memory.js";
@@ -292,9 +292,6 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
         keeps malformed enablement lists atomic across dashboard, CLI, and import writers.
         */
         await assertValidEnabledBuiltinWorkflowIds(store, updatedProjectSettings.enabledBuiltinWorkflowIds);
-        // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: reject recycleWorktrees + worktreeNaming:"task-id"
-        // (mutually exclusive) against the resolved next state BEFORE persisting the invalid combination.
-        assertWorktreeNamingRecycleExclusive({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
         /*
         FNXC:ConfigVersioning 2026-07-18-00:00:
         The project settings write and immutable revision share this existing

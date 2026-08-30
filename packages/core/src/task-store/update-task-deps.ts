@@ -26,6 +26,7 @@ import {deriveFallbackTaskTitle} from "../ai/ai-summarize.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {supersedePlanReviewResults} from "../planner/plan-approval.js";
+import {writePromptFileAtomic} from "./prompt-file.js";
 
 export async function refineTaskImpl(store: TaskStore, id: string, feedback: string): Promise<Task> {
     const sourceTask = await store.getTask(id);
@@ -179,7 +180,7 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
         const prompt = buildRefinementSeedPrompt(newTask.title ?? newId, newTask.description);
         const sanitizedPrompt = sanitizeFileScopeInPromptContent(prompt);
         await mkdir(newDir, { recursive: true });
-        await writeFile(join(newDir, "PROMPT.md"), sanitizedPrompt.sanitized);
+        await writePromptFileAtomic(join(newDir, "PROMPT.md"), sanitizedPrompt.sanitized);
 
         if (sourceTask.attachments && sourceTask.attachments.length > 0) {
           const sourceAttachDir = join(store.taskDir(id), "attachments");

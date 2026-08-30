@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
-import { isFusionDeletableBranch, resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError } from "@fusion/core";
+import { isFusionDeletableBranch, resolveWorkflowIrForTask, columnsWithFlag, resolveContainedBackwardTarget, TransitionRejectionError } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
@@ -138,7 +138,7 @@ export class BranchWorktreeAutoRecoveryHandler {
     throwing, so a degraded board behaves exactly as before.
     */
     let wipColumns = new Set<string>(["in-progress"]);
-    let reboundTarget = "todo";
+    let reboundTarget: string | undefined;
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-14:40 (#2797 review — coderabbit):
     The catch no longer swallows. Falling back to the legacy ids stays — this is a RECOVERY path, and
@@ -157,7 +157,7 @@ export class BranchWorktreeAutoRecoveryHandler {
       if (ir) {
         const resolvedWip = columnsWithFlag(ir, "countsTowardWip");
         if (resolvedWip.length > 0) wipColumns = new Set<string>(resolvedWip);
-        reboundTarget = resolveReboundTarget(ir) ?? "todo";
+        reboundTarget = resolveContainedBackwardTarget(ir, task.column);
       }
     } catch (err) {
       laneResolutionError = err instanceof Error ? err.message : String(err);
@@ -200,10 +200,39 @@ export class BranchWorktreeAutoRecoveryHandler {
     Everything is still CAUGHT (an exception thrown out of the recovery handler is invisible), but the
     row now says which failure it was.
     */
+    /*
+    FNXC:LifecycleContainment 2026-08-28-07:48:
+    Branch/worktree cleanup may repair metadata but cannot rehome the card. Keep the live column as
+    the only target so the existing transactional move/clear ordering remains intact without a
+    backward lifecycle transition.
+    */
+    reboundTarget = task.column;
+    if (!reboundTarget) {
+      await this.deps.taskStore.logEntry(
+        task.id,
+        `Lifecycle rebound contained in '${task.column}' — branch/worktree recovery has no adjacent backward destination`,
+      ).catch(() => undefined);
+      await this.deps.runAudit.database({
+        type: "branch-worktree:auto-requeue-skipped",
+        target: task.id,
+        metadata: {
+          class: failure.class,
+          reason: "no-contained-target",
+          rationale,
+          ...(laneResolutionError ? { laneResolutionError } : {}),
+          column: task.column,
+          branchPreserved: true,
+          evidence,
+        },
+      });
+      return;
+    }
+
     let moveFailure: { reason: string; code?: string } | undefined;
     try {
       await this.deps.taskStore.moveTask(task.id, reboundTarget, {
         moveSource: "engine",
+        lifecycleReason: "branch-worktree-recovery",
         preserveResumeState: true,
         preserveProgress: true,
         preserveWorktree: false,

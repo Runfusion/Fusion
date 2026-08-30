@@ -781,6 +781,18 @@ export interface GlobalSettings {
   importTranslateGlobalModelId?: string;
   /** Optional global translate-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   importTranslateGlobalThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:FastCheapModelLane 2026-08-29-02:43:
+  Fast & Cheap execution is a dedicated route, so its model selection must not reuse the normal execution lane. A complete pair is optional and falls through to the execution lane when unset.
+  */
+  /** Global baseline provider for Fast & Cheap task execution. Must be paired with `fastCheapGlobalModelId`. */
+  fastCheapGlobalProvider?: string;
+  /** Optional credential instance for `fastCheapGlobalProvider`. */
+  fastCheapGlobalCredentialInstanceId?: string;
+  /** Global baseline model ID for Fast & Cheap task execution. Must be paired with `fastCheapGlobalProvider`. */
+  fastCheapGlobalModelId?: string;
+  /** Optional global Fast & Cheap thinking override. Inherits execution/default thinking when unset. */
+  fastCheapGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global execution-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   executionGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global planning-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
@@ -837,12 +849,11 @@ export interface GlobalSettings {
    *  triggers a vitest auto-kill. Clamped to [50, 99] in the UI.
    *  Default: 90. */
   vitestKillThresholdPct?: number;
-  /** When true (default), persist tool argument/result payloads in task agent
-   *  logs for `tool`, `tool_result`, and `tool_error` entries. Very large tool
-   *  payloads may still be clipped server-side to keep dashboard log reads
-   *  responsive. When false, tool timeline rows are still stored, but their
-   *  verbose `detail` payload is omitted to reduce log size/noise. Distinct
-   *  from `persistAgentThinkingLog`, which controls `thinking` rows. */
+  /** When true (default), persist tool arguments and successful result payloads
+   *  in task agent logs. Failed `tool_error` detail remains a bounded diagnostic
+   *  signal even when false; tool timeline rows remain stored either way. Very
+   *  large payloads may still be clipped server-side. Distinct from
+   *  `persistAgentThinkingLog`, which controls `thinking` rows. */
   persistAgentToolOutput?: boolean;
   /** Per-result engine-injected tool-output budget. Unset/null uses 16,000 characters;
    * positive integers set a custom cap; 0 disables the shared clamp; invalid values
@@ -1432,10 +1443,6 @@ export interface ProjectSettings {
   testCommand?: string;
   /** Custom build command for the project (e.g. "pnpm build") */
   buildCommand?: string;
-  /** When true, completed task worktrees are returned to an idle pool instead
-   *  of being deleted. New tasks acquire a warm worktree from the pool,
-   *  preserving build caches (node_modules, target/, dist/). Default: false. */
-  recycleWorktrees?: boolean;
   /**
    * Controls whether the board shows worktree grouping and worktree-name labels in WIP/processing columns.
    *
@@ -1483,26 +1490,6 @@ export interface ProjectSettings {
    *  branches like `fusion/FN-123-2` when the canonical task branch is already
    *  checked out elsewhere. Default: false. */
   executorAllowSiblingBranchRename?: boolean;
-  /** Controls how worktree directory names are generated when creating fresh worktrees.
-   *  - "random": Human-friendly adjective-noun names (e.g., swift-falcon) — default
-   *  - "task-id": Use the task ID (e.g., fn-042) — ALSO enables task-pinned worktrees (see below)
-   *  - "task-title": Use a slugified version of the task title (e.g., fix-login-bug)
-   *  Default: "random".
-   *
-   *  For "random" and "task-title", this only affects the generated name and applies when
-   *  recycleWorktrees is NOT enabled (pooled worktrees retain their existing names).
-   *
-   *  FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-   *  "task-id" additionally enables the TASK-PINNED invariant: a task lives in exactly one derivable
-   *  directory `<worktreesDir>/<lowercased-task-id>` for its whole lifecycle. Acquisition
-   *  derives→validates→reuses-or-recreates at that same path (never suffixed), and `task.worktree` becomes a
-   *  self-correcting cache. Task pinning and `recycleWorktrees` are MUTUALLY EXCLUSIVE — enabling both is
-   *  rejected at the settings-write boundary (see `assertWorktreeNamingRecycleExclusive`), because pinning
-   *  each task to its own directory is incompatible with the cross-task recycle pool. Pinning therefore only
-   *  applies when `recycleWorktrees` is off; the runtime also degrades a legacy config that carries both back
-   *  to recycling. Worktrunk-managed layouts own their own path derivation, so pinning is bypassed when that
-   *  backend is on. */
-  worktreeNaming?: "random" | "task-id" | "task-title";
   /** Project-level worktrunk integration overrides.
    *  Merged with global `worktrunk` field-by-field so partial project values
    *  override only specified fields and inherit the rest. */
@@ -2247,6 +2234,14 @@ export interface ProjectSettings {
   importTranslateModelId?: string;
   /** Optional project translate-lane thinking override. Inherits through global translate thinking then default thinking when unset. */
   importTranslateThinkingLevel?: ThinkingLevel;
+  /** Project provider for Fast & Cheap task execution. Must be paired with `fastCheapModelId`; unset falls through to the global Fast & Cheap lane, then execution. */
+  fastCheapProvider?: string;
+  /** Optional credential instance for `fastCheapProvider`. */
+  fastCheapCredentialInstanceId?: string;
+  /** Project model ID for Fast & Cheap task execution. Must be paired with `fastCheapProvider`. */
+  fastCheapModelId?: string;
+  /** Optional project Fast & Cheap thinking override. Inherits through global Fast & Cheap then execution/default thinking. */
+  fastCheapThinkingLevel?: ThinkingLevel;
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   Auto-translation is OFF by default. This reverses the original opt-in-only stance (PR #2128) at operator request: import panels routinely list issues in languages the operator cannot read, so translation may now run automatically — but only when explicitly enabled, so import provenance stays faithful for operators who never opt in.

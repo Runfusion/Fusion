@@ -5,6 +5,7 @@
  * Extracted from types.ts; re-exported from the browser-safe types barrel.
  */
 
+import type { WorkflowStepNotRunReason } from "../../workflows/workflow-step-results.js";
 import type { ThinkingLevel } from "../board/board.js";
 
 /*
@@ -315,8 +316,21 @@ export interface WorkflowStepResult {
    */
   remediationArchivedAt?: string;
   remediationArchivedFromStatus?: WorkflowStepResult["status"];
+  /*
+   * FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+   * A gate that did not execute is persisted as terminal `status: "skipped"` plus a fixed-enum
+   * reason. `passed` is reserved for a check that actually ran and passed, while the closed reason
+   * vocabulary prevents arbitrary prose from entering persisted workflow-step state.
+   */
+  notRunReason?: WorkflowStepNotRunReason;
   /** Durable input identity used to detect a repeated review over unchanged code or plan text. */
   reviewInputFingerprint?: string;
+  /**
+   * FNXC:ReviewConvergence 2026-08-28-10:57:
+   * This is the commit the review actually inspected, anchoring the next same-gate round's
+   * changed-since summary. It is absent on legacy results written before this field existed.
+   */
+  reviewedCommitSha?: string;
   /** Arbitration provenance is only written by the fenced single-gate ruling writer. */
   arbitrationDecision?: "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
   arbitrationBindingFindingCount?: number;
@@ -400,7 +414,7 @@ export interface WorkflowStepResult {
    */
   supersededAt?: string;
   /** Machine-readable reason the result stopped being current. */
-  supersededReason?: "dependency-change";
+  supersededReason?: "dependency-change" | "respecify";
   /*
    * FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768):
    * Number of terminal REVISE results recorded in the current Plan Review

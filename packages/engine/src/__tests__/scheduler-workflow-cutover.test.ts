@@ -437,7 +437,7 @@ describe("Scheduler workflow cutover", () => {
     expect(onBlocked).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }), ["FN-001"]);
   });
 
-  it("clears a stale overlap blocker while preserving an unfinished dependency", async () => {
+  it("preserves an overlap blocker while a paused WIP dependency retains its lease", async () => {
     const blocker = task({ id: "FN-001", column: "in-progress", paused: true, userPaused: true });
     const dependent = task({
       id: "FN-002",
@@ -456,7 +456,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.transitionQueuedEpisode).toHaveBeenCalledWith("FN-002", {
       signature: "dependency:FN-001",
       blockedBy: "FN-001",
-      overlapBlockedBy: null,
+      overlapBlockedBy: "FN-001",
       action: "queued — unmet dependencies: FN-001",
     });
   });

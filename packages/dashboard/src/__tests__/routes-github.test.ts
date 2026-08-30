@@ -19,6 +19,7 @@ import { GitHubClient } from "../github.js";
 import * as resolveDiffBaseModule from "../routes/resolve-diff-base.js";
 import { githubRateLimiter } from "../github-poll.js";
 import {
+  MAX_TASK_MESSAGE_LENGTH,
   PLAN_REVIEW_GROUP_ID,
   TransitionRejectionError,
   type Task,
@@ -2091,7 +2092,7 @@ describe("POST /tasks/:id/spec/revise", () => {
     return app;
   }
 
-  it("requests spec revision and moves task from todo to triage", async () => {
+  it("requests spec revision in place from the todo planning column", async () => {
     const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-revise-"));
@@ -2120,13 +2121,8 @@ describe("POST /tasks/:id/spec/revise", () => {
         "Please add more details about error handling"
       );
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-03-01:10 (red on main — `triage` no longer exists):
-      A CARD AT INTAKE IS RESET IN PLACE, not moved. #2515 merged Todo into Planning keeping the id `todo`, so
-      the default lineage's intake column IS `todo` — and the respecify route's own comment says a task already
-      sitting at intake skips the transition check and `moveTask` entirely, resetting for replanning where it is.
-
-      This case asserted `moveTask(id, "triage")`. Both halves were stale: the column is gone, and there is no
-      move at all for a card that is already where respecify sends it.
+      FNXC:PlanApproval 2026-08-28-11:39:
+      A card already in the workflow's planning column is reset in place, not moved. The fixture's `todo` column contains the planning node, so respecify must leave it there for triage's hold-column needs-replan rediscovery.
       */
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
@@ -2258,18 +2254,67 @@ describe("POST /tasks/:id/spec/revise", () => {
     expect(res.body.error).toContain("feedback is required");
   });
 
-  it("returns 400 when feedback exceeds 2000 characters", async () => {
-    const longFeedback = "a".repeat(2001);
+  it("rejects whitespace-only spec-revision feedback before reading or mutating the task", async () => {
     const res = await REQUEST(
       buildApp(),
       "POST",
       "/api/tasks/KB-001/spec/revise",
-      JSON.stringify({ feedback: longFeedback }),
-      { "Content-Type": "application/json" }
+      JSON.stringify({ feedback: " \t\n " }),
+      { "Content-Type": "application/json" },
     );
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("feedback must be between 1 and 2000");
+    expect(res.body).toEqual({ error: `feedback must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters` });
+    expect(store.getTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("accepts long spec-revision feedback through the shared cap and rejects the next character", async () => {
+    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+    const updatedTask = { ...todoTask, status: "needs-replan" as const };
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-revise-length-"));
+    const longFeedback = "a".repeat(2001);
+    const boundaryFeedback = "a".repeat(MAX_TASK_MESSAGE_LENGTH);
+    const rejectedFeedback = "a".repeat(MAX_TASK_MESSAGE_LENGTH + 1);
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
+
+    try {
+      const longResponse = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/spec/revise",
+        JSON.stringify({ feedback: longFeedback }),
+        { "Content-Type": "application/json" },
+      );
+      const boundaryResponse = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/spec/revise",
+        JSON.stringify({ feedback: boundaryFeedback }),
+        { "Content-Type": "application/json" },
+      );
+      const rejectedResponse = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/spec/revise",
+        JSON.stringify({ feedback: rejectedFeedback }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(longResponse.status).toBe(200);
+      expect(boundaryResponse.status).toBe(200);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-001", "AI spec revision requested", longFeedback);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-001", "AI spec revision requested", boundaryFeedback);
+      expect(rejectedResponse.status).toBe(400);
+      expect(rejectedResponse.body).toEqual({ error: `feedback must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters` });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("returns 404 when task not found", async () => {

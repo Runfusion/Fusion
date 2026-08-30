@@ -47,8 +47,8 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     labelFallback: " Save tool output in agent logs ",
     helpKey: "settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
     helpFallback:
-      " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
-    keywords: ["persist", "transcript", "disk usage"],
+      " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
+    keywords: ["persist", "transcript", "disk usage", "tool arguments", "tool results"],
   },
   {
     sectionId: "global-general",

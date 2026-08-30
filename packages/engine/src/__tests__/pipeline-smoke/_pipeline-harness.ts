@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   getBuiltinWorkflow,
@@ -26,6 +26,7 @@ import { WorktreePool } from "../../worktree/worktree-pool.js";
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "../../worktree/worktree-acquisition.js";
 import { runHoldReleaseSweep } from "../../execution/hold-release.js";
 import { SelfHealingManager } from "../../self-healing.js";
+import { Scheduler } from "../../scheduler.js";
 import { reconcileRecovery } from "../../recovery-reconciler.js";
 import { createPipelineClock, type PipelineClock } from "./_pipeline-clock.js";
 import { createPipelineGitFixture, createPipelineWorkspaceFixture, type PipelineGitFixture } from "./_pipeline-git-fixture.js";
@@ -88,6 +89,27 @@ seams, or dependencies; this narrow subclass exposes only that protected entry f
 class PipelineGraphExecutor extends TaskExecutor {
   async executeAuthoritativeGraph(task: Task): Promise<void> {
     await this.executeWorkflowGraph(task);
+  }
+
+  async declareExternalObstacle(task: Task, reason: string): Promise<void> {
+    if (!task.worktree) throw new Error(`Pipeline smoke task ${task.id} has no worktree for fn_task_done.`);
+    const tool = this.createTaskDoneTool(
+      task.id,
+      task.worktree,
+      task.prompt ?? "",
+      new Map(),
+      () => undefined,
+    );
+    const result = await tool.execute("pipeline-s21-external-block", {
+      outcome: "blocked",
+      obstacle: "outside-worktree",
+      blockedBy: [],
+      reason,
+    } as never);
+    const text = result.content.map((entry) => entry.type === "text" ? entry.text : "").join("\n");
+    if (!text.includes("frozen as Blocked")) {
+      throw new Error(`S21: production fn_task_done did not freeze the external obstacle: ${text}`);
+    }
   }
 }
 
@@ -542,6 +564,108 @@ export class PipelineSmokeHarness {
       throw new Error(`Pipeline smoke task ${taskId} has no usable production-acquired worktree.`);
     }
     return task.worktree;
+  }
+
+  /*
+  FNXC:ExternalBlockPipeline 2026-08-28-05:33:
+  S21 must reproduce the reported MRG-058 path through the production fn_task_done tool, then run
+  real scheduler and self-healing passes. Directly seeding externalBlock would hide regressions in
+  obstacle classification, lifecycle routing, dispatch refusal, and resource-retention recovery.
+  */
+  async arrangeExternalBlockReplay(task: PipelineTaskSeed): Promise<void> {
+    const acquisition = await this.acquirePipelineTaskWorktree(task.id);
+    for (let index = 1; index <= 5; index += 1) {
+      const path = join(acquisition.worktreePath, `fn-209-proof-${index}.txt`);
+      writeFileSync(path, `FN-209 external block proof ${index}\n`, "utf8");
+      git(acquisition.worktreePath, ["add", `fn-209-proof-${index}.txt`]);
+      git(acquisition.worktreePath, ["commit", "-m", `test: S21 proof commit ${index}`]);
+    }
+    await this.store.moveTask(task.id, task.wipColumn as never, {
+      preserveProgress: true,
+      preserveWorktree: true,
+      moveSource: "engine",
+    });
+    const steps = Array.from({ length: 7 }, (_, index) => ({
+      name: index === 6 ? "Testing & Verification" : `Completed step ${index}`,
+      status: index === 6 ? "in-progress" as const : "done" as const,
+    }));
+    await this.store.updateTask(task.id, {
+      steps,
+      currentStep: 6,
+      effectiveNodeId: "steps#6:step-execute",
+      modifiedFiles: Array.from({ length: 5 }, (_, index) => `fn-209-proof-${index + 1}.txt`),
+    });
+    const live = await this.freshTask(task.id);
+    await this.wireExecutor().declareExternalObstacle(
+      live,
+      "Vitest cannot start: ENOSPC: no space left on device, write",
+    );
+  }
+
+  async driveExternalBlockRecoveryCycles(taskId: string, options: { startup?: boolean } = {}): Promise<void> {
+    let dispatchCount = 0;
+    const scheduler = new Scheduler(this.store, {
+      maxConcurrent: 2,
+      maxWorktrees: 2,
+      onSchedule: (task) => {
+        if (task.id === taskId) dispatchCount += 1;
+      },
+    });
+    (scheduler as unknown as { running: boolean }).running = true;
+    try {
+      await scheduler.schedule();
+    } finally {
+      scheduler.stop();
+    }
+    if (dispatchCount !== 0) throw new Error("S21: scheduler dispatched the externally blocked task.");
+
+    const manager = new SelfHealingManager(this.store, {
+      rootDir: this.fixture.repoDir,
+      getExecutingTaskIds: () => new Set<string>(),
+      listWorktreeHolders: () => [...this.pool.getLeasedPaths()].map(([worktreePath, holderTaskId]) => ({
+        taskId: holderTaskId,
+        worktreePath,
+      })),
+      clearPhantomExecutorBinding: (holderTaskId) => {
+        for (const [worktreePath, currentHolder] of this.pool.getLeasedPaths()) {
+          if (currentHolder === holderTaskId) this.pool.release(worktreePath, holderTaskId);
+        }
+        return true;
+      },
+    });
+    try {
+      if (options.startup) await manager.runStartupRecovery();
+      await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
+    } finally {
+      manager.stop();
+    }
+  }
+
+  async assertExternalBlockReplay(task: PipelineTaskSeed, expectedStatus: "blocked" | "resumed"): Promise<void> {
+    const live = await this.freshTask(task.id);
+    const worktree = await this.requireTaskWorktree(task.id);
+    if (!live.baseCommitSha) throw new Error("S21: production acquisition did not persist its base commit.");
+    const commitCount = Number(git(worktree, ["rev-list", "--count", `${live.baseCommitSha}..HEAD`]));
+    if (commitCount !== 5) throw new Error(`S21: expected five retained commits, observed ${commitCount}.`);
+    if (live.steps.slice(0, 6).some((step) => step.status !== "done") || live.steps[6]?.status !== "in-progress" || live.currentStep !== 6) {
+      throw new Error("S21: completed or interrupted step progress changed across external block recovery.");
+    }
+    if (this.pool.getLeasedPaths().get(worktree) !== task.id) {
+      throw new Error("S21: the production worktree pool released the blocked task lease.");
+    }
+    if (expectedStatus === "blocked") {
+      if (live.status !== "blocked" || live.externalBlock?.code !== "ENOSPC") throw new Error("S21: external obstacle is not durably readable.");
+    } else if (live.status === "blocked" || live.externalBlock) {
+      throw new Error("S21: dashboard Retry did not clear the external block.");
+    }
+  }
+
+  async resumeExternalBlockReplay(taskId: string): Promise<void> {
+    const { resumeExternallyBlockedTask } = await import("../../../../dashboard/src/routes/task-external-block-resume.js");
+    const result = await resumeExternallyBlockedTask({ store: this.store, taskId });
+    if (result.kind !== "resumed" || result.nodeId !== "steps#6:step-execute") {
+      throw new Error("S21: dashboard Retry did not arm the interrupted verification node.");
+    }
   }
 
   private async acquirePipelineTaskWorktree(taskId: string): Promise<AcquireTaskWorktreeResult> {

@@ -3,13 +3,16 @@ import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import type { Task, TaskComment } from "@fusion/core";
-import { getErrorMessage } from "@fusion/core";
+import { getErrorMessage, MAX_TASK_MESSAGE_LENGTH, type Task, type TaskComment } from "@fusion/core";
 import "./TaskComments.css";
 import { addSteeringComment, updateTaskComment, deleteTaskComment } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
-const MAX_COMMENT_LENGTH = 2000;
+/*
+FNXC:TaskMessageLength 2026-08-29-08:02:
+The task-comment composer must share the server's generous task-message limit so its counter and
+submit gate cannot reject an operator message that the route accepts.
+*/
 
 interface TaskCommentsProps {
   task: Task;
@@ -66,7 +69,7 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
     );
   }, [task.comments]);
 
-  const isOverLimit = draft.length > MAX_COMMENT_LENGTH;
+  const isOverLimit = draft.length > MAX_TASK_MESSAGE_LENGTH;
 
   async function handleAddComment() {
     const text = draft.trim();
@@ -199,7 +202,7 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
         />
         <div className="comments-footer-row"><MicButton {...dictation.micProps} disabled={submitting} />
           <span className={`comments-char-count${isOverLimit ? " comments-char-count--over" : ""}`}>
-            {draft.length} / {MAX_COMMENT_LENGTH}
+            {draft.length} / {MAX_TASK_MESSAGE_LENGTH}
           </span>
           <button
             className="btn btn-primary btn-sm"

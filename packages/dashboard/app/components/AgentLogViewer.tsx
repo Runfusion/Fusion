@@ -13,7 +13,7 @@ import { Maximize2, Minimize2, Loader2, ChevronDown, ChevronRight } from "lucide
 import "./AgentLogViewer.css";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { ToolCallDetails } from "./ToolCallDetails";
+import { ToolCallDetails, TOOL_CALL_PREVIEW_MAX_CHARS, TOOL_CALL_PREVIEW_MAX_LINES } from "./ToolCallDetails";
 import { ThinkingTrace } from "./ThinkingTrace";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
@@ -175,38 +175,58 @@ interface CollapsibleToolDetailProps {
   type?: "tool" | "tool_result" | "tool_error";
 }
 
+/*
+FNXC:ToolCallDisplay 2026-08-29-04:34:
+FN-253 requires complete tool payloads to remain visible on Raw Logs by default. Long values use a
+visible CSS preview with an explicit reveal instead of hiding the payload, and the control only exists
+when it can reveal more content.
+*/
 function CollapsibleToolDetail({ detail, type = "tool_result" }: CollapsibleToolDetailProps): ReactElement {
   const { t } = useTranslation("app");
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
   const lineCount = detail.split("\n").length;
+  const exceedsPreview = lineCount > TOOL_CALL_PREVIEW_MAX_LINES || detail.length > TOOL_CALL_PREVIEW_MAX_CHARS;
+  const detailLabel = type === "tool_error"
+    ? t("agentLog.error", "Error")
+    : type === "tool"
+      ? t("agentLog.arguments", "Arguments")
+      : t("agentLog.output", "Output");
   const toggleLabel = expanded
-    ? t("agentLog.hideOutput", "Hide output")
-    : t("agentLog.showOutput", `Show output${lineCount > 1 ? ` (${lineCount} lines)` : ""}`);
+    ? t("agentLog.showLessDetail", "Show less {{detailLabel}}", { detailLabel })
+    : t(
+      "agentLog.showMoreDetail",
+      "Show more {{detailLabel}}{{lineCount}}",
+      { detailLabel, lineCount: lineCount > 1 ? ` (${lineCount} lines)` : "" },
+    );
 
   return (
     <div className="agent-log-tool-detail-wrapper">
-      <button
-        type="button"
-        className="agent-log-tool-detail-toggle"
-        onClick={() => setExpanded((prev) => !prev)}
-        aria-expanded={expanded}
-        aria-controls={contentId}
-        data-testid="tool-detail-toggle"
-      >
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>{toggleLabel}</span>
-      </button>
+      {exceedsPreview ? (
+        <button
+          type="button"
+          className="agent-log-tool-detail-toggle"
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          data-testid="tool-detail-toggle"
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span>{toggleLabel}</span>
+        </button>
+      ) : null}
       <div
         id={contentId}
-        className={expanded ? "agent-log-tool-detail-content" : "agent-log-tool-detail-content agent-log-tool-detail-content--collapsed"}
+        className={expanded || !exceedsPreview
+          ? "agent-log-tool-detail-content"
+          : "agent-log-tool-detail-content agent-log-tool-detail-content--preview"}
         data-testid="tool-detail-content"
       >
         <ToolCallDetails
           className="agent-log-tool-detail"
           resultValue={detail}
           argumentsLabel={t("agentLog.arguments", "Arguments")}
-          resultLabel={type === "tool_error" ? t("agentLog.error", "Error") : type === "tool" ? t("agentLog.arguments", "Arguments") : t("agentLog.output", "Output")}
+          resultLabel={detailLabel}
           resultIsError={type === "tool_error"}
           renderValue={linkifyFilePaths}
         />
@@ -309,6 +329,8 @@ interface AgentLogViewerProps {
   loadingMore?: boolean;
   /** Total number of entries (when known) for "Showing X of Y" summary */
   totalCount?: number | null;
+  /** Shows one explanatory note for visible historical tool rows without saved detail. */
+  showMissingDetailHint?: boolean;
 }
 
 /**
@@ -339,6 +361,7 @@ export function AgentLogViewer({
   onLoadMore,
   loadingMore = false,
   totalCount = null,
+  showMissingDetailHint = false,
 }: AgentLogViewerProps) {
   const { t } = useTranslation("app");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -400,6 +423,15 @@ export function AgentLogViewer({
   const renderGroups = useMemo(
     () => buildRenderGroups(renderEntries, chronologicalEntryKeys),
     [renderEntries, chronologicalEntryKeys],
+  );
+  /*
+  FNXC:ToolCallDisplay 2026-08-29-04:34:
+  A missing-detail explanation is host-opted because this viewer also serves historical and
+  synthesized agent-run pages. FN-253 shows it once for task-log tool/result rows instead of
+  silently rendering an empty space or asserting that the current persistence setting is off.
+  */
+  const hasMissingToolDetail = showMissingDetailHint && visibleEntries.some(
+    (entry) => (entry.type === "tool" || entry.type === "tool_result") && !entry.detail,
   );
 
   /*
@@ -700,6 +732,12 @@ export function AgentLogViewer({
             </button>
           </div>
         )}
+
+        {hasMissingToolDetail ? (
+          <div className="agent-log-missing-detail-hint" role="note" data-testid="agent-log-missing-detail-hint">
+            {t("agentLog.missingToolDetailHint", "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.")}
+          </div>
+        ) : null}
 
         {renderGroups.map((group) => {
           const firstEntry = group.kind === "single" ? group.entry : group.entries[0];

@@ -10,8 +10,28 @@ describe("confirmed merge reconciliation", () => {
     })).toEqual({ skippedStepIndexes: [0], reconciledWorkflowStepIds: ["code-review"] });
   });
 
+  it("does not let a finalizer-inflicted failed status wedge proven-landed work", () => {
+    expect(getPostMergeFinalizeBlocker({
+      status: "failed",
+      error: "Cannot move FN-221 to 'done': Forbidden lifecycle path F3…",
+    })).toBeUndefined();
+  });
+
   it("retains independent task blockers", () => {
     expect(getPostMergeFinalizeBlocker({ status: "awaiting-approval", error: "operator action" }))
       .toBe("task is marked 'awaiting-approval': operator action");
+  });
+
+  it.each([
+    "awaiting-inspection",
+    "awaiting-user-review",
+    "planning",
+    "specifying",
+    "needs-replan",
+    "mission-validation",
+    "stuck-killed",
+  ])("keeps the %s post-merge blocker", (status) => {
+    expect(getPostMergeFinalizeBlocker({ status, error: undefined }))
+      .toBe(`task is marked '${status}'`);
   });
 });

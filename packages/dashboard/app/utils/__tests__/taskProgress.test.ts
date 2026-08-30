@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { WORKFLOW_STEP_NOT_RUN_REASONS as CORE_WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
 import type { Task } from "@fusion/core";
 import {
   getRunningOptionalGateBadge,
   getRunningWorkflowStepLabel,
   getUnifiedTaskProgress,
   isNonPlanningOptionalGateBadge,
+  mapWorkflowStatus,
+  WORKFLOW_STEP_NOT_RUN_REASONS,
   isPlanReviewRunning,
 } from "../taskProgress";
 
@@ -223,6 +226,26 @@ describe("review-gate badge precedence", () => {
 });
 
 describe("getUnifiedTaskProgress", () => {
+  it("maps not-run checks distinctly while preserving completed progress", () => {
+    const notRun = {
+      workflowStepId: "verification",
+      workflowStepName: "Verification",
+      status: "skipped",
+      notRunReason: "not-configured",
+    } as const;
+    expect(mapWorkflowStatus(notRun)).toBe("not_run");
+    expect(mapWorkflowStatus({ ...notRun, notRunReason: undefined })).toBe("skipped");
+    expect(mapWorkflowStatus({ ...notRun, status: "passed", notRunReason: undefined })).toBe("done");
+
+    const progress = getUnifiedTaskProgress(makeTask({
+      enabledWorkflowSteps: ["verification"],
+      workflowStepResults: [notRun],
+    }));
+    expect(progress).toMatchObject({ total: 1, completed: 1 });
+    expect(progress.items[0]?.status).toBe("not_run");
+    expect(WORKFLOW_STEP_NOT_RUN_REASONS).toEqual(CORE_WORKFLOW_STEP_NOT_RUN_REASONS);
+  });
+
   it("resolves workflow step names from result.workflowStepName without a lookup", () => {
     const progress = getUnifiedTaskProgress(
       makeTask({
@@ -487,6 +510,42 @@ describe("getUnifiedTaskProgress", () => {
       "step-1",
       "workflow-code-review",
     ]);
+  });
+
+  it("keeps repeated verification occurrences distinct by history index", () => {
+    const progress = getUnifiedTaskProgress(makeTask({
+      steps: [
+        { name: "Testing & Verification", status: "done" },
+        { name: "Fix: repair retry guard", status: "done" },
+        { name: "Testing & Verification", status: "pending" },
+      ],
+    }));
+
+    expect(progress.items.map((item) => ({ id: item.id, name: item.name, status: item.status }))).toEqual([
+      { id: "step-0", name: "Testing & Verification", status: "done" },
+      { id: "step-1", name: "Fix: repair retry guard", status: "done" },
+      { id: "step-2", name: "Testing & Verification", status: "pending" },
+    ]);
+  });
+
+  it("passes remediation names through verbatim in full and implementation scopes", () => {
+    const remediationName = "Fix: concise retry guard headline";
+    const task = makeTask({
+      steps: [
+        { name: "Implement retry guard", status: "done" },
+        {
+          name: remediationName,
+          status: "pending",
+          remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", detail: "Long reviewer explanation" },
+        },
+      ] as Task["steps"],
+    });
+
+    const full = getUnifiedTaskProgress(task);
+    const implementation = getUnifiedTaskProgress(task, { scope: "implementation" });
+    for (const progress of [full, implementation]) {
+      expect(progress.items).toContainEqual(expect.objectContaining({ id: "step-1", name: remediationName, status: "pending" }));
+    }
   });
 
   it("maps impl step statuses straight through and skipped as completed", () => {

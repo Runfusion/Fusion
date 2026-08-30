@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog} from "../store.js";
+import { buildPatchnodeEntryInput } from "../board/patchnode.js";
+import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
 
@@ -727,14 +729,24 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           !bypassGuards && toFacts.flags.complete && fromFacts.flags.mergeBlocker === true
             ? (getTaskMergeBlocker(task, {
               skipColumnIdentityCheck: true,
-              requiredPreMergeStepIds: resolveRequiredPreMergeStepIds(workflowIr, task.enabledWorkflowSteps),
+              requiredPreMergeStepIds: resolveRequiredPreMergeStepIds(workflowIr, task.enabledWorkflowSteps, task),
             }) ?? null)
             : null;
+        /*
+        FNXC:LifecycleContainment 2026-08-28-01:09:
+        FN-207 applies the direction policy even to bypassed and recovery-rehome
+        moves, so this in-lock validator receives the raw option rather than the
+        resolved `moveSource`. An absent option remains an operator-compatible,
+        fail-open legacy route; explicit engine/scheduler movers are covered by
+        the move-reason census and forbidden-path tests.
+        */
         const decision = evaluateTransitionInvariants({
           taskId: id,
           from: fromFacts,
           to: toFacts,
           mergeBlockerReason,
+          moveSource: options?.moveSource,
+          lifecycleReason: options?.lifecycleReason,
         });
         if (!decision.allow) {
           throw new TransitionRejectionError(
@@ -904,7 +916,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         */
         const mergeBlocker = getTaskMergeBlocker(task, {
           reviewColumns: moveLifecycle?.review ? new Set([moveLifecycle.review]) : undefined,
-          requiredPreMergeStepIds: resolveRequiredPreMergeStepIds(workflowIr, task.enabledWorkflowSteps),
+          requiredPreMergeStepIds: resolveRequiredPreMergeStepIds(workflowIr, task.enabledWorkflowSteps, task),
         });
         if (mergeBlocker) {
           throw new Error(`Cannot move ${id} to done: ${mergeBlocker}`);
@@ -1237,6 +1249,21 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         },
       });
 
+      /*
+      FNXC:PatchnodeLedger 2026-08-28-12:16:
+      Each genuine entry into the completion lane snapshots this delivery under its columnMovedAt occurrence. The next move overwrites that evidence, so this insert commits in the move transaction and intentionally aborts the move on failure; the move's early return, not conflict handling, prevents duplicate capture.
+
+      FNXC:PatchnodeLedger 2026-08-28-13:35:
+      Completion capture requires the store's real project partition. An unbound writer must fail this transaction instead of manufacturing a legacy project id whose entry the project-scoped feed can never read.
+      */
+      if (toColumn === (moveLifecycle?.complete ?? "done") && fromColumn !== toColumn && !internal.terminalFailureApply) {
+        await appendPatchnodeEntryInTransaction(
+          tx,
+          layer.projectId ?? "",
+          buildPatchnodeEntryInput(task, "completed", task.columnMovedAt ?? movedAt),
+        );
+      }
+
       // Dequeue from merge queue on column exit (if leaving in-review).
       await dequeueMergeQueueOnColumnExitInTransaction(tx, id, fromColumn, toColumn, movedAt, moveReviewColumns);
 
@@ -1502,7 +1529,23 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
       /* FNXC:WorkflowEvents 2026-08-22-00:13: an unresolved payload is unknown; retain a warm real cache answer until its TTL expires. */
       if (lanes) store.laneCache.set(task.id, lanes);
-      store.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource, lanes });
+      store.emit("task:moved", {
+        task,
+        from: fromColumn,
+        to: toColumn,
+        source: moveSource,
+        lanes,
+        requestedSource: options?.moveSource,
+        lifecycleReason: options?.lifecycleReason,
+        /*
+        FNXC:LifecycleContainment 2026-08-28-04:47:
+        FN-207 — the canonical emitter is the only place that holds the mover's graph provenance at
+        emit time. Withholding it made every forward graph transition unattributable downstream, so
+        the lifecycle log could only say "unattributed automatic move" for moves that were in fact
+        fully provenanced. Forward the raw option; the listener decides how to render it.
+        */
+        workflowMoveSource: options?.workflowMoveSource,
+      });
       /*
       FNXC:WorkflowEvents 2026-07-27-11:45 (U3 / R5, R6):
       THE post-commit emit point for lifecycle transitions. Its position is the

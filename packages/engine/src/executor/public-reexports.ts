@@ -171,6 +171,12 @@ export {
 } from "./await-input-parse.js";
 export {
   FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
+  MAX_DERIVED_WORKFLOW_STEP_NOTES_CHARS,
+  WORKFLOW_STEP_NOTES_REPAIR_PROMPT,
+  workflowStepVerdictNoNotesNotice,
+  stripStructuredVerdictPayload,
+  deriveWorkflowStepNotes,
+  parseWorkflowStepNotesRepair,
   parseWorkflowStepVerdict,
   inferWorkflowStepVerdictFromProse,
   parseWorkflowStepOutput,
@@ -179,12 +185,14 @@ export type {
   WorkflowStepOutcome,
   WorkflowStepResult,
   WorkflowStepVerdict,
+  WorkflowStepVerdictNoNotesReason,
 } from "./workflow-step-verdict.js";
 /*
 FNXC:TaskRecommendations 2026-08-09-22:10:
 Free validateCompletionRecommendations export (FN-8850) — tests import from executor.js.
 */
 export { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
+export { WORKFLOW_STEP_NOTES_REPAIR_TIMEOUT_MS } from "./execute-workflow-step.js";
 export { getExecutorSystemPrompt } from "./system-prompt.js";
 export {
   LEGACY_TERMINAL_COLUMNS,

@@ -7,6 +7,7 @@ import {
   WorkflowGraphExecutor,
   type WorkflowNodeHandler,
 } from "../workflows/workflow-graph-executor.js";
+import { workflowStepVerdictNoNotesNotice } from "../executor/workflow-step-verdict.js";
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
@@ -337,7 +338,7 @@ describe("WorkflowGraphExecutor optional-group", () => {
     group.config = { ...group.config, reviewKind: "code" };
     const result = await executor.run(taskWith(["group"]), settingsOn(), ir);
 
-    expect(requestFix).toHaveBeenCalledWith("FN-OG", {
+    expect(requestFix).toHaveBeenCalledWith("FN-OG", expect.objectContaining({
       stepName: "Code Review",
       feedback: "Fix the review finding",
       phase: "pre-merge",
@@ -345,7 +346,7 @@ describe("WorkflowGraphExecutor optional-group", () => {
       verdict: "REVISE",
       nodeId: "group",
       maxRevisions: undefined,
-    });
+    }));
     expect(calls).not.toContain("after");
     expect(result.context["node:group:fixScheduled"]).toBe(true);
     expect(records).toEqual(expect.arrayContaining([
@@ -418,6 +419,62 @@ describe("WorkflowGraphExecutor optional-group", () => {
       expect(result.context["node:group:fixScheduled"]).toBeUndefined();
       if (requestFix) expect(requestFix).toHaveBeenCalledOnce();
     }
+  });
+
+  it("records and logs passed optional-group review notes without fabricating legacy detail", async () => {
+    const note = "Reviewed the scoped implementation and focused tests; both satisfy the task.";
+    const records: WorkflowStepResult[] = [];
+    const logs: Array<[string, string | undefined]> = [];
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => node.id === "review"
+          ? { outcome: "success", value: "APPROVE", contextPatch: { output: note, notes: note } }
+          : { outcome: "success" },
+      },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result); },
+      logTaskEntry: (summary, detail) => { logs.push([summary, detail]); },
+    });
+    await executor.run(taskWith(["group"]), settingsOn(), reviseGroupIr());
+
+    expect(records.at(-1)).toMatchObject({ status: "passed", verdict: "APPROVE", output: note, notes: note });
+    expect(logs).toContainEqual(["[pre-merge] Workflow step completed: Code Review", note]);
+
+    const legacyLogs: Array<[string, string | undefined]> = [];
+    const legacyRecords: WorkflowStepResult[] = [];
+    const legacyExecutor = new WorkflowGraphExecutor({
+      handlers: { prompt: async (node) => node.id === "review" ? { outcome: "success", value: "APPROVE" } : { outcome: "success" } },
+      recordWorkflowStepResult: async (_taskId, result) => { legacyRecords.push(result); },
+      logTaskEntry: (summary, detail) => { legacyLogs.push([summary, detail]); },
+    });
+    await legacyExecutor.run(taskWith(["group"]), settingsOn(), reviseGroupIr());
+
+    expect(legacyRecords.at(-1)).not.toHaveProperty("notes");
+    expect(legacyLogs).toContainEqual(["[pre-merge] Workflow step completed: Code Review", undefined]);
+
+    const failedRepairNotice = workflowStepVerdictNoNotesNotice("APPROVE", "failed-soft");
+    const failedRepairPatch = { output: failedRepairNotice, notes: failedRepairNotice };
+    const failedRepairRecords: WorkflowStepResult[] = [];
+    const failedRepairLogs: Array<[string, string | undefined]> = [];
+    const failedRepairExecutor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => node.id === "review"
+          ? { outcome: "success", value: "APPROVE", contextPatch: failedRepairPatch }
+          : { outcome: "success" },
+      },
+      recordWorkflowStepResult: async (_taskId, result) => { failedRepairRecords.push(result); },
+      logTaskEntry: (summary, detail) => { failedRepairLogs.push([summary, detail]); },
+    });
+    await failedRepairExecutor.run(taskWith(["group"]), settingsOn(), reviseGroupIr());
+
+    expect(failedRepairPatch).not.toHaveProperty("notesMissing");
+    expect(failedRepairRecords.at(-1)).toMatchObject({
+      status: "passed",
+      verdict: "APPROVE",
+      output: failedRepairNotice,
+      notes: failedRepairNotice,
+    });
+    expect(failedRepairRecords.at(-1)).not.toHaveProperty("notesMissing");
+    expect(failedRepairLogs).toContainEqual(["[pre-merge] Workflow step completed: Code Review", failedRepairNotice]);
   });
 
   it("requests fixes for pre-merge gate REVISE but not post-merge, non-REVISE, or fast-mode skipped outcomes", async () => {

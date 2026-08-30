@@ -120,8 +120,7 @@ export function fetchSpecLock(id: string, projectId?: string): Promise<SpecLockR
 
 /*
 FNXC:TaskDetailPlan 2026-08-05-04:05:
-Definition polling reads only PROMPT.md. It must not request a TaskDetail because board/SSE/mutation
-snapshots exclusively own lifecycle, workflow, and action state while a detail host is mounted.
+Definition polling reads only PROMPT.md so it cannot roll lifecycle or workflow state backward. Its response is degradable evidence: the mounted detail may adopt usable plan text, while absent or blank text retains the loaded plan until a separate authoritative detail read confirms whether PROMPT.md is genuinely gone.
 */
 export function fetchTaskPrompt(id: string, projectId?: string): Promise<TaskPromptResponse> {
   return api<TaskPromptResponse>(withProjectId(`/tasks/${id}/prompt`, projectId));
@@ -280,6 +279,10 @@ export async function createTask(
   projectId?: string,
   options?: CreateTaskRequestOptions,
 ): Promise<Task> {
+  /*
+  FNXC:PlanApproval 2026-08-28-11:29:
+  The dashboard create API is an explicit whitelist shared by Quick Entry and New Task. Forward the per-task approval override here so an opted-in task reaches planning with its human-review hold intact.
+  */
   const {
     title,
     description,
@@ -316,7 +319,6 @@ export async function createTask(
     sessionAdvisorEnabled,
     acknowledgedDuplicates,
     bypassDuplicateCheck,
-    repositoryScope,
   } = input;
 
   try {
@@ -360,7 +362,6 @@ export async function createTask(
       sessionAdvisorEnabled,
       acknowledgedDuplicates,
       bypassDuplicateCheck,
-      repositoryScope,
     }),
   });
   } catch (error) {
@@ -372,18 +373,6 @@ export async function createTask(
     }
     throw error;
   }
-}
-
-/** Update explicit workspace repository intent before any land intent or landed SHA exists. */
-export function updateTaskRepositoryScope(
-  id: string,
-  input: { repositories: string[]; reason: string; action?: "add" | "remove" | "refuse" },
-  projectId?: string,
-): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${encodeURIComponent(id)}/repository-scope`, projectId), {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
 }
 
 export interface TaskOverlapBlockerReport {
@@ -523,7 +512,7 @@ export function moveTask(
   id: string,
   column: ColumnId,
   projectId?: string,
-  optionsOrPosition?: { preserveProgress?: boolean } | number,
+  optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number,
 ): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/move`, projectId), {
     method: "POST",
@@ -532,6 +521,11 @@ export function moveTask(
       ...(
         typeof optionsOrPosition === "object" && optionsOrPosition?.preserveProgress
           ? { preserveProgress: true }
+          : {}
+      ),
+      ...(
+        typeof optionsOrPosition === "object" && optionsOrPosition?.expectedColumn !== undefined
+          ? { expectedColumn: optionsOrPosition.expectedColumn }
           : {}
       ),
     }),

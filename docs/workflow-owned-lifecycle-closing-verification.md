@@ -82,7 +82,7 @@ was not added while several consolidation branches still touch those files.
 
 Diagnostic order that identifies this quickly, and two hypotheses it kills:
 
-1. `sweep()` returns `held: [{ reason: "move-rejected-or-no-slot" }]`.
+1. `sweep()` returns `held: [{ reason: "awaiting-planning:seed-prompt" }]`.
 2. Adding `maxConcurrent`/`maxWorktrees` to the settings changes nothing — **not** the
    in-transaction capacity gate.
 3. A direct `store.moveTask(id, wip)` **succeeds** — the move is not the blocker.

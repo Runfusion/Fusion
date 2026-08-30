@@ -7,7 +7,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
-import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
+import { type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { useBlockerFanout, type BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";
 import { useBoardMousePan } from "../hooks/useBoardMousePan";
@@ -34,11 +34,11 @@ interface BoardProps {
   /** Shared engine-enforced capacity for the board's Up Next preview. */
   effectiveMaxConcurrent?: number;
   showWorktreeGrouping: boolean;
-  onMoveTask: (id: string, column: ColumnId) => Promise<Task>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetail: (task: Task | TaskDetail) => void;
   onOpenRefine?: (task: Task | TaskDetail) => void;
@@ -58,6 +58,7 @@ interface BoardProps {
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
   /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
@@ -178,7 +179,7 @@ function columnDefOffersArchiveAllDone(columnDef: { flags: { complete?: boolean;
   return columnDef.flags.complete === true && columnDef.flags.archived !== true;
 }
 
-export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent = maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedSortMode, onArchivedSortModeChange, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent = maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedSortMode, onArchivedSortModeChange, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
   const { t } = useTranslation("app");
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
@@ -442,11 +443,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
     columnFlagsByTaskId: blockerFanoutColumnFlagsByTaskId,
   });
-
-  const handlePromote = useCallback(async (taskId: string, options?: { force?: boolean }) => {
-    // `force` only ever arrives from Column's confirmed unplanned-for-execution override.
-    await promoteTask(taskId, projectId, options);
-  }, [projectId]);
 
   const handleToggleAutoMerge = useCallback(() => {
     onToggleAutoMerge();
@@ -1000,6 +996,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
                   onRetryTask={onRetryTask}
+                  onOpenChatWithPrefill={onOpenChatWithPrefill}
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
                   onRevertTask={onRevertTask}
@@ -1069,10 +1066,9 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 effectiveMaxConcurrent={effectiveMaxConcurrent}
                 showWorktreeGrouping={showWorktreeGrouping}
                 onMoveTask={onMoveTask}
-                onPromote={handlePromote}
                 onPauseTask={onPauseTask}
                 onUnpauseTask={onUnpauseTask}
-                onResetTask={onResetTask}
+                  onResetTask={onResetTask}
                 onDuplicateTask={onDuplicateTask}
                 onMergeTask={onMergeTask}
                 onOpenDetail={onOpenDetail}
@@ -1083,6 +1079,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 globalPaused={globalPaused}
                 onUpdateTask={onUpdateTask}
                 onRetryTask={onRetryTask}
+                onOpenChatWithPrefill={onOpenChatWithPrefill}
                 onArchiveTask={onArchiveTask}
                 onUnarchiveTask={onUnarchiveTask}
                 onRevertTask={onRevertTask}
@@ -1129,10 +1126,9 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               effectiveMaxConcurrent={effectiveMaxConcurrent}
               showWorktreeGrouping={showWorktreeGrouping}
               onMoveTask={onMoveTask}
-              onPromote={handlePromote}
               onPauseTask={onPauseTask}
               onUnpauseTask={onUnpauseTask}
-              onResetTask={onResetTask}
+                  onResetTask={onResetTask}
               onDuplicateTask={onDuplicateTask}
               onMergeTask={onMergeTask}
               onOpenDetail={onOpenDetail}
@@ -1143,6 +1139,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               globalPaused={globalPaused}
               onUpdateTask={onUpdateTask}
               onRetryTask={onRetryTask}
+              onOpenChatWithPrefill={onOpenChatWithPrefill}
               onArchiveTask={onArchiveTask}
               onUnarchiveTask={onUnarchiveTask}
               onRevertTask={onRevertTask}

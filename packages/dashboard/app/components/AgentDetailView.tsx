@@ -197,6 +197,16 @@ function appendLiveLogEntry<T>(previous: T[], entry: T): T[] {
   return [...previous.slice(previous.length + 1 - limit), entry];
 }
 
+/*
+FNXC:AgentRunLogs 2026-08-29-05:06:
+FN-253 opts run-log hosts into the missing-detail explanation only for rows that can be persisted
+`tool` or `tool_result` evidence. The excerpt fallback emits only text and tool_error rows, so this
+keeps it from naming a settings path for synthesized output while historical real rows stay explained.
+*/
+function hasPersistedRunToolRows(entries: AgentLogEntry[]): boolean {
+  return entries.some((entry) => entry.type === "tool" || entry.type === "tool_result");
+}
+
 /**
  * FNXC:AgentLogHistory 2026-07-26-13:10:
  * Renders a bounded window over a complete log array plus the shared "Load older" button. Both agent
@@ -210,10 +220,12 @@ function WindowedAgentLogViewer({
   entries,
   resetKey,
   testId,
+  showMissingDetailHint = false,
 }: {
   entries: AgentLogEntry[];
   resetKey: string;
   testId: string;
+  showMissingDetailHint?: boolean;
 }) {
   const { t } = useTranslation("app");
   const [visibleCount, setVisibleCount] = useState(LOG_WINDOW_INITIAL);
@@ -249,7 +261,7 @@ function WindowedAgentLogViewer({
           </button>
         </div>
       )}
-      <AgentLogViewer entries={visibleEntries} loading={false} />
+      <AgentLogViewer entries={visibleEntries} loading={false} showMissingDetailHint={showMissingDetailHint} />
     </>
   );
 }
@@ -1215,6 +1227,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               hasTask={!!agent.taskId || logs.length > 0 || latestRun !== null}
               fallbackLabel={!agent.taskId && latestRun ? t("agents.latestRunLabel", "Latest run · {{id}}", { id: latestRun.id.slice(0, 8) }) : null}
               windowResetKey={agent.taskId ?? latestRun?.id ?? "none"}
+              showMissingDetailHint={!agent.taskId && hasPersistedRunToolRows(logs)}
             />
           )}
 
@@ -1728,12 +1741,14 @@ function LogsTab({
   hasTask,
   fallbackLabel,
   windowResetKey,
+  showMissingDetailHint = false,
 }: {
   logs: AgentLogEntry[];
   isStreaming: boolean;
   hasTask: boolean;
   fallbackLabel?: string | null;
   windowResetKey: string;
+  showMissingDetailHint?: boolean;
 }) {
   const { t } = useTranslation("app");
 
@@ -1783,7 +1798,12 @@ function LogsTab({
           </p>
         </div>
       ) : (
-        <WindowedAgentLogViewer entries={logs} resetKey={windowResetKey} testId="agent-logs" />
+        <WindowedAgentLogViewer
+          entries={logs}
+          resetKey={windowResetKey}
+          testId="agent-logs"
+          showMissingDetailHint={showMissingDetailHint}
+        />
       )}
     </div>
   );
@@ -2533,6 +2553,7 @@ function RunsTab({
                   entries={runLogs}
                   resetKey={selectedRunId ?? "none"}
                   testId="agent-run-logs"
+                  showMissingDetailHint={hasPersistedRunToolRows(runLogs)}
                 />
               )}
             </div>

@@ -11,12 +11,9 @@ import {
 
 describe("worktree-pinning", () => {
   describe("isTaskPinnedWorktreeNaming", () => {
-    it("is true only for task-id naming", () => {
-      expect(isTaskPinnedWorktreeNaming({ worktreeNaming: "task-id" })).toBe(true);
-      expect(isTaskPinnedWorktreeNaming({ worktreeNaming: "random" })).toBe(false);
-      expect(isTaskPinnedWorktreeNaming({ worktreeNaming: "task-title" })).toBe(false);
-      expect(isTaskPinnedWorktreeNaming({})).toBe(false);
-      expect(isTaskPinnedWorktreeNaming(undefined)).toBe(false);
+    it("is always true because every task now has a task-ID worktree", () => {
+      expect(isTaskPinnedWorktreeNaming()).toBe(true);
+      expect(isTaskPinnedWorktreeNaming({})).toBe(true);
     });
   });
 
@@ -70,22 +67,22 @@ describe("worktree-pinning", () => {
   });
 
   describe("preservedWorktreeTargetPathForTask", () => {
-    it("uses the task id for task-pinned naming", () => {
+    it("uses the task ID regardless of stale source metadata", () => {
       expect(preservedWorktreeTargetPathForTask(
         "FN-8400",
         "/legacy/recover-fn-8400",
-        { worktreeNaming: "task-id" },
+        {},
         "/repo",
       )).toBe("/repo/.worktrees/fn-8400");
     });
 
-    it("preserves the legacy basename for non-pinned naming", () => {
+    it("does not preserve a legacy basename", () => {
       expect(preservedWorktreeTargetPathForTask(
         "FN-8400",
         "/legacy/recover-fn-8400",
-        { worktreeNaming: "random" },
+        {},
         "/repo",
-      )).toBe("/repo/.worktrees/recover-fn-8400");
+      )).toBe("/repo/.worktrees/fn-8400");
     });
   });
 });

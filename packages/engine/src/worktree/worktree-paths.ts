@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { promisify } from "node:util";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { resolveWorktreesDirLayout, WORKSPACE_GROUP_MARKER_FILENAME, type Settings, type WorkspaceWorktreeContext } from "@fusion/core";
 import type { WorktreeBackendKind } from "./worktree-backend.js";
 import { canonicalizePath } from "./worktree-pool.js";
@@ -95,6 +95,25 @@ export function resolveTaskWorktreePath(
   workspaceContext?: WorkspaceWorktreeContext,
 ): string {
   return join(resolveWorktreesDir(rootDir, settings, workspaceContext), worktreeName);
+}
+
+/**
+ * Resolve a worktree's private Git administration directory without invoking Git. Linked
+ * worktrees use a `.git` file containing a relative `gitdir:` pointer; ordinary checkouts retain
+ * a real `.git` directory. Dependency readiness belongs here so it never becomes user-visible
+ * repository state or a File Scope commit candidate.
+ */
+export function resolveWorktreePrivateGitDir(worktreePath: string): string | null {
+  const dotGitPath = join(worktreePath, ".git");
+  try {
+    if (statSync(dotGitPath).isDirectory()) return dotGitPath;
+    const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGitPath, "utf8"));
+    if (!match?.[1]?.trim()) return null;
+    const privateGitDir = resolve(dirname(dotGitPath), match[1].trim());
+    return existsSync(privateGitDir) ? privateGitDir : null;
+  } catch {
+    return null;
+  }
 }
 
 // Structural backend input avoids importing the full WorktreeBackend interface here.

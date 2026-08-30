@@ -2362,8 +2362,10 @@ FNXC:TaskDetail 2026-06-22-18:40:
 }
 
 /*
-FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
-The done-task Summary tab is a scrollable overview composed from existing detail data. Reuse detail-section/markdown conventions and tokenized spacing/colors so the new landing tab preserves modal hierarchy across desktop and mobile.
+FNXC:TaskDetailSummaryTab 2026-08-29-05:45:
+The always-available Summary tab is a report-first, scrollable overview that ends with MergeDetails.
+Reuse detail-section and tokenized spacing so agent reports, optional recommendations, and landed facts
+preserve modal hierarchy on desktop and mobile while Stats remains the spend-only surface.
 */
 .detail-section--summary {
   overflow-y: auto;
@@ -2400,70 +2402,17 @@ The done-task Summary tab is a scrollable overview composed from existing detail
   font-weight: 600;
 }
 
-.task-summary-markdown {
-  color: var(--text);
-}
-
 .task-summary-empty {
   margin: 0;
   color: var(--text-muted);
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
 }
 
-.task-summary-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 3), 1fr));
-  gap: var(--space-sm);
-  margin: 0;
-}
-
-.task-summary-stats > div {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  min-width: 0;
-  padding: var(--space-sm);
-  background: var(--surface);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.task-summary-stats dt {
-  color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
-  text-transform: uppercase;
-  letter-spacing: calc(var(--btn-border-width) * 0.5);
-}
-
-.task-summary-stats dd {
-  margin: 0;
-  color: var(--text);
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-summary-diff-add {
-  color: var(--color-success);
-}
-
-.task-summary-diff-del {
-  color: var(--color-error);
-}
-
 /*
-FNXC:TaskDetailSummaryTokenCost 2026-06-27-00:00:
-The done-task Summary token-cost section must reuse task-summary card hierarchy while showing per-model counts and cost without hardcoded colors or spacing.
-
-FNXC:TaskDetailSummaryTokenCost 2026-06-28-00:00:
-The desktop table needs a token-scale min-width and non-anywhere model-name wrapping so narrow right-dock containers scroll horizontally instead of collapsing MODEL values to one character per line.
-
-FNXC:TaskDetailSummaryTokenCost 2026-07-11-00:00:
-Mobile per-model breakdowns must stay real tables and scroll horizontally inside .task-summary-token-table-wrap, matching the Command Center .cc-table-wrap pattern. Do not stack rows into cards; side-by-side model token/cost columns are the user-facing scan path.
-
-FNXC:TaskDetailSummaryTab 2026-08-01-07:15:
-Mobile token/cost scrolling requires min-width: 0 containment through the Summary flex ancestors. Overflow-x alone cannot shrink an intrinsically wide table's flex/grid child, so the wrapper must own horizontal overflow rather than widening the detail body.
+FNXC:TaskDetailStatsCost 2026-08-28-23:05:
+TaskCostTab renders the Stats per-model breakdown with these shared table classes. Keep the table
+scrollable on narrow screens rather than stacking rows: operators need side-by-side model token and
+USD columns, while Summary no longer owns any spend data.
 */
 .task-summary-token-table-wrap {
   width: 100%;
@@ -2523,129 +2472,6 @@ Mobile token/cost scrolling requires min-width: 0 containment through the Summar
   color: var(--color-warning);
 }
 
-.task-summary-file-list,
-.task-summary-work-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.task-summary-file-list li,
-.task-summary-work-list li {
-  min-width: 0;
-  padding: var(--space-sm);
-  background: var(--surface);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text);
-}
-
-.task-summary-file-list li {
-  font-family: var(--font-mono);
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
-  overflow-wrap: anywhere;
-}
-
-.task-summary-subsection {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.task-summary-work-list li {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-xs);
-}
-
-.task-summary-work-list-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-/*
-FNXC:WorkflowStepResults 2026-07-09-00:45:
-FN-7727: bounded, read-only history of prior failed pre-merge review attempts
-(`WorkflowStepResult.priorAttempts`), surfaced as a collapsed <details> so it
-does not clutter the default workflow-results view. Rendered only when a step
-has history; no shell appears otherwise.
-*/
-.task-summary-prior-attempts {
-  margin-left: calc(var(--space-sm) * 2);
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
-  color: var(--text-muted);
-}
-
-.task-summary-prior-attempts summary {
-  cursor: pointer;
-  color: var(--text-muted);
-}
-
-.task-summary-prior-attempts-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin: var(--space-xs) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.task-summary-prior-attempts-list li {
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--surface-muted);
-  border-radius: var(--radius-sm);
-}
-
-.task-summary-prior-attempts-timestamp {
-  margin-left: var(--space-sm);
-  color: var(--text-muted);
-}
-
-.task-summary-prior-attempts-output {
-  margin: var(--space-xs) 0 0;
-  overflow-wrap: anywhere;
-  color: var(--text-muted);
-}
-
-.task-summary-status {
-  flex-shrink: 0;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-full);
-  background: var(--surface-muted);
-  color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.task-summary-status--done,
-.task-summary-status--passed {
-  background: color-mix(in srgb, var(--color-success) 16%, transparent);
-  color: var(--color-success);
-}
-
-.task-summary-status--skipped,
-.task-summary-status--advisory_failure,
-.task-summary-status--pending {
-  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
-  color: var(--color-warning);
-}
-
-.task-summary-status--failed {
-  background: color-mix(in srgb, var(--color-error) 16%, transparent);
-  color: var(--color-error);
-}
-
-.task-summary-retries {
-  margin: 0;
-  color: var(--text-muted);
-}
-
 @media (max-width: 768px) {
   .detail-section--summary {
     padding-inline: var(--space-sm);
@@ -2657,18 +2483,6 @@ has history; no shell appears otherwise.
 
   .task-summary-section {
     padding: var(--space-md);
-  }
-
-  .task-summary-stats {
-    grid-template-columns: 1fr;
-  }
-
-  .task-summary-work-list li {
-    align-items: flex-start;
-  }
-
-  .task-summary-prior-attempts {
-    margin-left: 0;
   }
 }
 
@@ -3312,6 +3126,11 @@ this generalizes FN-8166's mobile-only correction to desktop and tablet.
 
 /* FNXC:PlannerOversight 2026-07-27-02:15: Retain the explicit zero inset for the overlay-free Interventions segment; it documents the FN-7581 full-width timeline contract even though the shared container is now symmetric. */
 .detail-activity--interventions {
+  padding-inline-end: 0;
+}
+
+/* FNXC:TaskHistory 2026-08-28-13:46: Activity Summaries has no overlay controls, so its flat report list uses the full symmetric panel width at every breakpoint. */
+.detail-activity--summaries {
   padding-inline-end: 0;
 }
 
@@ -3989,33 +3808,6 @@ reuse source-grid spacing so long structural finding labels and immutable proven
 .ai-merge-review-reconciliation ul { margin: var(--space-2) 0 0; }
 @media (max-width: 768px) {
   .ai-merge-review-reconciliation { margin-inline: var(--space-2); }
-}
-
-/*
-FNXC:RepositoryScope 2026-08-21-00:29:
-Task Detail exposes pre-land scope corrections beside acquired repository evidence. The controls
-use existing form and spacing tokens so desktop and compact modal layouts retain keyboard-accessible
-operator recovery without treating acquisition count as task intent.
-*/
-.workspace-repository-scope-controls {
-  display: grid;
-  gap: var(--space-sm);
-  margin-block: var(--space-md);
-}
-.workspace-repository-scope-controls label {
-  display: grid;
-  gap: var(--space-xs);
-  color: var(--text-muted);
-}
-.workspace-repository-scope-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
-.workspace-repository-scope-error { color: var(--color-danger-text); }
-.workspace-repository-scope-history {
-  margin: var(--space-sm) 0;
-  padding-inline-start: var(--space-lg);
 }
 
 /*

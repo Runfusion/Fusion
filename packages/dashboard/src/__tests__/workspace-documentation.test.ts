@@ -60,7 +60,7 @@ describe("workspace documentation contract", () => {
     for (const [surface, source] of [
       ["detectWorkspaceRepos", repositorySource],
       ["workspace.json", repositorySource],
-      ["fn_acquire_repo_worktree", agentToolsSource],
+      ["fn_install_worktree_dependencies", agentToolsSource],
       ["landWorkspaceTask", mergerSource],
       ["isRepoLanded", predicateSource],
       ["task:reconcile-workspace-partial-land", selfHealingSource],

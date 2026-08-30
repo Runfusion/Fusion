@@ -32,6 +32,7 @@ import {
   applySupersededPriorAttemptFindingIds,
   closeUnrebuttedDisputedFindings,
   isTerminalStepResult,
+  isWorkflowStepNotRun,
 } from "@fusion/core";
 import { resolveWorkflowGateActivityClaim } from "./workflow-gate-activity.js";
 import type { ImplementationExit } from "./implementation-exit.js";
@@ -43,6 +44,18 @@ import {
   workflowEntryArtifacts,
 } from "../execution/required-workflow-artifacts.js";
 import { getActiveNotificationService } from "../util/notifier.js";
+
+export function buildWorkflowGateActivityMetadata(
+  result: CoreWorkflowStepResult,
+  persistedResult: CoreWorkflowStepResult,
+): { stepId: string; status: CoreWorkflowStepResult["status"]; attempt: number; notRun?: true } {
+  return {
+    stepId: result.workflowStepId,
+    status: result.status,
+    attempt: persistedResult.priorAttempts?.length ?? 0,
+    ...(isWorkflowStepNotRun(result) ? { notRun: true } : {}),
+  };
+}
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
@@ -202,143 +215,270 @@ function reviewConvergenceResetPatch(
   return undefined;
 }
 
+export type WorkflowStepResultPersistFence = {
+  signal?: AbortSignal;
+  requireAttemptStartedAt?: string;
+  /** A failed pending write may recover only if no different attempt has since claimed this step. */
+  requireAttemptStartedAtOrAbsent?: string;
+};
+
+/** Returns true only when the exact graph attempt still owns its pending/terminal row. */
+export function attemptStillPresent(
+  results: CoreWorkflowStepResult[] | undefined,
+  workflowStepId: string,
+  startedAt: string,
+): boolean {
+  return results?.some((entry) => entry.workflowStepId === workflowStepId && entry.startedAt === startedAt) === true;
+}
+
+/*
+FNXC:WorkflowStepResults 2026-08-29-03:21:
+A fail-soft pending write can report no durable receipt even though the graph must still record its
+terminal verdict. Permit that recovery only when the step row remains absent or carries this exact
+`startedAt`; any different identity belongs to a later run and must never be replaced by stale work.
+*/
+export function attemptStillPresentOrAbsent(
+  results: CoreWorkflowStepResult[] | undefined,
+  workflowStepId: string,
+  startedAt: string,
+): boolean {
+  return (results ?? []).every((entry) => entry.workflowStepId !== workflowStepId || entry.startedAt === startedAt);
+}
+
+function attemptFenceAllows(
+  fence: WorkflowStepResultPersistFence,
+  results: CoreWorkflowStepResult[] | undefined,
+  workflowStepId: string,
+): boolean {
+  return (
+    (fence.requireAttemptStartedAt === undefined
+      || attemptStillPresent(results, workflowStepId, fence.requireAttemptStartedAt))
+    && (fence.requireAttemptStartedAtOrAbsent === undefined
+      || attemptStillPresentOrAbsent(results, workflowStepId, fence.requireAttemptStartedAtOrAbsent))
+  );
+}
+
+type WorkflowStepResultPatch = Pick<
+  Task,
+  "workflowStepResults"
+  | "approvedPlanFingerprint"
+  | "reviewConvergenceStage"
+  | "reviewConvergenceEscalationCount"
+>;
+
+type FencedWorkflowStepResultOutcome =
+  | { applied: true; task: Task }
+  | { applied: false; reason: string };
+
+type RuntimeWorkflowStepResultStore = {
+  updateWorkflowStepResultsFenced?: (
+    taskId: string,
+    compute: (current: Task) => WorkflowStepResultPatch | null,
+  ) => Promise<FencedWorkflowStepResultOutcome>;
+  updateTaskAtomic?: (
+    taskId: string,
+    compute: (current: Task) => WorkflowStepResultPatch | null,
+    runContext?: EngineRunContext,
+  ) => Promise<Task>;
+};
+
+function buildWorkflowStepResultPatch(
+  current: Task,
+  result: CoreWorkflowStepResult,
+  isPlanReviewResult: boolean,
+): { resultToPersist: CoreWorkflowStepResult; results: CoreWorkflowStepResult[]; patch: WorkflowStepResultPatch } {
+  const resultToPersist = isPlanReviewResult
+    ? {
+        ...result,
+        planReviewAttemptCount: nextPlanReviewAttemptCount(
+          current.workflowStepResults?.find((existing) => existing.workflowStepId === result.workflowStepId),
+          result,
+        ),
+      }
+    : result;
+  const upserted = upsertWorkflowStepResult(
+    current.workflowStepResults,
+    resultToPersist,
+    isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
+  );
+  const crossLane = applySupersededFindingIds(upserted, resultToPersist.supersededFindingIds ?? [], {
+    excludeWorkflowStepId: resultToPersist.workflowStepId,
+    sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
+  }) ?? upserted;
+  const sameGate = resultToPersist.supersededFindingSourceWorkflowStepId === resultToPersist.workflowStepId
+    ? applySupersededPriorAttemptFindingIds(crossLane, {
+        workflowStepId: resultToPersist.workflowStepId,
+        findingIds: resultToPersist.supersededFindingIds ?? [],
+      }) ?? crossLane
+    : crossLane;
+  const results = closeUnrebuttedDisputedFindings(sameGate, resultToPersist, {
+    revisionKey: resultToPersist.workflowStepId,
+    workflowStepId: resultToPersist.workflowStepId,
+  }) ?? sameGate;
+  return {
+    resultToPersist,
+    results,
+    patch: {
+      workflowStepResults: results,
+      ...reviewConvergenceResetPatch(
+        current.workflowStepResults?.find((entry) => entry.workflowStepId === resultToPersist.workflowStepId),
+        resultToPersist,
+      ),
+    },
+  };
+}
+
+/*
+FNXC:WorkflowLifecycle 2026-08-29-02:04:
+awaitAbortInFlightTaskWork aborts the graph without awaiting it, while Reset performs slow Git cleanup
+before publishing its fresh row. Therefore a caller-side abort check, the planning lifecycle lock, and
+updateTaskAtomic's in-process task mutex cannot fence an already-started graph write against Reset.
+Production uses TaskStore.updateWorkflowStepResultsFenced, whose PostgreSQL transaction holds the same
+per-task advisory lock as resetTaskPublicationImpl. Minimal test stores retain the atomic and direct
+fallbacks, but only the first tier serializes against Reset.
+*/
+async function writeWorkflowStepResultPatch(
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor">,
+  taskId: string,
+  compute: (current: Task) => WorkflowStepResultPatch | null,
+): Promise<{ applied: boolean; task?: Task }> {
+  const store = deps.store as TaskStore & RuntimeWorkflowStepResultStore;
+  if (typeof store.updateWorkflowStepResultsFenced === "function") {
+    const outcome = await store.updateWorkflowStepResultsFenced(taskId, compute);
+    if (outcome.applied) return { applied: true, task: outcome.task };
+    if (outcome.reason !== "unavailable") return { applied: false };
+  }
+
+  if (typeof store.updateTaskAtomic === "function") {
+    let applied = false;
+    const task = await store.updateTaskAtomic(taskId, (current) => {
+      const patch = compute(current);
+      if (patch !== null) applied = true;
+      return patch;
+    }, deps.getRunContextFor(taskId));
+    return applied ? { applied: true, task } : { applied: false };
+  }
+
+  const current = await store.getTask(taskId);
+  if (!current) return { applied: false };
+  const patch = compute(current);
+  if (patch === null) return { applied: false };
+  const task = await store.updateTask(taskId, patch, deps.getRunContextFor(taskId));
+  return { applied: true, task };
+}
+
+type PersistWorkflowStepResultDeps = Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">
+  & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>;
+
+/** The graph needs durable acceptance separately from the scope-CAS edge-admission result. */
+export type WorkflowStepResultPersistOutcome = {
+  scopeCurrent: boolean;
+  persisted: boolean;
+};
+
 /**
  * Persists graph review evidence and applies explicit prior-lane supersession in
  * the same write. Exported for production-shaped graph-writer tests.
  */
 export async function persistWorkflowStepResult(
-  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">
-    & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>,
+  deps: PersistWorkflowStepResultDeps,
   taskId: string,
   result: CoreWorkflowStepResult,
+  fence: WorkflowStepResultPersistFence = {},
 ): Promise<boolean> {
-  if (typeof deps.store.updateTask !== "function") return true;
+  return (await persistWorkflowStepResultWithOutcome(deps, taskId, result, fence)).scopeCurrent;
+}
+
+/**
+ * Production adapter receipt for graph persistence. `persistWorkflowStepResult` retains its legacy
+ * boolean contract while optional-group lease establishment uses `persisted` to decide whether a
+ * terminal write has a durable predecessor to compare-and-set against.
+ */
+export async function persistWorkflowStepResultWithOutcome(
+  deps: PersistWorkflowStepResultDeps,
+  taskId: string,
+  result: CoreWorkflowStepResult,
+  fence: WorkflowStepResultPersistFence = {},
+): Promise<WorkflowStepResultPersistOutcome> {
+  if (typeof deps.store.updateTask !== "function") return { scopeCurrent: true, persisted: false };
+  if (fence.signal?.aborted) return { scopeCurrent: true, persisted: false };
+
   try {
     const live = await deps.store.getTask(taskId);
     const repositoryScopeRevision = typeof result.repositoryScopeRevision === "number"
       ? result.repositoryScopeRevision
       : undefined;
-    let scopeSuperseded = false;
     const isPlanReviewResult = result.workflowStepId === PLAN_REVIEW_GROUP_ID
       || result.workflowStepName === "Plan Review";
-    const resultToPersist = isPlanReviewResult
-      ? {
-          ...result,
-          planReviewAttemptCount: nextPlanReviewAttemptCount(
-            live?.workflowStepResults?.find((existing) => existing.workflowStepId === result.workflowStepId),
-            result,
-          ),
-        }
-      : result;
-    const upserted = upsertWorkflowStepResult(
-      live?.workflowStepResults,
-      resultToPersist,
-      isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
-    );
-    /*
-    FNXC:WorkflowReviewFindings 2026-08-11-20:30:
-    Prompt and declared-script review nodes converge at this persistence sink. A supersession claim names
-    its prior workflow result, so duplicate finding IDs in other review lanes remain actionable.
-    */
-    const crossLane = applySupersededFindingIds(upserted, resultToPersist.supersededFindingIds ?? [], {
-      excludeWorkflowStepId: resultToPersist.workflowStepId,
-      sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
-    }) ?? upserted;
-    const sameGate = resultToPersist.supersededFindingSourceWorkflowStepId === resultToPersist.workflowStepId
-      ? applySupersededPriorAttemptFindingIds(crossLane, { workflowStepId: resultToPersist.workflowStepId, findingIds: resultToPersist.supersededFindingIds ?? [] }) ?? crossLane
-      : crossLane;
-    const existing = closeUnrebuttedDisputedFindings(sameGate, resultToPersist, {
-      revisionKey: resultToPersist.workflowStepId,
-      workflowStepId: resultToPersist.workflowStepId,
-    }) ?? sameGate;
-    if (isPlanReviewResult && isPlanReviewSatisfied(resultToPersist) && deps.store.isBackendMode()) {
+    let scopeSuperseded = false;
+    let fenceRefused = false;
+    let activityResult = result;
+    let activityResults: CoreWorkflowStepResult[] | undefined;
+
+    const compute = (current: Task, options?: { requireScopeRevision?: number }): WorkflowStepResultPatch | null => {
+      if (fence.signal?.aborted) {
+        fenceRefused = true;
+        return null;
+      }
+      if (!attemptFenceAllows(fence, current.workflowStepResults, result.workflowStepId)) {
+        fenceRefused = true;
+        return null;
+      }
+      if (
+        options?.requireScopeRevision !== undefined
+        && current.repositoryScope?.revision !== options.requireScopeRevision
+      ) {
+        scopeSuperseded = true;
+        return null;
+      }
+      const built = buildWorkflowStepResultPatch(current, result, isPlanReviewResult);
+      activityResult = built.resultToPersist;
+      activityResults = built.results;
+      return built.patch;
+    };
+
+    if (isPlanReviewResult && isPlanReviewSatisfied(result) && deps.store.isBackendMode()) {
       const prompt = await deps.readTaskArtifact(taskId, "PROMPT.md");
       if (!prompt?.trim()) throw new Error("Plan Review cannot accept an unreadable PROMPT.md without a spec lock");
       const fingerprint = computePlanApprovalFingerprint(prompt);
       await deps.store.withPlanningLifecycleLock(taskId, async () => {
         const fresh = await deps.store.getTask(taskId);
-        const acceptedUpserted = upsertWorkflowStepResult(
-          fresh.workflowStepResults,
-          resultToPersist,
-          { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT },
-        );
-        const acceptedCrossLane = applySupersededFindingIds(acceptedUpserted, resultToPersist.supersededFindingIds ?? [], {
-          excludeWorkflowStepId: resultToPersist.workflowStepId,
-          sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
-        }) ?? acceptedUpserted;
-        const acceptedSameGate = resultToPersist.supersededFindingSourceWorkflowStepId === resultToPersist.workflowStepId
-          ? applySupersededPriorAttemptFindingIds(acceptedCrossLane, { workflowStepId: resultToPersist.workflowStepId, findingIds: resultToPersist.supersededFindingIds ?? [] }) ?? acceptedCrossLane
-          : acceptedCrossLane;
-        const acceptedResult = closeUnrebuttedDisputedFindings(acceptedSameGate, resultToPersist, {
-          revisionKey: resultToPersist.workflowStepId,
-          workflowStepId: resultToPersist.workflowStepId,
-        }) ?? acceptedSameGate;
-        await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
-        const accepted = await deps.store.updateTask(taskId, {
-          workflowStepResults: acceptedResult,
-          approvedPlanFingerprint: fingerprint,
-          ...reviewConvergenceResetPatch(
-            fresh.workflowStepResults?.find((entry) => entry.workflowStepId === resultToPersist.workflowStepId),
-            resultToPersist,
-          ),
-        }, deps.getRunContextFor(taskId));
-        await deps.store.reconcileSpecDriftWhilePlanningLocked(accepted);
-      });
-    } else if (repositoryScopeRevision !== undefined && typeof deps.store.updateTaskAtomic === "function") {
-      /*
-      FNXC:RepositoryScope 2026-08-21-02:48:
-      Terminal Code Review state is the graph's edge-admission record. Persist it
-      under the callback's scope-generation CAS so a superseding scope mutation
-      cannot leave an old approval eligible to advance the graph.
-      */
-      await deps.store.updateTaskAtomic(taskId, (current) => {
-        if (current.repositoryScope?.revision !== repositoryScopeRevision) {
-          scopeSuperseded = true;
-          return null;
+        // This cheap check avoids creating inert plan evidence after a cancellation. The advisory-lock
+        // transaction below remains the enforcement point for an abort or Reset racing this await chain.
+        if (
+          fence.signal?.aborted
+          || !attemptFenceAllows(fence, fresh?.workflowStepResults, result.workflowStepId)
+        ) {
+          fenceRefused = true;
+          return;
         }
-        const currentUpserted = upsertWorkflowStepResult(current.workflowStepResults, resultToPersist);
-        const currentCrossLane = applySupersededFindingIds(currentUpserted, resultToPersist.supersededFindingIds ?? [], {
-          excludeWorkflowStepId: resultToPersist.workflowStepId,
-          sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
-        }) ?? currentUpserted;
-        const currentSameGate = resultToPersist.supersededFindingSourceWorkflowStepId === resultToPersist.workflowStepId
-          ? applySupersededPriorAttemptFindingIds(currentCrossLane, { workflowStepId: resultToPersist.workflowStepId, findingIds: resultToPersist.supersededFindingIds ?? [] }) ?? currentCrossLane
-          : currentCrossLane;
-        const currentResults = closeUnrebuttedDisputedFindings(currentSameGate, resultToPersist, {
-          revisionKey: resultToPersist.workflowStepId,
-          workflowStepId: resultToPersist.workflowStepId,
-        }) ?? currentSameGate;
-        return {
-          workflowStepResults: currentResults,
-          ...reviewConvergenceResetPatch(
-            current.workflowStepResults?.find((entry) => entry.workflowStepId === resultToPersist.workflowStepId),
-            resultToPersist,
-          ),
-        };
-      }, deps.getRunContextFor(taskId));
-      if (scopeSuperseded) return false;
+        await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
+        const written = await writeWorkflowStepResultPatch(deps, taskId, (current) => {
+          const patch = compute(current);
+          return patch === null ? null : { ...patch, approvedPlanFingerprint: fingerprint };
+        });
+        if (!written.applied) {
+          fenceRefused = true;
+          return;
+        }
+        await deps.store.reconcileSpecDriftWhilePlanningLocked(written.task!);
+      });
     } else {
-      await deps.store.updateTask(taskId, {
-        workflowStepResults: existing,
-        ...reviewConvergenceResetPatch(
-          live?.workflowStepResults?.find((entry) => entry.workflowStepId === resultToPersist.workflowStepId),
-          resultToPersist,
-        ),
-      }, deps.getRunContextFor(taskId));
+      const written = await writeWorkflowStepResultPatch(
+        deps,
+        taskId,
+        (current) => compute(current, repositoryScopeRevision === undefined
+          ? undefined
+          : { requireScopeRevision: repositoryScopeRevision }),
+      );
+      if (!written.applied) fenceRefused = true;
     }
-    /*
-    FNXC:AgentActivityStream 2026-08-09-09:38 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
-    Terminal graph gate results are emitted at this shared persistence sink, not at individual node
-    implementations (FN-8864). Node ids are operator-authored, so metadata sanitation records unknown
-    ids as the closed `custom` enum rather than retaining prose.
 
-    FNXC:AgentActivityStream 2026-08-09-11:50:
-    Workflow `skipped` is terminal and non-blocking, so it is a passed gate for activity consumers;
-    advisory failures and failures remain failed. Preserve the exact closed status in metadata rather
-    than deriving a replacement that loses the gate outcome.
-    */
+    if (scopeSuperseded) return { scopeCurrent: false, persisted: false };
+    if (fenceRefused) return { scopeCurrent: true, persisted: false };
+
+    const persistedResult = activityResults?.find((entry) => entry.workflowStepId === result.workflowStepId) ?? activityResult;
     if (isTerminalStepResult(result)) {
-      const persistedResult = existing.find((entry) => entry.workflowStepId === result.workflowStepId) ?? resultToPersist;
       const passed = result.status === "passed"
         || result.status === "skipped"
         || result.verdict === "APPROVE"
@@ -347,12 +487,6 @@ export async function persistWorkflowStepResult(
       try {
         await deps.store.recordAgentActivity({
           type: passed ? "workflow:gate-passed" : "workflow:gate-failed",
-          /*
-          FNXC:AgentActivityStream 2026-08-09-13:30:
-          A workflow gate belongs to the principal that actually ran its node. The active
-          routing fence preserves reviewer overrides and column bindings; falling back to
-          the task assignee is only for unclassified nodes that have no routed principal.
-          */
           attributionClaim: resolveWorkflowGateActivityClaim(
             deps.workflowGateActivityPrincipals?.get(`${taskId}\0${result.workflowStepId}`)
               ?? deps.activeWorkflowPrincipals?.get(taskId)?.agentId,
@@ -360,44 +494,45 @@ export async function persistWorkflowStepResult(
           ),
           taskId,
           occurredAt: result.completedAt ?? result.startedAt ?? new Date().toISOString(),
-          /*
-          FNXC:AgentActivityStream 2026-08-09-19:03:
-          `priorAttempts` is intentionally bounded, so its length cannot identify retries:
-          after the retention cap it would make later gate attempts collide and disappear.
-          A graph attempt's persisted startedAt is its natural, replay-stable identity;
-          pending→terminal updates keep that value while a new dispatch gets a new one.
-          */
           discriminator: `${result.workflowStepId}:${result.startedAt ?? result.completedAt ?? result.status}`,
-          metadata: {
-            stepId: result.workflowStepId,
-            status: result.status,
-            attempt: persistedResult.priorAttempts?.length ?? 0,
-          },
+          metadata: buildWorkflowGateActivityMetadata(result, persistedResult),
         });
-        /*
-        FNXC:AgentActivityStream 2026-08-09-13:59:
-        Once the terminal event is durable, discard the retained node identity so a later
-        run cannot inherit an earlier gate's routed principal.
-        */
         deps.workflowGateActivityPrincipals?.delete(`${taskId}\0${result.workflowStepId}`);
       } catch (error) {
-        /*
-        FNXC:AgentActivityStream 2026-08-09-13:43:
-        Activity is observability only: warn so a failed append is diagnosable, but never
-        let it change the workflow gate result or interrupt graph execution.
-        */
         executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return true;
+    return { scopeCurrent: true, persisted: true };
   } catch (error) {
-    /*
-    FNXC:AgentActivityStream 2026-08-09-13:43:
-    Persisting the underlying step and its activity row is additive visibility. Log a
-    failed persistence attempt without converting an otherwise valid graph run into a failure.
-    */
     executorLog.warn(`[agent-activity] ${taskId}: failed to persist workflow step result: ${error instanceof Error ? error.message : String(error)}`);
-    return true;
+    return { scopeCurrent: true, persisted: false };
+  }
+}
+
+/**
+ * Remove only the pending lease from the aborted attempt. This intentionally uses the same writer
+ * tiers as terminal results: production serializes the removal with Reset, while fake stores retain
+ * test-friendly fallbacks. A missing or newer lease is a harmless no-op.
+ */
+export async function discardWorkflowStepLease(
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor">,
+  taskId: string,
+  workflowStepId: string,
+  startedAt: string,
+): Promise<boolean> {
+  try {
+    const written = await writeWorkflowStepResultPatch(deps, taskId, (current) => {
+      const lease = current.workflowStepResults?.find((entry) =>
+        entry.workflowStepId === workflowStepId
+        && entry.status === "pending"
+        && entry.startedAt === startedAt,
+      );
+      if (!lease) return null;
+      return { workflowStepResults: current.workflowStepResults?.filter((entry) => entry !== lease) };
+    });
+    return written.applied;
+  } catch {
+    return false;
   }
 }
 
@@ -622,6 +757,7 @@ export async function executeWorkflowGraph(
       */
       const outputLanguage = resolveTaskOutputLanguage(settings, task.description ?? "");
       graphAbortController = new AbortController();
+      const graphAbortSignal = graphAbortController.signal;
       deps.activeWorkflowGraphAbortControllers.set(task.id, graphAbortController);
       const customNodeExecution = new WorkflowCustomNodeExecutionService({
         /*
@@ -850,8 +986,16 @@ export async function executeWorkflowGraph(
         holdPlanReviewNoOp: async (nodeTask, suspension) => {
           continuation = await deps.holdPlanReviewNoOpContinuation(nodeTask, suspension, continuation, resolvedRunId);
         },
-        recordWorkflowStepResult: (taskId: string, result: CoreWorkflowStepResult) =>
-          persistWorkflowStepResult(deps, taskId, result),
+        recordWorkflowStepResult: (
+          taskId: string,
+          result: CoreWorkflowStepResult,
+          fence?: WorkflowStepResultPersistFence,
+        ) => persistWorkflowStepResultWithOutcome(deps, taskId, result, {
+          ...fence,
+          signal: graphAbortSignal,
+        }),
+        discardWorkflowStepLease: (taskId: string, workflowStepId: string, startedAt: string) =>
+          discardWorkflowStepLease(deps, taskId, workflowStepId, startedAt),
         isRepositoryScopeReviewEdgeCurrent: async (taskId: string, workflowStepId: string, revision: number): Promise<boolean> => {
           const current = await deps.store.getTask(taskId);
           const result = current.workflowStepResults?.find((entry) => entry.workflowStepId === workflowStepId);

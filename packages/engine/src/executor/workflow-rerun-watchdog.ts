@@ -21,7 +21,7 @@ export type WorkflowRerunWatchdogDeps = {
     worktreePath: string,
     preserveResumeState: boolean,
     persistWorktreePath?: boolean,
-  ) => Promise<"bounced" | "skipped-pending" | "deferred-paused">;
+  ) => Promise<"bounced" | "skipped-pending" | "deferred-paused" | "deferred-capacity">;
   getExecutionPauseLabel: () => Promise<string | null>;
   resolveResumeLanes: (taskId: string) => Promise<{ wip: string }>;
 };
@@ -47,6 +47,8 @@ export function scheduleWorkflowRerun(
         executorLog.log(successMessage);
       } else if (outcome === "skipped-pending") {
         executorLog.warn(`${taskId}: rerun bounce skipped — another bounce already in flight`);
+      } else if (outcome === "deferred-capacity") {
+        executorLog.log(`${taskId}: rerun bounce deferred while the WIP lane is at capacity`);
       } else {
         executorLog.log(`${taskId}: rerun bounce deferred while pause is active`);
       }
@@ -104,6 +106,8 @@ export function scheduleWorkflowRerun(
           taskId,
           `Workflow rerun watchdog retry skipped — original bounce still in flight after ${deps.workflowRerunWatchdogMs / 1000}s; task may be stuck`,
         ).catch(() => undefined);
+      } else if (outcome === "deferred-capacity") {
+        executorLog.log(`${taskId}: workflow rerun watchdog retry deferred while the WIP lane is at capacity`);
       } else {
         executorLog.log(`${taskId}: workflow rerun watchdog retry deferred while pause is active`);
       }

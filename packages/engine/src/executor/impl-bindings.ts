@@ -62,6 +62,7 @@ export {
   clearPauseAbortStateForManualRetry as clearPauseAbortStateForManualRetryImpl,
 } from "./stale-pause-abort.js";
 export { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetImpl } from "./dependency-dispatch-gate.js";
+export { blockOuterDispatchWhenFileScopeLeaseHeld as blockOuterDispatchWhenFileScopeLeaseHeldImpl } from "./file-scope-lease-dispatch-gate.js";
 export { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskImpl } from "./merge-confirmed-finalize.js";
 export { holdForSessionContention as holdForSessionContentionImpl } from "./session-contention-hold.js";
 export {
