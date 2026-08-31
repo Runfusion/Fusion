@@ -17,7 +17,7 @@
  * sidecar file so the tests can assert on them.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -195,6 +195,94 @@ exit 0
     expect(invocation).toContain("--schema archive");
     // The central dump includes the central schema.
     expect(invocation).toContain("--schema central");
+  });
+
+  it("listBackups returns an empty inventory when the backup directory is absent", async () => {
+    const manager = new PgBackupManager(
+      "postgresql://localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath },
+    );
+
+    await expect(manager.listBackups()).resolves.toEqual([]);
+  });
+
+  it("listBackups reports project and central orphans and ignores malformed files", async () => {
+    const manager = new PgBackupManager(
+      "postgresql://localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath },
+    );
+    const backupDirPath = join(fusionDir, "..", ".fusion", "backups");
+    mkdirSync(backupDirPath, { recursive: true });
+    writeFileSync(join(backupDirPath, "fusion-pg-20260101-000001.dump"), "project");
+    writeFileSync(join(backupDirPath, "fusion-central-pg-20260101-000002.dump"), "central");
+    for (const filename of [
+      "fusion-2026-01-01-000001.db",
+      "fusion-pg-not-a-timestamp.dump",
+      "fusion-project-pg-20260101-000003.dump",
+      "unrelated.dump",
+    ]) {
+      writeFileSync(join(backupDirPath, filename), "ignored");
+    }
+
+    const backups = await manager.listBackups();
+
+    expect(backups).toHaveLength(2);
+    expect(backups.find((pair) => pair.timestamp === "20260101-000001")?.project?.filename)
+      .toBe("fusion-pg-20260101-000001.dump");
+    expect(backups.find((pair) => pair.timestamp === "20260101-000001")?.central)
+      .toBeUndefined();
+    expect(backups.find((pair) => pair.timestamp === "20260101-000002")?.project)
+      .toBeUndefined();
+    expect(backups.find((pair) => pair.timestamp === "20260101-000002")?.central)
+      .toMatchObject({ filename: "fusion-central-pg-20260101-000002.dump" });
+  });
+
+  it("createBackup assigns a shared collision-free stem to both halves", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:01Z"));
+    try {
+      const manager = new PgBackupManager(
+        "postgresql://localhost:5432/fusion",
+        fusionDir,
+        { pgDumpPath, pgRestorePath },
+      );
+
+      const first = await manager.createBackup();
+      const second = await manager.createBackup();
+
+      expect(first.timestamp).toMatch(/^\d{8}-\d{6}$/);
+      expect(second.timestamp).toBe(`${first.timestamp}-1`);
+      expect(second.project?.filename).toBe(`fusion-pg-${first.timestamp}-1.dump`);
+      expect(second.central).toMatchObject({
+        filename: `fusion-central-pg-${first.timestamp}-1.dump`,
+      });
+      expect(await manager.listBackups()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("listBackups recognizes complete pre-restore dump pairs", async () => {
+    const manager = new PgBackupManager(
+      "postgresql://localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath },
+    );
+    const backupDirPath = join(fusionDir, "..", ".fusion", "backups");
+    mkdirSync(backupDirPath, { recursive: true });
+    writeFileSync(join(backupDirPath, "fusion-pre-restore-pg-20260101-000001.dump"), "project");
+    writeFileSync(join(backupDirPath, "fusion-central-pre-restore-pg-20260101-000001.dump"), "central");
+
+    const backups = await manager.listBackups();
+
+    expect(backups).toHaveLength(1);
+    expect(backups[0]).toMatchObject({
+      timestamp: "pre-restore-20260101-000001",
+      project: { filename: "fusion-pre-restore-pg-20260101-000001.dump" },
+      central: { filename: "fusion-central-pre-restore-pg-20260101-000001.dump" },
+    });
   });
 
   it("listBackups returns pairs newest-first", async () => {

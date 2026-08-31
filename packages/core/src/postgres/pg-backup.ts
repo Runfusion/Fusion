@@ -35,7 +35,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -107,6 +107,8 @@ export interface PgBackupOptions {
    * See {@link PgBackupOptions.pgDumpPath} for the bundling/availability note.
    */
   readonly pgRestorePath?: string;
+  /** Bounded timeout for each pg_dump/pg_restore process. Defaults to 120s. */
+  readonly clientTimeoutMs?: number;
 }
 
 /**
@@ -169,6 +171,7 @@ export class PgBackupManager {
   private readonly includeCentral: boolean;
   private readonly pgDumpPath: string;
   private readonly pgRestorePath: string;
+  private readonly clientTimeoutMs: number;
 
   constructor(connectionString: string, fusionDir: string, options?: PgBackupOptions) {
     this.connectionString = connectionString;
@@ -178,10 +181,29 @@ export class PgBackupManager {
     this.includeCentral = options?.includeCentral ?? true;
     this.pgDumpPath = options?.pgDumpPath ?? resolveClientBinary("pg_dump");
     this.pgRestorePath = options?.pgRestorePath ?? resolveClientBinary("pg_restore");
+    this.clientTimeoutMs = options?.clientTimeoutMs ?? 120_000;
   }
 
   private getBackupDirPath(): string {
-    return join(this.fusionDir, "..", this.backupDir);
+    return resolve(this.fusionDir, "..", this.backupDir);
+  }
+
+  private allocateBackupStem(family: PgBackupFamily): string {
+    const initial = currentBackupTimestamp();
+    let counter = 0;
+    while (true) {
+      const stem = counter === 0 ? initial : `${initial}-${counter}`;
+      const projectPath = join(
+        this.getBackupDirPath(),
+        formatBackupFilename("project", family, stem),
+      );
+      const centralPath = join(
+        this.getBackupDirPath(),
+        formatBackupFilename("central", family, stem),
+      );
+      if (!existsSync(projectPath) && !existsSync(centralPath)) return stem;
+      counter += 1;
+    }
   }
 
   /**
@@ -201,8 +223,8 @@ export class PgBackupManager {
     const backupDirPath = this.getBackupDirPath();
     await mkdir(backupDirPath, { recursive: true });
 
-    const timestamp = currentBackupTimestamp();
-    const projectFilename = `fusion-pg-${timestamp}.dump`;
+    const timestamp = this.allocateBackupStem("regular");
+    const projectFilename = formatBackupFilename("project", "regular", timestamp);
     const projectPath = join(backupDirPath, projectFilename);
 
     const projectResult = await this.dumpSchemas(
@@ -217,7 +239,7 @@ export class PgBackupManager {
       return pair;
     }
 
-    const centralFilename = `fusion-central-pg-${timestamp}.dump`;
+    const centralFilename = formatBackupFilename("central", "regular", timestamp);
     const centralPath = join(backupDirPath, centralFilename);
     try {
       const centralResult = await this.dumpSchemas(
@@ -273,44 +295,35 @@ export class PgBackupManager {
     const backupDirPath = this.getBackupDirPath();
     if (!existsSync(backupDirPath)) return [];
 
-    const entries = await readdir(backupDirPath);
-    const projectDumps = entries.filter((f) => /^fusion-pg-.*\.dump$/.test(f));
-    const centralDumps = entries.filter((f) => /^fusion-central-pg-.*\.dump$/.test(f));
+    const byStem = new Map<string, MutablePgBackupPair>();
+    for (const filename of await readdir(backupDirPath)) {
+      const parsed = parseBackupFilename(filename);
+      if (!parsed) continue;
 
-    const byTimestamp = new Map<string, MutablePgBackupPair>();
-
-    for (const filename of projectDumps) {
-      const timestamp = extractTimestamp(filename, "fusion-pg-", ".dump");
-      if (!timestamp) continue;
       const path = join(backupDirPath, filename);
       const stats = await stat(path);
-      byTimestamp.set(timestamp, {
-        timestamp,
-        project: {
-          filename,
-          path,
-          sizeBytes: stats.size,
-          createdAt: stats.mtime.toISOString(),
-        },
-      });
-    }
+      if (!stats.isFile()) continue;
 
-    for (const filename of centralDumps) {
-      const timestamp = extractTimestamp(filename, "fusion-central-pg-", ".dump");
-      if (!timestamp) continue;
-      const path = join(backupDirPath, filename);
-      const stats = await stat(path);
-      const existing = byTimestamp.get(timestamp) ?? { timestamp };
-      existing.central = {
+      const key = `${parsed.family}:${parsed.stem}`;
+      const pair = byStem.get(key) ?? {
+        timestamp: parsed.family === "pre-restore" ? `pre-restore-${parsed.stem}` : parsed.stem,
+      };
+      const result: PgDumpResult = {
         filename,
         path,
         sizeBytes: stats.size,
         createdAt: stats.mtime.toISOString(),
       };
-      byTimestamp.set(timestamp, existing);
+      if (parsed.kind === "project") pair.project = result;
+      else pair.central = result;
+      byStem.set(key, pair);
     }
 
-    return [...byTimestamp.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    return [...byStem.values()].sort((left, right) => {
+      const leftCreated = latestPairCreatedAt(left);
+      const rightCreated = latestPairCreatedAt(right);
+      return rightCreated.localeCompare(leftCreated) || right.timestamp.localeCompare(left.timestamp);
+    });
   }
 
   /**
@@ -361,7 +374,7 @@ export class PgBackupManager {
 
     const stats = await stat(outputPath);
     return {
-      filename: outputPath.split("/").pop() ?? outputPath,
+      filename: basename(outputPath),
       path: outputPath,
       sizeBytes: stats.size,
       createdAt: new Date().toISOString(),
@@ -384,7 +397,7 @@ export class PgBackupManager {
       await execFileAsync(this.pgDumpPath, args, {
         env: this.buildLibpqEnv(),
         maxBuffer: 10 * 1024 * 1024,
-        timeout: 120_000,
+        timeout: this.clientTimeoutMs,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -397,7 +410,7 @@ export class PgBackupManager {
       await execFileAsync(this.pgRestorePath, args, {
         env: this.buildLibpqEnv(),
         maxBuffer: 10 * 1024 * 1024,
-        timeout: 120_000,
+        timeout: this.clientTimeoutMs,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -434,10 +447,45 @@ export class PgBackupManager {
   }
 }
 
-/**
- * Generate a backup timestamp matching the SQLite backup naming convention
- * (YYYYMMDD-HHMMSS), with collision avoidance handled by the caller.
- */
+type PgBackupKind = "project" | "central";
+type PgBackupFamily = "regular" | "pre-restore";
+
+interface ParsedBackupFilename {
+  kind: PgBackupKind;
+  family: PgBackupFamily;
+  stem: string;
+}
+
+function formatBackupFilename(
+  kind: PgBackupKind,
+  family: PgBackupFamily,
+  stem: string,
+): string {
+  const central = kind === "central" ? "central-" : "";
+  const preRestore = family === "pre-restore" ? "pre-restore-" : "";
+  return `fusion-${central}${preRestore}pg-${stem}.dump`;
+}
+
+function parseBackupFilename(filename: string): ParsedBackupFilename | null {
+  const match = filename.match(
+    /^fusion-(central-)?(pre-restore-)?pg-((?:\d{8}|\d{4}-\d{2}-\d{2})-\d{6}(?:-\d+)?)\.dump$/,
+  );
+  if (!match) return null;
+  return {
+    kind: match[1] ? "central" : "project",
+    family: match[2] ? "pre-restore" : "regular",
+    stem: match[3],
+  };
+}
+
+function latestPairCreatedAt(pair: MutablePgBackupPair): string {
+  const central = pair.central && "createdAt" in pair.central ? pair.central.createdAt : "";
+  return pair.project?.createdAt && pair.project.createdAt > central
+    ? pair.project.createdAt
+    : central;
+}
+
+/** Generate a production backup timestamp (YYYYMMDD-HHMMSS). */
 function currentBackupTimestamp(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -445,11 +493,6 @@ function currentBackupTimestamp(): string {
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
     `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
   );
-}
-
-function extractTimestamp(filename: string, prefix: string, suffix: string): string | null {
-  if (!filename.startsWith(prefix) || !filename.endsWith(suffix)) return null;
-  return filename.slice(prefix.length, filename.length - suffix.length);
 }
 
 /**

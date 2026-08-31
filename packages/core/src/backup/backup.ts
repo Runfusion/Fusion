@@ -52,6 +52,11 @@ export interface BackupOptions {
    * was removed as part of the SQLite-to-PostgreSQL cutover.
    */
   connectionString?: string;
+  /** Override PostgreSQL client paths, primarily for embedders and tests. */
+  pgDumpPath?: string;
+  pgRestorePath?: string;
+  /** Override the bounded native-client timeout. Defaults to 120 seconds. */
+  clientTimeoutMs?: number;
 }
 
 /**
@@ -86,6 +91,9 @@ export class BackupManager {
       backupDir: this.backupDir,
       retention: this.retention,
       includeCentral: this.includeCentralDb,
+      pgDumpPath: options?.pgDumpPath,
+      pgRestorePath: options?.pgRestorePath,
+      clientTimeoutMs: options?.clientTimeoutMs,
     });
   }
 
@@ -123,27 +131,15 @@ export class BackupManager {
   }
 
   async listBackupPairs(): Promise<BackupPairInfo[]> {
-    const projects = await this.listBackups();
-    const centrals = await this.listCentralBackups();
-    const pairs = new Map<string, BackupPairInfo>();
-
-    for (const project of projects) {
-      const key = getBackupPairKey(project.filename, false);
-      if (!key) continue;
-      const existing = pairs.get(key) ?? { timestamp: key };
-      existing.project = project;
-      pairs.set(key, existing);
-    }
-
-    for (const central of centrals) {
-      const key = getBackupPairKey(central.filename, true);
-      if (!key) continue;
-      const existing = pairs.get(key) ?? { timestamp: key };
-      existing.central = central;
-      pairs.set(key, existing);
-    }
-
-    return [...pairs.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const pairs = await this.pgManager.listBackups();
+    return pairs.map((pair) => ({
+      timestamp: pair.timestamp,
+      project: pair.project ? pgDumpResultToBackupFileInfo(pair.project) : undefined,
+      central:
+        pair.central && "filename" in pair.central
+          ? pgDumpResultToBackupFileInfo(pair.central)
+          : undefined,
+    }));
   }
 
   async cleanupOldBackups(): Promise<number> {
@@ -184,15 +180,6 @@ function formatTimestamp(date: Date): string {
   const minutes = String(date.getUTCMinutes()).padStart(2, "0");
   const seconds = String(date.getUTCSeconds()).padStart(2, "0");
   return `${year}-${month}-${day}-${hours}${minutes}${seconds}`;
-}
-
-function getBackupPairKey(filename: string, isCentral: boolean): string | null {
-  const pattern = isCentral
-    ? /^fusion-central(?:-pre-restore)?-(\d{4}-\d{2}-\d{2}-\d{6})(-\d+)?\.db$/
-    : /^(?:fusion|kb)(?:-pre-restore)?-(\d{4}-\d{2}-\d{2}-\d{6})(-\d+)?\.db$/;
-  const match = filename.match(pattern);
-  if (!match) return null;
-  return `${match[1]}${match[2] ?? ""}`;
 }
 
 export function validateBackupSchedule(schedule: string): boolean {

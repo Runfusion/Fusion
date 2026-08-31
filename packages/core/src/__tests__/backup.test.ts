@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   BackupManager,
   createBackupManager,
@@ -19,6 +22,41 @@ const externalUrl = "postgresql://operator:external-secret@db.example.test:5432/
 afterEach(() => {
   clearActiveEmbeddedRuntimeUrl();
   vi.unstubAllEnvs();
+});
+
+describe("PostgreSQL backup pair inventory", () => {
+  it("lists the canonical dump pair emitted by PostgreSQL backup creation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-backup-pair-repro-"));
+    try {
+      const fusionDir = join(root, "project", ".fusion");
+      await mkdir(fusionDir, { recursive: true });
+      const pgDumpPath = join(root, "pg_dump");
+      await writeFile(
+        pgDumpPath,
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = --file ]; then shift; printf dump >\"$1\"; fi; shift; done\n",
+      );
+      await chmod(pgDumpPath, 0o755);
+
+      const manager = new BackupManager(fusionDir, {
+        connectionString: embeddedUrl,
+        pgDumpPath,
+      });
+      const created = await manager.createBackup();
+      const pairs = await manager.listBackupPairs();
+
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]?.project?.filename).toBe(created.filename);
+      expect(pairs[0]?.central?.filename).toBe(
+        created.centralBackup && "filename" in created.centralBackup
+          ? created.centralBackup.filename
+          : undefined,
+      );
+      expect(pairs[0]?.project?.path).toMatch(/^\//);
+      expect(pairs[0]?.central?.path).toMatch(/^\//);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("embedded backup runtime URL registry", () => {
