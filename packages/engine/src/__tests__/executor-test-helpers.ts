@@ -851,6 +851,9 @@ FNXC:TaskVerificationRequest 2026-07-19-04:30 (merged with U5f 2026-07-19-06:00)
     #2332 and in the cutover's U5f — this block is the union).
     */
     getTaskVerificationRequestAsync: vi.fn().mockResolvedValue(null),
+    // FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010): executor write-ahead + stale reclaim surface.
+    upsertExecutorVerificationRequest: vi.fn().mockResolvedValue({ claimed: true, request: { requestId: "req-mock", status: "running", startedAt: new Date().toISOString() } }),
+    reclaimStaleTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     getTaskVerificationRequest: vi.fn().mockReturnValue(null),
     claimTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     finishTaskVerificationRequest: vi.fn().mockResolvedValue(undefined),

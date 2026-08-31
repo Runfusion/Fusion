@@ -146,6 +146,14 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   ensurePrEntityForSource: { kind: "writer", reason: "persists or mutates TaskStore state" },
   ensureWorkflowStepForTemplate: { kind: "writer", reason: "persists or mutates TaskStore state" },
   finishTaskVerificationRequest: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  /*
+  FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+  Executor write-ahead + stale-`running` reclaim for task_verification_requests. Both mutate
+  the durable verification record (the reclaim is a CAS transition to terminal `failed`), so an
+  orphaned merge body reaching either would mutate state it no longer owns.
+  */
+  upsertExecutorVerificationRequest: { kind: "writer", reason: "persists executor write-ahead verification request state" },
+  reclaimStaleTaskVerificationRequest: { kind: "writer", reason: "CAS-transitions a stale running verification request to terminal failed" },
   flushAgentLogBuffer: { kind: "writer", reason: "persists or mutates TaskStore state" },
   importLegacyAgentLogs: { kind: "writer", reason: "persists or mutates TaskStore state" },
   importLegacyAgentLogsOnce: { kind: "writer", reason: "persists or mutates TaskStore state" },
@@ -715,6 +723,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "recordPluginGateVerdict",
   "recordPrThreadOutcome",
   "recordRunAuditEventBackend",
+  "reclaimStaleTaskVerificationRequest",
   "recordVerificationCachePass",
   "recoverExpiredMergeQueueLeases",
   "recoverStaleTransitionPending",
@@ -830,6 +839,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "updateWorkflowPromptOverrides",
   "updateWorkflowSettingValues",
   "updateWorkflowStep",
+  "upsertExecutorVerificationRequest",
   "upsertMergeRequestRecord",
   "upsertPrInfoByNumber",
   "upsertTask",
