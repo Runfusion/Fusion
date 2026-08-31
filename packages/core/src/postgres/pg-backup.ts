@@ -35,7 +35,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, delimiter, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -59,6 +59,15 @@ export interface PgDumpResult {
 }
 
 /** Result of a paired backup (project + central). */
+export interface PgBackupSelection {
+  readonly family: "regular" | "pre-restore";
+  readonly stem: string;
+  readonly selectedKind: "project" | "central";
+  readonly selectedPath: string;
+  readonly projectPath: string;
+  readonly centralPath: string;
+}
+
 export interface PgBackupPair {
   readonly timestamp: string;
   readonly project?: PgDumpResult;
@@ -204,6 +213,34 @@ export class PgBackupManager {
       if (!existsSync(projectPath) && !existsSync(centralPath)) return stem;
       counter += 1;
     }
+  }
+
+  resolveBackupSelection(input: string): PgBackupSelection {
+    const selectedFilename = basename(input);
+    const parsed = parseBackupFilename(selectedFilename);
+    if (!parsed) {
+      throw new Error(
+        `Invalid PostgreSQL backup filename: ${input}. Expected a canonical fusion-*-pg-<timestamp>.dump file.`,
+      );
+    }
+    const selectedPath = selectedFilename === input
+      ? join(this.getBackupDirPath(), selectedFilename)
+      : resolve(input);
+    const directory = dirname(selectedPath);
+    return {
+      family: parsed.family,
+      stem: parsed.stem,
+      selectedKind: parsed.kind,
+      selectedPath,
+      projectPath: join(
+        directory,
+        formatBackupFilename("project", parsed.family, parsed.stem),
+      ),
+      centralPath: join(
+        directory,
+        formatBackupFilename("central", parsed.family, parsed.stem),
+      ),
+    };
   }
 
   /**

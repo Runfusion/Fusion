@@ -41,6 +41,18 @@ export interface BackupPairInfo {
   central?: BackupFileInfo;
 }
 
+export interface BackupRestoreOptions {
+  createPreRestoreBackup?: boolean;
+  skipCentral?: boolean;
+  centralOnly?: boolean;
+}
+
+export interface BackupRestoreResult {
+  restored: Array<"project" | "central">;
+  preRestoreBackup?: BackupPairInfo;
+  projectRollback?: "succeeded";
+}
+
 export interface BackupOptions {
   backupDir?: string;
   retention?: number;
@@ -148,15 +160,86 @@ export class BackupManager {
   }
 
   /**
-   * FNXC:SqliteFinalRemoval 2026-06-26:
-   * Restore is delegated to PgBackupManager (pg_restore). The legacy SQLite
-   * file-copy restore (cp fusion.db, pre-restore snapshots) was removed.
+   * Restore the selected PostgreSQL schema group, defaulting project inputs to
+   * their required same-stem central sibling. Each dump is transactional; when
+   * central fails after project commits, project is rolled back from the
+   * retained pre-restore pair before the original failure is surfaced.
    */
   async restoreBackup(
     filename: string,
-    _options?: { createPreRestoreBackup?: boolean; skipCentral?: boolean; centralOnly?: boolean }
-  ): Promise<void> {
-    await this.pgManager.restoreBackup(filename);
+    options: BackupRestoreOptions = {},
+  ): Promise<BackupRestoreResult> {
+    if (options.skipCentral && options.centralOnly) {
+      throw new Error("skipCentral and centralOnly cannot be used together");
+    }
+
+    const selection = this.pgManager.resolveBackupSelection(filename);
+    if (selection.selectedKind === "central" && options.skipCentral) {
+      throw new Error("skipCentral cannot be used when a central dump is selected");
+    }
+
+    const restoreProject = selection.selectedKind === "project" && !options.centralOnly;
+    const restoreCentral = selection.selectedKind === "central"
+      || options.centralOnly === true
+      || (selection.selectedKind === "project" && !options.skipCentral);
+    const sources: Array<{ kind: "project" | "central"; path: string }> = [];
+    if (restoreProject) sources.push({ kind: "project", path: selection.projectPath });
+    if (restoreCentral) sources.push({ kind: "central", path: selection.centralPath });
+
+    // Validate every requested source before creating a dump or mutating schemas.
+    for (const source of sources) await this.pgManager.validateBackup(source.path);
+
+    let preRestorePair: PgBackupPair | undefined;
+    if (options.createPreRestoreBackup !== false) {
+      preRestorePair = await this.pgManager.createPreRestoreBackup();
+      if (!preRestorePair.project || !preRestorePair.central || !("path" in preRestorePair.central)) {
+        throw new Error("Pre-restore backup did not produce a complete PostgreSQL dump pair");
+      }
+      await this.pgManager.validateBackup(preRestorePair.project.path);
+      await this.pgManager.validateBackup(preRestorePair.central.path);
+    }
+
+    const result: BackupRestoreResult = {
+      restored: [],
+      preRestoreBackup: preRestorePair
+        ? pgBackupPairToBackupPairInfo(preRestorePair)
+        : undefined,
+    };
+
+    if (restoreProject) {
+      await this.pgManager.restoreBackup(selection.projectPath);
+      result.restored.push("project");
+    }
+
+    if (restoreCentral) {
+      try {
+        await this.pgManager.restoreBackup(selection.centralPath);
+        result.restored.push("central");
+      } catch (centralError) {
+        if (!restoreProject) throw centralError;
+        if (!preRestorePair?.project) {
+          throw new Error(
+            `Central restore failed after project/archive committed; no pre-restore backup was requested, so project rollback was unavailable: ${errorMessage(centralError)}`,
+            { cause: centralError },
+          );
+        }
+        try {
+          await this.pgManager.restoreBackup(preRestorePair.project.path);
+          result.projectRollback = "succeeded";
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [centralError, rollbackError],
+            `Central restore failed after project/archive committed: ${errorMessage(centralError)}; project/archive rollback also failed: ${errorMessage(rollbackError)}`,
+          );
+        }
+        throw new Error(
+          `Central restore failed after project/archive committed; project/archive was rolled back from ${preRestorePair.project.filename}: ${errorMessage(centralError)}`,
+          { cause: centralError },
+        );
+      }
+    }
+
+    return result;
   }
 }
 
@@ -268,6 +351,21 @@ function pgDumpResultToBackupFileInfo(result: PgDumpResult): BackupFileInfo {
     size: result.sizeBytes,
     path: result.path,
   };
+}
+
+function pgBackupPairToBackupPairInfo(pair: PgBackupPair): BackupPairInfo {
+  return {
+    timestamp: pair.timestamp,
+    project: pair.project ? pgDumpResultToBackupFileInfo(pair.project) : undefined,
+    central:
+      pair.central && "filename" in pair.central
+        ? pgDumpResultToBackupFileInfo(pair.central)
+        : undefined,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function pgBackupPairToBackupInfo(pair: PgBackupPair): BackupInfo {
