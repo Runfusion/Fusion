@@ -2596,6 +2596,8 @@ The uploaded image uses the tracking repository's raw URL. It renders inline for
 
 Chat can queue `fn_task_request_verification` for an **in-progress** task that has a live executor worktree. The only profiles are `verify:fast` (default) and the project-configured `test-command`; chat never accepts or executes raw shell text. Command-execution policy applies to the request, including approval and denial outcomes. Use `fn_task_verification_status` to read the persisted request, running state, or bounded terminal output. The executor owns the actual run and shared verification concurrency slot, so results remain visible through task execution state and Command Center observability.
 
+**EXAM-010 status semantics (2026-08-31):** every executor `fn_run_verification` call now persists a record before dispatch, so `fn_task_verification_status` (and the Task Detail / Command Center verification cards) always returns the LATEST record for any task that issued a verification call — including stale records reclaimed to terminal `failed` with a `rejectionReason` naming the lost executor or the watchdog ceiling (`verificationWatchdogTimeoutMs`, default 10 minutes). "No verification request exists" now appears only when a task has truly never issued a call. The former operator runbook for wedged verification calls (`fn_agent_stop` → `fn_agent_start` on the executor, or pausing/unpausing the task) is DEPRECATED once an engine build carrying this fix is installed — a wedged call now fails explicitly on its own within the ceiling and a follow-up request reclaims the stale record automatically.
+
 
 Productivity duration uses total agent-active time: planning (`cumulativePlanningMs`) plus execution (`cumulativeActiveMs`); queued column dwell is not included.
 
