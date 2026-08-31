@@ -335,6 +335,75 @@ exit 0
     expect(remaining.length).toBeLessThanOrEqual(2);
   });
 
+  it("validateBackup lists a custom archive without destructive restore flags", async () => {
+    const manager = new PgBackupManager(
+      "postgresql://user:secret@localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath },
+    );
+    const pair = await manager.createBackup();
+
+    await manager.validateBackup(pair.project!.path);
+
+    const invocation = readFileSync(join(tempDir, "pg_restore-invocation.txt"), "utf8");
+    expect(invocation).toContain(`ARGS: --list ${pair.project!.path}`);
+    expect(invocation).not.toContain("--clean");
+    expect(invocation).not.toContain("--single-transaction");
+  });
+
+  it("a corrupt archive fails validation before any destructive restore", async () => {
+    const rejectingRestore = join(tempDir, "fake-pg_restore-invalid-list");
+    writeFileSync(rejectingRestore, `#!/bin/bash
+if [ "$1" = "--list" ]; then echo "truncated archive" >&2; exit 1; fi
+echo "$@" >> "${tempDir}/destructive-restore.log"
+`, { mode: 0o755 });
+    const manager = new PgBackupManager(
+      "postgresql://localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath: rejectingRestore },
+    );
+    const dumpPath = join(tempDir, "corrupt.dump");
+    writeFileSync(dumpPath, "truncated");
+
+    await expect(manager.validateBackup(dumpPath)).rejects.toThrow(/pg_restore failed/);
+    expect(existsSync(join(tempDir, "destructive-restore.log"))).toBe(false);
+  });
+
+  it("createPreRestoreBackup keeps sources and uses a collision-safe paired stem", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:01Z"));
+    try {
+      const manager = new PgBackupManager(
+        "postgresql://localhost:5432/fusion",
+        fusionDir,
+        { pgDumpPath, pgRestorePath, retention: 1 },
+      );
+      const backupDirPath = join(fusionDir, "..", ".fusion", "backups");
+      mkdirSync(backupDirPath, { recursive: true });
+      const sourcePath = join(backupDirPath, "fusion-pg-20251231-235959.dump");
+      writeFileSync(sourcePath, "selected-source");
+
+      const first = await manager.createPreRestoreBackup();
+      const second = await manager.createPreRestoreBackup();
+
+      expect(second.timestamp).toBe(`${first.timestamp}-1`);
+      expect(second.project?.filename).toBe(
+        first.project?.filename.replace(/\.dump$/, "-1.dump"),
+      );
+      expect(second.central && "filename" in second.central ? second.central.filename : undefined)
+        .toBe(
+          first.central && "filename" in first.central
+            ? first.central.filename.replace(/\.dump$/, "-1.dump")
+            : undefined,
+        );
+      expect(readFileSync(sourcePath, "utf8")).toBe("selected-source");
+      expect(existsSync(first.project!.path)).toBe(true);
+      expect(existsSync(second.project!.path)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restoreBackup invokes pg_restore with the dump path", async () => {
     const manager = new PgBackupManager(
       "postgresql://user:secret@localhost:5432/fusion",
@@ -349,10 +418,57 @@ exit 0
     const invocation = readFileSync(join(tempDir, "pg_restore-invocation.txt"), "utf8");
     expect(invocation).toContain("--format=custom");
     expect(invocation).toContain("--clean");
+    expect(invocation).toContain("--if-exists");
+    expect(invocation).toContain("--single-transaction");
+    expect(invocation).toContain("--no-owner");
+    expect(invocation).toContain("--no-privileges");
     expect(invocation).toContain(pair.project!.path);
     // Credential safety: password in env, not in args.
     expect(invocation).toContain("PGPASSWORD=secret");
     expect(invocation).not.toMatch(/ARGS:.*secret/);
+  });
+
+  it("native restore timeouts remain bounded and credential-safe", async () => {
+    const sleepingRestore = join(tempDir, "fake-pg_restore-sleep");
+    writeFileSync(sleepingRestore, "#!/bin/bash\nsleep 2\n", { mode: 0o755 });
+    const dumpPath = join(tempDir, "valid.dump");
+    writeFileSync(dumpPath, "dump");
+    const manager = new PgBackupManager(
+      "postgresql://user:timeout-secret@localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath: sleepingRestore, clientTimeoutMs: 20 },
+    );
+
+    const startedAt = Date.now();
+    let error: Error | undefined;
+    try {
+      await manager.validateBackup(dumpPath);
+    } catch (caught) {
+      error = caught as Error;
+    }
+
+    expect(error?.message).toMatch(/pg_restore failed/);
+    expect(error?.message).not.toContain("timeout-secret");
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("native restore spawn failures redact passwords from child errors", async () => {
+    const leakingRestore = join(tempDir, "fake-pg_restore-secret-error");
+    writeFileSync(
+      leakingRestore,
+      "#!/bin/bash\necho 'postgresql://user:spawn-secret@localhost/fusion PGPASSWORD=spawn-secret' >&2\nexit 1\n",
+      { mode: 0o755 },
+    );
+    const dumpPath = join(tempDir, "valid.dump");
+    writeFileSync(dumpPath, "dump");
+    const manager = new PgBackupManager(
+      "postgresql://user:spawn-secret@localhost:5432/fusion",
+      fusionDir,
+      { pgDumpPath, pgRestorePath: leakingRestore },
+    );
+
+    await expect(manager.validateBackup(dumpPath)).rejects.not.toThrow(/spawn-secret/);
+    await expect(manager.validateBackup(dumpPath)).rejects.toThrow(/\*\*\*/);
   });
 
   it("restoreBackup throws on missing file", async () => {
