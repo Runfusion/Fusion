@@ -66,10 +66,10 @@ When `prCompletionMode` is set to "pr-first":
 **Backup operations:**
 
 ```bash
-fn backup --create         # Create a backup now
-fn backup --list           # List all backups
-fn backup --restore <file> # Restore from backup
-fn backup --cleanup        # Remove old backups
+fn backup --create         # Create project/archive + central .dump pair
+fn backup --list           # List complete pairs and orphans
+fn backup --restore <file> # Project dump restores its pair; central dump is central-only
+fn backup --cleanup        # Remove old backup pairs
 ```
 
 **Multi-project support:**
