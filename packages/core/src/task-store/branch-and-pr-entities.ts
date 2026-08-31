@@ -24,7 +24,7 @@ import { WorkflowMovePolicyInput } from "../workflows/workflow-extension-types.j
 import { resolveWorkflowIrById, isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
 import { WorkflowSettingDefinition } from "../workflows/workflow-ir-types.js";
 import { resolveTaskLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
-import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1040,6 +1040,141 @@ export async function finishTaskVerificationRequestImpl(store: TaskStore, taskId
   if (!store.backendMode) return null;
   const where = verificationScope(store);
   const rows = await store.asyncLayer!.db.update(schema.project.taskVerificationRequests).set({ status, completedAt: new Date().toISOString(), result: result ?? null, rejectionReason: rejectionReason ?? null }).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), eq(schema.project.taskVerificationRequests.requestId, requestId), eq(schema.project.taskVerificationRequests.status, "running"), ...(where ? [where] : []))).returning();
+  return rows[0] ? verificationRowToRecord(rows[0]) : null;
+}
+
+/*
+FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+The executor tool path (fn_run_verification) previously persisted NOTHING — only the
+chat-queue path wrote a row — so fn_task_verification_status spuriously answered
+"No verification request exists" for tasks that had run dozens of executor
+verifications, and a killed run left no inspectable record. This upsert is the
+write-ahead half of the fix: an executor-initiated verification records its request
+BEFORE dispatch so the row exists even when the run dies mid-call.
+
+Semantics (one row per project/task, composite PK):
+  - no row / terminal row  -> insert a fresh `requested` row (new requestId, requestedBy:"executor")
+  - unclaimed chat row      -> CLAIM it (requested -> running, startedAt set) preserving that
+                               requestId, so chat lineage and the (project_id, request_id)
+                               unique key stay intact instead of being clobbered
+  - `running` row          -> returned untouched with claimed:false ("in-flight"): never steal a
+                               live executor's record; staleness is resolved by the CAS reclaim
+                               below, guarded by requestId + startedAt, never by blind overwrite.
+Every path returns a record or a typed reason — no outcome is silently dropped.
+*/
+export type ExecutorVerificationWriteAhead = {
+  /** True when this caller now owns the running record (or a fresh requested row it may claim). */
+  claimed: boolean;
+  /** The record that exists after the upsert, in any status. */
+  request: TaskVerificationRequest;
+  /** When claimed is false: why. "in-flight" is the only reason today. */
+  reason?: "in-flight";
+};
+
+export async function upsertExecutorVerificationRequestImpl(
+  store: TaskStore,
+  input: Omit<TaskVerificationRequest, "status" | "requestedAt" | "startedAt" | "completedAt" | "result" | "rejectionReason">,
+): Promise<ExecutorVerificationWriteAhead> {
+  if (!store.backendMode) throw new Error("Task verification requests require PostgreSQL persistence");
+  const layer = store.asyncLayer!;
+  return layer.db.transaction(async (tx) => {
+    const where = verificationScope(store);
+    const rows = await tx.select().from(schema.project.taskVerificationRequests)
+      .where(and(eq(schema.project.taskVerificationRequests.taskId, input.taskId), ...(where ? [where] : [])))
+      .limit(1);
+    const existing = rows[0];
+    const startedAt = new Date().toISOString();
+    if (existing && existing.status === "running") {
+      return { claimed: false, request: verificationRowToRecord(existing), reason: "in-flight" as const };
+    }
+    if (existing && existing.status === "requested") {
+      // Claim the unclaimed chat (or prior executor) request in place — preserve requestId lineage.
+      const claimedRows = await tx.update(schema.project.taskVerificationRequests)
+        .set({ status: "running", startedAt })
+        .where(and(
+          eq(schema.project.taskVerificationRequests.taskId, input.taskId),
+          eq(schema.project.taskVerificationRequests.requestId, existing.requestId),
+          eq(schema.project.taskVerificationRequests.status, "requested"),
+          ...(where ? [where] : []),
+        ))
+        .returning();
+      const claimed = claimedRows[0];
+      if (claimed) return { claimed: true, request: verificationRowToRecord(claimed) };
+      // CAS lost (concurrent claimer won) — re-read and surface the winner in-flight.
+      const reread = await tx.select().from(schema.project.taskVerificationRequests)
+        .where(and(eq(schema.project.taskVerificationRequests.taskId, input.taskId), ...(where ? [where] : [])))
+        .limit(1);
+      const current = reread[0]!;
+      return { claimed: false, request: verificationRowToRecord(current), reason: "in-flight" as const };
+    }
+    const requestedAt = new Date().toISOString();
+    const values = {
+      taskId: input.taskId,
+      requestId: input.requestId,
+      profile: input.profile,
+      command: input.command,
+      scope: input.scope,
+      requestedBy: input.requestedBy,
+      status: "running" as const,
+      requestedAt,
+      startedAt,
+      completedAt: null,
+      result: null,
+      rejectionReason: null,
+      projectId: layer.projectId ?? "__legacy_unscoped__",
+    };
+    await tx.insert(schema.project.taskVerificationRequests).values(values)
+      .onConflictDoUpdate({
+        target: [schema.project.taskVerificationRequests.projectId, schema.project.taskVerificationRequests.taskId],
+        set: {
+          requestId: values.requestId,
+          profile: values.profile,
+          command: values.command,
+          scope: values.scope,
+          requestedBy: values.requestedBy,
+          status: values.status,
+          requestedAt: values.requestedAt,
+          startedAt: values.startedAt,
+          completedAt: null,
+          result: null,
+          rejectionReason: null,
+        },
+      });
+    return { claimed: true, request: verificationRowToRecord({ ...values } as typeof schema.project.taskVerificationRequests.$inferSelect) };
+  });
+}
+
+/*
+FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+Stale-`running` reaper. A killed executor run leaves the row at `running` forever; the
+pickup path only claims `requested` and createTaskVerificationRequest refuses while
+`requested|running`, so every follow-up verification on that task failed with
+"already in flight" until an operator restarted the agent. This CAS transitions a
+`running` row to terminal `failed` ONLY when both guards pass:
+  - requestId matches (a NEW request must not be reaped as the OLD dead one)
+  - startedAt is at least olderThanMs old (a live executor's fresh claim is never stolen)
+*/
+export async function reclaimStaleTaskVerificationRequestImpl(
+  store: TaskStore,
+  taskId: string,
+  requestId: string,
+  olderThanMs: number,
+  reason?: string,
+): Promise<TaskVerificationRequest | null> {
+  if (!store.backendMode) return null;
+  const where = verificationScope(store);
+  const staleBefore = new Date(Date.now() - Math.max(0, olderThanMs)).toISOString();
+  const rejectionReason = reason ?? `executor lost: running verification reclaimed after ${olderThanMs}ms without completion`;
+  const rows = await store.asyncLayer!.db.update(schema.project.taskVerificationRequests)
+    .set({ status: "failed" as const, completedAt: new Date().toISOString(), result: null, rejectionReason })
+    .where(and(
+      eq(schema.project.taskVerificationRequests.taskId, taskId),
+      eq(schema.project.taskVerificationRequests.requestId, requestId),
+      eq(schema.project.taskVerificationRequests.status, "running"),
+      lte(schema.project.taskVerificationRequests.startedAt, staleBefore),
+      ...(where ? [where] : []),
+    ))
+    .returning();
   return rows[0] ? verificationRowToRecord(rows[0]) : null;
 }
 
