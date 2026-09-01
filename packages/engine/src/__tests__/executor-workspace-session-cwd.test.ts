@@ -84,7 +84,7 @@ describe("FN-158 — workspace sessions use one task directory", () => {
 
     // The workspace root is never acquired as a task worktree.
     expect(mockedAcquireTaskWorktree).not.toHaveBeenCalled();
-    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalled();
+    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalledWith(expect.objectContaining({ refreshStaleBase: true }));
 
     // The execution session is rooted at the task directory containing every repository.
     const taskDirectory = "/tmp/workspace-root/.fusion/worktrees/fn-001";

@@ -358,6 +358,7 @@ export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional
 export {
   FAST_LANE_STEP_NAME,
   FAST_LANE_SKIP_VALUE,
+  FAST_MODE_BYPASS_ACTOR,
   FAST_LANE_STEP_REVIEW_ROUTE_VALUE,
   isFastExecutionMode,
   isFastLaneSkippableCustomNode,
@@ -1067,6 +1068,7 @@ export {
   formatRemediationStepName,
   isRemediationStep,
   hasPendingRemediationWork,
+  hasPendingReviewRemediationWork,
   remediationWaveCount,
   hasOpenEquivalentRemediationStep,
   remediationDeclaredFiles,
@@ -1078,7 +1080,9 @@ export type { NoCommitsNoOpFinalizeEvaluation } from "./merge/no-commits-finaliz
 export { evaluateCompletedPromotionFailureProvenance, CLEAN_COMPLETION_MARKERS, MAX_LOG_SCAN } from "./merge/completed-promotion-failure-provenance.js";
 export type { CompletedPromotionFailureProvenanceEvaluation } from "./merge/completed-promotion-failure-provenance.js";
 export {
+  buildStepLedgerReopenLog,
   evaluateStepLedgerSeal,
+  STEP_LEDGER_REFUSAL_MARKER_PREFIX,
   STEP_LEDGER_REENTRY_MARKERS,
   STEP_LEDGER_REOPEN_MARKER_PREFIX,
 } from "./task-store/step-ledger-seal.js";
@@ -1323,7 +1327,7 @@ export {
   readProjectIdentityAsync,
   writeProjectIdentityAsync,
 } from "./central/project-identity.js";
-export { ProcessSupervisor, superviseSpawn, FUSION_RESTART_EXIT_CODE, FUSION_NON_RETRYABLE_EXIT_CODE } from "./process/process-supervisor.js";
+export { ProcessSupervisor, superviseSpawn, releaseSupervisedChild, FUSION_RESTART_EXIT_CODE, FUSION_NON_RETRYABLE_EXIT_CODE } from "./process/process-supervisor.js";
 export { isPostgresUniqueError } from "./db/postgres-errors.js";
 export type {
   SuperviseSpawnOptions,
@@ -1400,7 +1404,13 @@ export {
 } from "./merge/task-merge.js";
 export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
 export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
-export { evaluatePreMergeApprovals } from "./merge/pre-merge-approval.js";
+export {
+  AUTOMATED_BYPASS_ACTORS,
+  evaluatePreMergeApprovals,
+  isAuditedOperatorBypass,
+  requiresContentReviewProof,
+  resolveUnprovenReviewApproval,
+} from "./merge/pre-merge-approval.js";
 export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
@@ -1964,7 +1974,7 @@ export type {
   BuildUnblockWeightMapOptions,
   PriorityFanoutComparatorContext,
 } from "./tasks/task-priority.js";
-export { fileScopeLeaseBlocksCandidate } from "./tasks/file-scope-lease.js";
+export { fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
 export type { FileScopeLeaseClassification, FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
 
 // ── Mission Hierarchy Types ────────────────────────────────────────────
@@ -2744,12 +2754,14 @@ export { CliSessionStore } from "./cli/cli-session-store.js";
 export type { CliSessionStoreEvents } from "./cli/cli-session-store.js";
 export {
   choosePreferredStoredCredential,
+  computeStoredCredentialAccountFingerprint,
   extractClaudeCliStoredCredential,
   extractCodexCliStoredCredential,
   getClaudeCodeCredentialPaths,
   getCodexCliAuthPath,
   readStoredCredentialsFromAuthFile,
   shouldHydrateStoredCredential,
+  isSameStoredCredentialMaterial,
   isStoredAuthCredential,
 } from "./secrets/oauth-credential-interop.js";
 export type { StoredAuthCredential } from "./secrets/oauth-credential-interop.js";
@@ -3024,10 +3036,13 @@ export {
   WORKFLOW_REVIEW_FINDING_RESOLUTIONS,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
   PLAN_REVIEW_LEASE_STALENESS_MS,
+  REMEDIATION_ATTEMPT_CLAIM_STALENESS_MS,
+  classifyRemediationAttemptClaim,
   classifyReviewLease,
   makeReviewLeaseRecord,
   isTerminalStepResult,
   type ReviewLeaseDisposition,
+  type RemediationAttemptClaimDisposition,
   type ArbitrationFailureFence,
 } from "./workflows/workflow-step-results.js";
 export { PLAN_REVIEW_COMPLETENESS_POLICY } from "./agents/planning-review-policy.js";
@@ -3114,7 +3129,11 @@ export {
   assertWorkspaceRepoRelPath,
   workspaceWorktreeGroupSegment,
   workspaceRepoSegment,
+  LEGACY_WORKTREES_DIRNAME,
   resolveWorktreesDirLayout,
+  resolveLegacyWorktreesDirLayout,
+  resolveWorktreesDirCandidates,
+  isStrictDescendantPath,
   resolveWorkspaceTaskWorktreeDir,
   resolveWorkspaceRepoWorktreePath,
   isLegacyWorkspaceWorktreeLayout,

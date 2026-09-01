@@ -22,6 +22,7 @@ import { createFusionAuthStorage, getFusionAuthPath } from "../auth/auth-storage
 
 const RAW_API_KEY = "sk-ant-api03-raw-key-from-settings-card";
 const SUBSCRIPTION_ACCESS_TOKEN = "sk-ant-oat01-subscription-access-token";
+const LEGACY_OAUTH_ACCESS_TOKEN = "sk-ant-oat01-legacy-shadow-access-token";
 
 function writeAuth(homeDir: string, credentials: Record<string, unknown>): void {
   mkdirSync(join(homeDir, ".fusion", "agent"), { recursive: true });
@@ -129,6 +130,21 @@ describe("Anthropic credential precedence (anthropicAuthPreference)", () => {
     const storage = createFusionAuthStorage();
 
     await expect(storage.getApiKey("anthropic")).resolves.toBe(SUBSCRIPTION_ACCESS_TOKEN);
+  });
+
+  it.each(["api-key", "subscription"])("never lets a legacy OAuth row override a stored subscription with %s preference", async (anthropicAuthPreference) => {
+    writeAuth(homeDir, {
+      anthropic: {
+        type: "oauth",
+        access: LEGACY_OAUTH_ACCESS_TOKEN,
+        refresh: "legacy-shadow-refresh-token",
+        expires: Date.now() + 24 * 60 * 60_000,
+      },
+      "anthropic-subscription": liveSubscriptionCredential(),
+    });
+    writeGlobalSettings(homeDir, { anthropicAuthPreference });
+
+    await expect(createFusionAuthStorage().getApiKey("anthropic")).resolves.toBe(SUBSCRIPTION_ACCESS_TOKEN);
   });
 
   it("honors the preference stored in a legacy global settings dir", async () => {

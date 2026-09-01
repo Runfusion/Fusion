@@ -102,6 +102,8 @@ export interface WorkflowStep {
   prompt: string;
   /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
   toolMode?: WorkflowStepToolMode;
+  /** In-memory graph-node config: named MCP servers allowed for this readonly step. */
+  readonlyMcpServers?: string[];
   /** Name of a skill to load into this step's session (e.g.
    *  "compound-engineering:ce-work"). When set, the step session loads the named
    *  skill (discovery + selection) and the engine injects the Fusion workflow-step
@@ -316,6 +318,17 @@ export interface WorkflowStepResult {
    */
   remediationArchivedAt?: string;
   remediationArchivedFromStatus?: WorkflowStepResult["status"];
+  /*
+   * FNXC:LifecycleContainment 2026-08-30-12:57:
+   * FN-267 makes automatic remediation admission an owner-scoped lease on one review-input
+   * episode. A claim with no reason is in flight and reclaimable after its staleness floor; a
+   * claim with a fixed refusal reason suppresses only that exact input; owner matching prevents a
+   * displaced runner from clearing or condemning its successor's review round.
+   */
+  remediationAttemptSignature?: string;
+  remediationAttemptOwner?: string;
+  remediationAttemptClaimedAt?: string;
+  remediationRefusedReason?: "no-actionable-findings" | "upstream-out-of-scope" | "unclassified-gate-no-reopen" | "appender-declined";
   /*
    * FNXC:WorkflowStepNotRun 2026-08-28-14:13:
    * A gate that did not execute is persisted as terminal `status: "skipped"` plus a fixed-enum

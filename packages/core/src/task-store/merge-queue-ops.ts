@@ -19,7 +19,7 @@ import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/she
 import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
 import {appendTaskStepReport} from "../workflows/task-step-reports.js";
-import {evaluateStepLedgerSeal, STEP_LEDGER_REOPEN_MARKER_PREFIX} from "./step-ledger-seal.js";
+import {buildStepLedgerReopenLog, evaluateStepLedgerSeal, STEP_LEDGER_REFUSAL_MARKER_PREFIX} from "./step-ledger-seal.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 
@@ -251,9 +251,21 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
       }
 
       const ledgerSeal = isTransition ? evaluateStepLedgerSeal(task.log) : { sealed: false };
+      const admittedPostCompletionStart = currentStatus === "pending" && status === "in-progress";
+      /*
+      FNXC:StepLedgerIntegrity 2026-09-01-02:31:
+      The completion seal prevents a FINISHED session from rewriting progress it already recorded;
+      starting work that the durable ledger still shows as pending is implementation re-entry, not
+      time travel. FN-272 measured the opposite at 2026-09-01T01:31:14: `steps#8:step-execute`
+      rejected the pending Fix step before `runTaskStep` invoked its body, failed the whole foreach
+      region, and routed the card away from the success edge that returns it to review. Admit only
+      pending-to-in-progress here; stale pending-to-done and in-progress-to-done projections remain
+      sealed, as does the earlier completed-step regression guard.
+      */
       if (
         isTransition
         && status !== "pending"
+        && !admittedPostCompletionStart
         && !options?.operatorOverride
         && ledgerSeal.sealed
       ) {
@@ -263,7 +275,7 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
         task.log.push({
           timestamp: ts,
           action:
-            `Ignored post-completion ${status} for step ${stepIndex} (${stepName}) — ` +
+            `${STEP_LEDGER_REFUSAL_MARKER_PREFIX} ${status} for step ${stepIndex} (${stepName}) — ` +
             `implementation ended at "${ledgerSeal.markerAction}" and no new implementation session has started`,
         });
         if (graphSource) {
@@ -295,16 +307,18 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
           ? "pending"
           : options?.operatorOverride
             ? "operator"
-            : undefined
+            : admittedPostCompletionStart
+              ? "start"
+              : undefined
         : undefined;
       if (reopenAfterCompletion) {
         const stepName = task.steps[stepIndex].name;
-        task.log.push({
-          timestamp: new Date().toISOString(),
-          action: reopenAfterCompletion === "pending"
-            ? `${STEP_LEDGER_REOPEN_MARKER_PREFIX} — step ${stepIndex} (${stepName}) returned to pending after completion`
-            : `${STEP_LEDGER_REOPEN_MARKER_PREFIX} — step ${stepIndex} (${stepName}) edited by operator after completion`,
-        });
+        const reason = reopenAfterCompletion === "pending"
+          ? `step ${stepIndex} (${stepName}) returned to pending after completion`
+          : reopenAfterCompletion === "operator"
+            ? `step ${stepIndex} (${stepName}) edited by operator after completion`
+            : `step ${stepIndex} (${stepName}) started after completion`;
+        task.log = buildStepLedgerReopenLog(task.log, reason) ?? task.log;
       }
 
       /*
@@ -313,8 +327,9 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
       graph step-runner start projection recorded the initial Preflight start, the implementation
       StepSessionExecutor onStepStart re-wrote that same status, and its fire-and-forget
       onStepComplete could write done after `Task marked done by agent`. A sealed completion window
-      refuses later non-pending engine transitions; pending resets and explicit operator edits append
-      a reopen marker first, so re-entry remains possible without time-traveling the ledger.
+      refuses stale engine transitions; pending resets, explicit operator edits, and starting a step
+      still recorded pending append a reopen marker first, so genuine re-entry remains possible
+      without time-traveling the ledger.
       */
       task.steps[stepIndex].status = status;
       task.updatedAt = new Date().toISOString();

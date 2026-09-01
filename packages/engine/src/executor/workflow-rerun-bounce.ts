@@ -8,7 +8,12 @@
  * the last plan step to pending. in-review must bounce like in-progress to avoid deadlock.
  */
 import type { TaskStore } from "@fusion/core";
-import { hasPendingRemediationWork, resolveWipTargetForTask } from "@fusion/core";
+import {
+  hasPendingReviewRemediationWork,
+  resolveStepReopenPolicy,
+  resolveWipTargetForTask,
+  resolveWorkflowIrForTask,
+} from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { moveTaskWithLifecycleReason } from "../execution/lifecycle-move.js";
 import { resolveReboundColumnFor } from "./lifecycle-columns.js";
@@ -63,16 +68,19 @@ export async function performWorkflowRerunBounce(
        bounce ends up handling one lane and throwing on the other, which is the bug that comment is about. */
     const bounceLanes = await deps.resolveResumeLanes(taskId);
     /*
-    FNXC:LifecycleContainment 2026-08-28-07:48:
-    A review-to-WIP bounce is a REVISE handoff and therefore must carry concrete pending remediation
-    work. Without a remediation marker the executor has nothing to do, so bouncing would replay the
-    same review over an unchanged tree. Refuse that empty bounce in place.
+    FNXC:LifecycleContainment 2026-08-30-12:57:
+    FN-267 keeps the review-to-WIP guard but asks whether the selected workflow has produced its
+    own remediation model before moving. Named-remediation workflows require a pending structural
+    fix step; trailing-reopen workflows instead produce a plain pending replay occurrence. An IR
+    resolution failure stays strict so an unknown workflow never receives an empty hand-off.
     */
-    if (latestTask.column === bounceLanes.review && !hasPendingRemediationWork(latestTask)) {
+    const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
+    const stepReopenPolicy = workflowIr ? resolveStepReopenPolicy(workflowIr) : "none";
+    if (latestTask.column === bounceLanes.review && !hasPendingReviewRemediationWork(latestTask, { stepReopenPolicy })) {
       await deps.store.logEntry(
         taskId,
         "Workflow rerun refused — no pending remediation work",
-        "A review revision may return to implementation only with a named pending remediation step.",
+        "A review revision may return to implementation only after the workflow has produced pending remediation work.",
       );
       return "refused-no-remediation";
     }

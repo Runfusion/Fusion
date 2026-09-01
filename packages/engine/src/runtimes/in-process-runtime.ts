@@ -1876,6 +1876,8 @@ export class InProcessRuntime
         isWorktreeResumeReserved: this.cliAgentRuntime?.isWorktreeResumeReserved,
         recoverCompletedTask: (task) => this.executor.recoverCompletedTask(task),
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
+        /* FNXC:LifecycleContainment 2026-08-30-13:36: without this wiring the sweep's claim never reaches the recovery, so a refusal releases its claim and is re-narrated every five minutes. */
+        recoverFailedPreMergeStepDetailed: (task, options) => this.executor.recoverFailedPreMergeWorkflowStepDetailed(task, options),
         getExecutingTaskIds: () => this.executor?.getExecutingTaskIds() ?? new Set<string>(),
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean; externallyBlocked?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
         /*

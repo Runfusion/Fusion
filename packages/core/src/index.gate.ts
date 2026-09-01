@@ -300,6 +300,7 @@ export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional
 export {
   FAST_LANE_STEP_NAME,
   FAST_LANE_SKIP_VALUE,
+  FAST_MODE_BYPASS_ACTOR,
   FAST_LANE_STEP_REVIEW_ROUTE_VALUE,
   isFastExecutionMode,
   isFastLaneSkippableCustomNode,
@@ -878,6 +879,7 @@ export {
   formatRemediationStepName,
   isRemediationStep,
   hasPendingRemediationWork,
+  hasPendingReviewRemediationWork,
   remediationWaveCount,
   hasOpenEquivalentRemediationStep,
   remediationDeclaredFiles,
@@ -1184,7 +1186,13 @@ export {
 } from "./merge/task-merge.js";
 export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
 export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
-export { evaluatePreMergeApprovals } from "./merge/pre-merge-approval.js";
+export {
+  AUTOMATED_BYPASS_ACTORS,
+  evaluatePreMergeApprovals,
+  isAuditedOperatorBypass,
+  requiresContentReviewProof,
+  resolveUnprovenReviewApproval,
+} from "./merge/pre-merge-approval.js";
 export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
@@ -1719,7 +1727,7 @@ export type {
   BuildUnblockWeightMapOptions,
   PriorityFanoutComparatorContext,
 } from "./tasks/task-priority.js";
-export { fileScopeLeaseBlocksCandidate } from "./tasks/file-scope-lease.js";
+export { fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
 export type { FileScopeLeaseClassification, FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
 
 // ── Mission Hierarchy Types ────────────────────────────────────────────
@@ -2507,7 +2515,11 @@ export {
   assertWorkspaceRepoRelPath,
   workspaceWorktreeGroupSegment,
   workspaceRepoSegment,
+  LEGACY_WORKTREES_DIRNAME,
   resolveWorktreesDirLayout,
+  resolveLegacyWorktreesDirLayout,
+  resolveWorktreesDirCandidates,
+  isStrictDescendantPath,
   resolveWorkspaceTaskWorktreeDir,
   resolveWorkspaceRepoWorktreePath,
   isLegacyWorkspaceWorktreeLayout,
@@ -2541,10 +2553,13 @@ export {
   WORKFLOW_REVIEW_FINDING_RESOLUTIONS,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
   PLAN_REVIEW_LEASE_STALENESS_MS,
+  REMEDIATION_ATTEMPT_CLAIM_STALENESS_MS,
+  classifyRemediationAttemptClaim,
   classifyReviewLease,
   makeReviewLeaseRecord,
   isTerminalStepResult,
   type ReviewLeaseDisposition,
+  type RemediationAttemptClaimDisposition,
   type ArbitrationFailureFence,
 } from "./workflows/workflow-step-results.js";
 export { PLAN_REVIEW_COMPLETENESS_POLICY } from "./agents/planning-review-policy.js";

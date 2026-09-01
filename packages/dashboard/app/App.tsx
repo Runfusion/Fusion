@@ -51,7 +51,7 @@ import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
 import { useMobileKeyboard } from "./hooks/useMobileKeyboard";
 import { useKeyboardFocusPending } from "./hooks/useKeyboardFocusPending";
-import { isIOS, useMobileKeyboardViewportLock, useMobileViewportRestoreReset } from "./hooks/useMobileScrollLock";
+import { useMobileKeyboardViewportLock, useMobileViewportRestoreReset } from "./hooks/useMobileScrollLock";
 import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
 import { recordActivity } from "./utils/activity-trace";
 import { closeViewShortcut, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
@@ -224,7 +224,6 @@ export function useMobileBarKeyboardState({
       keyboardFocusPending,
       anyModalOpen,
       overlayOpen,
-      isIOS: isIOS(),
     }),
   };
 }
@@ -750,6 +749,10 @@ function AppInner() {
   across close/reopen so ChatView retains its selected session, transcript, and scroll position.
   Reset the latch when the project changes so a hidden ChatView cannot leak one project's state
   into another project; the FloatingWindow key supplies the matching React identity boundary.
+
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  Hidden Quick Chat now receives the same active gate as retained main Chat. Visibility alone is
+  insufficient because automatic read acknowledgements must stop until the operator reveals it.
   */
   useEffect(() => {
     const projectId = currentProject?.id;
@@ -811,9 +814,9 @@ function AppInner() {
   // keyboard with no empty gap. This supersedes the earlier Android gate
   // (FN-5707), which kept the footer visible and left a ~80px dead band
   // where the off-screen nav bar's padding remained reserved.
-  // `footerKeyboardOpen` (the footer `bottom: 0` collapse class) stays
-  // iOS-only: it only matters when the footer is still rendered (e.g. over
-  // a modal), where Android's resizes-content already stacks it correctly.
+  // `footerKeyboardOpen` uses the same immediate focus/keyboard trigger as
+  // the nav bar. A footer that remains rendered over a modal must also drop
+  // its bottom reservation on both platforms to avoid a dead band.
   const mobileKeyboardOpen = footerHidden;
   const mobileNavKeyboardOpen = navKeyboardOpen;
   // App-level scroll lock for inline editing (TaskCard inline edit, etc.):
@@ -2241,6 +2244,7 @@ function AppInner() {
               experimentalFeatures={experimentalFeatures}
               floating
               findActive={quickChatOpen}
+              active={quickChatOpen}
               initialComposerDraft={chatComposerPrefill?.text}
               initialComposerDraftNonce={chatComposerPrefill?.nonce}
               onSendAsReport={handleSendChatMessageAsReport}

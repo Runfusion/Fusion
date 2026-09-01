@@ -5,6 +5,19 @@ export {
 
 export { TunnelProcessManager, type TunnelProcessManagerOptions } from "./tunnel-process-manager.js";
 
+export {
+  RemoteTunnelService,
+  getRemoteTunnelService,
+  peekRemoteTunnelService,
+  remoteTunnelScopeKey,
+  shutdownRemoteTunnelService,
+  shutdownAllRemoteTunnels,
+  preserveRemoteTunnelForSupervisedRestart,
+  preserveAllRemoteTunnelsForSupervisedRestart,
+  __resetRemoteTunnelServicesForTests,
+  type RemoteLifecycleEvaluation,
+} from "./remote-tunnel-service.js";
+
 export type {
   CloudflareProviderConfig,
   ExternalTunnelInfo,

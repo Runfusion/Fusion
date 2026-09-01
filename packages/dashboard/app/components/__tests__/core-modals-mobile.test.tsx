@@ -1,4 +1,4 @@
-import { loadAllAppCss } from "../../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { describe, expect, it } from "vitest";
 
 
@@ -566,6 +566,23 @@ describe("core modals mobile css coverage", () => {
     );
     expect(actionButtonMatch).not.toBeNull();
     expect(actionButtonMatch![0]).toContain("min-height: 36px");
+    expect(actionButtonMatch![0]).toContain("flex: 0 1 auto");
+    expect(actionButtonMatch![0]).not.toContain("flex: 1 1 auto");
+    expect(actionButtonMatch![0]).not.toMatch(/flex-grow:\s*(?!0\b)\d/);
+
+    const baseCss = loadAllAppCssBaseOnly();
+    const iconOnlyRule = baseCss.match(
+      /\.task-form-description-actions \.task-form-inline-icon-btn\s*\{[^}]+\}/,
+    );
+    expect(iconOnlyRule).not.toBeNull();
+    expect(iconOnlyRule![0]).toContain("flex: 0 0 auto");
+    expect(iconOnlyRule![0]).toMatch(/min-width:\s*36px/);
+
+    const baseActionsRule = [...baseCss.matchAll(/\.task-form-description-actions\s*\{[^}]+\}/g)]
+      .map((match) => match[0])
+      .find((rule) => rule.includes("width: fit-content"));
+    expect(baseActionsRule).toBeDefined();
+    expect(baseActionsRule).toContain("width: fit-content");
 
     const quickFieldsTriggerMatch = mobileBlock.match(
       /\.new-task-quick-fields \.dep-trigger\s*\{[^}]+\}/,

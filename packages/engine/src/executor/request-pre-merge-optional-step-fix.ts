@@ -38,7 +38,7 @@ import type { Task, TaskStore, WorkflowReviewFinding, WorkflowStepResult as Core
 import {
   DEFAULT_MAX_POST_REVIEW_FIXES,
   DEFAULT_PLAN_REVIEW_REPLAN_CAP,
-  hasPendingRemediationWork,
+  hasPendingReviewRemediationWork,
   hasPreMergeRemediationAutoMergeHold,
   PLAN_REVIEW_GROUP_ID,
   resolveOptionalReviewRevisionBudget,
@@ -66,6 +66,10 @@ import {
   deriveWorkspaceReviewRemediation,
   hasDurableRepeatedWorkspaceReview,
 } from "./workspace-review-remediation.js";
+/* Both sides of this cycle export hoisted function declarations, so the deferred calls are safe. */
+import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
+import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
+import type { ReviewRemediationAttemptDescriptor } from "./recover-failed-pre-merge-step.js";
 import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
 import type {
   AppendReviewRemediationOptions,
@@ -80,6 +84,26 @@ function normalizeConvergenceText(value: string | undefined): string {
 }
 
 /*
+FNXC:ReviewRemediation 2026-08-31-08:24:
+The field separator MUST NOT be NUL. This signature was in-memory-only when it was written, so
+`\u0000` was a sound "cannot occur in the content" choice. FN-267 then PERSISTED it as
+`remediationAttemptSignature` on the step result -- and PostgreSQL rejects NUL in text/jsonb with
+SQLSTATE 22P05 (`unsupported Unicode escape sequence`). Every remediation claim write therefore
+THREW against a real database while passing every mock-store test, because a JS string carries
+`\u0000` happily.
+
+Measured on FN-270/FN-273: from the moment the claim protocol landed, a Code Review REVISE could
+never be claimed, so no fix steps were ever produced and the cards sat blocked overnight with an
+empty timeline. Reproduced against real PostgreSQL in
+`review-remediation-claim.pg.test.ts`; no mock-store test can observe this.
+
+UNIT SEPARATOR (U+001F) keeps the original property -- it cannot appear in a file path, a verdict,
+a fingerprint, or normalized reviewer prose -- and is storable. No migration is needed precisely
+because the broken write never persisted a single signature.
+*/
+const SIGNATURE_FIELD_SEPARATOR = "\u001F";
+
+/*
 FNXC:RepositoryScope 2026-08-21-02:17:
 R10 convergence is keyed by the actual review input: review node, repository, confirmed scope generation, exact diff fingerprint, blocking verdict, and normalized findings. Reviewer prose is presentation only; it may change without a new defect or remain unchanged after the underlying diff changes.
 */
@@ -88,8 +112,9 @@ export function reviewInputSignature(result: CoreWorkflowStepResult): string | u
     .map((finding) => `${normalizeConvergenceText(finding.filePath)}:${finding.line ?? ""}:${normalizeConvergenceText(finding.body)}`)
     .sort()
     .join("|");
+  const sep = SIGNATURE_FIELD_SEPARATOR;
   if (result.reviewInputFingerprint && result.verdict === "REVISE") {
-    return `${result.workflowStepId}\u0000${result.reviewInputFingerprint}\u0000${result.verdict}\u0000${singularFindings}`;
+    return `${result.workflowStepId}${sep}${result.reviewInputFingerprint}${sep}${result.verdict}${sep}${singularFindings}`;
   }
   const blocking = (result.repositoryReviewOutcomes ?? [])
     .filter((outcome) => outcome.status === "REVIEWED" && (outcome.verdict === "REVISE" || outcome.verdict === "RETHINK"))
@@ -103,14 +128,14 @@ export function reviewInputSignature(result: CoreWorkflowStepResult): string | u
         .map((finding) => `${normalizeConvergenceText(finding.filePath)}:${finding.line ?? ""}:${normalizeConvergenceText(finding.body)}`)
         .sort()
         .join("|");
-      return `${outcome.repository}\u0000${outcome.fingerprint ?? ""}\u0000${outcome.verdict}\u0000${findings}`;
+      return `${outcome.repository}${sep}${outcome.fingerprint ?? ""}${sep}${outcome.verdict}${sep}${findings}`;
     })
     .sort();
   if (blocking.length === 0) return undefined;
   const scopeRevision = result.repositoryScopeRevision === undefined
     ? ""
-    : `\u0000${result.repositoryScopeRevision}`;
-  return `${result.workflowStepId}${scopeRevision}\u0000${blocking.join("\u0001")}`;
+    : `${sep}${result.repositoryScopeRevision}`;
+  return `${result.workflowStepId}${scopeRevision}${sep}${blocking.join("\u001E")}`;
 }
 
 export function hasRepeatedUnchangedReview(task: Task, info: RequestPreMergeOptionalStepFixInfo): boolean {
@@ -187,14 +212,111 @@ export type RequestPreMergeOptionalStepFixDeps = {
   ) => Promise<void>;
 };
 
+/**
+ * FNXC:LifecycleContainment 2026-08-30-13:36:
+ * A claimed run executes against a fenced store, so EVERY durable branch below — not just the
+ * hand-off — re-asserts ownership before it writes. Supersession surfaces as a thrown sentinel and
+ * is converted here into a silent "nothing scheduled", which is exactly what an overtaken runner
+ * owes a newer review round: no log, no move, no convergence, no refusal.
+ */
 export async function requestPreMergeOptionalStepFix(
   deps: RequestPreMergeOptionalStepFixDeps,
   taskId: string,
   fallbackTask: Task,
   info: RequestPreMergeOptionalStepFixInfo,
+  options: { claim?: ReviewRemediationAttemptDescriptor } = {},
+): Promise<boolean> {
+  /*
+  FNXC:ReviewRemediation 2026-08-31-07:58:
+  A `false` from this function means BOTH "declined, correctly" and "could not, unexpectedly", and
+  the caller sees only the boolean. Of the 34 refusal exits below, roughly half narrate on the task
+  and the rest return in silence -- so a card can stop dead with a blocking review and NOTHING
+  written anywhere explaining why. Measured: FN-270 and FN-273 sat blocked for a full night, and
+  three separate diagnostic passes were spent deducing which exit had fired, because none of them
+  said so.
+
+  Rather than touch 34 sites (the churn that keeps missing the next one -- see the fence above for
+  the same lesson), observe whether the call narrated at all. Every honest refusal already writes to
+  the task; a `false` with no write is by definition the silent class, and only that class gets this
+  line. The message is diagnostic, not a verdict: it reports that remediation was declined without
+  explanation, which is the fact an operator needs to know a card is not merely slow.
+
+  Behaviour is unchanged -- this only observes and reports.
+  */
+  const baseStore = options.claim ? fenceStoreForClaim(deps.store, taskId, options.claim) : deps.store;
+  let narrated = false;
+  const narrationWitnesses = new Set(["logEntry", "addTaskComment"]);
+  const watchedStore = new Proxy(baseStore, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      const method = value as (...args: unknown[]) => unknown;
+      if (typeof property !== "string" || !narrationWitnesses.has(property)) return method.bind(target);
+      return (...args: unknown[]) => {
+        narrated = true;
+        return method.apply(target, args);
+      };
+    },
+  }) as typeof baseStore;
+  const scopedDeps = { ...deps, store: watchedStore };
+  let scheduled = false;
+  try {
+    scheduled = await requestPreMergeOptionalStepFixInner(scopedDeps, taskId, fallbackTask, info, options);
+    return scheduled;
+  } catch (err: unknown) {
+    if (err instanceof ClaimSupersededError) return false;
+    throw err;
+  } finally {
+    if (!scheduled && !narrated) {
+      const gate = info.nodeId ?? info.stepName;
+      const silentDecline = `Pre-merge remediation declined without explanation — no fix steps were produced for '${gate}'`;
+      executorLog.warn(`${taskId}: ${silentDecline} (status=${info.status}, verdict=${info.verdict ?? "none"}, findings=${info.findings?.length ?? 0}, claimed=${Boolean(options.claim)})`);
+      await deps.store.logEntry(
+        taskId,
+        silentDecline,
+        `Gate: ${gate}\nReported status: ${info.status}\nReviewer verdict: ${info.verdict ?? "(none)"}\nFindings: ${info.findings?.length ?? 0}\n`
+        + "The remediation producer refused this round without recording a reason. That is a defect in the "
+        + "producer, not an operator action: a blocking review must never stop a card silently.",
+        deps.getRunContextFor(taskId),
+      ).catch(() => undefined);
+    }
+  }
+}
+
+async function requestPreMergeOptionalStepFixInner(
+  deps: RequestPreMergeOptionalStepFixDeps,
+  taskId: string,
+  fallbackTask: Task,
+  info: RequestPreMergeOptionalStepFixInfo,
+  options: { claim?: ReviewRemediationAttemptDescriptor } = {},
 ): Promise<boolean> {
   if (info.phase !== "pre-merge") return false;
   if (info.status !== "advisory_failure" && info.status !== "failed") return false;
+
+  /*
+  FNXC:LifecycleContainment 2026-08-30-13:36:
+  FN-267: an admission claim taken by a CALLER only fences production if it is re-asserted inside
+  this requester, immediately before the real hand-off. The graph-failure backstop wins its claim,
+  then awaits this function; without the re-assert a newer review round landing in between would be
+  remediated and bounced from the older round's findings. A refused re-assert aborts silently — no
+  append, no send-back, no message — and the caller's fenced resolution then refuses too, so the
+  overtaken attempt can neither clear nor condemn the newer round.
+  */
+  const holdsClaim = async (): Promise<boolean> => {
+    if (!options.claim) return true;
+    const reasserted = await reassertRemediationAttempt(deps.store, taskId, options.claim);
+    return reasserted.applied;
+  };
+  /*
+  FNXC:LifecycleContainment 2026-08-30-13:36:
+  Validation runs BEFORE the first durable act, not only before the hand-off. A claimed run can
+  legitimately reach a refusal or convergence branch instead of an append — an operator hold, the
+  empty-content close, or the budget/repeat ladder — and each of those NARRATES on the task or
+  routes escalation. A log entry cannot be withdrawn by a later fenced refusal, so a stale runner
+  that reached those branches would permanently attribute an old round's outcome to a newer one.
+  Each durable class re-validates immediately before acting; a lost claim aborts silently.
+  */
+  if (!await holdsClaim()) return false;
 
   const liveTask = await deps.store.getTask(taskId).catch(() => fallbackTask);
   /*
@@ -419,7 +541,9 @@ export async function requestPreMergeOptionalStepFix(
   */
   const emptyResult = liveTask.workflowStepResults?.find((result) =>
     result.workflowStepId === info.nodeId && isDefiniteEmptyCodeReviewRevise(result));
-  if (emptyResult) {
+  const closeEmptyReviewContent = async (): Promise<boolean> => {
+    if (!emptyResult) return false;
+    if (!await holdsClaim()) return false;
     const outcome = await routeReviewConvergenceLadder(deps, taskId, {
       kind: "empty-review-input",
       workflowStepId: emptyResult.workflowStepId,
@@ -436,20 +560,33 @@ export async function requestPreMergeOptionalStepFix(
         expectedReviewInputFingerprint: emptyResult.reviewInputFingerprint!,
       },
     });
-    if (outcome === "empty-content-terminalized") return false;
-  }
+    return outcome === "empty-content-terminalized";
+  };
 
-  const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
   /*
    * FNXC:ReviewGatedRemediation 2026-08-23-05:23:
    * Review-gated handoff runs only after the shared operator-hold, artifact, and provider-verdict
    * guards above. A deterministic Verification failure has no reviewer verdict; Code Review still
    * requires a genuine REVISE so transport failures cannot manufacture remediation work.
+   *
+   * FNXC:ReviewEmptyContent 2026-08-30-13:36:
+   * FN-267 moves the empty-diff close BEHIND the producer for the shapes a producer serves. It kept
+   * its original position ahead of every Code Review budget branch, so an empty-diff REVISE with no
+   * usable findings parked terminally before the deterministic Fix step could ever be written — the
+   * exact "a REVISE blocks the card because fix steps were absent" outcome the operator forbids. It
+   * stays first for gates with no producer, and becomes the decline fallback for the rest.
    */
   const remediationGate = resolveReviewRemediationGate(info);
+  const producesRemediation = remediationGate === "Verification"
+    || (remediationGate === "Code Review" && info.verdict === "REVISE");
+  if (!producesRemediation && await closeEmptyReviewContent()) return false;
+
+  const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
   if (remediationGate === "Verification") {
+    if (!await holdsClaim()) return false;
     const remediationOutcome = await deps.appendReviewRemediationSteps(liveTask, info);
     if (remediationOutcome === "appended") return true;
+    if (await closeEmptyReviewContent()) return false;
     return false;
   }
 
@@ -490,6 +627,8 @@ export async function requestPreMergeOptionalStepFix(
         : hasRepeatedUnchangedReview(liveTask, info)
       : hasRepeatedUnchangedReview(liveTask, info);
     const routeStop = async (stop: { kind: "repeat-unchanged" | "budget-exhausted"; attempt: number }): Promise<boolean> => {
+      /* Convergence routing and its narration are durable: never speak for a round we no longer own. */
+      if (!await holdsClaim()) return false;
       const outcome = await routeReviewConvergenceLadder(deps, taskId, {
         ...stop,
         workflowStepId: info.nodeId,
@@ -523,6 +662,7 @@ export async function requestPreMergeOptionalStepFix(
         : undefined;
     if (stop) return routeStop(stop);
 
+    if (!await holdsClaim()) return false;
     const remediationOutcome = await deps.appendReviewRemediationSteps(liveTask, info, {
       attemptClaim: {
         revisionKey,
@@ -539,7 +679,10 @@ export async function requestPreMergeOptionalStepFix(
         attempt: countOptionalStepRevisionAttempts(current, revisionKey, info.stepName),
       });
     }
-    return remediationOutcome === "appended";
+    if (remediationOutcome === "appended") return true;
+    /* The producer genuinely declined; only now may a provably empty round close terminally. */
+    if (await closeEmptyReviewContent()) return false;
+    return false;
   }
 
   /*
@@ -710,11 +853,12 @@ export async function requestPreMergeOptionalStepFix(
     );
     return false;
   }
-  if (!hasPendingRemediationWork(liveTask)) {
+  const stepReopenPolicy = resolveStepReopenPolicy(workflowIr);
+  if (stepReopenPolicy === "none" && !hasPendingReviewRemediationWork(liveTask, { stepReopenPolicy })) {
     await deps.store.logEntry(
       taskId,
       "Review revision released — no pending remediation work",
-      "A review-to-WIP transition requires a named pending remediation step.",
+      "This workflow requires named remediation before returning to implementation.",
       deps.getRunContextFor(taskId),
     );
     return false;
@@ -730,7 +874,7 @@ export async function requestPreMergeOptionalStepFix(
     { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
     info.findings,
   ] as const;
-  const stepReopenPolicy = resolveStepReopenPolicy(workflowIr);
+  if (!await holdsClaim()) return false;
   await deps.sendTaskBackForFix(...sendArgs, remediationCheckout.persist, stepReopenPolicy);
   return true;
 }

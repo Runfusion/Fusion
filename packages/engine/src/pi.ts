@@ -1138,6 +1138,11 @@ export interface AgentOptions {
    * Defaults to false so validators/read-only helpers do not inherit arbitrary external tools.
    */
   allowMcpToolsInReadonly?: boolean;
+  /**
+   * Configured MCP server names a read-only session may use. This only narrows an explicit
+   * `allowMcpToolsInReadonly` opt-in; omit it to preserve the reviewed planning-lane behavior.
+   */
+  readonlyMcpServerAllowlist?: string[];
   /** Test seam for MCP session tools; production uses the SDK client/transport factories. */
   mcpClientFactory?: McpClientFactory;
   /** Test seam for MCP retry timing. */
@@ -2857,7 +2862,19 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     // names (`read`, `bash`, ...) as the built-ins they replace.
     let mcpToolset: McpSessionToolset | undefined;
     const allowReadonlyMcpTools = options.allowMcpToolsInReadonly === true;
-    if (forwardedMcpServers.length > 0 && (!isReadonly || allowReadonlyMcpTools)) {
+    const readonlyMcpServerAllowlist = options.readonlyMcpServerAllowlist === undefined
+      ? undefined
+      : new Set(options.readonlyMcpServerAllowlist.map((name) => name.trim()).filter(Boolean));
+    const mcpServersToConnect = isReadonly && allowReadonlyMcpTools && readonlyMcpServerAllowlist !== undefined
+      ? forwardedMcpServers.filter((server) => readonlyMcpServerAllowlist.has(server.name))
+      : forwardedMcpServers;
+    /*
+     * FNXC:McpConfig 2026-09-01-06:06:
+     * Read-only workflow lanes may receive MCP only from explicitly named servers. Narrow before
+     * connection so excluded servers never start, then re-check each tool by recorded origin;
+     * the dashboard's reviewed blanket opt-in remains unchanged when no allowlist is supplied.
+     */
+    if (mcpServersToConnect.length > 0 && (!isReadonly || allowReadonlyMcpTools)) {
       /*
        * FNXC:McpConfig 2026-06-27-14:06:
        * pi-coding-agent does not have a createAgentSession `mcpServers` option, so passing resolved servers is silently ignored. Connect MCP servers here and merge namespaced tools into the same customTools filtering/gating/boundary pipeline as engine tools before the session sees them.
@@ -2865,7 +2882,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
        * FNXC:McpConfig 2026-06-29-00:00:
        * Planning and mission interviews are read-only lanes that still need operator-configured documentation/context MCP tools. They must opt in explicitly; other read-only sessions continue to skip MCP connection so unknown external tools do not bypass the read-only allowlist by default.
        */
-      mcpToolset = await connectMcpSessionTools(forwardedMcpServers, {
+      mcpToolset = await connectMcpSessionTools(mcpServersToConnect, {
         cwd: options.cwd,
         clientFactory: options.mcpClientFactory,
         logger: piLog,
@@ -2882,7 +2899,10 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         piLog.warn(`MCP session continuing with unavailable servers: count=${bootstrapFailures.length}`);
       }
     } else if (forwardedMcpServers.length > 0 && isReadonly) {
-      piLog.debug(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped`);
+      const reason = !allowReadonlyMcpTools
+        ? "no-readonly-opt-in"
+        : "readonly-allowlist-no-match";
+      piLog.log(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped: reason=${reason}`);
     }
 
     const mcpReadonlyTools = new Set(mcpToolset?.tools ?? []);
@@ -2893,7 +2913,13 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     const readonlyFilteredCustomTools = isReadonly
       ? filterCustomToolsForReadonly(
           candidateCustomTools,
-          allowReadonlyMcpTools ? { allowTool: (tool) => mcpReadonlyTools.has(tool) } : {},
+          allowReadonlyMcpTools
+            ? {
+                allowTool: (tool) => readonlyMcpServerAllowlist === undefined
+                  ? mcpReadonlyTools.has(tool)
+                  : readonlyMcpServerAllowlist.has(mcpToolset?.serverByToolName?.get(tool.name) ?? ""),
+              }
+            : {},
         )
       : { allowed: candidateCustomTools, denied: [] };
     const allowlistFilteredCustomTools = {

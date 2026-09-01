@@ -200,7 +200,7 @@ describe("log severity spam contract (source)", () => {
     expect(notify).toMatch(/schedulerLog\.log\(`NotificationService\.maybeNotify dispatch failed key=/);
   });
 
-  it("pi session-purpose runtime routing and skip bookkeeping uses debug", () => {
+  it("pi session-purpose runtime routing uses debug while readonly MCP skips are visible", () => {
     const runtime = readSrc("execution/runtime-resolution.ts");
     const pi = readSrc("pi.ts");
     expect(runtime).toMatch(/runtimeLog\.debug\(`\[\$\{sessionPurpose\}\] No runtime hint configured/);
@@ -208,7 +208,7 @@ describe("log severity spam contract (source)", () => {
     expect(runtime).toMatch(/runtimeLog\.debug\(`\[\$\{sessionPurpose\}\] Using configured plugin runtime/);
     expect(runtime).toMatch(/runtimeLog\.error\(`\[\$\{sessionPurpose\}\] Error resolving plugin runtime/);
     expect(pi).toMatch(/piLog\.debug\(`\$\{skipReason\} session — host extensions/);
-    expect(pi).toMatch(/piLog\.debug\(`readonly session — MCP servers/);
+    expect(pi).toMatch(/piLog\.log\(`readonly session — MCP servers/);
   });
 
   it("checkpoint bookkeeping (self-improve + RETHINK rewind) uses debug", () => {

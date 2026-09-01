@@ -204,14 +204,14 @@ describe("acquireTaskWorktree", () => {
     const [first, second] = await Promise.all([
       acquireTaskWorktree({
         task: { ...task, id: "FN-100", worktree: null, branch: sharedBranch, branchContext: sharedContext },
-        rootDir: process.cwd(),
+        rootDir: makeRepo(),
         store,
         settings: {},
         createWorktree,
       }),
       acquireTaskWorktree({
         task: { ...task, id: "FN-101", worktree: null, branch: sharedBranch, branchContext: sharedContext },
-        rootDir: process.cwd(),
+        rootDir: makeRepo(),
         store,
         settings: {},
         createWorktree,
@@ -230,7 +230,7 @@ describe("acquireTaskWorktree", () => {
 
     const perTaskDerived = await acquireTaskWorktree({
       task: { ...task, id: "FN-102", worktree: null, branch: "fusion/custom-derived", branchContext: { assignmentMode: "per-task-derived", groupId: "BG-1", source: "planning" } },
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: {},
       createWorktree,
@@ -238,7 +238,7 @@ describe("acquireTaskWorktree", () => {
 
     const ungrouped = await acquireTaskWorktree({
       task: { ...task, id: "FN-103", worktree: null, branch: null },
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: {},
       createWorktree,
@@ -526,13 +526,14 @@ describe("acquireTaskWorktree", () => {
   it("reconciles a durable quarantine for an absent pinned path before recreation", async () => {
     const rootDir = makeRepo();
     const worktreesDir = join(rootDir, ".worktrees");
+    const reservationWorktreesDir = join(rootDir, ".fusion", "worktrees");
     const pinnedPath = join(worktreesDir, "fn-1");
     mkdirSync(worktreesDir, { recursive: true });
     git(rootDir, `git worktree add -b fusion/fn-1 ${JSON.stringify(pinnedPath)} main`);
     rmSync(pinnedPath, { recursive: true, force: true });
     const failedArchiveReservation = await acquireWorktreePathReservation({
       canonicalPath: pinnedPath,
-      worktreesDir,
+      worktreesDir: reservationWorktreesDir,
       rootDir,
     });
     await failedArchiveReservation.quarantine("simulated archive failure");
@@ -552,11 +553,12 @@ describe("acquireTaskWorktree", () => {
   it("refuses quarantine reconciliation when an active session owns the absent pinned path", async () => {
     const rootDir = makeRepo();
     const worktreesDir = join(rootDir, ".worktrees");
+    const reservationWorktreesDir = join(rootDir, ".fusion", "worktrees");
     const pinnedPath = join(worktreesDir, "fn-1");
     mkdirSync(worktreesDir, { recursive: true });
     const failedArchiveReservation = await acquireWorktreePathReservation({
       canonicalPath: pinnedPath,
-      worktreesDir,
+      worktreesDir: reservationWorktreesDir,
       rootDir,
     });
     await failedArchiveReservation.quarantine("simulated archive failure");
@@ -741,7 +743,7 @@ describe("acquireTaskWorktree", () => {
   it("does not apply the native stale-base refresh to fresh Worktrunk acquisitions", async () => {
     const result = await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: { worktrunk: { enabled: true } } as any,
       backend: { kind: "worktrunk" } as any,
@@ -854,7 +856,7 @@ describe("acquireTaskWorktree", () => {
     const rootDir = makeRepo();
     const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
     vi.mocked(classifyTaskWorktree).mockImplementationOnce(actualPool.classifyTaskWorktree);
-    const freshPath = join(rootDir, ".worktrees", "fn-6861-fresh");
+    const freshPath = join(rootDir, ".fusion", "worktrees", "fn-6861-fresh");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });
     const auditGit = vi.fn().mockResolvedValue(undefined);
 
@@ -874,16 +876,88 @@ describe("acquireTaskWorktree", () => {
       isResume: false,
     });
     expect(result.worktreePath).not.toBe(rootDir);
-    expect(result.worktreePath).toContain(`${join(rootDir, ".worktrees")}/`);
+    expect(result.worktreePath).toContain(`${join(rootDir, ".fusion", "worktrees")}/`);
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
+  });
+
+  /*
+   * FNXC:BranchWriteOrigin 2026-08-28-10:12:
+   * #3523 review (Greptile P1) regressions: branch-value writes carrying operator-provided branches must
+   * persist "operator" provenance; a hardcoded "engine" stamp made those branches eligible for engine cleanup.
+   */
+  it("#3523 stamps operator provenance when fresh-create finalizes an operator-override branch", async () => {
+    const rootDir = makeRepo();
+    const freshPath = join(rootDir, ".worktrees", "op-fresh");
+    const overrideTask = {
+      ...task,
+      branch: "operator/branch",
+      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "operator/branch" } },
+    } as any;
+
+    await acquireTaskWorktree({
+      task: overrideTask,
+      rootDir,
+      store,
+      settings: {} as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: freshPath, branch: "operator/branch" }),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "operator/branch", branchWriteOrigin: "operator" });
+  });
+
+  it("#3523 stamps operator provenance when pool acquisition adopts an operator-override branch", async () => {
+    const overrideTask = {
+      ...task,
+      branch: "operator/branch",
+      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "operator/branch" } },
+    } as any;
+
+    const result = await acquireTaskWorktree({
+      task: overrideTask,
+      rootDir: process.cwd(),
+      store,
+      settings: { recycleWorktrees: true } as any,
+      pool: {
+        acquire: (_taskId: string) => "/tmp/pooled-operator",
+        prepareForTask: vi.fn().mockResolvedValue({ branch: "operator/branch", worktreePath: "/tmp/pooled-operator", reclaimed: false }),
+        release: vi.fn(),
+      } as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "operator/branch" }),
+    });
+
+    expect(result.source).toBe("pool");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled-operator", branch: "operator/branch", branchWriteOrigin: "operator" });
+  });
+
+  it("#3523 keeps operator provenance when a Fusion-named override is sibling-renamed by a branch collision", async () => {
+    // Greptile P1 (re-review of 1c02ddd0): a bare branch collision renames the
+    // requested `fusion/fn-1` to `fusion/fn-1-2`; the renamed branch is still
+    // the operator's and must persist as operator-owned.
+    const rootDir = makeRepo();
+    const freshPath = join(rootDir, ".worktrees", "op-renamed");
+    const overrideTask = {
+      ...task,
+      branch: "fusion/fn-1",
+      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "fusion/fn-1" } },
+    } as any;
+
+    await acquireTaskWorktree({
+      task: overrideTask,
+      rootDir,
+      store,
+      settings: {} as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1-2" }),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1-2", branchWriteOrigin: "operator" });
   });
 
   it("FN-6922 rejects a canonical-equal resumed repo root before returning", async () => {
     const rootDir = makeRepo();
     const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
     vi.mocked(classifyTaskWorktree).mockImplementationOnce(actualPool.classifyTaskWorktree);
-    const freshPath = join(rootDir, ".worktrees", "fn-6922-trailing-slash");
+    const freshPath = join(rootDir, ".fusion", "worktrees", "fn-6922-trailing-slash");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });
 
     const result = await acquireTaskWorktree({
@@ -903,7 +977,7 @@ describe("acquireTaskWorktree", () => {
   it("FN-6922 self-heals when the return guard catches a mocked repo-root resume", async () => {
     const rootDir = makeRepo();
     vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({ ok: true });
-    const freshPath = join(rootDir, ".worktrees", "fn-6922-guard-fresh");
+    const freshPath = join(rootDir, ".fusion", "worktrees", "fn-6922-guard-fresh");
     const createWorktree = vi.fn().mockResolvedValue({ path: freshPath, branch: "fusion/fn-1" });
     const auditGit = vi.fn().mockResolvedValue(undefined);
 
@@ -917,7 +991,7 @@ describe("acquireTaskWorktree", () => {
     });
 
     expect(result).toMatchObject({ worktreePath: freshPath, source: "fresh", isResume: false });
-    expect(createWorktree).toHaveBeenCalledWith("fusion/fn-1", expect.stringContaining(`${join(rootDir, ".worktrees")}/`), "FN-1", "main", false);
+    expect(createWorktree).toHaveBeenCalledWith("fusion/fn-1", expect.stringContaining(`${join(rootDir, ".fusion", "worktrees")}/`), "FN-1", "main", false);
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "fusion/fn-1", branchWriteOrigin: "engine" });
   });
 
@@ -946,7 +1020,7 @@ describe("acquireTaskWorktree", () => {
     const createWorktree = vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" });
     const result = await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: {},
       createWorktree,
@@ -961,7 +1035,7 @@ describe("acquireTaskWorktree", () => {
 
     await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: {},
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),
@@ -1061,7 +1135,7 @@ describe("acquireTaskWorktree", () => {
 
     await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: { worktreeInitCommand: "./bootstrap" } as any,
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),
@@ -1082,7 +1156,7 @@ describe("acquireTaskWorktree", () => {
 
     await expect(acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: {},
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),
@@ -1102,7 +1176,7 @@ describe("acquireTaskWorktree", () => {
     const runConfiguredCommand = vi.fn();
     await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: { worktreeInitCommand: "pnpm i" } as any,
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),
@@ -1117,7 +1191,7 @@ describe("acquireTaskWorktree", () => {
 
     await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: { worktreeInitCommand: "pnpm install" } as any,
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),
@@ -1184,7 +1258,7 @@ describe("acquireTaskWorktree", () => {
 
     await expect(acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: makeRepo(),
       store,
       settings: { worktreeInitCommand: "pnpm install --frozen-lockfile" } as any,
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),

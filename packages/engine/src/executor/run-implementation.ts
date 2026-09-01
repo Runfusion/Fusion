@@ -791,6 +791,7 @@ export async function runImplementation(
             }),
           taskEnv,
           addActiveWorktree: deps.addActiveWorktree,
+          refreshStaleBase: true,
         });
         task = workspace.task;
         workspaceTaskWorktreeDir = workspace.taskWorktreeDir;

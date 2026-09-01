@@ -11,7 +11,7 @@ import type {
   WorkflowStepResult,
   WorkflowStepNotRunReason,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker, requiresContentReviewProof } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -885,7 +885,7 @@ export class WorkflowGraphExecutor {
               phase: "pre-merge",
               source: "optional-group",
               status: "skipped",
-              bypassedBy: "fast-mode",
+              bypassedBy: FAST_MODE_BYPASS_ACTOR,
               bypassedAt,
               bypassReason: "Fast mode bypasses pre-merge workflow gates",
               bypassedFromStatus: "absent",
@@ -1226,7 +1226,8 @@ export class WorkflowGraphExecutor {
           const repositoryScopeRevision = this.workflowReviewKind(node) && typeof exitContextPatch?.repositoryScopeRevision === "number"
             ? exitContextPatch.repositoryScopeRevision
             : undefined;
-          const reviewInputFingerprint = this.workflowReviewKind(node) && typeof exitContextPatch?.reviewInputFingerprint === "string"
+          const reviewInputFingerprint = requiresContentReviewProof(node.id, { reviewKind: this.workflowReviewKind(node) })
+            && typeof exitContextPatch?.reviewInputFingerprint === "string"
             ? exitContextPatch.reviewInputFingerprint
             : undefined;
           const reviewedCommitSha = this.workflowReviewKind(node) && typeof exitContextPatch?.reviewedCommitSha === "string"
@@ -2349,7 +2350,8 @@ export class WorkflowGraphExecutor {
     const repositoryScopeRevision = this.workflowReviewKind(node) && typeof contextPatch.repositoryScopeRevision === "number"
       ? contextPatch.repositoryScopeRevision
       : undefined;
-    const reviewInputFingerprint = this.workflowReviewKind(node) && typeof contextPatch.reviewInputFingerprint === "string"
+    const reviewInputFingerprint = requiresContentReviewProof(node.id, { reviewKind: this.workflowReviewKind(node) })
+      && typeof contextPatch.reviewInputFingerprint === "string"
       ? contextPatch.reviewInputFingerprint
       : undefined;
     const reviewedCommitSha = this.workflowReviewKind(node) && typeof contextPatch.reviewedCommitSha === "string"

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR, FAST_LANE_STEP_NAME, type TaskDetail, type WorkflowIr, type WorkflowStepResult } from "@fusion/core";
 
@@ -51,6 +52,12 @@ function graph(): WorkflowIr {
 }
 
 describe("FN-252 fast graph route", () => {
+  it("routes the persisted bypass actor through the shared core constant", async () => {
+    const source = await readFile(new URL("../workflows/workflow-graph-executor.ts", import.meta.url), "utf8");
+    expect(source).toContain("bypassedBy: FAST_MODE_BYPASS_ACTOR");
+    expect(source).not.toContain('bypassedBy: "fast-mode"');
+  });
+
   it("bypasses planning and enabled pre-merge groups while preserving execution and completion summary", async () => {
     const planning = vi.fn(async () => ({ outcome: "success" as const }));
     const execute = vi.fn(async () => ({ outcome: "success" as const }));

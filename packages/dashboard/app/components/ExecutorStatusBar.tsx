@@ -252,10 +252,18 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   // hook count between renders (Rules of Hooks).
   if (hideWhenKeyboardOpen) return null;
 
+  /*
+  FNXC:ExecutorStatusBar 2026-09-01-05:36:
+  Keyboard-collapse and mobile modifiers must reach every render branch. An error,
+  loading, or connecting footer otherwise retains the nav-height reservation and
+  floats above the keyboard.
+  */
+  const baseClassName = `executor-status-bar${isMobile ? " executor-status-bar--mobile" : ""}${keyboardOpen ? " executor-status-bar--keyboard-open" : ""}`;
+
   if (error) {
     if (isLikelyTabSuspensionError(error)) {
       return (
-        <div className="executor-status-bar executor-status-bar--connecting" role="status" aria-label={t("executor.status", "Executor status")}>
+        <div className={`${baseClassName} executor-status-bar--connecting`} role="status" aria-label={t("executor.status", "Executor status")}>
           <span className="executor-status-bar__connecting">
             <span className="executor-status-bar__indicator executor-status-bar__indicator--connecting executor-status-bar__indicator--active" aria-hidden="true" />
             {t("executor.connecting", "Connecting…")}
@@ -265,7 +273,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
     }
 
     return (
-      <div className="executor-status-bar executor-status-bar--error" role="status" aria-label={t("executor.status", "Executor status")}>
+      <div className={`${baseClassName} executor-status-bar--error`} role="status" aria-label={t("executor.status", "Executor status")}>
         <span className="executor-status-bar__error">
           <AlertTriangle size={14} />
           {error}
@@ -280,7 +288,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
    */
   if (loading && stats.runningTaskCount === 0 && !hasRenderedPopulatedStatsRef.current) {
     return (
-      <div className="executor-status-bar executor-status-bar--loading" role="status" aria-label={t("executor.status", "Executor status")}>
+      <div className={`${baseClassName} executor-status-bar--loading`} role="status" aria-label={t("executor.status", "Executor status")}>
         <LoadingSpinner className="executor-status-bar__loading-text" label={t("executor.loading", "Loading...")} />
       </div>
     );
@@ -288,7 +296,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
 
   return (
     <div
-      className={`executor-status-bar${isMobile ? " executor-status-bar--mobile" : ""}${stats.executorState === "running" ? " executor-status-bar--running" : ""}${keyboardOpen ? " executor-status-bar--keyboard-open" : ""}`}
+      className={`${baseClassName}${stats.executorState === "running" ? " executor-status-bar--running" : ""}`}
       role="status"
       aria-label={t("executor.status", "Executor status")}
     >

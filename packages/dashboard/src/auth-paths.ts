@@ -8,6 +8,7 @@ export interface StoredAuthProvider {
   refresh?: string;
   expires?: number;
   accountId?: string;
+  accountFingerprint?: string;
 }
 
 export function getFusionAgentDir(home = process.env.HOME || process.env.USERPROFILE || homedir()): string {

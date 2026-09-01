@@ -75,6 +75,46 @@ describe("blockOuterDispatchWhenFileScopeLeaseHeld", () => {
     expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
   });
 
+  it("does not re-hold a workspace task that already owns repository checkouts", async () => {
+    const holder = makeTask({ id: "FN-HOLDER", column: "in-progress" });
+    const candidate = makeTask({ workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-candidate/repo-a" } } as Task["workspaceWorktrees"] });
+    const store = createStore([holder, candidate], {
+      [holder.id]: ["repo-a/src/shared.ts"],
+      [candidate.id]: ["repo-a/src/shared.ts"],
+    });
+
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(false);
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+  });
+
+  it("holds a fresh workspace task with no repository checkouts", async () => {
+    const holder = makeTask({ id: "FN-HOLDER", column: "in-progress" });
+    const candidate = makeTask({ workspaceWorktrees: {} });
+    const store = createStore([holder, candidate], {
+      [holder.id]: ["repo-a/src/shared.ts"],
+      [candidate.id]: ["repo-a/src/shared.ts"],
+    });
+
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(true);
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledOnce();
+  });
+
+  it("uses a workspace review checkout as an active holder", async () => {
+    const holder = makeTask({
+      id: "FN-HOLDER",
+      column: "in-review",
+      workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-holder/repo-a" } } as Task["workspaceWorktrees"],
+    });
+    const candidate = makeTask();
+    const store = createStore([holder, candidate], {
+      [holder.id]: ["repo-a/src/shared.ts"],
+      [candidate.id]: ["repo-a/src/shared.ts"],
+    });
+
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(true);
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(candidate.id, expect.objectContaining({ overlapBlockedBy: holder.id }));
+  });
+
   it("does not apply overlap admission when grouping is disabled", async () => {
     const holder = makeTask({ id: "FN-HOLDER", column: "in-progress" });
     const candidate = makeTask();

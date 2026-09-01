@@ -1,3 +1,5 @@
+import { isForeignTaskEvent, readTaskEventProjectId } from "./taskEventProjectScope";
+
 /*
 FNXC:BranchGroupDetails 2026-06-30-18:04:
 Branch group summaries derive membership and landed completion from tasks, so dashboard subscribers refetch on each task lifecycle SSE event that can change those values.
@@ -10,9 +12,7 @@ export function shouldRefreshBranchGroupForTaskEvent(event: MessageEvent, projec
   if (!projectId) return true;
 
   try {
-    const payload = JSON.parse(event.data) as { projectId?: string; task?: { projectId?: string } };
-    const payloadProjectId = payload.projectId ?? payload.task?.projectId;
-    return !payloadProjectId || payloadProjectId === projectId;
+    return !isForeignTaskEvent(readTaskEventProjectId(JSON.parse(event.data)), projectId);
   } catch {
     return true;
   }

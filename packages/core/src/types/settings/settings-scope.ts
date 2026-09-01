@@ -1495,7 +1495,9 @@ export interface ProjectSettings {
    *  override only specified fields and inherit the rest. */
   worktrunk?: WorktrunkSettings;
   /** Optional container directory for task worktrees.
-   *  When unset, worktrees default to `<projectRoot>/.worktrees`.
+   *  When unset, worktrees default to `<projectRoot>/.fusion/worktrees`.
+   *  While unset, a pre-existing `<projectRoot>/.worktrees` root remains honored
+   *  for containment and cleanup sweeps so historic checkouts are not stranded.
    *  Supports leading `~` expansion and the `{repo}` token (basename of the project root).
    *  Accepts absolute paths or paths relative to the project root.
    *  Affects newly-created worktrees and pool/self-healing directory scans only;

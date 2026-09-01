@@ -329,6 +329,12 @@ interface ListViewProps {
   onCreateWorkflow?: () => void;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  A kept-alive host leaves ListView mounted while hidden. Inactive preserves local filters and
+  selection, but must release the shared workflow-header slot until this is the visible view.
+  */
+  active?: boolean;
 }
 
 
@@ -422,6 +428,7 @@ export function ListView({
   onOpenWorkflowEditor,
   onCreateWorkflow,
   workflowControlsInHeader = false,
+  active = true,
 }: ListViewProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
@@ -475,12 +482,12 @@ export function ListView({
   const { confirm, confirmWithChoice, confirmWithSelect } = useConfirm();
 
   useEffect(() => {
-    if (!workflowControlsInHeader || typeof document === "undefined") {
+    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
       setHeaderWorkflowSlot(null);
       return;
     }
     setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [workflowControlsInHeader, viewportMode]);
+  }, [active, workflowControlsInHeader, viewportMode]);
 
   // Column visibility state - initialize from localStorage or reduced default columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => readVisibleColumns(projectId));
@@ -2540,8 +2547,13 @@ export function ListView({
 
     FNXC:WorkflowControls 2026-06-20-15:43:
     ListView now has edit parity through WorkflowSwitcher row actions and no longer renders a standalone create icon, preventing empty button shells across desktop and mobile header placements.
+
+    FNXC:MainViewKeepAlive 2026-08-31-14:54:
+    A cached header slot survives the render where a retained List becomes inactive, before its
+    active-gate effect clears state. Restrict the portal at render time so that commit leaves the
+    shared slot empty and keeps the hidden toolbar inline.
     */
-    return workflowControlsInHeader && headerWorkflowSlot
+    return active && workflowControlsInHeader && headerWorkflowSlot
       ? createPortal(workflowControl, headerWorkflowSlot)
       : workflowControl;
   };

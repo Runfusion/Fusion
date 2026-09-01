@@ -30,6 +30,7 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/agents/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource, isTaskReverted } from "../utils/taskRevert";
+import { isForeignTaskEvent, readTaskEventProjectId } from "../utils/taskEventProjectScope";
 import {
   isArchivedColumnRole,
   isCompleteColumnRole,
@@ -52,6 +53,7 @@ import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
 import { runDuplicateTaskAction } from "../utils/duplicateTaskAction";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { PreciseTimestamp } from "./PreciseTimestamp";
 import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrPanel } from "./PrPanel";
 import { PrCreateModal } from "./PrCreateModal";
@@ -2036,7 +2038,7 @@ export function TaskDetailContent({
       try {
         const updatedTask = JSON.parse(e.data);
         // Only update if this is for our task and has workflow step results
-        if (updatedTask.id === task.id && Array.isArray(updatedTask.workflowStepResults)) {
+        if (!isForeignTaskEvent(readTaskEventProjectId(updatedTask), projectId) && updatedTask.id === task.id && Array.isArray(updatedTask.workflowStepResults)) {
           setWorkflowResults(updatedTask.workflowStepResults);
           setWorkflowResultsLoadState("succeeded");
         }
@@ -4580,7 +4582,7 @@ export function TaskDetailContent({
     const handleTaskUpdated = (event: MessageEvent) => {
       try {
         const updatedTask = JSON.parse(event.data) as { id?: unknown };
-        if (updatedTask.id === task.id) scheduleResync();
+        if (!isForeignTaskEvent(readTaskEventProjectId(updatedTask), projectId) && updatedTask.id === task.id) scheduleResync();
       } catch {
         // FNXC:TaskActivityFeedFreshness 2026-08-28-00:13: Ignore malformed stream payloads; the next authoritative resync remains available.
       }
@@ -6254,9 +6256,21 @@ export function TaskDetailContent({
                               data-stall-highlight={isHighlighted ? "true" : undefined}
                             >
                               <div className="detail-log-header">
-                                <span className="detail-log-timestamp">
-                                  {formatTimestamp(entry.timestamp)}
-                                </span>
+                                {/*
+                                FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+                                FN-272 keeps Feed's compact relative timestamp for scanability and adds the task action's precise local wall-clock time beside it.
+                                This wrapper exists only at the activity-log render site, leaving task metadata timestamps on their established relative contract.
+                                */}
+                                <div className="detail-log-timestamps">
+                                  <span className="detail-log-timestamp">
+                                    {formatTimestamp(entry.timestamp)}
+                                  </span>
+                                  <PreciseTimestamp
+                                    timestamp={entry.timestamp}
+                                    className="detail-log-precise-timestamp"
+                                    testId="task-activity-precise-timestamp"
+                                  />
+                                </div>
                                 <span className="detail-log-action">{action}</span>
                               </div>
                               {outcome && (

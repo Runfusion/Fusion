@@ -1,6 +1,9 @@
-import { dirname } from "node:path";
+import { execSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { tempWorkspace } from "../../../core/src/__test-utils__/workspace.js";
 
 const { writeSecretsEnvFile, reconcileSecretsEnvFingerprint, refreshReusedWorktreeBase } = vi.hoisted(() => ({
   writeSecretsEnvFile: vi.fn(),
@@ -45,6 +48,17 @@ vi.mock("../worktree/worktree-hooks.js", async () => {
 import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 import { classifyTaskWorktree } from "../worktree/worktree-pool.js";
 
+function pinnedWorktree(rootDir: string): string {
+  execSync("git init -b main", { cwd: rootDir, stdio: "pipe" });
+  execSync('git config user.email "test@example.com"', { cwd: rootDir, stdio: "pipe" });
+  execSync('git config user.name "Test"', { cwd: rootDir, stdio: "pipe" });
+  execSync("git commit --allow-empty -m baseline", { cwd: rootDir, stdio: "pipe" });
+  const worktree = join(rootDir, ".fusion", "worktrees", "fn-1");
+  mkdirSync(dirname(worktree), { recursive: true });
+  execSync(`git worktree add -b fusion/fn-1 ${JSON.stringify(worktree)} HEAD`, { cwd: rootDir, stdio: "pipe" });
+  return worktree;
+}
+
 describe("worktree-acquisition secrets env hook", () => {
   const task = { id: "FN-1", title: "t", description: "d", branch: null, worktree: null } as any;
   let store: any;
@@ -57,10 +71,10 @@ describe("worktree-acquisition secrets env hook", () => {
     store = { updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined) };
   });
 
-  it("calls writer on pool", async () => {
+  it("calls writer for a new pinned checkout", async () => {
     await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: tempWorkspace("fn-273-secrets-new-"),
       store,
       settings: { recycleWorktrees: true, secretsEnv: { enabled: true } } as any,
       pool: {
@@ -71,13 +85,13 @@ describe("worktree-acquisition secrets env hook", () => {
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fresh-fallback", branch: "fusion/fn-1" }),
       secretsStore: undefined,
     });
-    expect(writeSecretsEnvFile).toHaveBeenCalledWith(expect.objectContaining({ worktreeSource: "pool", secretsStore: undefined }));
+    expect(writeSecretsEnvFile).toHaveBeenCalledWith(expect.objectContaining({ worktreeSource: "fresh", secretsStore: undefined }));
   });
 
   it("calls writer on fresh", async () => {
     await acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: tempWorkspace("fn-273-secrets-fresh-"),
       store,
       settings: { secretsEnv: { enabled: true } } as any,
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fresh", branch: "fusion/fn-1" }),
@@ -87,8 +101,8 @@ describe("worktree-acquisition secrets env hook", () => {
   });
 
   it("does not call writer for existing resume", async () => {
-    const existingWorktree = process.cwd();
-    const projectRoot = dirname(existingWorktree);
+    const projectRoot = tempWorkspace("fn-273-secrets-existing-");
+    const existingWorktree = pinnedWorktree(projectRoot);
 
     await acquireTaskWorktree({
       task: { ...task, branch: "fusion/fn-1", worktree: existingWorktree },
@@ -101,8 +115,8 @@ describe("worktree-acquisition secrets env hook", () => {
   });
 
   it("reconciles a pinned planning sidecar before its refresh-enabled execution handoff", async () => {
-    const existingWorktree = process.cwd();
-    const projectRoot = dirname(existingWorktree);
+    const projectRoot = tempWorkspace("fn-273-secrets-refresh-");
+    const existingWorktree = pinnedWorktree(projectRoot);
     reconcileSecretsEnvFingerprint.mockResolvedValueOnce({ executionSafe: true, outcome: "adopted-legacy" });
 
     await expect(acquireTaskWorktree({
@@ -121,8 +135,8 @@ describe("worktree-acquisition secrets env hook", () => {
   });
 
   it("fails closed with a redacted fixed audit outcome when reconciliation rejects", async () => {
-    const existingWorktree = process.cwd();
-    const projectRoot = dirname(existingWorktree);
+    const projectRoot = tempWorkspace("fn-273-secrets-reject-");
+    const existingWorktree = pinnedWorktree(projectRoot);
     const git = vi.fn();
     reconcileSecretsEnvFingerprint.mockRejectedValueOnce(new Error("secret-derived resolver detail"));
 
@@ -153,7 +167,7 @@ describe("worktree-acquisition secrets env hook", () => {
     writeSecretsEnvFile.mockRejectedValueOnce(new Error("boom"));
     await expect(acquireTaskWorktree({
       task,
-      rootDir: process.cwd(),
+      rootDir: tempWorkspace("fn-273-secrets-writer-failure-"),
       store,
       settings: { secretsEnv: { enabled: true } } as any,
       createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fresh", branch: "fusion/fn-1" }),

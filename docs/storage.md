@@ -781,10 +781,7 @@ requires. The real defect was in **project-root resolution** for pi-extension to
 (`packages/cli/src/extension.ts`'s `resolveProjectRoot(cwd)` → `getProjectRootFromWorktree`
 in `packages/core/src/pi-extensions.ts`):
 
-1. `getProjectRootFromWorktree` matches the standard `.worktrees/<id>` and
- `.fusion/worktrees/<id>` path shapes via hardcoded regex. A project with a non-default
- `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized
- deployments) doesn't match either pattern.
+1. `getProjectRootFromWorktree` matches the standard `.fusion/worktrees/<id>` path shape and the legacy `.worktrees/<id>` shape via hardcoded regex. New worktrees use the former, while the latter remains accepted for pre-existing paths when `worktreesDir` is unset. A project with a non-default `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized deployments) doesn't match either pattern.
 2. The only remaining resolution path, `getProjectRootFromGitLinkedWorktree`, shelled out to
  `git rev-parse --git-common-dir`/`--git-dir` via `spawnSync`. A failing `git` invocation —
  missing binary in a minimal container image, Docker's "detected dubious ownership"

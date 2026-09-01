@@ -903,17 +903,11 @@ export function ModelOnboardingModal({
   }, [step]);
 
   useEffect(() => {
-    const copilotDeviceCode = deviceCodes["github-copilot"];
-    if (!copilotDeviceCode?.userCode) {
-      return;
+    for (const [providerId, deviceCode] of Object.entries(deviceCodes)) {
+      if (!deviceCode.userCode || lastAutoCopiedDeviceCodesRef.current[providerId] === deviceCode.userCode) continue;
+      lastAutoCopiedDeviceCodesRef.current[providerId] = deviceCode.userCode;
+      void copyTextToClipboard(deviceCode.userCode);
     }
-
-    if (lastAutoCopiedDeviceCodesRef.current["github-copilot"] === copilotDeviceCode.userCode) {
-      return;
-    }
-
-    lastAutoCopiedDeviceCodesRef.current["github-copilot"] = copilotDeviceCode.userCode;
-    void copyTextToClipboard(copilotDeviceCode.userCode);
   }, [deviceCodes]);
 
   // Initialize skippedProviders from persisted state
@@ -1537,13 +1531,13 @@ export function ModelOnboardingModal({
 
       try {
         const { url, instructions, manualCode, deviceCode } = await loginProvider(providerId);
-        if (instructions?.trim() && !(providerId === "github-copilot" && deviceCode)) {
+        if (instructions?.trim() && !deviceCode) {
           setLoginInstructions((prev) => ({ ...prev, [providerId]: instructions }));
         }
         if (manualCode) {
           setManualCodeConfigs((prev) => ({ ...prev, [providerId]: manualCode }));
         }
-        if (deviceCode && providerId === "github-copilot") {
+        if (deviceCode) {
           setDeviceCodes((prev) => ({ ...prev, [providerId]: deviceCode }));
         }
         /*
@@ -1552,9 +1546,10 @@ export function ModelOnboardingModal({
         behind the dashboard or dismiss by accident, and without the URL the only recovery was to
         cancel and restart the whole flow.
         */
-        setLoginAuthUrls((prev) => ({ ...prev, [providerId]: appendTokenQuery(deviceCode?.verificationUri ?? url) }));
-        if (providerId !== "github-copilot" || !deviceCode) {
-          openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
+        const authUrl = appendTokenQuery(deviceCode ? deviceCode.verificationUri : url);
+        setLoginAuthUrls((prev) => ({ ...prev, [providerId]: authUrl }));
+        if (!deviceCode) {
+          openExternalUrl(authUrl);
         }
 
         // Poll for auth completion
@@ -2529,9 +2524,14 @@ export function ModelOnboardingModal({
             </button>
           )}
         </div>
-        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && provider.id === "github-copilot" && deviceCodes[provider.id] && (
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && deviceCodes[provider.id] && (
+          /*
+          FNXC:ProviderAuth 2026-09-01-08:30:
+          Device-code notifications are provider-agnostic. Show every code and verification link,
+          but do not auto-open it: the operator must read or copy the code before continuing.
+          */
           <div className="auth-device-code-panel" data-testid={`onboarding-device-code-${provider.id}`}>
-            <strong>{t("setup.enterCodeOnGitHub", "Enter this code on GitHub")}</strong>
+            <strong>{provider.id === "github-copilot" ? t("setup.enterCodeOnGitHub", "Enter this code on GitHub") : t("settings.auth.enterCodeToContinue", "Enter this code to continue")}</strong>
             <div className="auth-device-code-pill">{deviceCodes[provider.id].userCode}</div>
             <div className="auth-provider-actions-row">
               <button
@@ -2550,7 +2550,7 @@ export function ModelOnboardingModal({
                 {t("setup.copyCode", "Copy code")}
               </button>
               <button className="btn btn-sm" onClick={() => openExternalUrl(appendTokenQuery(deviceCodes[provider.id].verificationUri))}>
-                {t("setup.openGitHub", "Open GitHub")}
+                {provider.id === "github-copilot" ? t("setup.openGitHub", "Open GitHub") : t("settings.auth.openVerificationPage", "Open verification page")}
               </button>
             </div>
           </div>

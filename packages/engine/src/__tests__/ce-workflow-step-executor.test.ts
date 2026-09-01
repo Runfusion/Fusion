@@ -36,6 +36,10 @@ vi.mock("../executor/worktree-git-refs.js", async (importOriginal) => ({
   ...(await importOriginal() as object),
   captureBaseCommitSha: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../worktree/review-diff-fingerprint.js")>(),
+  resolveContentReviewInputProof: vi.fn(async () => ({ kind: "fingerprint", fingerprint: "ce-review-proof" })),
+}));
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";

@@ -19,7 +19,7 @@ import type {
   WorkflowStep,
   WorkspaceConfig,
 } from "@fusion/core";
-import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
+import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, requiresContentReviewProof, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -47,6 +47,7 @@ import {
   type DependencyCommandRunner,
   type WorktreeDependencyReadiness,
 } from "../worktree/worktree-dependency-install.js";
+import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
@@ -403,6 +404,8 @@ export async function runGraphCustomNode(
       : graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "plan" || graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "code"
         ? graphContext[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] as "plan" | "code"
         : undefined;
+    const effectiveStepId = optionalGroupId ?? node.id;
+    const isContentBindingStep = requiresContentReviewProof(effectiveStepId, { reviewKind: declaredReviewKind });
     /*
     FNXC:FastLane 2026-08-29-03:10:
     The pure route predicate keeps custom-node skips aligned with graph bypasses while preserving
@@ -758,6 +761,9 @@ export async function runGraphCustomNode(
     const stepThinkingLevel = typeof cfg.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(cfg.thinkingLevel)
       ? cfg.thinkingLevel as ThinkingLevel
       : undefined;
+    const readonlyMcpServers = Array.isArray(cfg.readonlyMcpServers)
+      ? [...new Set(cfg.readonlyMcpServers.filter((name): name is string => typeof name === "string").map((name) => name.trim()).filter(Boolean))]
+      : [];
     const step: WorkflowStep = {
       id: `graph:${node.id}`,
       name: typeof cfg.name === "string" && cfg.name.trim() ? cfg.name : node.id,
@@ -775,6 +781,7 @@ export async function runGraphCustomNode(
       ...(cfg.requiresBrowser === true ? { requiresBrowser: true } : {}),
       ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
       ...(stepThinkingLevel ? { thinkingLevel: stepThinkingLevel } : {}),
+      ...(readonlyMcpServers.length > 0 ? { readonlyMcpServers } : {}),
     };
     if (cfg.summaryTarget === "task") {
       (step as WorkflowStep & { summaryTarget?: "task" }).summaryTarget = "task";
@@ -962,14 +969,45 @@ export async function runGraphCustomNode(
         outcome = buildWorkspaceReviewOutcome(aggregate, { superseded: reviewSuperseded });
       }
     } else {
-      outcome = mode === "script"
-        ? await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv)
-        : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
+      const dispatchSingularStep = async (reviewInputFingerprint?: string): Promise<WorkflowStepOutcome> => {
+        if (mode === "script") {
+          const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+          return reviewInputFingerprint === undefined
+            ? scriptOutcome
+            : { ...scriptOutcome, reviewInputFingerprint };
+        }
+        return deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
           unattended,
           principalAgentId,
           outputLanguage,
           ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
+          ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
         });
+      };
+      /*
+      FNXC:ReviewInputProof 2026-09-01-11:18:
+      A singular content-binding review cannot be dispatched unless its exact input proof exists.
+      Use the merge gate's identity-or-kind predicate so an id-only `code-review` cannot escape the
+      guard, and mirror the workspace lane's existing refusal instead of spending a reviewer session
+      on an approval that persistence and merge admission must discard.
+      */
+      if (isContentBindingStep && !workspaceConfig) {
+        const proof = await resolveContentReviewInputProof(worktreePath, executionTarget.baseCommitSha);
+        if (proof.kind === "unprovable") {
+          const diagnostic = `${step.name} review input is unprovable (${proof.reason}); reviewer dispatch refused.`;
+          await deps.store.logEntry(
+            live.id,
+            `[pre-merge] ${diagnostic}`,
+            undefined,
+            deps.getRunContextFor(live.id),
+          );
+          outcome = { success: false, error: diagnostic, failureValue: "review-input-unprovable" };
+        } else {
+          outcome = await dispatchSingularStep(proof.fingerprint);
+        }
+      } else {
+        outcome = await dispatchSingularStep();
+      }
     }
     /*
      * FNXC:WorkflowReviewFindings 2026-08-05-06:29:

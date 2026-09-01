@@ -1075,8 +1075,18 @@ export { applyUnavailableNodePolicy, type PolicyDecision } from "./project/node-
 export { PeerExchangeService, type PeerExchangeServiceOptions, type SyncResult } from "./project/peer-exchange-service.js";
 export {
   TunnelProcessManager,
+  RemoteTunnelService,
+  getRemoteTunnelService,
+  peekRemoteTunnelService,
+  remoteTunnelScopeKey,
+  shutdownRemoteTunnelService,
+  shutdownAllRemoteTunnels,
+  preserveRemoteTunnelForSupervisedRestart,
+  preserveAllRemoteTunnelsForSupervisedRestart,
+  __resetRemoteTunnelServicesForTests,
   getTunnelProviderAdapter,
   redactTunnelText,
+  type RemoteLifecycleEvaluation,
   type TunnelProcessManagerOptions,
   type CloudflareProviderConfig,
   type ManagedTunnelProcess,

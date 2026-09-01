@@ -35,6 +35,7 @@ import {
   AiMergeBlockedError,
 } from "../merge/merger-ai.js";
 import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
+import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree/worktree-paths.js";
 import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
@@ -608,9 +609,11 @@ describe("runAiMerge", () => {
   });
 
   it.each([
-    ["modern repo-local root", "FN-1", (dir: string) => join(dir, ".worktrees", ".ai-merge")],
-    ["legacy .fusion root", "FN-2", (dir: string) => join(dir, ".fusion", "ai-merge")],
-    ["direct tmpdir root", "FN-3", (_dir: string) => tmpdir()],
+    ["current repo-local root", "FN-1", (dir: string) => resolveAiMergeRootPath(dir, undefined)],
+    ["legacy .fusion root", "FN-2", (dir: string) => resolveLegacyAiMergeRootPath(dir)],
+    // This literal is deliberate: it is the historic layout the production resolver must retain.
+    ["legacy .worktrees root", "FN-3", (dir: string) => join(dir, ".worktrees", ".ai-merge")],
+    ["direct tmpdir root", "FN-4", (_dir: string) => tmpdir()],
   ])("recovers an approved pre-existing clean-room commit from the %s before pruning and re-merging", async (_label, taskId, resolveRoot) => {
     const branch = `fusion/${taskId.toLowerCase()}`;
     const { dir } = initRepoWithBranch({ branch });
@@ -654,6 +657,7 @@ describe("runAiMerge", () => {
     expect(result.merged).toBe(true);
     expect(result.commitSha).toBe(strandedSha);
     expect(git(dir, "rev-parse main")).toBe(strandedSha);
+    expect(git(dir, "status --porcelain")).toBe("");
     expect(mergeAgent).not.toHaveBeenCalled();
     expect(logs.some((line) => line.includes("recovered approved pre-existing clean-room commit"))).toBe(true);
   });

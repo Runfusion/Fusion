@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { loadStylesCss } from "../../../test/cssFixture";
 import { CommandCenter } from "../CommandCenter";
+import { selectCommandCenterSection } from "./sectionNavTestUtils";
 
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
@@ -330,7 +331,6 @@ function mockMobileMatchMedia(matchesMobile: boolean) {
 function assertScrollOwnerContract(panel: HTMLElement) {
   const shell = screen.getByTestId("command-center");
   const header = shell.querySelector(".cc-header") as HTMLElement;
-  const tablist = screen.getByRole("tablist");
 
   const shellStyle = window.getComputedStyle(shell);
   const panelStyle = window.getComputedStyle(panel);
@@ -340,7 +340,6 @@ function assertScrollOwnerContract(panel: HTMLElement) {
   expect(panelStyle.minHeight).toBe("0px");
   expect(panelStyle.overflowY).toBe("auto");
   expect(window.getComputedStyle(header).flexShrink).toBe("0");
-  expect(window.getComputedStyle(tablist).flexShrink).toBe("0");
 }
 
 function assertNoChartScrollSteal(panel: HTMLElement) {
@@ -357,9 +356,9 @@ function assertNoChartScrollSteal(panel: HTMLElement) {
 }
 
 async function openChartTab(tab: string) {
-  fireEvent.click(screen.getByTestId(`command-center-tab-${tab}`));
+  selectCommandCenterSection(tab);
   const panel = screen.getByTestId(`command-center-panel-${tab}`);
-  expect(panel).toBe(screen.getByRole("tabpanel"));
+  expect(panel).toBe(screen.getByRole("region"));
   await vi.waitFor(() => {
     expect(screen.queryByTestId(`cc-area-${tab}-loading`)).toBeNull();
   });
@@ -406,27 +405,27 @@ describe("CommandCenter mobile scroll regression (FN-6595)", () => {
     expect(screen.queryByTestId("cc-controls-heartbeat")).toBeNull();
     assertScrollOwnerContract(overviewPanel);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-tokens"));
+    selectCommandCenterSection("tokens");
     const tokensPanel = screen.getByTestId("command-center-panel-tokens");
-    expect(tokensPanel).toBe(screen.getByRole("tabpanel"));
+    expect(tokensPanel).toBe(screen.getByRole("region"));
     assertScrollOwnerContract(tokensPanel);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    selectCommandCenterSection("team");
     const teamPanel = screen.getByTestId("command-center-panel-team");
-    expect(teamPanel).toBe(screen.getByRole("tabpanel"));
+    expect(teamPanel).toBe(screen.getByRole("region"));
     expect(screen.getByTestId("cc-team-org-chart")).toBeTruthy();
     expect(screen.getByTestId("cc-team-heartbeat")).toBeTruthy();
     expect(screen.getByTestId("cc-controls-org-portability")).toBeTruthy();
     assertScrollOwnerContract(teamPanel);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-github"));
+    selectCommandCenterSection("github");
     const githubPanel = screen.getByTestId("command-center-panel-github");
-    expect(githubPanel).toBe(screen.getByRole("tabpanel"));
+    expect(githubPanel).toBe(screen.getByRole("region"));
     assertScrollOwnerContract(githubPanel);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    selectCommandCenterSection("system");
     const systemPanel = screen.getByTestId("command-center-panel-system");
-    expect(systemPanel).toBe(screen.getByRole("tabpanel"));
+    expect(systemPanel).toBe(screen.getByRole("region"));
     await screen.findByTestId("cc-area-system");
     assertScrollOwnerContract(systemPanel);
   });

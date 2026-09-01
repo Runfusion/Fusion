@@ -16,6 +16,7 @@ import { pushTrace } from "../utils/dashboardTraceBuffer";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { isLikelyTabSuspensionError } from "./visibilitySuspension";
 import { isIntakeColumnRole, isHoldColumnRole, type ColumnRoleFlags } from "../utils/columnRoles";
+import { isForeignTaskEvent, readTaskEventProjectId, stripTaskEventProjectId } from "../utils/taskEventProjectScope";
 
 const loggedTaskCacheHitProjects = new Set<string>();
 
@@ -608,6 +609,8 @@ export function useTasks(options?: UseTasksOptions) {
   const includeArchived = false;
   const includeArchivedRef = useRef(includeArchived);
   const tasksRef = useRef(tasks);
+  // Task ids are project-local. Reconciliation may compare ids only after this owner fence holds.
+  const tasksProjectIdRef = useRef<string | undefined>(projectId);
   /*
   FNXC:PromoteVisibility 2026-08-11-20:53:
   This is deliberately hook-local rather than Task state or persistent cache. It records only the
@@ -779,6 +782,9 @@ export function useTasks(options?: UseTasksOptions) {
     fetchVersionRef.current++;
     archivedRequestGenerationRef.current++;
     projectContextVersionRef.current++;
+    liveTaskMutationsRef.current.clear();
+    releaseGateProvenanceRef.current.clear();
+    boardFetchConfirmedRef.current = false;
     projectChangeRefreshPendingRef.current = true;
   }
 
@@ -858,24 +864,30 @@ export function useTasks(options?: UseTasksOptions) {
       callback. Reconcile from the synchronous task/mutation refs before either side effect, so a
       remount cannot hydrate the older response after an intervening SSE create or delete.
       */
-      const previousById = new Map(tasksRef.current.map((task) => [task.id, task]));
+      /*
+      FNXC:TaskEventProjectScope 2026-09-01-06:16:
+      `mergeTaskSnapshot` resolves equal ids by freshness, so callers must establish identical project
+      ownership first. Project-local IDs are intentionally reusable and must never arbitrate cross-project rows.
+      */
+      const ownsCurrentRows = tasksProjectIdRef.current === requestProjectId;
+      const previousById = new Map(ownsCurrentRows ? tasksRef.current.map((task) => [task.id, task]) : []);
       const fetchedIds = new Set(normalizedFetchedTasks.map((task) => task.id));
       const reconciledFetchedTasks = normalizedFetchedTasks.flatMap((fetched) => {
-        const liveMutation = liveTaskMutationsRef.current.get(fetched.id);
+        const liveMutation = ownsCurrentRows ? liveTaskMutationsRef.current.get(fetched.id) : undefined;
         if (liveMutation && liveMutation.version > requestLiveMutationVersion) {
           return liveMutation.deleted ? [] : [liveMutation.task ?? previousById.get(fetched.id) ?? fetched];
         }
         const current = previousById.get(fetched.id);
         return [current ? mergeIncomingTask(current, fetched, { fullSnapshot: true }) : fetched];
       });
-      for (const [taskId, liveMutation] of liveTaskMutationsRef.current) {
+      for (const [taskId, liveMutation] of ownsCurrentRows ? liveTaskMutationsRef.current : []) {
         if (!fetchedIds.has(taskId) && liveMutation.version > requestLiveMutationVersion && !liveMutation.deleted) {
           const task = liveMutation.task ?? previousById.get(taskId);
           if (task) reconciledFetchedTasks.push(task);
         }
       }
       const freshIds = new Set(reconciledFetchedTasks.map((task) => task.id));
-      const archivedCarryOver = shouldCarryOverArchived
+      const archivedCarryOver = shouldCarryOverArchived && ownsCurrentRows
         ? archivedTasksRef.current.filter((task) => !freshIds.has(task.id))
         : [];
       const tasksForCache = reconciledFetchedTasks;
@@ -893,6 +905,7 @@ export function useTasks(options?: UseTasksOptions) {
           liveTaskMutationsRef.current.delete(taskId);
         }
       }
+      tasksProjectIdRef.current = requestProjectId;
       if (requestProjectId) {
         writeTaskCacheSnapshot(`${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`, tasksForCache);
       }
@@ -1160,7 +1173,10 @@ export function useTasks(options?: UseTasksOptions) {
         loggedTaskCacheHitProjects.add(projectId);
         console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
       }
-      setTasks(filterActiveTasks(cachedTasks.map(normalizeNonBoardTask)));
+      const nextTasks = filterActiveTasks(cachedTasks.map(normalizeNonBoardTask));
+      tasksRef.current = nextTasks;
+      tasksProjectIdRef.current = projectId;
+      setTasks(nextTasks);
       /*
       FNXC:MobileTabDiscard 2026-07-26-14:18:
       A project switch replaces `tasks` with the new project's snapshot, so the freshness clock must
@@ -1172,6 +1188,13 @@ export function useTasks(options?: UseTasksOptions) {
       lastFetchTimeMs.current = readCacheSavedAt(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
       // FNXC:MobileTabDiscard 2026-07-26-16:40: these rows come from cache, not the server — an SSE
       // event must not stamp them as measured-from-now until this project's fetch confirms them.
+      boardFetchConfirmedRef.current = false;
+    } else if (tasksProjectIdRef.current !== projectId) {
+      // Never retain another project's stale rows when this project's snapshot is absent.
+      tasksRef.current = [];
+      tasksProjectIdRef.current = projectId;
+      setTasks([]);
+      lastFetchTimeMs.current = undefined;
       boardFetchConfirmedRef.current = false;
     }
     setIsStale(true);
@@ -1282,6 +1305,19 @@ export function useTasks(options?: UseTasksOptions) {
     // Guards against reconnect callbacks firing after the effect has cleaned up
     // (e.g., sseEnabled flipped to false during a pending reconnect timer in sse-bus).
     let active = true;
+    const readScopedEvent = <T,>(event: MessageEvent): T | null => {
+      const payload = JSON.parse(event.data) as T;
+      const eventProjectId = readTaskEventProjectId(payload);
+      if (!isForeignTaskEvent(eventProjectId, projectId)) return stripTaskEventProjectId(payload);
+      pushTrace("useTasks", "dropped-foreign-project-event", {
+        eventProjectId,
+        projectId,
+        id: typeof payload === "object" && payload !== null && "id" in payload
+          ? (payload as { id?: unknown }).id
+          : undefined,
+      });
+      return null;
+    };
 
     // Guard against stale callbacks: when sseEnabled flips false or the
     // effect unmounts, these handlers must not fire refreshTasks into a
@@ -1300,7 +1336,9 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      const task = normalizeTask(stripTransientReleaseGate(JSON.parse(e.data) as Task));
+      const payload = readScopedEvent<Task>(e);
+      if (!payload) return;
+      const task = normalizeTask(stripTransientReleaseGate(payload));
       recordLiveMutation(task, isSoftDeleted(task));
       if (searchQueryRef.current) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
@@ -1335,12 +1373,14 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
+      // #1403: the move event carries `ColumnId` (custom column ids admitted).
+      const payload = readScopedEvent<{ task: Task; from: ColumnId; to: ColumnId }>(e);
+      if (searchQueryRef.current && payload) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      // #1403: the move event carries `ColumnId` (custom column ids admitted).
-      const { task, to }: { task: Task; from: ColumnId; to: ColumnId } = JSON.parse(e.data);
+      if (!payload) return;
+      const { task, to } = payload;
       const normalizedTask = normalizeTask(stripTransientReleaseGate(task));
       if (isSoftDeleted(normalizedTask)) {
         recordLiveMutation(normalizedTask, true);
@@ -1378,11 +1418,13 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
+      const payload = readScopedEvent<Task>(e);
+      if (searchQueryRef.current && payload) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const incoming = normalizeTask(stripTransientReleaseGate(JSON.parse(e.data) as Task));
+      if (!payload) return;
+      const incoming = normalizeTask(stripTransientReleaseGate(payload));
       recordLiveMutation(incoming, isSoftDeleted(incoming));
       if (isSoftDeleted(incoming)) {
         // FN-5135: treat deletedAt-bearing task:updated payloads as delete-equivalent.
@@ -1410,11 +1452,13 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
+      const payload = readScopedEvent<Task>(e);
+      if (!payload) return;
       if (searchQueryRef.current) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const task = normalizeTask(stripTransientReleaseGate(JSON.parse(e.data) as Task));
+      const task = normalizeTask(stripTransientReleaseGate(payload));
       recordLiveMutation(task, true);
       applyLiveTasks((prev) => prev.filter((t) => t.id !== task.id));
     };
@@ -1424,11 +1468,13 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
+      const payload = readScopedEvent<{ task: Task }>(e);
+      if (searchQueryRef.current && payload) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const { task }: { task: Task } = JSON.parse(e.data);
+      if (!payload) return;
+      const { task } = payload;
       const normalizedTask = normalizeTask(stripTransientReleaseGate(task));
       if (isSoftDeleted(normalizedTask)) {
         recordLiveMutation(normalizedTask, true);
@@ -1454,11 +1500,9 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
-        return;
-      }
-      const entry = JSON.parse(e.data) as AgentLogActivityEvent;
-      if (!entry.taskId || !entry.timestamp) return;
+      const entry = readScopedEvent<AgentLogActivityEvent>(e);
+      if (searchQueryRef.current) return;
+      if (!entry || !entry.taskId || !entry.timestamp) return;
       setTasks((prev) => {
         let changed = false;
         const next = prev.map((task) => {
@@ -1483,12 +1527,12 @@ export function useTasks(options?: UseTasksOptions) {
       // Guard onReconnect against stale SSE callbacks: do not call refreshTasks
       // if the SSE was disabled or the effect unmounted while reconnect was pending.
       onReconnect: () => {
-        contextVersionAtStart = projectContextVersionRef.current;
         if (!active) return;
         if (isStale()) {
           traceDroppedStaleEvent();
           return;
         }
+        contextVersionAtStart = projectContextVersionRef.current;
         revalidateAfterResume("sse-reconnect", "stream-reopened");
       },
     });

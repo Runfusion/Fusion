@@ -79,6 +79,33 @@ describe("MCP lane forwarding", () => {
     }));
   });
 
+  it("forwards readonly MCP opt-in and server narrowing through the runtime bridge", async () => {
+    await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/fusion-test-worktree",
+      systemPrompt: "A readonly workflow lane with named MCP servers.",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4",
+      mcpServers,
+      allowMcpToolsInReadonly: true,
+      readonlyMcpServerAllowlist: ["nav"],
+    });
+
+    expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      allowMcpToolsInReadonly: true,
+      readonlyMcpServerAllowlist: ["nav"],
+    }));
+  });
+
+  it("leaves readonly MCP policy options absent for lanes that do not request them", async () => {
+    await createLaneSession("reviewer");
+
+    const options = createFnAgentMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(options).not.toHaveProperty("allowMcpToolsInReadonly");
+    expect(options).not.toHaveProperty("readonlyMcpServerAllowlist");
+  });
+
   it("does not send mock-provider sessions through the pi createFnAgent seam", async () => {
     const result = await createResolvedAgentSession({
       sessionPurpose: "executor",

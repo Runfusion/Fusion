@@ -1,5 +1,330 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.13
+
+### Minor Changes
+
+- 3ce0c01: summary: Replace Command Center section tabs with a compact accessible dropdown.
+  category: feature
+  dev: Adds CommandCenterSectionNav and removes the wrapping .cc-tablist without removing any sections.
+- d0521d5: summary: Allow readonly workflow steps to use explicitly named MCP servers.
+  category: feature
+  dev: Adds the readonlyMcpServers node config key and readonlyMcpServerAllowlist session option.
+- 188f8d6: summary: Fix OpenAI Codex sign-in on remote dashboards and stop stalled logins hanging in the background.
+  category: fix
+  dev: Remote Codex origins default to device code, support an explicit browser override, abort initiation timeouts safely, and render device codes for every OAuth provider.
+
+### Patch Changes
+
+- 2d12078: summary: A landed merge no longer fails to finalize when the task row has no steps.
+  category: fix
+  dev: `planConfirmedMergeChecklistReconciliation` and the merge-confirmed fast path both assumed `task.steps` is an array. A row reaching them without it threw "Cannot read properties of undefined (reading 'map')", which the merge loop's catch absorbed — so a task whose work had already landed never finalized and never emitted `task:merged`. Both sites now tolerate an absent `steps`.
+- 54eb5f0: summary: Restore an existing terminal immediately when reopening it.
+  category: fix
+  dev: Attachable terminal sessions now initialize xterm before background session validation completes.
+- 3546460: summary: Prevent approved tasks from becoming permanently stuck when merge review proof is missing.
+  category: fix
+  dev: Raises the diff buffer, centralizes requiresContentReviewProof, enforces pre-dispatch and sink proof, broadens writer lifts, limits bypass to audited humans, excludes fast-mode, and adds bounded reconciliation audit.
+- 4690693: summary: Preserve selected agent targets when retargeting an existing Direct chat.
+  category: fix
+  dev: Restores updateChatSession's agentId persistence clause for async PostgreSQL storage.
+- 8b0465c: summary: Mailbox task cards now render with correct padding, spacing, borders, and text sizes.
+  category: fix
+  dev: Replaced undefined CSS custom properties with dashboard tokens and added a raw-CSS validity guard.
+- 0b912ee: summary: Keep the New Task priority button compact on phones.
+  category: fix
+  dev: Prevent wrapped quick-action controls from growing across an entire mobile row.
+- 943edbf: summary: Keep mobile chat footer and composer flush above the keyboard.
+  category: fix
+  dev: Aligns computeMobileBarKeyboardFlags across platforms by removing the isIOS gate.
+- 4f366d3: summary: Your selected Claude account now takes precedence over a leftover legacy Anthropic sign-in.
+  category: fix
+  dev: `resolveAnthropicRuntimeApiKey` and the shared refresh candidate preserve subscription-instance precedence; auth status exposes `legacyAnthropicOAuthPresent`.
+- ba7d55c: summary: Prevent duplicate OAuth accounts when adding a credential instance.
+  category: fix
+  dev: Instance login now uses the credential returned by the provider-auth login seam.
+- 0c21494: summary: Workflow lists now reflect workflow edits immediately without a daemon restart.
+  category: fix
+  dev: Removed TaskStore.workflowDefinitionsCache; readAllWorkflowDefinitionsImpl now reads through on every call.
+- 2122ea9: summary: Clean up finished worktrees containing regenerable build and dependency output.
+  category: fix
+  dev: Preserves non-allowlisted ignored files behind the durable landing-proof gate.
+- 10a9714: summary: Prevent inline review fixes from leaving approved tasks unable to merge.
+  category: fix
+  dev: Re-captures verified review identity, reroutes singular stale content from merge admission and self-healing, and emits bounded audit events.
+- 96a73e0: summary: Keep same-numbered tasks isolated to their selected project.
+  category: fix
+  dev: Task SSE payloads now carry projectId and useTasks owns state per project.
+- 8fe0b76: summary: Correct Direct Chat default help text in Settings.
+  category: fix
+  dev: Removed retired chatNewSessionMode localization keys and regenerated packages/i18n/src/resources.d.ts.
+- 14e2d1c: summary: Restore emphasized dashboard text and visible borders across mailbox, chat, settings, and task details.
+  category: fix
+  dev: Adds the shared --font-weight-\* scale and repoints invalid --border-width usages to --btn-border-width.
+- 2308136: summary: Restore interrupted merges from pre-upgrade worktree layouts without dirty checkout refusals.
+  category: fix
+  dev: Routes clean-room discovery through resolveAiMergeSearchRoots, including historic .worktrees/.ai-merge.
+- c8dfb47: summary: Command Center's System controls come back on their own after a failed load.
+  category: fix
+  dev: `loadInfo` had exactly two callers — the panel's mount and the Refresh button — so a single failed capability probe was permanent. Every dev-only control is gated on `info` (`showRebuildControls = info?.rebuildSupported ?? false`), so a probe that missed left the panel with no Rebuild/Full rebuild/plugin cards until the operator clicked Refresh. A Command Center tab left open across a dev-server restart hits this routinely. The probe now retries via `useVisibilityAwarePoll`, gated on `!info` so it stops the moment it succeeds, and refreshes on the visible edge.
+
+## 0.77.0-beta.12
+
+### Minor Changes
+
+- 71580ae: summary: Update Fusion from source in one click — pull, rebuild, and restart from Command Center.
+  category: feature
+  dev: New `POST /system/source/update` job (git status/pull --ff-only, pnpm install, workspace build, restart only on build success) plus `sourceUpdateSupported` on `/system/info`. The Docker entrypoint is now a restart supervisor (relaunches on exit 86, forwards signals, stamps `FUSION_SUPERVISOR_PID`) and accepts `--from-source`/`FUSION_FROM_SOURCE` with `FUSION_SOURCE_ROOT` (default `/home/node/fusion`).
+- 0fa15c4: summary: Keep task worktrees under .fusion and remove merged workspace checkouts.
+  category: feature
+  dev: Defaults to .fusion/worktrees, retains the legacy .worktrees root for cleanup, and adds workspace post-landing cleanup.
+- 4c7729c: summary: Preserve Board, List, and Chat state when returning to visited views.
+  category: feature
+  dev: Retained main views release shared header and unread-message side effects while hidden.
+- 863b440: summary: Show precise millisecond clock times beside task activity log timestamps.
+  category: feature
+  dev: Adds the precise-timestamp utility and PreciseTimestamp element across Live, Feed, Raw, and Interventions.
+
+### Patch Changes
+
+- f76d15f: summary: Include the scoping cwd and JSON-RPC diagnostic when the ACP runtime's session/new fails.
+
+  category: fix
+  dev: `newAcpSession` rethrew raw SDK errors, so a rejected `session/new` surfaced only the bare protocol message (typically "Invalid params" / -32602) with no indication of which agent binary rejected it, why, or which cwd scoped the failing session. The helper now wraps the rejection with the same `describeAcpTurnError` contract as `promptAcpSession`, prefixing `session/new failed (cwd <cwd>):` so operators can immediately tell a misconfigured spawn target from an agent-side fault. The original error is retained as `cause`. The message intentionally does not match `ACP_TRANSIENT_ERROR_PATTERNS` (caller-fault codes are non-retryable). Tests pin the message shape, cwd inclusion, and cause retention across flat/nested RPC envelopes, retryable and caller-fault codes, structured data payloads, and non-RPC passthrough.
+
+- 438cd55: summary: Remote access no longer reports "stopped" while the tunnel is serving traffic.
+  category: fix
+  dev: `restoreIfNeeded` gated funnel adoption behind the `wasRunningOnShutdown` marker, so one restart that lost track of the tunnel made `state:"stopped"` permanent — a service that believes it is stopped never writes a marker to recover from, and every later restart re-skipped with `no_prior_running_marker` while the public URL served 200. Adoption now runs before the marker gate and depends on what tailscaled can prove is serving the configured port; a funnel on a different port is still refused rather than clobbered.
+- 1b5e889: summary: A code review revision's fix steps can now start on the first try, with no manual retry.
+  category: fix
+  dev: The step-ledger reopen stamp was added only to `appendRemediationStepsImpl`, but `appendReviewRemediationSteps` takes an inline atomic branch whenever `attemptClaim` or a workspace remediation is present — which Code Review always supplies — so the failing path never reached it. The stamp is now written in that branch too, inside the same mutation as the steps.
+- 3789129: summary: Remote access now reports "running" for a tunnel that survived a restart.
+  category: fix
+  dev: `tailscale funnel <port>` registers a FOREGROUND session, so tailscaled files its config under `Foreground.<session-id>` rather than at the top level of `serve status --json`. `detectActiveFunnel` read only the top level, so the funnel Fusion actually spawns was undetectable: a tunnel surviving a supervised restart was never adopted and the status route reported `stopped` with `no_prior_running_marker` while the public URL served 200. Detection now scans foreground sessions as well as the persistent config.
+- f8d32fe: summary: Fix task dispatch and recovery stalling when Fusion re-pins a task's worktree branch.
+  category: fix
+  dev: FN-9161's store validation rejects branch writes without an explicit origin (even null clears); engine call sites (fresh-create finalize, warm-reuse re-pin, pool acquire, branch-conflict reclaim/sticky-park, merge-reuse fallback, PR-conflict reclaim, resume-limbo reclaim, post-merge cleanup, workspace stale-routing clear, recovery metadata rewrite) were still writing bare {worktree, branch} and failing every affected dispatch/recovery write. Branch-value stamps now derive provenance from `classifyTaskBranchOrigin` so operator-provided branches keep `branchWriteOrigin: "operator"` and stay protected from engine branch cleanup; null clears keep explicit engine attribution. `classifyTaskBranchOrigin` additionally keeps the operator marker through numeric sibling renames (`-2`..`-50`) of a Fusion-named override branch, while engine derivatives (`-step-<i>`, `-stranded`) stay engine-owned.
+- 534264e: summary: Honor the push-after-merge setting for workspace projects.
+  category: fix
+  dev: Uses the shared push-after-merge policy and workspace publication gate.
+- 85938b9: summary: A rejected review now writes its fix steps before returning the task to implementation.
+  category: fix
+  dev: Code Review REVISE hand-offs create structured remediation before the lifecycle bounce. Missing reviewer fix records receive a deterministic executor remediation step, while self-healing claims keyable review episodes before consuming retry budget or narrating an attempt, threads that claim through the recovery it authorized, retains it on a genuine refusal, and goes silent once a newer review round supersedes it.
+- 2fd2432: summary: A blocked review always explains itself, even when the concurrency marker cannot be written.
+  category: fix
+  dev: claimRemediationAttempt now reports `unavailable` instead of collapsing every declined admission to `held`; the graph-failure backstop and the self-healing sweep fail open on it, logging why the attempt is unfenced and producing remediation anyway. Silence stays reserved for outcomes with an owner (superseded/held/refused/missing).
+- 4896bf5: summary: Chat now focuses the message box when you open or create a conversation.
+  category: fix
+  dev: Adds a ChatView focus effect gated by findActive with phone and touch-tablet suppression.
+- 864bbf2: summary: Keep workspace tasks current and safely serialized when files overlap.
+  category: fix
+  dev: Refreshes workspace repository bases at implementation dispatch and shares workspace-aware overlap lease predicates.
+- efbc963: summary: Resume appended review fixes and return completed remediation to review.
+  category: fix
+  dev: Shares the post-completion step-ledger reopen marker across remediation appenders and pending-step starts.
+- 4970221: summary: A code review revision reliably reopens implementation instead of stalling on an internal lock.
+  category: fix
+  dev: The graph-failure backstop and the failed-pre-merge-step sweep no longer take a fenced remediation claim; they re-trigger the single producer, matching Plan Review's shape. The claim guarded a bounded problem (a duplicate remediation wave, capped by the revision budget) at the cost of an unbounded one — any unclaimable round returned silently, before the "remediation was not scheduled" park. FN-267's actual fix, the ordering guard plus the deterministic Fix-step fallback, is untouched. The advisory refusal filter goes with the claim that wrote its marker.
+- d299a0c: summary: A card sent back for review fixes can now actually start them instead of stalling on the first step.
+  category: fix
+  dev: `appendRemediationStepsImpl` now stamps the step-ledger reopen marker inside its atomic mutation when the log tail carries a clean-completion marker. `evaluateStepLedgerSeal` refuses step transitions after completion until a re-entry marker supersedes it, and `updateStep` wrote that marker only for a pending reset or operator edit — remediation arrives through the append path, so the seal survived and the new Fix step was refused as a post-completion projection.
+- 73261dc: summary: A blocked review that produces no fix steps now says why on the task instead of stopping silently.
+  category: fix
+  dev: `requestPreMergeOptionalStepFix` has 34 refusal exits and roughly half wrote nothing. The outer seam now observes whether the call narrated (via a store proxy over `logEntry`/`addTaskComment`) and emits one diagnostic entry when a `false` return left no explanation. The graph-failure remediation backstop also records its two previously-silent returns (deferred admission, unheld claim). Behaviour is unchanged; this is visibility only.
+- 14d3fb6: summary: Stopping or restarting the engine no longer kills remote access, and a stopped engine can be restarted from the UI.
+  category: fix
+  dev: TunnelProcessManager moves from ProjectEngine into a process-lifetime per-project registry (`@fusion/engine` remote-tunnel-service); tunnels are stopped only by ProjectEngineManager.stopAll(). `POST /remote/tunnel/start|stop|kill-external` and `GET /remote/status` work with no engine attached (`REMOTE_TUNNEL_ENGINE_UNAVAILABLE` is unreachable on the start path), and `POST /system/engine/restart` now resumes paused projects.
+- 9930850: summary: Fix code review revisions never producing fix steps — the card stayed blocked in review with no explanation.
+  category: fix
+  dev: `reviewInputSignature` and `deriveWorkspaceReviewRemediation` used NUL (U+0000) as a field separator. Both signatures became persisted state when FN-267 introduced the remediation claim (`remediationAttemptSignature`, `reviewRemediation.inputSignature`), and PostgreSQL rejects NUL in text/jsonb with SQLSTATE 22P05 — so every claim write threw and no remediation could ever be scheduled. Separators are now U+001F/U+001E. No migration: the broken write never persisted a signature.
+- 235d802: summary: Fix a code review revision producing no fix steps after a Retry, leaving the card stuck in review.
+  category: fix
+  dev: A new workflow-graph run now clears the task-keyed abort markers (`userCanceledTaskIds`, `pausedAborted`, `pausedAbortProvenance`) at run birth. Nothing cleared them on the review path, and `awaitAbortInFlightTaskWork` stamps `markPausedAborted` unconditionally, so the dashboard Retry's pause/hard-cancel/unpause left leftovers that the NEXT run read as its own — the FN-249 cancellation exit swallowed the REVISE and `genuinePauseAbort` misclassified it as a pause abort.
+- a5a8cc2: summary: Fix review cards frozen after a Retry, where a code review's revision produced no fix steps.
+  category: fix
+  dev: The FN-249 operator-cancellation exit in `handle-graph-failure.ts` honored a task-scoped in-memory `userCanceledTaskIds` marker whose only clear sites were the implementation loop and the move-into-WIP listener. A card canceled in the review lane reached neither, so the marker outlived its run and every later run exited before the FN-267 remediation claim — and the card could not reach WIP, the very move that clears the marker. The exit now requires abort evidence (pause-abort marker, abort provenance, paused row, or an interrupted node) and drops a stale marker otherwise.
+- 2576a75: summary: A card sent back for review fixes no longer gets permanently stuck unable to start them.
+  category: fix
+  dev: `evaluateStepLedgerSeal` now skips its own "Ignored post-completion …" narration, which quoted the completion marker verbatim and therefore re-sealed on a substring match — each refusal nesting inside the last, so no re-entry marker could ever lift it. Also adds the graph resume wording "Resuming execution after unpause" to the re-entry markers; only `run-implementation.ts`'s "Resumed agent session after unpause" was listed, so one of the two documented resume paths never lifted the seal.
+- fbd56a6: summary: Restarting Fusion no longer kills remote access — the Tailscale tunnel survives the restart.
+  category: fix
+  dev: A supervised restart (exit 86) now passes `stopAll({ supervisedRestart: true })`, which releases the tunnel child from `superviseSpawn`'s parent-death registry instead of stopping it; the relaunched process adopts a funnel proven live via `tailscale serve status --json` rather than spawning a competing one. Restore also keeps `remoteAccess.lifecycle.wasRunningOnShutdown` set through transient prerequisite/spawn failures.
+- 12f5393: summary: Fix remote access silently dying after a container restart.
+  category: fix
+  dev: The Docker entrypoint gated `tailscaled` startup on the absence of `/var/run/tailscale/tailscaled.sock`. `docker restart` reuses the writable layer, so that socket file survives with no daemon behind it and the guard skipped startup — the dashboard came back healthy while `tailscale` returned `connect: connection refused` and the tunnel was dead. Liveness is now decided by scanning `/proc` for a running `tailscaled`, and a stale socket file is removed before starting.
+
+## 0.77.0-beta.11
+
+### Minor Changes
+
+- 97fcc5a: summary: Reset multi-repository tasks safely back to fresh planning.
+  category: feature
+  dev: Adds the core reset target planner, workspace-aware reset route cleanup, and publication-time workspace coordination cleanup.
+- d16c8d6: summary: Add an in-place Restart stage action for live task workflow stages.
+  category: feature
+  dev: Adds POST /tasks/:id/restart-stage and the planTaskColumnRestart lifecycle seam.
+- c0e99df: summary: Simplify task recovery to Retry, Reset, and Delete.
+  category: breaking
+  dev: Removed the restart-stage route and Respecify/Restart stage dashboard affordances; Retry now restarts the current stage and is visible on intake cards.
+- 26f2a20: summary: Keep automatic task recovery in its owning lifecycle stage.
+  category: fix
+  dev: Adds enforced lifecycle containment, visible move attribution, remediation placement, and workspace checkout reuse.
+- becaacc: summary: Add a task History tab for planning, implementation, review, and merge reports.
+  category: feature
+  dev: Adds task stepReports migration 0068, fn_task_update summaries, and a shared History workflow-results gate.
+- 38ed1d2: summary: Preserve task work and resume exactly after external infrastructure blocks.
+  category: feature
+  dev: Adds durable external-block metadata, frozen resource accounting, dashboard recovery, and audit events.
+- 1ffd202: summary: Planning Mode history now shows the original prompt that started the session, read-only.
+  category: feature
+  dev: Adds PlanningSessionPrompt to History, error, and plan-review Q&A surfaces.
+- 156919e: summary: Choose an enabled workflow when duplicating tasks and honor the Planning Mode default.
+  category: feature
+  dev: Adds `workflowId` to `POST /api/tasks/:id/duplicate` and normalizes Planning Mode create requests.
+- 532fabc: summary: Add plan-preserving Respecify.
+  category: feature
+  dev: Adds the preservePlan spec-revision flag.
+- eb29966: summary: Add the Cozy Cartoon color theme with a pastel light palette and oversized rounded buttons.
+  category: feature
+- 5e4934c: summary: Make revision findings the only authority that moves tasks backward.
+  category: breaking
+  dev: Removes blocked-exit auto-replan; execution-resume, stale-spec-replan, blocked-exit-replan, missing-required-artifact-recovery, and workflow-retry-rehome reasons; ghost-review, stale-incomplete-review, terminal-failure, in-progress-limbo, and zero-progress no-task-done sweeps; executor stuck-kill terminalization and use of maxStuckKills (retained for triage); and their terminal-failure, no-progress, and in-progress-limbo audit events.
+- 55edb7a: summary: Add a Patchnode view with a searchable, permanent daily log of completed and reverted tasks.
+  category: feature
+  dev: New project.patchnode_entries table (migration 0071) keyed per completion occurrence so re-deliveries each get their own dated entry. Completion entries are written inside the move transaction in both completion writers because columnMovedAt is overwritten by the next move. No FK to tasks and no row expiry, so entries outlive archive cleanup; reads never join tasks. Archive and cleanup capture pre-Patchnode backlog, and reconciliation re-arms on a TTL. Adds GET /api/patchnode and the read-only fn_patchnode_read chat tool.
+- e85ec40: summary: Reset now deletes the task's local branch and commits so the next run starts clean.
+  category: fix
+  dev: Adds `branchCleanupTargets`, `planTaskResetBranchCleanup`, and `deleteTaskResetBranches`; absent reset targets skip the ownership proof.
+- 7a595a2: summary: Reset now opens an editable original-description dialog and replaces Respecify.
+  category: breaking
+  dev: Removes the Respecify dialog and menu action while retaining the spec-revision route; adds reset endpoint description input and reorders resetTask client parameters to options-second/projectId-last.
+- de1a1a7: summary: Remove the per-task manual plan-approval toggle and shield badges.
+  category: breaking
+  dev: Removes Task.requirePlanApproval and create/update API acceptance; resolvePlanApprovalRequired now takes settings only. The project.tasks.require_plan_approval column and migration 0070 remain preserved and inert.
+- e4ba6b4: summary: Require reviewer notes for every verdict and show them in task activity summaries.
+  category: feature
+  dev: Derives notes from prose then findings, performs one bounded same-session repair, preserves per-repository notes, and adds taskHistory.entry.verdictNoNotes.
+- bd25845: summary: Prevent tasks from freezing when a required tool is unavailable.
+  category: fix
+  dev: Removes the third-party-service/UNCLASSIFIED freeze fallback and injects host capabilities into planning and Plan Review.
+- 7909915: summary: Consolidate Task Detail tabs so reports, changes, and spend each have one clear home.
+  category: feature
+  dev: Removed Cost, Routing, Debug, Attachments, and Recommendations tabs; content now lives in Stats, Details, Artifacts, and Summary.
+- 9aa5581: summary: Prevent unplanned tasks from being force-started into execution.
+  category: breaking
+  dev: Removes the promoteHeldTask force option, issueRelease allowUnplanned option, POST /tasks/:id/promote force body field and forceable hint, fn_task_promote force parameter, task:promote-forced-unplanned audit event, and column.promoteUnplannedTitle, column.promoteUnplannedMessage, column.promoteUnplannedConfirm, and column.promoteUnplannedCancel i18n keys.
+- 57eb789: summary: Add a Fast lane for quick task changes without planning or pre-merge review.
+  category: feature
+  dev: Fast tasks now use one original-request implementation occurrence, skip per-step review and selected pre-merge groups, and retain the existing merge path.
+- 407d11a: summary: Show complete, readable tool inputs and outputs across Fusion task logs.
+  category: feature
+  dev: Defaults persistAgentToolOutput to enabled; expands tool arguments and TaskStore.appendAgentLogBatch timing, adds visible clamped Raw Logs and CLI blocks, shares bounded fn_task_logs_read and run-log detail handling, bounds overseer deltas, and keeps archive summaries text-first.
+- 5b438d8: summary: Reorganize task Summary with merge details and per-step timings.
+  category: feature
+  dev: Removes `taskDetail.summaryTab.completedSteps` and moves `MergeDetails` from Changes to Summary.
+- 14babc4: summary: Prepare every configured repository in a task-ID worktree before work starts.
+  category: breaking
+  dev: Removes `worktreeNaming`, `recycleWorktrees`, `fn_acquire_repo_worktree`, and `POST /tasks/:id/repository-scope`; persisted removed-setting values are ignored. Adds multi-ecosystem dependency bootstrap with unrecognised-evidence detection, planning-only `fn_install_worktree_dependencies`, and a blocking Plan Review dependency gate that uses the existing bounded replan cap and `awaiting-approval` escalation.
+- e4889f8: summary: Rename Patchnote and make Start/Reset reactive, guard duplicate Start clicks, and remove Promote cards.
+  category: feature
+  dev: Removes the Promote card affordance and catalog keys; adds the optional expectedColumn move CAS, confirmed-row reconciliation, and canonical-worktree Reset ownership proof.
+- 875af8b: summary: Rename the Patchnote view to History across navigation, view copy, and chat tool labels.
+  category: feature
+  dev: Keeps the patchnode view id, nav.patchnode and patchnode._ keys, patchnode-_ test ids, project.patchnode_entries, and fn_patchnode_read unchanged.
+
+### Patch Changes
+
+- b802d4b: summary: Keep task Activity Feed entries current and accept focus resume diagnostics.
+  category: fix
+  dev: Retains journals in mergeTaskSnapshot, resyncs Feed through SSE, and shares resume triggers.
+- e24b109: summary: Keep task branches and checkouts attached when self-healing reclaim encounters a non-conflict failure.
+  category: fix
+  dev: Fixes reclaim and merger branch-write provenance, narrows conflict escalation, and rebinds relocated worktrees from Git.
+- 1e8627a: summary: Prevent workspace Reset from deleting a task directory held by an active session.
+  category: fix
+  dev: Applies admission and point-of-use session fences to workspace coordinator cleanup.
+- eaeb265: summary: Merger no longer re-runs a full AI merge for work that already landed.
+  category: fix
+  dev: runAiMerge short-circuits to finalization when mergeDetails proves a verified landing on the resolved integration branch (confirmed flag, locally present and reachable commitSha, matching mergeTargetBranch, and a pinned landedBranchTipSha equal to the live branch tip); an expected-tip ref deletion fences concurrent branch advances, and any missing or stale proof falls through to the full clean-room merge.
+- 7c46ce3: summary: Allow successfully merged review cards to advance to Done.
+  category: fix
+  dev: Updates rule F3 in workflow-lifecycle-direction.ts and lets getPostMergeFinalizeBlocker ignore failed after proof.
+- 9b4d79d: summary: Report one complete workspace Code Review verdict across every modified repository.
+  category: fix
+  dev: Updates reviewWorkspacePerRepo with severity ordering, per-repository failure isolation, provider-error abort with unchanged seam handling, and an all-blocking-repository convergence signature.
+- 421e046: summary: Prevent frozen review cycles from repeating the same model without change evidence.
+  category: fix
+  dev: Persists reviewedCommitSha and reuses execution fallback and effective-model resolution helpers.
+- 244a070: summary: Conclude no-change tasks once with a visible terminal outcome.
+  category: fix
+  dev: Adds empty-review identity, a fenced terminal park, review-lane settling, and terminal empty-merge blockers.
+- 5e12f4f: summary: Show checks that could not run as not executed instead of passed.
+  category: fix
+  dev: Adds `notRunReason`, a narrow pre-merge approval carve-out, and a Plan Review recorder exclusion.
+- 6e02d19: summary: Make per-task human plan approval visible and actionable from the workflow planning lane.
+  category: fix
+  dev: Forwards the create override, widens planning-lane UI and route acceptance, keeps reject/respecify in place, and adds badges.
+- e1ce294: summary: Show the pointing hand over board task tiles and the grabbing hand throughout active board pans.
+  category: fix
+  dev: Supersedes the unreleased FN-220 tile cursor entry with the corrected resting affordance.
+- bfae5fd: summary: Move task History into Activity Summaries and render duplicated review reports once.
+  category: fix
+  dev: Summaries renders all report stages sequentially and preserves legacy History links.
+- 42c8df4: summary: Reopen workspace implementation with named fixes when Code Review requests changes.
+  category: fix
+  dev: Resolves remediation gates structurally and routes recovery and arbitration through the failing repository checkout.
+- f68ada2: summary: Allow workspace tasks to retry their current stage without losing repository landing progress.
+  category: fix
+  dev: Removes the `workspace-task` restart refusal and uses `isMergeActiveStatus` for the active-merge fence.
+- d143d68: summary: Keep creating review fix steps beyond three rounds while actionable evidence changes.
+  category: fix
+  dev: Removes `released-wave-exhausted` and the hard-coded wave cap; adds output-derived `evidenceDigest` and `released-verification-no-progress`, workspace unchanged-input parity, and Code Review attempt-ledger writes that enforce authored `maxRevisions`.
+- c1150fb: summary: Keep the task Plan summary visible through transient prompt refresh failures.
+  category: fix
+  dev: Publishes PROMPT.md atomically and confirms degraded narrow reads with an authoritative task-detail refresh.
+- 3c330ce: summary: Preserve completed verification history and require a fresh verification pass after review fixes.
+  category: fix
+  dev: Replaces in-place verification resets with append-only remediation and replay occurrences.
+- f3fad13: summary: Restart reset tasks in Planning with their confirmed original request.
+  category: fix
+  dev: Publishes an empty fresh-planning state and resolves manual-intake resets to the Planning hold lane.
+- 2eb2539: summary: Ensure every saved reviewer verdict includes readable notes.
+  category: fix
+  dev: Adds deterministic no-notes narration and bounded `task:review-notes-repaired` telemetry.
+- 06afb99: summary: Start waiting planning and implementation work as soon as shared capacity becomes available.
+  category: fix
+  dev: Classifies automatic hold candidates without refusal logs, preserves force waivers, and wakes both lanes on slot release.
+- e7abb42: summary: Show concise review finding titles in remediation step names.
+  category: fix
+  dev: `deriveRemediationSteps` now labels Code Review fixes from finding titles while preserving finding bodies in `remediation.detail`.
+- c70fffb: summary: Reset and manual cancel now stop a running task cleanly, with no failed step or blocked merge.
+  category: fix
+  dev: Graph traversal halts on the run abort signal. Durable step-result writes now use a field-bounded TaskStore primitive that serializes with Reset's task advisory lock and checks the exact startedAt attempt before publishing.
+- 12a9579: summary: Clean merged task worktrees before marking tasks complete.
+  category: fix
+  dev: Uses `CompletionLandedCleanup`, proof-gated removal, and the shared post-landing cleanup helper.
+- 50dce61: summary: Keep overlapping tasks queued until unfinished work lands.
+  category: fix
+  dev: Adds active/dormant file-scope lease classification across scheduler, healing, repair, and executor dispatch.
+- 283dd10: summary: Keep task timelines consistent across workspace and single-repository runs.
+  category: fix
+  dev: Aligns workspace gate context, step-ledger sealing, dependency readiness, merge attribution, and lifecycle provenance.
+- 7c9ea8e: summary: Allow long task steering messages and comments without rejection.
+  category: fix
+  dev: Uses MAX_TASK_MESSAGE_LENGTH and task-message routes share the 2 MiB JSON parser envelope.
+- deb4c31: summary: Persist workspace Code Review approvals so reviewed tasks can merge.
+  category: fix
+  dev: Adds the publishWorkspaceCodeReviewEvidence TaskStore writer.
+- a4c4302: summary: Restore optional review selections after disabling Fast task creation mode.
+  category: fix
+  dev: Uses fastModeOptionalSteps in QuickEntryBox and TaskForm.
+- 138deb9: summary: Show one completion summary in Review and remove the empty Merge section.
+  category: fix
+  dev: `buildTaskHistory` recognizes completion-summary and documentation-delivery projection ids, classifies them deterministically into Review, emits verdict-free and status-free entries to suppress report badges, and prefers the cleaned `task.summary` body. The obsolete `taskHistory.stage.merge` and `taskHistory.empty.merge` localization keys are removed.
+- 6495ab7: summary: Keep Board controls clickable in narrow desktop browser windows.
+  category: fix
+  dev: Stops mouse capture in the mobile column-snap hook and keeps intent-gated Board mouse panning active.
+
 ## 0.77.0-beta.10
 
 ### Minor Changes

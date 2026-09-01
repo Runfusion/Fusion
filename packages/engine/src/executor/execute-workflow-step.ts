@@ -28,6 +28,7 @@ import {
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
   resolveReviewBlockingSeverity,
+  requiresContentReviewProof,
   resolveValidatorFallbackModel,
   resolveTaskOutputLanguage,
   startPlanningSegment,
@@ -103,7 +104,13 @@ import {
   computeReviewDiffFingerprint,
   EMPTY_REVIEW_DIFF_FINGERPRINT,
   probeReviewChangesSinceCommit,
+  resolveContentReviewInputProof,
 } from "../worktree/review-diff-fingerprint.js";
+import {
+  classifyReviewInlineFixRecapture,
+  isFastForwardAdvance,
+  readHeadSha,
+} from "../worktree/review-inline-fix-recapture.js";
 // FNXC:PlanReviewConvergence 2026-08-15-22:15: FN-8768 convergence primer + revision-key classifier (restored post-wave-18).
 import { buildGraphPlanReviewConvergenceContext, buildReviewConvergenceContext, optionalStepRevisionKey } from "./optional-step-revision.js";
 // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
@@ -227,6 +234,8 @@ export async function executeWorkflowStep(
     outputLanguage?: ResolvedTaskOutputLanguage;
     sessionBoundary?: SessionBoundaryDescriptor;
     diffBaseCommitSha?: string;
+    /** Node-captured proof for singular content-binding reviews; prevents a second Git probe. */
+    reviewInputFingerprint?: string;
     /** Identifies the repository inspected by a per-repository workspace dispatch. */
     dispatchLabel?: string;
   },
@@ -250,6 +259,8 @@ export async function executeWorkflowStep(
       requireExternalIntegrationEvidence?: boolean;
     };
     const optionalGroupId = workflowStepMetadata.optionalGroupId;
+    const effectiveWorkflowStepId = optionalGroupId ?? workflowStep.id.replace(/^graph:/, "");
+    const isContentBindingStep = requiresContentReviewProof(effectiveWorkflowStepId, workflowStepMetadata);
     /*
     FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768; restored 2026-08-15-22:15 after the wave-18
     executor.ts shell-ification dropped it): a RENAMED inner step of the canonical Plan Review optional
@@ -278,6 +289,16 @@ export async function executeWorkflowStep(
     }
     const requireExternalIntegrationEvidence =
       workflowStepMetadata.requireExternalIntegrationEvidence === true;
+    const readonlyMcpServerAllowlist = toolMode === "readonly"
+      ? [...new Set((workflowStepMetadata.readonlyMcpServers ?? []).map((name) => name.trim()).filter(Boolean))]
+      : [];
+    /*
+     * FNXC:McpConfig 2026-09-01-06:06:
+     * A read-only step may use MCP from explicitly named servers without coding-mode promotion,
+     * which would expose the adjacent accepted write-capability gap. Coding steps pass no readonly
+     * MCP policy because their ordinary MCP behavior is deliberately unchanged.
+     */
+    const allowReadonlyMcpTools = toolMode === "readonly" && readonlyMcpServerAllowlist.length > 0;
 
     /*
      * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
@@ -301,7 +322,7 @@ export async function executeWorkflowStep(
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
     const latestTaskForUserComments = await deps.store.getTask(task.id).catch(() => task);
-    const sameGateStepId = workflowStep.id.replace(/^graph:/, "");
+    const sameGateStepId = effectiveWorkflowStepId;
     /*
     FNXC:ReviewConvergence 2026-08-28-10:57:
     Plan Review must assemble convergence from a fresh task snapshot because disputes recorded during
@@ -377,22 +398,49 @@ export async function executeWorkflowStep(
     let diffShortstat: string | undefined;
     let reviewInputFingerprint: string | undefined;
     let reviewedCommitSha: string | undefined;
+    let baseRef: string | undefined;
     try {
-      const baseRef = await resolveDiffBaseRef(worktreePath, diffBaseCommitSha);
-      if (baseRef) {
-        const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
-          cwd: worktreePath,
-          encoding: "utf-8",
-        });
-        diffShortstat = stdout.trim() || undefined;
+      baseRef = await resolveDiffBaseRef(worktreePath, diffBaseCommitSha);
+    } catch {
+      // The content-proof resolver below reports the fail-closed diagnostic when this step binds content.
+    }
+    if (isContentBindingStep && task.workspaceWorktrees === undefined) {
+      const suppliedFingerprint = stepOptions?.reviewInputFingerprint?.trim();
+      const proof = suppliedFingerprint
+        ? { kind: "fingerprint" as const, fingerprint: suppliedFingerprint }
+        : await resolveContentReviewInputProof(worktreePath, diffBaseCommitSha);
+      if (proof.kind === "unprovable") {
+        const diagnostic = `${workflowStep.name} review input is unprovable (${proof.reason}); reviewer dispatch refused.`;
+        await deps.store.logEntry(
+          task.id,
+          `[pre-merge] ${diagnostic}`,
+          undefined,
+          deps.getRunContextFor(task.id),
+        );
+        return { success: false, error: diagnostic, failureValue: "review-input-unprovable" };
+      }
+      reviewInputFingerprint = proof.fingerprint;
+    } else if (baseRef) {
+      try {
         if (workflowStepMetadata.reviewKind === "code") {
           reviewInputFingerprint = await computeCodeReviewInputFingerprint(worktreePath, baseRef);
         } else if (isReviewTypeWorkflowStep) {
           reviewInputFingerprint = await computeReviewDiffFingerprint(worktreePath, baseRef);
         }
+      } catch {
+        // Non-content review fingerprints remain best-effort; content-binding singular steps fail above.
       }
-    } catch {
-      // best-effort — fall through with no shortstat
+    }
+    if (baseRef) {
+      try {
+        const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
+          cwd: worktreePath,
+          encoding: "utf-8",
+        });
+        diffShortstat = stdout.trim() || undefined;
+      } catch {
+        // Shortstat is prompt context only and must never suppress an already-captured proof.
+      }
     }
     if (isReviewTypeWorkflowStep) {
       try {
@@ -978,6 +1026,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
       const workflowStepFallbackThinkingLevel = isReviewTypeWorkflowStep
         ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
         : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
+      if (allowReadonlyMcpTools) {
+        await deps.store.logEntry(
+          task.id,
+          `Workflow step '${workflowStep.name}' enabled read-only MCP servers: ${readonlyMcpServerAllowlist.join(", ")}`,
+        );
+      }
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
         taskExecutionSession: true,
@@ -1000,6 +1054,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
         settings,
         taskEnv: stepEnv,
         mcpServers: await deps.resolveMcpServers(undefined),
+        ...(allowReadonlyMcpTools
+          ? {
+              allowMcpToolsInReadonly: true,
+              readonlyMcpServerAllowlist,
+            }
+          : {}),
         // FNXC:SessionRouting 2026-06-24-11:20:
         // #1675: propagate task id so workflow-step requests carry the same
         // X-Session-Id/X-Session-Affinity as the primary session.
@@ -1257,6 +1317,73 @@ CRITICAL SCOPING RULES — read before doing anything else:
             });
           }
           const revisionRequested = effectiveVerdict === "REVISE";
+
+          /*
+          FNXC:PreMergeApproval 2026-09-01-06:53:
+          FN-9234 removes the inline-fix wedge where this lane approved the pre-fix diff while the
+          merge gate probes base..HEAD. Only this reviewing lane may re-bind after a proven
+          fast-forward because no other lane inspected its new content. REVISE retains the original
+          input identity because convergence compares the input each remediation round received.
+          */
+          if (isReviewTypeWorkflowStep && !isPlanReviewStep && !revisionRequested) {
+            const priorReviewedCommitSha = reviewedCommitSha;
+            const currentHeadSha = await readHeadSha(worktreePath);
+            const fastForwardAdvance = await isFastForwardAdvance(worktreePath, priorReviewedCommitSha, currentHeadSha);
+            const baseIsAncestor = await isFastForwardAdvance(worktreePath, baseRef, currentHeadSha);
+            const decision = classifyReviewInlineFixRecapture({
+              verdict: effectiveVerdict,
+              reviewKind: workflowStepMetadata.reviewKind,
+              reviewedCommitSha: priorReviewedCommitSha,
+              currentHeadSha,
+              baseRef,
+              fastForwardAdvance,
+              baseIsAncestor,
+              fingerprintProbeAvailable: true,
+            });
+            if (decision.recapture) {
+              // A post-review fingerprint is evidence only: an unreadable probe must preserve the
+              // already-recorded approval identity rather than converting a completed review to failure.
+              try {
+                const recapturedFingerprint = workflowStepMetadata.reviewKind === "code"
+                  ? await computeCodeReviewInputFingerprint(worktreePath, baseRef)
+                  : await computeReviewDiffFingerprint(worktreePath, baseRef);
+                const finalDecision = classifyReviewInlineFixRecapture({
+                  verdict: effectiveVerdict,
+                  reviewKind: workflowStepMetadata.reviewKind,
+                  reviewedCommitSha: priorReviewedCommitSha,
+                  currentHeadSha,
+                  baseRef,
+                  fastForwardAdvance,
+                  baseIsAncestor,
+                  fingerprintProbeAvailable: recapturedFingerprint !== undefined,
+                });
+                if (finalDecision.recapture && currentHeadSha) {
+                  reviewInputFingerprint = recapturedFingerprint;
+                  reviewedCommitSha = currentHeadSha;
+                  const resolvedInReviewFindingCount = parsed.findings?.filter((finding) => finding.resolution === "resolved-in-review").length ?? 0;
+                  await deps.store.logEntry(task.id, `[pre-merge] ${workflowStep.name} re-captured its own review identity after fast-forward ${priorReviewedCommitSha?.slice(0, 7)} → ${currentHeadSha.slice(0, 7)} (${finalDecision.reason})`);
+                  const runContext = deps.getRunContextFor(task.id);
+                  if (runContext) await emitBoundedRunAudit(deps.store, {
+                    taskId: task.id,
+                    agentId: runContext.agentId,
+                    runId: runContext.runId,
+                    domain: "git",
+                    mutationType: "task:review-input-recaptured",
+                    target: task.id,
+                    metadata: {
+                      taskId: task.id,
+                      workflowStepId: workflowStep.id,
+                      verdict: effectiveVerdict,
+                      resolvedInReviewFindingCount,
+                      reason: finalDecision.reason,
+                    },
+                  });
+                }
+              } catch {
+                // Keep the original pre-dispatch identity; an unproven tree must still face the gate.
+              }
+            }
+          }
           if (workflowStep.requiresBrowser === true) {
             await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: verdict ${effectiveVerdict}`);
           }

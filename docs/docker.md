@@ -54,13 +54,13 @@ for the full flow.
 
 ## Provider OAuth logins (Anthropic, OpenAI Codex)
 
-Subscription logins finish on a **loopback callback server that the container runs itself**, on fixed
-ports: `53692` for Anthropic and `1455` for OpenAI Codex. Two things make that unreachable by
-default — the port is not published, and the listener binds `127.0.0.1` *inside* the container, so
-publishing alone still would not deliver traffic arriving on the container's external interface.
-The symptom is a browser that lands on a connection-error page after you approve the login.
+Anthropic subscription login uses a loopback callback server on port `53692`. OpenAI Codex uses
+that browser callback on port `1455` only when the dashboard is reached at a localhost origin. For
+a remote dashboard origin, Codex instead displays a device code and a verification-page link; enter
+the code on that page, with no localhost callback or paste-back required.
 
-Publish both ports and bind the listener to all interfaces:
+Publish the Anthropic port (and Codex `1455` only when you intentionally use Codex browser login)
+and bind the listener to all interfaces:
 
 ```bash
 docker run -p 4040:4040 -p 53692:53692 -p 1455:1455 \
@@ -70,15 +70,11 @@ docker run -p 4040:4040 -p 53692:53692 -p 1455:1455 \
   fusion
 ```
 
-The browser callback then completes on its own, with nothing to paste. Both ports are fixed by the
-provider's registered redirect URI, so they cannot be remapped to different host ports — `-p
-53692:53693` will not work.
-
-Without this, the fallback is manual: copy the full URL from the browser's address bar after
-approving and paste it into the login card. Note the callback listener accepts connections from
-outside the container while a login is in flight; it is short-lived and validates the OAuth `state`,
-but prefer publishing these ports only on a trusted network (`-p 127.0.0.1:53692:53692` restricts
-them to the host).
+These callback ports are fixed by their providers' registered redirect URIs and cannot be remapped
+to different host ports. If an environment needs the Codex browser flow despite a remote dashboard,
+call `POST /api/auth/login` with `{"provider":"openai-codex","method":"browser"}`; this restores
+the paste-back/callback behavior. The temporary callback listener validates OAuth `state`, but
+prefer publishing it only on a trusted network.
 
 ## Helper script
 
@@ -138,6 +134,63 @@ enabled and the `funnel` node attribute granted in your tailnet's ACL policy.
 
 If the daemon is missing, logged out, or stopped, the dashboard's remote-access card reports that
 directly rather than failing with an unexplained exit code.
+
+## Update Fusion from source, from the dashboard
+
+A contributor whose only access to the box is the Fusion dashboard can pull new source, rebuild it,
+and restart into it — no shell, no Docker socket, no image rebuild — using **Command Center → System
+Controls → Update from source**. Two pieces make that possible.
+
+**The entrypoint is a restart supervisor.** PID 1 is the wrapper script, not the dashboard, so a
+restart request (exit code 86) relaunches the dashboard in place. Any other exit code still ends the
+container with its real status, and `SIGTERM`/`SIGINT`/`SIGHUP` are forwarded to the dashboard so
+`docker stop` shuts down gracefully. Without this the System panel's Restart button was inert in a
+container, because nothing was there to respawn the process.
+
+**Run the CLI from a source checkout instead of the image.** The image-baked `/app` has no `.git` and
+no build scripts, so it cannot be updated. Pass `--from-source` before the CLI arguments (or set
+`FUSION_FROM_SOURCE=1`) to run the CLI from a git checkout instead:
+
+```bash
+docker run -v fusion-node-home:/home/node fusion --from-source dashboard --host 0.0.0.0
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FUSION_FROM_SOURCE` | `0` | Env equivalent of `--from-source`. |
+| `FUSION_SOURCE_ROOT` | `/home/node/fusion` | The git checkout to run from. Needs `node_modules` installed and a built `packages/cli/dist/bin.js`. |
+| `FUSION_APP_ROOT` | `/app` | The image-baked build used when not running from source. |
+
+If `--from-source` is requested and the checkout has no built CLI, the container **fails to start
+with a message naming the path** rather than quietly serving `/app` — a container silently running
+different code than you asked for is worse than one that refuses to start.
+
+With those in place the **Update from source** control runs, against that checkout:
+
+1. `git status --porcelain` — a dirty tree is refused, not stashed or merged over.
+2. `git pull --ff-only` — a diverged branch is refused; no merge commit is ever created.
+3. `pnpm install` and a full workspace build, streamed live into the System panel's job log.
+4. A restart **only if the build succeeded.** A failed build leaves the running instance completely
+   untouched, so the dashboard stays up and you can read the failure and try again.
+
+Only one such job runs at a time; a second request while one is in flight is rejected. The control is
+disabled with the reason when the process is not running from a git checkout, or when nothing is
+supervising it. Authentication is the normal dashboard bearer token.
+
+### Remote access survives a restart
+
+A supervised restart is not a shutdown: the same machine, the same `tailscaled`, and the same operator
+are all still there seconds later. Restart (and the source update, which ends in one) therefore **hands
+the Tailscale funnel over instead of stopping it** — the funnel process is released from parent-death
+supervision and the relaunched dashboard adopts it, so the public URL never goes dark and no second
+`tailscale funnel` is spawned (two against one node conflict, and the loser clears the winner's
+config). Only a genuine container stop tears the tunnel down, recording the "was running" marker so the
+next boot restores it.
+
+If the released process does not survive the swap, the relaunch finds no funnel to adopt and simply
+restores one from that marker — a few seconds of downtime rather than a dead URL. The System panel's
+remote-access card reports which happened: `restore.reason` is `adopted_running_tunnel` for a clean
+handover and `restore_started` for a respawn.
 
 ## Pass additional CLI flags
 

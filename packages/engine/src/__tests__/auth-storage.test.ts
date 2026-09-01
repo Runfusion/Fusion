@@ -127,6 +127,48 @@ describe("createFusionAuthStorage", () => {
       expect(answer).toBe("browser");
     });
 
+    it("keeps select off hanging prompt channels and forwards device-code notifications intact", async () => {
+      const authStorage = createFusionAuthStorage();
+      const onSelect = vi.fn(async () => "device_code");
+      const onPrompt = vi.fn(async () => new Promise<string>(() => {}));
+      const onManualCodeInput = vi.fn(async () => new Promise<string>(() => {}));
+      const onDeviceCode = vi.fn();
+      const onAuth = vi.fn();
+      authStorage.setModelRuntime({
+        login: async (_provider: string, _type: string, interaction: {
+          prompt: (prompt: unknown) => Promise<string>;
+          notify: (event: unknown) => void;
+        }) => {
+          await interaction.prompt({
+            type: "select",
+            message: "Select OpenAI Codex login method:",
+            options: [{ id: "browser" }, { id: "device_code" }],
+          });
+          interaction.notify({
+            type: "device_code",
+            userCode: "ABCD-1234",
+            verificationUri: "https://auth.openai.com/codex/device",
+            intervalSeconds: 5,
+            expiresInSeconds: 900,
+          });
+        },
+      } as never);
+
+      await authStorage.login("openai-codex", { onSelect, onPrompt, onManualCodeInput, onDeviceCode, onAuth });
+
+      expect(onSelect).toHaveBeenCalledOnce();
+      expect(onPrompt).not.toHaveBeenCalled();
+      expect(onManualCodeInput).not.toHaveBeenCalled();
+      expect(onAuth).not.toHaveBeenCalled();
+      expect(onDeviceCode).toHaveBeenCalledWith({
+        type: "device_code",
+        userCode: "ABCD-1234",
+        verificationUri: "https://auth.openai.com/codex/device",
+        intervalSeconds: 5,
+        expiresInSeconds: 900,
+      });
+    });
+
     it("routes a manual_code prompt to the dedicated manual-code channel", async () => {
       const onManualCodeInput = vi.fn(async () => "code=abc&state=xyz");
       const onPrompt = vi.fn(async () => "wrong-channel");
@@ -448,6 +490,27 @@ describe("createFusionAuthStorage", () => {
       expect(await authStorage.getApiKey("anthropic-subscription")).toBe("subscription-access-token");
       expect(authStorage.hasAuth("anthropic")).toBe(true);
       expect(authStorage.list()).toEqual(expect.arrayContaining(["anthropic", "anthropic-subscription"]));
+    });
+
+    it("uses stored Anthropic subscription OAuth before a legacy OAuth shadow row", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: {
+          type: "oauth",
+          access: "legacy-shadow-access-token",
+          refresh: "legacy-shadow-refresh-token",
+          expires: Date.now() + 24 * 60 * 60_000,
+        },
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "selected-subscription-access-token",
+          refresh: "selected-subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("selected-subscription-access-token");
     });
 
     it("exposes legacy Anthropic OAuth through the subscription provider without raw direct auth", async () => {

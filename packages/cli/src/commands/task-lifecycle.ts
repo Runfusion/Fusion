@@ -30,6 +30,7 @@ import type { TaskStore } from "@fusion/core";
 import {
   resolveTaskMergeTarget,
   resolveTaskPrHeadBranch,
+  resolveWorktreesDirLayout,
   getCurrentRepo,
   getPushRepo,
   isBranchGroupMemberLanded,
@@ -428,14 +429,14 @@ export async function refreshAutomatedPrHead(
     */
     // Keep retained failed-cleanup worktrees under the bounded project worktree
     // area, where the existing native worktree reconciliation can discover them.
-    const refreshWorktreesDir = join(root, ".worktrees");
-    await mkdir(refreshWorktreesDir, { recursive: true });
     /*
-    FNXC:PullRequestFreshness 2026-08-09-02:44:
-    Refresh worktrees use a deterministic managed path and a durable path reservation.
-    A failed removal quarantines that path; a later refresh reconciles the exact
-    inactive checkout before it can reuse the branch or path.
+    FNXC:PullRequestFreshness 2026-08-30-15:06:
+    PR refresh callers do not receive resolved project settings, so this path deliberately
+    follows only the shared default. New refresh worktrees must use `.fusion/worktrees` so
+    engine sweeps discover them alongside ordinary task checkouts.
     */
+    const refreshWorktreesDir = resolveWorktreesDirLayout(root, undefined);
+    await mkdir(refreshWorktreesDir, { recursive: true });
     temporary = join(
       refreshWorktreesDir,
       `pr-refresh-${createHash("sha256").update(input.headBranch).digest("hex").slice(0, 16)}`,

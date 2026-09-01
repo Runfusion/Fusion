@@ -146,8 +146,11 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
       // FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 gate-attribution retention map (restored post-wave-18).
       "workflowGateActivityPrincipals",
+      // FNXC:WorkflowLifecycle 2026-08-31-06:41: per-run abort-marker reset at run birth.
+      "userCanceledTaskIds",
     ]),
     ...facadeMethods(host, [
+      "clearPausedAborted",
       "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
       "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
       "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
@@ -184,7 +187,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "isRequiredArtifactRecoveryProtected", "isRetryableBenignMergePauseAbort",
       "parkCompletedBlockedTask", "persistTokenUsage", "reenterPausedAbortedWorkflowNode",
       "resolveResumeLanes", "routeGraphFailureToExecutionResume", "routeGraphMergeFailureToRetry",
-      "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
+      "requestPreMergeOptionalStepFix", "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
       "routeRetryableRemediationGraphFailureToPreMergeFix", "routeUnusableWorktreeGraphFailureToRecovery",
       "safeLogEntry",
     ]),
@@ -1490,7 +1493,9 @@ export function buildStaleLockRecoveryDeps(host: any): any {
 export function buildRecoverFailedPreMergeWorkflowStepDeps(host: any): any {
   return {
     store: host.store,
-    ...facadeMethods(host, ["getRunContextFor", "resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveFailedPreMergeWorkflowStepBudget", "appendReviewRemediationSteps", "sendTaskBackForFix",
+    ]),
   };
 }
 

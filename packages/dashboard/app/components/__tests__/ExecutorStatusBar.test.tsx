@@ -1079,6 +1079,40 @@ describe("ExecutorStatusBar", () => {
       expect(status).toBeInTheDocument();
       expect(status).not.toHaveClass("executor-status-bar--keyboard-open");
     });
+
+    it.each([
+      ["error", { loading: false, error: "Stats unavailable", stats: defaultStats }, "executor-status-bar--error"],
+      ["connecting", { loading: false, error: "Failed to fetch", stats: defaultStats }, "executor-status-bar--connecting"],
+      ["initial loading", { loading: true, error: null, stats: { ...defaultStats, runningTaskCount: 0 } }, "executor-status-bar--loading"],
+    ])("applies the keyboard collapse class in the %s branch", (_branch, state, branchClass) => {
+      vi.mocked(mockUseExecutorStats).mockReturnValue({
+        stats: state.stats ?? defaultStats,
+        loading: state.loading,
+        error: state.error,
+        refresh: vi.fn(),
+      });
+
+      render(<ExecutorStatusBar tasks={emptyTasks} keyboardOpen />);
+
+      expect(document.querySelector(".executor-status-bar")).toHaveClass(branchClass, "executor-status-bar--keyboard-open");
+    });
+
+    it.each([
+      ["error", { loading: false, error: "Stats unavailable", stats: defaultStats }],
+      ["connecting", { loading: false, error: "Failed to fetch", stats: defaultStats }],
+      ["initial loading", { loading: true, error: null, stats: { ...defaultStats, runningTaskCount: 0 } }],
+    ])("does not apply the keyboard collapse class in the %s branch when closed", (_branch, state) => {
+      vi.mocked(mockUseExecutorStats).mockReturnValue({
+        stats: state.stats ?? defaultStats,
+        loading: state.loading,
+        error: state.error,
+        refresh: vi.fn(),
+      });
+
+      render(<ExecutorStatusBar tasks={emptyTasks} keyboardOpen={false} />);
+
+      expect(document.querySelector(".executor-status-bar")).not.toHaveClass("executor-status-bar--keyboard-open");
+    });
   });
 
   describe("layout integration", () => {

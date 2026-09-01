@@ -9,6 +9,7 @@ export interface WorkspaceWorktreeContext {
 }
 
 export const WORKSPACE_GROUP_MARKER_FILENAME = ".fusion-workspace-root";
+export const LEGACY_WORKTREES_DIRNAME = ".worktrees";
 
 /**
  * FNXC:WorkspaceWorktree 2026-08-20-01:20:
@@ -55,10 +56,10 @@ export function workspaceRepoSegment(repoRelPath: string): string {
 }
 
 /**
- * FNXC:WorkspaceWorktree 2026-08-20-01:20:
- * The unset setting intentionally retains the historic per-repository `.worktrees`
- * layout. Grouping applies only to an explicitly configured root, while `.ai-merge`
- * remains resolved separately from the ungrouped root.
+ * FNXC:WorkspaceWorktree 2026-08-30-15:06:
+ * New task worktrees default under `.fusion/worktrees` for both singular and workspace
+ * projects. The historic `.worktrees` root remains a first-class containment and sweep
+ * candidate while no override is configured, so persisted checkouts are never stranded.
  */
 export function resolveWorktreesDirLayout(
   rootDir: string,
@@ -66,7 +67,7 @@ export function resolveWorktreesDirLayout(
   workspaceContext?: WorkspaceWorktreeContext,
 ): string {
   const configured = settings?.worktreesDir;
-  if (!configured) return join(rootDir, ".worktrees");
+  if (!configured) return join(rootDir, ".fusion", "worktrees");
 
   const resolutionRoot = workspaceContext?.workspaceRootDir ?? rootDir;
   const expandedHome = configured.replace(/^~(?=$|[\\/])/, homedir());
@@ -74,6 +75,32 @@ export function resolveWorktreesDirLayout(
   const configuredRoot = resolve(resolutionRoot, expandedRepo);
   if (!workspaceContext) return configuredRoot;
   return join(configuredRoot, workspaceWorktreeGroupSegment(workspaceContext.workspaceRootDir), workspaceRepoSegment(workspaceContext.repoRelPath));
+}
+
+/** Resolve the historic root without treating it as the current default. */
+export function resolveLegacyWorktreesDirLayout(rootDir: string): string {
+  return join(rootDir, LEGACY_WORKTREES_DIRNAME);
+}
+
+/**
+ * Returns every managed root that may contain a task worktree. A configured root is
+ * exclusive; otherwise newly-created paths use the primary root while legacy paths
+ * remain visible to containment checks and cleanup sweeps.
+ */
+export function resolveWorktreesDirCandidates(
+  rootDir: string,
+  settings: Pick<Settings, "worktreesDir"> | undefined,
+  workspaceContext?: WorkspaceWorktreeContext,
+): string[] {
+  const resolved = resolveWorktreesDirLayout(rootDir, settings, workspaceContext);
+  if (settings?.worktreesDir) return [resolved];
+  return [resolved, resolveLegacyWorktreesDirLayout(rootDir)];
+}
+
+/** True only when candidate is strictly contained by root after path resolution. */
+export function isStrictDescendantPath(root: string, candidate: string): boolean {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel !== "" && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }
 
 /*

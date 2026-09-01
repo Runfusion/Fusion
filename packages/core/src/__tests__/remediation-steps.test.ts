@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatRemediationStepName,
   hasOpenEquivalentRemediationStep,
+  hasPendingReviewRemediationWork,
   remediationWaveCount,
   type Task,
   type TaskStep,
@@ -98,5 +99,20 @@ describe("review remediation steps", () => {
     expect(hasOpenEquivalentRemediationStep([existing], remediation("missing undefined case"))).toBe(true);
     existing.status = "done";
     expect(hasOpenEquivalentRemediationStep([existing], remediation("missing undefined case"))).toBe(false);
+  });
+
+  it("recognizes the workflow-selected pending remediation model without weakening named remediation", () => {
+    const pendingFix = remediation("missing undefined case");
+    const pendingPlain: TaskStep = { name: "Documentation & Delivery", status: "pending" };
+    const doneFix = remediation("previous wave", "done");
+
+    expect(hasPendingReviewRemediationWork({ steps: [pendingFix] }, { stepReopenPolicy: "none" })).toBe(true);
+    expect(hasPendingReviewRemediationWork({ steps: [pendingFix] }, { stepReopenPolicy: "reopen-trailing" })).toBe(true);
+    expect(hasPendingReviewRemediationWork({ steps: [pendingPlain] }, { stepReopenPolicy: "reopen-trailing" })).toBe(true);
+    expect(hasPendingReviewRemediationWork({ steps: [pendingPlain] }, { stepReopenPolicy: "none" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [] }, { stepReopenPolicy: "none" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [] }, { stepReopenPolicy: "reopen-trailing" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [doneFix] }, { stepReopenPolicy: "none" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [doneFix] }, { stepReopenPolicy: "reopen-trailing" })).toBe(false);
   });
 });

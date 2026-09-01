@@ -10,7 +10,13 @@ vi.mock("../worktree/review-diff-fingerprint.js", async () => {
     ...actual,
     computeReviewDiffFingerprint: vi.fn(async () => "stable-review-diff"),
     computeCodeReviewInputFingerprint: vi.fn(async (...args: Parameters<typeof actual.computeCodeReviewInputFingerprint>) =>
-      codeFingerprintOverride.value ?? actual.computeCodeReviewInputFingerprint(...args)), 
+      codeFingerprintOverride.value ?? actual.computeCodeReviewInputFingerprint(...args)),
+    resolveContentReviewInputProof: vi.fn(async (...args: Parameters<typeof actual.resolveContentReviewInputProof>) => {
+      const fingerprint = codeFingerprintOverride.value;
+      return fingerprint
+        ? { kind: "fingerprint" as const, fingerprint }
+        : actual.resolveContentReviewInputProof(...args);
+    }),
   };
 });
 import { performWorkflowRerunBounce } from "../executor/workflow-rerun-bounce.js";
@@ -88,12 +94,14 @@ function installReviewer(output: string) {
 }
 
 async function persistResult(store: any, subject: any, outcome: any, options: { stepId?: string; stepName?: string } = {}) {
+  store.isBackendMode ??= () => false;
+  store.recordAgentActivity ??= vi.fn(async () => undefined);
   await persistWorkflowStepResult({
     store,
     getRunContextFor: () => undefined,
     readTaskArtifact: vi.fn(async () => "# Approved plan\n"),
   } as any, subject.id, {
-    workflowStepId: options.stepId ?? "plan-review-step",
+    workflowStepId: options.stepId ?? "plan-review",
     workflowStepName: options.stepName ?? "Plan Review",
     phase: "pre-merge",
     status: outcome.success ? "passed" : "failed",
@@ -176,7 +184,7 @@ describe("unchanged review input reuse", () => {
     expect(first.reviewInputFingerprint).toBeTypeOf("string");
     expect(first.repositoryScopeRevision).toBe(1);
     await persistResult(store, subject, first, {
-      stepId: "code-review-step",
+      stepId: "code-review",
       stepName: "Code Review",
     });
     await expect(store.getTask(subject.id)).resolves.toMatchObject({

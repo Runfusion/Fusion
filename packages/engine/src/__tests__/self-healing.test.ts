@@ -150,6 +150,7 @@ vi.mock("../merge/post-landing-worktree-cleanup.js", () => ({
 }));
 
 import { SelfHealingManager, isBranchAheadOfBase, MAX_AUTO_MERGE_RETRIES, MAX_TASK_DONE_RETRIES } from "../self-healing.js";
+import { resolveAiMergeRootPath } from "../worktree/worktree-paths.js";
 import { cleanupLandedTaskWorktree } from "../merge/post-landing-worktree-cleanup.js";
 import { HEARTBEAT_ERROR_RECOVERY_METADATA_KEY, HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON, HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON, readHeartbeatErrorRetryCount } from "../agent-heartbeat.js";
 import { PlanningLifecycleLockTransportError, TaskDeletedError, TaskNotFoundError, TransitionRejectionError, type TaskStore, type Settings, type Task, type AgentStore, type Agent, type NotificationProvider } from "@fusion/core";
@@ -4877,6 +4878,73 @@ describe("SelfHealingManager", () => {
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-352",
         expect.stringContaining("eligible in-review task was merged"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:PreMergeApproval 2026-09-01-14:05:
+    The review recovery sweep must solve stale content-bound approvals by re-seeding review, not by
+    re-enqueueing the same merge refusal that wedged FN-9234.
+    */
+    it("routes stale singular review approvals back to Code Review instead of merge retry", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store as any).getTaskWorkflowSelection = vi.fn(() => null);
+      (store as any).listWorkflowWorkItemsForTask = vi.fn(async () => []);
+      (store as any).seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async () => ({ seeded: true }));
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd === "git diff --binary base-sha..HEAD") return "current diff" as any;
+        return "" as any;
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-9234-STUCK",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-9234-stuck",
+          baseCommitSha: "base-sha",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{
+            workflowStepId: "code-review",
+            workflowStepName: "Code Review",
+            status: "passed",
+            phase: "pre-merge",
+            reviewKind: "code",
+            verdict: "APPROVE",
+            reviewInputFingerprint: "old-diff",
+          }],
+          mergeDetails: undefined,
+          enabledWorkflowSteps: ["code-review"],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(enqueueMerge).not.toHaveBeenCalled();
+      expect((store as any).seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: "FN-9234-STUCK",
+        nodeId: "code-review",
+        state: "runnable",
+      }));
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-9234-STUCK",
+        expect.stringContaining("Self-healing re-seeded Code Review"),
       );
 
       managerWithRecovery.stop();
@@ -9700,10 +9768,9 @@ describe("stranded AI merge clean-room recovery", () => {
 
     const originalReaddir = mockedReaddirSync.getMockImplementation();
     const originalExec = mockedExecSync.getMockImplementation();
+    const recoveryRoot = resolveAiMergeRootPath("/tmp/test-project", undefined);
     mockedReaddirSync.mockImplementation((path: any) => {
-      if (String(path).includes(".ai-merge") || String(path).includes("fusion-ai-merge")) {
-        return ["fusion-ai-merge-fn-5858-abcd"] as any;
-      }
+      if (String(path) === recoveryRoot) return ["fusion-ai-merge-fn-5858-abcd"] as any;
       return [] as any;
     });
     mockedExecSync.mockImplementation((command: string) => {

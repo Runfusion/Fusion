@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import type { PlannerInterventionEntry, PlannerInterventionSourceLink } from "@fusion/core";
 import { fetchPlannerInterventionTimeline } from "../api";
+import { formatPreciseTimestampFull } from "../utils/preciseTimestamp";
 
 /*
 FNXC:PlannerOversight 2026-07-04-18:00:
@@ -109,13 +110,13 @@ function InterventionEntryRow({ entry }: { entry: PlannerInterventionEntry }) {
   const outcomeLabel = t(OUTCOME_LABEL_KEYS[entry.outcome] ?? OUTCOME_LABEL_KEYS.pending, entry.outcome);
   const dotModifier = OUTCOME_DOT_MODIFIER[entry.outcome] ?? "status-dot--pending";
   const hasAttempts = typeof entry.attemptCount === "number" && typeof entry.attemptLimit === "number";
-  const timestampLabel = (() => {
-    try {
-      return new Date(entry.timestamp).toLocaleString();
-    } catch {
-      return entry.timestamp;
-    }
-  })();
+  /*
+  FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+  FN-272 requires the Interventions activity segment to expose the logged wall-clock time with milliseconds.
+  Keep the raw stored value as a defensive fallback for legacy or malformed entries rather than rendering an invalid date.
+  */
+  const preciseTimestamp = formatPreciseTimestampFull(entry.timestamp);
+  const timestampLabel = preciseTimestamp || entry.timestamp;
 
   return (
     <li className="planner-intervention-entry" data-testid="planner-intervention-entry">
@@ -125,7 +126,7 @@ function InterventionEntryRow({ entry }: { entry: PlannerInterventionEntry }) {
         </span>
         <span className={`status-dot ${dotModifier}`} aria-hidden="true" />
         <span className="planner-intervention-entry__outcome">{outcomeLabel}</span>
-        <span className="planner-intervention-entry__timestamp">{timestampLabel}</span>
+        <span className="planner-intervention-entry__timestamp" title={preciseTimestamp || undefined}>{timestampLabel}</span>
       </div>
       <p className="planner-intervention-entry__reason">{entry.reason}</p>
       <div className="planner-intervention-entry__meta">

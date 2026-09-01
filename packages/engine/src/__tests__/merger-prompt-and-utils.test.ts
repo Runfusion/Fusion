@@ -519,7 +519,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
-      mergeIntegrationWorktree: "reuse-task-worktree" as const,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
       mergeStrategy: "direct",
@@ -597,7 +597,9 @@ describe("push-after-merge", () => {
     expect(result.merged).toBe(true);
     expect(result.pushedToRemote).toBe(false);
     expect(result.pushError).toContain("permission denied");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
 
     // FN-7625: a failed push must not vanish silently — it needs a persisted
     // audit event and a task log entry, not just a process-wide log line.

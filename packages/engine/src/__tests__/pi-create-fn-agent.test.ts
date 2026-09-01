@@ -2958,6 +2958,51 @@ describe("createFnAgent", () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it("connects and exposes only allowlisted MCP servers in readonly sessions", async () => {
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    const nav = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "find_symbol" }, { name: "find_references" }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined),
+    };
+    const memory = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "recall_append" }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined),
+    };
+
+    const created = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+      mcpServers: [
+        { name: "nav", transport: "stdio", command: "node", enabled: true },
+        { name: "memory", transport: "stdio", command: "node", enabled: true },
+      ],
+      allowMcpToolsInReadonly: true,
+      readonlyMcpServerAllowlist: ["nav"],
+      mcpClientFactory: (server) => (server.name === "nav" ? nav : memory) as any,
+    });
+
+    const customTools = (createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> }).customTools;
+    expect(customTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "mcp__nav__find_symbol",
+      "mcp__nav__find_references",
+    ]));
+    expect(customTools.map((tool) => tool.name)).not.toContain("mcp__memory__recall_append");
+    expect(nav.connect).toHaveBeenCalledTimes(1);
+    expect(memory.connect).not.toHaveBeenCalled();
+    expect(customTools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining(["edit", "write", "bash"]));
+
+    await created.session.dispose?.();
+    expect(nav.close).toHaveBeenCalledTimes(1);
+    expect(memory.close).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["connect", "TypeError"],
     ["list", "RangeError"],

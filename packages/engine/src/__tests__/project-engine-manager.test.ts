@@ -20,6 +20,7 @@ vi.mock("../project-engine.js", () => {
         start: vi.fn().mockResolvedValue(undefined),
         beginDrain: vi.fn(),
         stop: vi.fn().mockResolvedValue(undefined),
+        shutdownRemoteTunnelForProcessExit: vi.fn().mockResolvedValue(undefined),
         getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
         getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
         getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
@@ -972,5 +973,152 @@ describe("ProjectEngineManager", () => {
       expect(manager.getEngine("proj_aaa")).toBeUndefined();
       expect(manager.hasRunningEngine()).toBe(false);
     });
+  });
+});
+
+/*
+FNXC:RemoteAccess 2026-08-31-07:08:
+Original symptom (reproduced twice in production): "Stop engine" — which is
+ProjectEngineManager.pauseProject — took the operator's Tailscale tunnel down with the engine, so the
+public URL they use to reach the box went dark and they could not restart anything.
+
+The invariant: engine-lifecycle transitions (pause, and the pause+resume behind "Restart engine") must
+never stop a tunnel; only real process shutdown (stopAll) may, and it must do so BEFORE engine.stop()
+while the TaskStore is still open so the restore marker persists.
+*/
+describe("ProjectEngineManager remote tunnel ownership", () => {
+  let centralCore: CentralCore;
+  const projectA = makeProject("proj_aaa", "Project A", "/tmp/a");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    centralCore = createMockCentralCore([projectA]);
+    // An earlier suite replaces the shared ProjectEngine mock implementation and never restores it;
+    // reinstall the shape these tests need.
+    (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(function (config: any) {
+      return {
+        start: vi.fn().mockResolvedValue(undefined),
+        beginDrain: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        shutdownRemoteTunnelForProcessExit: vi.fn().mockResolvedValue(undefined),
+        getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+        getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
+        getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
+        getAutomationStore: vi.fn().mockReturnValue(undefined),
+        getRuntime: vi.fn().mockReturnValue({
+          getMissionAutopilot: vi.fn().mockReturnValue(undefined),
+          getMissionExecutionLoop: vi.fn().mockReturnValue(undefined),
+        }),
+        getWorkingDirectory: vi.fn().mockReturnValue(config.workingDirectory),
+        onMerge: vi.fn().mockResolvedValue(undefined),
+        _config: config,
+      };
+    });
+  });
+
+  function makeManager(): ProjectEngineManager {
+    return new ProjectEngineManager(centralCore);
+  }
+
+  it("does not touch the tunnel when pausing a project", async () => {
+    const manager = makeManager();
+    await manager.ensureEngine("proj_aaa");
+    const engine = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    };
+
+    await manager.pauseProject("proj_aaa");
+
+    expect(engine.stop).toHaveBeenCalledTimes(1);
+    // The defect: this used to happen implicitly inside engine.stop().
+    expect(engine.shutdownRemoteTunnelForProcessExit).not.toHaveBeenCalled();
+  });
+
+  it("does not touch the tunnel across a pause+resume restart cycle", async () => {
+    const manager = makeManager();
+    await manager.ensureEngine("proj_aaa");
+    const first = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+    };
+
+    await manager.pauseProject("proj_aaa");
+    await manager.resumeProject("proj_aaa");
+
+    const second = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+    };
+    expect(second).toBeDefined();
+    expect(first.shutdownRemoteTunnelForProcessExit).not.toHaveBeenCalled();
+    expect(second.shutdownRemoteTunnelForProcessExit).not.toHaveBeenCalled();
+  });
+
+  it("stops the tunnel on process shutdown, before the engine's own stop", async () => {
+    const manager = makeManager();
+    await manager.ensureEngine("proj_aaa");
+    const engine = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    };
+
+    const order: string[] = [];
+    engine.shutdownRemoteTunnelForProcessExit.mockImplementation(async () => {
+      order.push("tunnel");
+    });
+    engine.stop.mockImplementation(async () => {
+      order.push("engine");
+    });
+
+    await manager.stopAll();
+
+    // Tunnel first: persisting the "was running" marker needs the store still open.
+    expect(order).toEqual(["tunnel", "engine"]);
+  });
+
+  /*
+  FNXC:RemoteAccess 2026-09-01-02:54:
+  A SUPERVISED RESTART IS NOT A SHUTDOWN. Command Center "Restart" — and "Update from source", which
+  ends in the same restart — exits with FUSION_RESTART_EXIT_CODE for a supervisor that relaunches
+  seconds later. Stopping the tunnel there killed the operator's public URL on every routine restart
+  (observed twice: container healthy, tailnet URL dead). Only a genuine process/container exit stops it.
+  */
+  it("hands the tunnel over on a supervised restart instead of stopping it", async () => {
+    const manager = makeManager();
+    await manager.ensureEngine("proj_aaa");
+    const engine = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    };
+
+    await manager.stopAll({ supervisedRestart: true });
+
+    expect(engine.shutdownRemoteTunnelForProcessExit).toHaveBeenCalledWith({ supervisedRestart: true });
+    // The engine itself still stops — only remote access is exempt from the restart.
+    expect(engine.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the genuine-shutdown disposition when no restart is in flight", async () => {
+    const manager = makeManager();
+    await manager.ensureEngine("proj_aaa");
+    const engine = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+    };
+
+    await manager.stopAll();
+
+    expect(engine.shutdownRemoteTunnelForProcessExit).toHaveBeenCalledWith({ supervisedRestart: false });
+  });
+
+  it("survives a throwing tunnel shutdown and still stops the engine", async () => {
+    const manager = makeManager();
+    await manager.ensureEngine("proj_aaa");
+    const engine = manager.getEngine("proj_aaa") as unknown as {
+      shutdownRemoteTunnelForProcessExit: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    };
+    engine.shutdownRemoteTunnelForProcessExit.mockRejectedValue(new Error("tunnel boom"));
+
+    await expect(manager.stopAll()).resolves.toBeUndefined();
+    expect(engine.stop).toHaveBeenCalledTimes(1);
   });
 });

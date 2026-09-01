@@ -180,6 +180,9 @@ export interface AgentRuntimeOptions {
    * logging server contents.
    */
   mcpServers?: AgentRuntimeMcpServerConfig[];
+  /** Read-only MCP opt-in and server narrowing; MCP-incapable runtimes ignore both without logging definitions. */
+  allowMcpToolsInReadonly?: boolean;
+  readonlyMcpServerAllowlist?: string[];
   /** Optional task-scoped environment variables for session-local subprocesses. */
   taskEnv?: NodeJS.ProcessEnv;
   /**

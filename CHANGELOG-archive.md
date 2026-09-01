@@ -13885,6 +13885,30 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.36-beta.13
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.13
+
+## 0.39.36-beta.12
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.12
+
+## 0.39.36-beta.11
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.11
+
 ## 0.39.36-beta.10
 
 ### @fusion/i18n
@@ -14471,6 +14495,30 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.62-beta.13
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.13
+
+## 0.11.62-beta.12
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.12
+
+## 0.11.62-beta.11
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.11
 
 ## 0.11.62-beta.10
 

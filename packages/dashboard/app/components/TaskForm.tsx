@@ -1143,11 +1143,15 @@ export function TaskForm({
               : t("taskForm.attach", "Attach")}
           </button>
 
+          {/*
+          FNXC:NewTaskDialogAffordances 2026-09-01-05:04:
+          Icon-only inline quick-action controls must keep a compact square footprint and never stretch to fill a wrapped flex line on phones.
+          */}
           {/* FNXC:NewTask 2026-06-23-00:10: Fast — toggles executionMode standard⇄fast; btn-primary when active, matching QuickEntryBox's fast toggle. */}
           {onExecutionModeChange && executionMode !== undefined && (
             <button
               type="button"
-              className={`btn btn-sm ${executionMode === "fast" ? "btn-primary" : ""}`}
+              className={`btn btn-sm task-form-inline-icon-btn ${executionMode === "fast" ? "btn-primary" : ""}`}
               onClick={() => handleExecutionModeChange(executionMode === "fast" ? "standard" : "fast")}
               aria-pressed={executionMode === "fast"}
               aria-label={inlineFastButtonLabel}
@@ -1245,7 +1249,7 @@ export function TaskForm({
           {onPriorityChange && (
             <button
               type="button"
-              className="btn btn-sm"
+              className="btn btn-sm task-form-inline-icon-btn"
               onClick={() => {
                 const idx = TASK_PRIORITIES.indexOf(inlinePriority);
                 const next = TASK_PRIORITIES[(idx + 1) % TASK_PRIORITIES.length];

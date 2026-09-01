@@ -1111,7 +1111,7 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   gap: var(--space-sm);
   width: 100%;
   padding: var(--space-sm);
-  border: var(--border) solid;
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-warning) 10%, var(--surface));
   color: var(--text);

@@ -86,6 +86,7 @@ Be specific: cite \`file:line\` for every finding and explain the concrete failu
 - APPROVE_WITH_NOTES: shippable. Use this when your findings are all P1/P2 — they are recorded and handed to the implementer without another remediation round.
 - REVISE: a correctness bug, regression, or contract break requires changes before merge. Requires at least one \`critical\` finding in \`findings\`; a REVISE without one will be treated as APPROVE_WITH_NOTES.
 - Every blocking issue MUST appear as an entry in \`findings\` with its severity and \`filePath\`/\`line\`. Prose in \`notes\` alone does not block.
+- Every REVISE finding is a required Fix-step record. Its \`id\`, \`title\`, \`body\`, \`filePath\`, \`line\`, and \`severity\` must be concrete enough for an executor to implement without asking what to fix. If you cannot name an affected file and correction, do not return REVISE: investigate until you can, or return the appropriate non-blocking verdict.
 - \`notes\` MUST contain one to three sentences naming what was checked and why the verdict was reached. An empty \`notes\` string is a protocol violation.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"concrete failure and remediation","filePath":"path/to/file.ts","line":1,"severity":"critical|high|medium|low","resolution":"open|resolved-in-review|superseded"}]}`;

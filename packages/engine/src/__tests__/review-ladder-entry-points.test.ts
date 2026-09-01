@@ -562,7 +562,7 @@ describe("FN-149 remediation graph ladder entry", () => {
       getSettings: vi.fn(async () => ({ autoMerge: true, globalPause: false, enginePaused: false, maxPostReviewFixes: 3 })),
       listTasks: vi.fn(async () => [row]),
       getTask: vi.fn(async () => row),
-      updateTask: vi.fn(async () => undefined),
+      updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(row, patch)),
       logEntry: vi.fn(async () => undefined),
       getTaskWorkflowSelection: vi.fn(() => undefined),
       getWorkflowDefinition: vi.fn(async () => undefined),
@@ -637,7 +637,36 @@ function emptyReviewStore(row: any) {
 }
 
 describe("FN-225 definite empty review entry points", () => {
-  it("terminalizes from the live requester without scheduling remediation", async () => {
+  /*
+  FNXC:ReviewEmptyContent 2026-08-30-13:36:
+  FN-267 changed this contract deliberately. The empty-diff close used to run AHEAD of the
+  remediation producer on the live requester, so an empty-diff REVISE parked terminally before the
+  deterministic Fix step could be written — a card blocked purely because fix steps were absent,
+  which the operator requirement forbids. The park is now the fallback for a review no producer can
+  serve; the two cases below pin both halves of that ordering.
+  */
+  it("produces remediation from the live requester instead of parking when a producer can serve the empty review", async () => {
+    const row = emptyReviewRow();
+    row.column = "in-progress";
+    const store = emptyReviewStore(row);
+    const sendTaskBackForFix = vi.fn(async () => undefined);
+    const appendReviewRemediationSteps = vi.fn(async () => "appended");
+
+    await expect(requestPreMergeOptionalStepFix({
+      store, getRunContextFor: () => undefined, recoverMissingRequiredArtifacts: vi.fn(async () => undefined),
+      parkPlanReviewReplanCapExhausted: vi.fn(async () => undefined), clearPausedAborted: vi.fn(),
+      appendReviewRemediationSteps, workflowLifecycleMovesInFlight: new Set(),
+      sendTaskBackForFix,
+    } as any, row.id, row, {
+      phase: "pre-merge", status: "failed", verdict: "REVISE", nodeId: "code-review", stepName: "Code Review", feedback: "No diff",
+    })).resolves.toBe(true);
+
+    expect(appendReviewRemediationSteps).toHaveBeenCalledTimes(1);
+    expect(row.status).not.toBe("failed");
+    expect(row.error ?? "").not.toMatch(/^NO REVIEWABLE CONTENT:/);
+  });
+
+  it("still terminalizes from the live requester when the producer declines the empty review", async () => {
     const row = emptyReviewRow();
     row.column = "in-progress";
     const store = emptyReviewStore(row);
@@ -646,11 +675,49 @@ describe("FN-225 definite empty review entry points", () => {
     await expect(requestPreMergeOptionalStepFix({
       store, getRunContextFor: () => undefined, recoverMissingRequiredArtifacts: vi.fn(async () => undefined),
       parkPlanReviewReplanCapExhausted: vi.fn(async () => undefined), clearPausedAborted: vi.fn(),
-      appendReviewRemediationSteps: vi.fn(async () => "appended"), workflowLifecycleMovesInFlight: new Set(),
-      sendTaskBackForFix,
+      appendReviewRemediationSteps: vi.fn(async () => "released-no-actionable-findings"),
+      workflowLifecycleMovesInFlight: new Set(), sendTaskBackForFix,
     } as any, row.id, row, {
       phase: "pre-merge", status: "failed", verdict: "REVISE", nodeId: "code-review", stepName: "Code Review", feedback: "No diff",
     })).resolves.toBe(false);
+
+    expect(row).toMatchObject({ status: "failed", error: expect.stringMatching(/^NO REVIEWABLE CONTENT:/) });
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+  });
+
+  it("produces remediation from recovery for an empty review with no usable findings", async () => {
+    const row = emptyReviewRow();
+    const store = emptyReviewStore(row);
+    const appendReviewRemediationSteps = vi.fn(async () => "appended");
+    const sendTaskBackForFix = vi.fn(async () => undefined);
+
+    await expect(recoverFailedPreMergeWorkflowStep({
+      store, getRunContextFor: () => undefined,
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
+        unbounded: true, max: Infinity, attempts: 0, label: "unbounded", key: "code-review",
+      })),
+      appendReviewRemediationSteps,
+      sendTaskBackForFix,
+    } as any, row)).resolves.toBe(true);
+
+    expect(appendReviewRemediationSteps).toHaveBeenCalledTimes(1);
+    expect(row.status).not.toBe("failed");
+    expect(row.error ?? "").not.toMatch(/^NO REVIEWABLE CONTENT:/);
+  });
+
+  it("terminalizes from recovery when the producer declines the empty review", async () => {
+    const row = emptyReviewRow();
+    const store = emptyReviewStore(row);
+    const sendTaskBackForFix = vi.fn(async () => undefined);
+
+    await expect(recoverFailedPreMergeWorkflowStep({
+      store, getRunContextFor: () => undefined,
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
+        unbounded: true, max: Infinity, attempts: 0, label: "unbounded", key: "code-review",
+      })),
+      appendReviewRemediationSteps: vi.fn(async () => "released-no-actionable-findings"),
+      sendTaskBackForFix,
+    } as any, row)).resolves.toBe(false);
 
     expect(row).toMatchObject({ status: "failed", error: expect.stringMatching(/^NO REVIEWABLE CONTENT:/) });
     expect(sendTaskBackForFix).not.toHaveBeenCalled();

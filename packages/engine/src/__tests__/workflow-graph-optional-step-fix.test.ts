@@ -895,26 +895,29 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(sendBackCalls).toEqual([BUDGET - 3, BUDGET - 2, BUDGET - 1]);
   });
 
-  it("releases finding-less graph-owned Code Review regardless of legacy display counts", async () => {
-    for (const count of [0, 3, 6]) {
-      const store = createMockStore();
-      const liveTask = task({
-        postReviewFixCount: count,
-        log: Array.from({ length: count }, (_, index) => revisionLog("Code Review", "code-review", index + 1)),
-      });
-      store.getTask.mockResolvedValue(liveTask);
-      store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
-      const executor = new TaskExecutor(store, "/tmp/test");
-      const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+  it("returns a finding-less graph-owned Code Review REVISE to execution with a deterministic Fix step", async () => {
+    const store = createMockStore();
+    const liveTask = task({ postReviewFixCount: 0, log: [] });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+    (store as any).updateTaskAtomic = vi.fn(async (_id: string, callback: (current: Task) => Partial<Task> | null) => {
+      const patch = callback(liveTask);
+      if (patch) Object.assign(liveTask, patch);
+      return liveTask;
+    });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
 
-      await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
-        ...reviseInfo,
-        nodeId: "code-review",
-      })).resolves.toBe(false);
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      ...reviseInfo,
+      nodeId: "code-review",
+    })).resolves.toBe(true);
 
-      expect(sendBack).not.toHaveBeenCalled();
-      expect(liveTask).not.toHaveProperty("awaitingApprovalReason");
-    }
+    expect(sendBack).toHaveBeenCalledOnce();
+    expect(liveTask.steps).toContainEqual(expect.objectContaining({
+      remediation: expect.objectContaining({ findingId: "missing-code-review-fix-steps" }),
+    }));
+    expect(liveTask).not.toHaveProperty("awaitingApprovalReason");
   });
 
   it("recovers a standalone failed Code Review with the default project-Off settings", async () => {

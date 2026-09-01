@@ -953,7 +953,6 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
           continue;
         }
 
-        store.workflowDefinitionsCache = null;
                 return definition;
       }
       throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");

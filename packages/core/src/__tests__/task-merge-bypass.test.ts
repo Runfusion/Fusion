@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { StepStatus, WorkflowStepResult } from "../types.js";
 import { findPendingPreMergeStep, getLatestFailedPreMergeReviewStep, getTaskMergeBlocker } from "../merge/task-merge.js";
+import { FAST_MODE_BYPASS_ACTOR } from "../workflows/workflow-fast-lane.js";
 
 /*
  * FNXC:ReviewLaneBypass 2026-07-09-00:00:
@@ -174,6 +175,60 @@ describe("bypass invariant on getTaskMergeBlocker", () => {
       ],
     };
     expect(getTaskMergeBlocker(task)).toMatch(/marked 'stuck-killed'/);
+  });
+});
+
+describe("content-binding bypass actors", () => {
+  const requiredPreMergeStepIds = new Set(["code-review"]);
+  const mergeContent = { kind: "singular" as const, diff: { state: "fingerprint" as const, fingerprint: "current" } };
+  const audit = {
+    status: "skipped" as const,
+    bypassedAt: "2026-09-01T00:00:00.000Z",
+    bypassReason: "Reviewer transport failed",
+    bypassedFromStatus: "absent" as const,
+  };
+
+  function blocker(result: WorkflowStepResult, manual: boolean) {
+    return getTaskMergeBlocker({ ...baseTask, workflowStepResults: [result] }, {
+      manual,
+      requiredPreMergeStepIds,
+      mergeContent,
+    });
+  }
+
+  it.each([false, true])("releases audited human carriers but not the field-identical fast carrier when manual=%s", (manual) => {
+    const humanAbsent = stepResult({ workflowStepId: "code-review", ...audit, bypassedBy: "operator-1" });
+    const humanFailed = stepResult({ ...humanAbsent, bypassedFromStatus: "failed" });
+    const automated = stepResult({ ...humanAbsent, bypassedBy: FAST_MODE_BYPASS_ACTOR });
+    const incompleteHuman = stepResult({ ...humanAbsent, bypassedAt: undefined, bypassReason: undefined });
+
+    expect(blocker(humanFailed, manual)).toBeUndefined();
+    expect(blocker(humanAbsent, manual)).toBeUndefined();
+    expect(blocker(automated, manual)).toBe("task has no provable approval for the content being merged");
+    expect(blocker(incompleteHuman, manual)).toBe("task has no provable approval for the content being merged");
+  });
+
+  it("keeps fast-mode behavior unchanged for empty and absent descriptors", () => {
+    const automated = stepResult({ workflowStepId: "code-review", ...audit, bypassedBy: FAST_MODE_BYPASS_ACTOR });
+    expect(getTaskMergeBlocker({ ...baseTask, workflowStepResults: [automated] }, {
+      requiredPreMergeStepIds,
+      mergeContent: { kind: "singular", diff: { state: "empty" } },
+    })).toBeUndefined();
+    expect(getTaskMergeBlocker({ ...baseTask, workflowStepResults: [automated] }, {
+      requiredPreMergeStepIds,
+    })).toBeUndefined();
+  });
+
+  it("lets an audited waiver release stale content while an unbypassed approval stays stale", () => {
+    const stale = stepResult({
+      workflowStepId: "code-review",
+      status: "passed",
+      reviewKind: "code",
+      verdict: "APPROVE",
+      reviewInputFingerprint: "stale",
+    });
+    expect(blocker(stale, false)).toBe("task has a pre-merge approval recorded against different content");
+    expect(blocker({ ...stale, ...audit, bypassedBy: "operator-1" }, false)).toBeUndefined();
   });
 });
 

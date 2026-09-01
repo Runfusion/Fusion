@@ -27,7 +27,7 @@ describe("planTaskWorktreePath", () => {
       { id: "FN-258", description: "unused" },
       "/repo",
       new Set(["gentle-panda"]),
-    )).toBe("/repo/.worktrees/fn-258");
+    )).toBe("/repo/.fusion/worktrees/fn-258");
   });
 
   it("preserves an existing task worktree pointer until acquisition corrects it", () => {
