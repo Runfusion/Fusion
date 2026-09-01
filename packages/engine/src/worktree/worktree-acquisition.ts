@@ -363,7 +363,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
    * FNXC:BranchWriteOrigin 2026-08-28-10:12:
    * #3523 review (Greptile P1): hardcoded `branchWriteOrigin: "engine"` stamps on branch-value
    * writes bypassed the classifier below, so operator-provided branches reaching fresh-create,
-   * warm-reuse, pool-acquire, or merge-reuse persisted as Fusion-owned and became eligible for
+   * warm-reuse, pinned reuse, or merge-reuse persisted as Fusion-owned and became eligible for
    * engine cleanup of branches the operator supplied. Every branch-value write must derive its
    * origin through `classifyTaskBranchOrigin`; null clears keep explicit stamps because they
    * attribute the actor and cannot claim branch ownership.
