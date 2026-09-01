@@ -29,6 +29,32 @@ describe("classifyFileScopeLease", () => {
     expect(classifyFileScopeLease(makeTask({ column: "in-review" }), [])).toMatchObject({ kind: "none" });
   });
 
+  it("keeps workspace review and dormant leases until every repository checkout is removed", () => {
+    const workspaceWorktrees = { "repo-a": { worktreePath: "/wt/fn-1/repo-a" } } as Task["workspaceWorktrees"];
+    const review = makeTask({ column: "signoff", workspaceWorktrees });
+    const hold = makeTask({ column: "backlog", workspaceWorktrees });
+
+    expect(classifyFileScopeLease(review, [], {
+      isWipColumn: false,
+      isReviewColumn: true,
+      isTerminalColumn: false,
+    })).toMatchObject({ kind: "active" });
+    expect(classifyFileScopeLease(hold, [], {
+      isWipColumn: false,
+      isReviewColumn: false,
+      isTerminalColumn: false,
+    })).toMatchObject({ kind: "dormant" });
+    expect(classifyFileScopeLease(makeTask({ column: "done", workspaceWorktrees }), [], {
+      isTerminalColumn: true,
+    })).toMatchObject({ kind: "none" });
+    expect(classifyFileScopeLease(makeTask({ column: "signoff", deletedAt: "2026-01-02T00:00:00.000Z", workspaceWorktrees }), [], {
+      isReviewColumn: true,
+    })).toMatchObject({ kind: "none" });
+    expect(classifyFileScopeLease(makeTask({ column: "signoff", workspaceWorktrees: {} }), [], {
+      isReviewColumn: true,
+    })).toMatchObject({ kind: "none" });
+  });
+
   it("keeps WIP work active despite failure and before worktree acquisition", () => {
     expect(classifyFileScopeLease(makeTask({ column: "in-progress", worktree: "/wt/a", status: "failed" }), [])).toMatchObject({ kind: "active" });
     expect(classifyFileScopeLease(makeTask({ column: "in-progress", paused: true }), [])).toMatchObject({ kind: "active" });

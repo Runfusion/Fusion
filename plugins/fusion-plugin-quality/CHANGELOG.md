@@ -1,5 +1,12 @@
 # @fusion-plugin-examples/quality
 
+## 0.1.11-beta.12
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.12
+- @fusion/plugin-sdk@0.77.0-beta.12
+
 ## 0.1.11-beta.11
 
 ### Patch Changes

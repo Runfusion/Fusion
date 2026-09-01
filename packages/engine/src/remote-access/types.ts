@@ -43,6 +43,22 @@ export interface ExternalTunnelInfo {
   pid: number | null;
 }
 
+/**
+ * FNXC:RemoteAccess 2026-09-01-02:54:
+ * PROOF that a funnel is actually serving right now, read from tailscaled's own serve config rather
+ * than inferred from "tailscale is logged in" (which is all ExternalTunnelInfo's DNSName probe shows).
+ * A relaunch after a supervised restart must adopt a surviving funnel instead of spawning a second
+ * one: two `tailscale funnel` processes against one node conflict, the second exits 1 AND the first
+ * one's config is cleared, which is precisely how remote access dies. Adoption therefore needs
+ * evidence, and `proxyPort` is what lets the caller tell OUR funnel from somebody else's.
+ */
+export interface ActiveFunnelInfo {
+  provider: "tailscale";
+  url: string;
+  /** Local port the funnel proxies to, when the serve config states one. */
+  proxyPort: number | null;
+}
+
 export type TunnelRestoreOutcome = "applied" | "skipped" | "failed";
 
 export type TunnelRestoreReasonCode =
@@ -55,7 +71,16 @@ export type TunnelRestoreReasonCode =
   | "provider_not_configured"
   | "runtime_prerequisite_missing"
   | "restore_start_failed"
-  | "restore_started";
+  | "restore_started"
+  /* FNXC:RemoteAccess 2026-09-01-02:54: a funnel proven to be serving our port was adopted instead of
+     respawned — the transparent-restart outcome. */
+  | "adopted_running_tunnel"
+  /* FNXC:RemoteAccess 2026-09-01-02:54: a funnel is serving a DIFFERENT port. Starting ours would
+     clear it, so restore refuses and reports rather than clobbering someone else's remote access. */
+  | "external_funnel_conflict"
+  /* FNXC:RemoteAccess 2026-08-31-07:08: restore ran while the tunnel was already up — an engine
+     restart re-entering restore must leave a live tunnel untouched, not bounce it. */
+  | "already_running";
 
 export interface TunnelRestoreDiagnostics {
   outcome: TunnelRestoreOutcome;

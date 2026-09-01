@@ -2,6 +2,7 @@ import type { TaskStore } from "../store.js";
 import type { Task, TaskStep } from "../types.js";
 import { hasOpenEquivalentRemediationStep, remediationWaveCount } from "../tasks/remediation-steps.js";
 import { planRemediationPlacement } from "../tasks/remediation-step-placement.js";
+import { buildStepLedgerReopenLog } from "./step-ledger-seal.js";
 
 export interface AppendRemediationStepsOptions {
   wave?: number;
@@ -47,7 +48,35 @@ export async function appendRemediationStepsImpl(
     const placement = planRemediationPlacement(existing, appended);
     insertionIndex = placement.insertionIndex;
     verificationStepIndex = placement.verificationStepIndex;
-    return { steps: placement.steps, currentStep: placement.insertionIndex };
+    /*
+    FNXC:StepLedgerIntegrity 2026-08-31-09:44:
+    Appending remediation after a clean completion IS a reopening of implementation, and it must say
+    so or the work it just created cannot run.
+
+    `evaluateStepLedgerSeal` refuses any step transition once the log tail carries a completion
+    marker such as "Task marked done by agent", until a re-entry marker supersedes it. Re-entry
+    comes from a fresh executor session, a resume-after-unpause, or this shared reopen stamp -- and
+    `updateStep` also stamps pending resets, operator edits, and admitted starts of pending work.
+    Remediation arrives through THIS append instead, so it wrote no stamp: the seal survived, and the
+    graph's very next act -- taking the new Fix step to `in-progress` -- was refused as a
+    post-completion projection. The card was moved back for repair and then could not start it.
+
+    Measured on FN-270: "Review gate Code Review requested named remediation - moved back to
+    in-progress", immediately followed by "Ignored post-completion in-progress for step 6 (Fix: ...)"
+    and a graph failure at `steps#6:step-execute`.
+
+    Stamped inside the same atomic mutation as the append, so no window exists in which the steps
+    exist while the ledger still claims completion.
+    */
+    const log = buildStepLedgerReopenLog(
+      current.log,
+      `${appended.length} remediation step(s) appended after completion (wave ${wave})`,
+    );
+    return {
+      steps: placement.steps,
+      currentStep: placement.insertionIndex,
+      ...(log ? { log } : {}),
+    };
   });
   return {
     task,

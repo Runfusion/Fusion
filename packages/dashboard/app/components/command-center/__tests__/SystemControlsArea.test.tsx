@@ -28,6 +28,7 @@ const mockFetchNodeSystemStats = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
 const mockFetchNodes = vi.fn();
 const subscribeSseMock = vi.fn(() => () => undefined);
+const mockStartSystemSourceUpdate = vi.fn();
 
 vi.mock("../../../api/legacy", () => ({
   fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
@@ -49,6 +50,7 @@ vi.mock("../../../api/legacy", () => ({
   restartAllSystemAgents: vi.fn().mockResolvedValue({ ok: true }),
   restartSystemEngines: vi.fn().mockResolvedValue({ ok: true }),
   startSystemRebuild: vi.fn().mockResolvedValue({ id: "job-1", status: "running", kind: "rebuild", scope: "app", lines: [] }),
+  startSystemSourceUpdate: (...args: unknown[]) => mockStartSystemSourceUpdate(...args),
   startFnBinaryLinkLocal: vi.fn().mockResolvedValue({
     id: "job-fn-local",
     status: "running",
@@ -116,6 +118,7 @@ function systemInfoFixture(overrides: Record<string, unknown> = {}) {
     rebuildSupported: true,
     fnBinaryLinkLocalSupported: true,
     fnBinaryUseGlobalSupported: true,
+    sourceUpdateSupported: true,
     engineAvailable: true,
     engineRestartSupported: true,
     agentRestartSupported: true,
@@ -191,6 +194,13 @@ describe("SystemControlsArea layout integration", () => {
       entries: [{ timestamp: "2026-07-12T00:00:00.000Z", level: "info", message: "ready" }],
     });
     mockFetchCurrentSystemRebuild.mockResolvedValue({ job: null });
+    mockStartSystemSourceUpdate.mockResolvedValue({
+      id: "job-source-update",
+      status: "running",
+      kind: "source-update",
+      scope: "source-update",
+      lines: [],
+    });
     mockFetchSystemStats.mockResolvedValue(systemStatsFixture());
     mockFetchNodeSystemStats.mockResolvedValue(systemStatsFixture());
     mockFetchGlobalSettings.mockResolvedValue({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
@@ -439,6 +449,49 @@ describe("SystemControlsArea layout integration", () => {
 
     expect(await screen.findByTestId("cc-system-update-check-result")).toHaveTextContent("Updates are managed by this deployment");
     expect(screen.queryByText("Update checks are disabled in global settings")).not.toBeInTheDocument();
+  });
+
+  /*
+  FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+  The "Update from source" control is the remote contributor's only way to ship. It must be offered
+  when — and only when — it can actually work, and when it cannot it must say WHY, because a
+  container operator cannot inspect the process to find out. These assert the enabled/disabled
+  states from the server's advertised capabilities, not the button's mere presence.
+  */
+  it("enables update-from-source and starts the job when the host is a supervised git checkout", async () => {
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const card = await screen.findByTestId("cc-syscontrol-source-update");
+    const button = within(card).getByRole("button", { name: "Update & restart" });
+    expect(button).toBeEnabled();
+
+    fireEvent.click(button);
+    await waitFor(() => expect(mockStartSystemSourceUpdate).toHaveBeenCalledWith(true));
+  });
+
+  it("disables update-from-source with a run-from-source reason when the host is not a source checkout", async () => {
+    mockFetchSystemInfo.mockResolvedValue(systemInfoFixture({ sourceUpdateSupported: false }));
+
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const card = await screen.findByTestId("cc-syscontrol-source-update");
+
+    expect(within(card).getByRole("button", { name: "Update & restart" })).toBeDisabled();
+    expect(card).toHaveTextContent(/--from-source/);
+    expect(mockStartSystemSourceUpdate).not.toHaveBeenCalled();
+  });
+
+  it("disables update-from-source with a supervision reason when nothing would respawn the process", async () => {
+    mockFetchSystemInfo.mockResolvedValue(
+      systemInfoFixture({ sourceUpdateSupported: true, restartSupported: false }),
+    );
+
+    render(<CommandCenter projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const card = await screen.findByTestId("cc-syscontrol-source-update");
+
+    expect(within(card).getByRole("button", { name: "Update & restart" })).toBeDisabled();
+    expect(card).toHaveTextContent(/supervising parent/i);
   });
 
   it("hides build-and-link-local when the host is not a source checkout", async () => {

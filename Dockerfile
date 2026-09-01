@@ -235,8 +235,15 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # FNXC:DockerRun 2026-07-23-00:00: Entrypoint uses the absolute app path so it works
 # regardless of the working directory or any volume mounted at /workspace.
 # FNXC:DockerRun 2026-08-23-02:03: The wrapper script consumes its own opt-in `--tailscale` flag and
-# then `exec`s that same absolute-path node invocation with the REMAINING args verbatim, so PID 1,
-# signal handling, and every documented `docker run ... dashboard --host 0.0.0.0` argument list behave
-# exactly as before.
+# then runs that same absolute-path node invocation with the REMAINING args verbatim, so every
+# documented `docker run ... dashboard --host 0.0.0.0` argument list behaves exactly as before.
+# FNXC:DockerSourceUpdate 2026-09-01-01:22: PID 1 is now the wrapper acting as the RESTART SUPERVISOR
+# rather than the dashboard itself. Without a supervising parent the dashboard reported
+# restartSupported=false, so the System panel's Restart button — and therefore the whole
+# dashboard-only "pull, rebuild, restart" path a remote contributor depends on — was dead in the
+# container. The wrapper forwards SIGTERM/SIGINT/SIGHUP to the child and propagates its exit code, so
+# `docker stop` still shuts down gracefully and a crash still ends the container with its real status.
+# `--from-source` (or FUSION_FROM_SOURCE=1) runs the CLI from the FUSION_SOURCE_ROOT git checkout
+# instead of the image-baked /app, which is what makes an in-container source update possible.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["dashboard", "--host", "0.0.0.0"]

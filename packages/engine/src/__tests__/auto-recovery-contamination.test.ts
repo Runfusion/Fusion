@@ -12,9 +12,21 @@ vi.mock("../recovery/foreign-only-contamination.js", () => ({
 
 const baseTask = { id: "FN-1", column: "in-progress", recoveryRetryCount: 0 } as Task;
 
+/*
+FNXC:LifecycleContainment 2026-08-31-09:28:
+One factory rather than five inline literals, because the missing method was the failure: FN-207/
+FN-217 containment made the recovery NARRATE when it retains a card in place
+(`moveTaskToContainedBackwardTarget` -> `store.logEntry`), and a fake without `logEntry` threw a
+TypeError that read as a product fault. Five copies meant five places to forget; one factory means
+the next method the path adopts is added once.
+*/
+function makeTaskStore() {
+  return { moveTask: vi.fn(), updateTask: vi.fn(), logEntry: vi.fn(async () => undefined) } as any;
+}
+
 describe("ContaminationAutoRecoveryHandler", () => {
   it("skips when userPaused", async () => {
-    const taskStore = { moveTask: vi.fn(), updateTask: vi.fn() } as any;
+    const taskStore = makeTaskStore();
     const runAudit = { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new ContaminationAutoRecoveryHandler({ taskStore, runAudit, repoDir: process.cwd() });
     await handler.issueRetry({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination" }, { action: "retry", rationale: "mode-programmatic", auditMetadata: {}, legacyPausedReason: "x" }, { task: { ...baseTask, userPaused: true } as Task, retryCount: 0, settings: { mode: "programmatic", maxRetries: 3 } });
@@ -22,17 +34,29 @@ describe("ContaminationAutoRecoveryHandler", () => {
   });
 
   it("requeues and clears paused state", async () => {
-    const taskStore = { moveTask: vi.fn(), updateTask: vi.fn() } as any;
+    const taskStore = makeTaskStore();
     const runAudit = { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new ContaminationAutoRecoveryHandler({ taskStore, runAudit, repoDir: process.cwd() });
     await handler.issueRetry({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination", evidence: { ownCommits: 0, foreignAttributedCommits: 2 } }, { action: "retry", rationale: "mode-programmatic", auditMetadata: {}, legacyPausedReason: "x" }, { task: { ...baseTask } as Task, retryCount: 1, settings: { mode: "programmatic", maxRetries: 3 } });
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveWorktree: true }));
+    /*
+    FNXC:LifecycleContainment 2026-08-31-09:28:
+    This asserted a backward move to `todo`. FN-207/FN-217 forbids it: only a REVISION may move a
+    card backward, and `moveTaskToContainedBackwardTarget` enforces that with a closed allow-list of
+    four revision reasons. "contamination-recovery" is deliberately not among them -- the rule names
+    contamination recovery as work that "stays in the current lifecycle role".
+
+    So the card is retained and the retention is narrated. The recovery itself is unchanged and still
+    proven below: the pause is cleared and the attempt is audited. Asserting the move again would be
+    asking for the backward transition the containment rule exists to prevent.
+    */
+    expect(taskStore.moveTask).not.toHaveBeenCalled();
+    expect(taskStore.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("retained in 'in-progress'"));
     expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ paused: false, pausedReason: null, error: null }));
     expect(runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "contamination:retry-issued" }));
   });
 
   it("uses foreign-only recovery helper when branch/worktree metadata exists", async () => {
-    const taskStore = { moveTask: vi.fn(), updateTask: vi.fn() } as any;
+    const taskStore = makeTaskStore();
     const runAudit = { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new ContaminationAutoRecoveryHandler({ taskStore, runAudit, repoDir: process.cwd() });
     await handler.issueRetry({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination", evidence: { ownCommits: 0, foreignAttributedCommits: 2 } }, { action: "retry", rationale: "mode-programmatic", auditMetadata: {}, legacyPausedReason: "x" }, { task: { ...baseTask, branch: "fusion/fn-1", worktree: "/tmp/fn-1", baseCommitSha: "main" } as Task, retryCount: 1, settings: { mode: "programmatic", maxRetries: 3 } });
@@ -40,7 +64,7 @@ describe("ContaminationAutoRecoveryHandler", () => {
   });
 
   it("emits irreducible pause and skips retry for destructive ambiguity", async () => {
-    const taskStore = { moveTask: vi.fn(), updateTask: vi.fn() } as any;
+    const taskStore = makeTaskStore();
     const runAudit = { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new ContaminationAutoRecoveryHandler({ taskStore, runAudit, repoDir: process.cwd() });
     await handler.issueRetry({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination", evidence: { ownCommits: 1, foreignAttributedCommits: 1 } }, { action: "retry", rationale: "mode-programmatic", auditMetadata: {}, legacyPausedReason: "x" }, { task: { ...baseTask } as Task, retryCount: 1, settings: { mode: "programmatic", maxRetries: 3 } });
@@ -49,7 +73,7 @@ describe("ContaminationAutoRecoveryHandler", () => {
   });
 
   it("emits irreducible pause and skips retry when retry budget exhausted", async () => {
-    const taskStore = { moveTask: vi.fn(), updateTask: vi.fn() } as any;
+    const taskStore = makeTaskStore();
     const runAudit = { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new ContaminationAutoRecoveryHandler({ taskStore, runAudit, repoDir: process.cwd() });
     await handler.issueRetry({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination", evidence: { ownCommits: 0, foreignAttributedCommits: 2 } }, { action: "retry", rationale: "mode-programmatic", auditMetadata: {}, legacyPausedReason: "x" }, { task: { ...baseTask } as Task, retryCount: 3, settings: { mode: "programmatic", maxRetries: 3 } });

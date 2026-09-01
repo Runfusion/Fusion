@@ -12,7 +12,12 @@ import * as schema from "./postgres/schema/index.js";
 import { type FSWatcher } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput, TaskStep } from "./types.js";
-import { fileScopeLeaseBlocksCandidate, type FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
+import {
+  fileScopeLeaseBlocksCandidate,
+  normalizeOverlapScopeForTask,
+  taskHoldsUnmergedCheckout,
+  type FileScopeLeaseKind,
+} from "./tasks/file-scope-lease.js";
 import { compareTasksByPriorityThenAgeAndId } from "./tasks/task-priority.js";
 
 /*
@@ -452,9 +457,9 @@ function repairLeaseLaneIncludes(
 /*
 FNXC:OverlapScheduling 2026-08-29-06:04:
 Operator overlap repair must use the same lease lifetime as scheduler admission: terminal or deleted
-cards release immediately; WIP stays active before worktree acquisition; review stays active only
-while its worktree exists; other retained worktrees are dormant and resolve contention by priority,
-age, then task id. The explicit archive/delete/worktree-clear escape hatch remains the only way to
+cards release immediately; WIP stays active before checkout acquisition; review stays active only
+while a singular or per-repository checkout exists; other retained checkouts are dormant and resolve contention
+by priority, age, then task id. The explicit archive/delete/checkout-clear escape hatch remains the only way to
 release unfinished work early.
 
 FNXC:OverlapScheduling 2026-08-29-06:34:
@@ -468,25 +473,25 @@ Overlap repair therefore receives complete role sets from the blocker's own sele
 second WIP or review lane retains unfinished work, while every complete or archived lane releases it.
 */
 export function classifyRepairFileScopeLease(
-  candidate: Pick<Task, "column" | "worktree" | "deletedAt">,
+  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt">,
   lanes: RepairFileScopeLeaseLanes | undefined,
 ): FileScopeLeaseKind {
   if (candidate.deletedAt) return "none";
   if (!lanes) {
     if (isWipColumnRole(undefined, candidate.column)) return "active";
-    return isReviewColumnRole(undefined, candidate.column) && Boolean(candidate.worktree) ? "active" : "none";
+    return isReviewColumnRole(undefined, candidate.column) && taskHoldsUnmergedCheckout(candidate) ? "active" : "none";
   }
   if (lanes.terminal?.has(candidate.column)) return "none";
   if (repairLeaseLaneIncludes(lanes.wip, candidate.column)) return "active";
   if (repairLeaseLaneIncludes(lanes.review, candidate.column)) {
-    return candidate.worktree ? "active" : "none";
+    return taskHoldsUnmergedCheckout(candidate) ? "active" : "none";
   }
-  return candidate.worktree ? "dormant" : "none";
+  return taskHoldsUnmergedCheckout(candidate) ? "dormant" : "none";
 }
 
 /** Compatibility wrapper retained for callers that only need a boolean lease answer. */
 export function holdsRepairFileScopeLease(
-  candidate: Pick<Task, "column" | "worktree" | "deletedAt">,
+  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt">,
   lanes: RepairFileScopeLeaseLanes | undefined,
 ): boolean {
   return classifyRepairFileScopeLease(candidate, lanes) !== "none";
@@ -3106,7 +3111,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const getScope = async (taskId: string): Promise<string[]> => {
       const cached = scopeCache.get(taskId);
       if (cached !== undefined) return cached;
-      const scope = filterRepairOverlapIgnoredPaths(await this.parseFileScopeFromPrompt(taskId), ignorePaths);
+      const filteredScope = filterRepairOverlapIgnoredPaths(await this.parseFileScopeFromPrompt(taskId), ignorePaths);
+      const scope = taskById.has(taskId)
+        ? normalizeOverlapScopeForTask(taskById.get(taskId)!, filteredScope)
+        : filteredScope;
       scopeCache.set(taskId, scope);
       return scope;
     };

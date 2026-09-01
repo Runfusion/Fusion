@@ -2,6 +2,8 @@ import {
   getCurrentRepo,
   computeBlockerFanoutMap,
   compareTasksByPriorityThenAgeAndId,
+  normalizeOverlapScopeForTask,
+  taskHoldsUnmergedCheckout,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
   nonExecutableDuplicateRedirectReason,
   isPlanReviewSatisfied,
@@ -580,14 +582,14 @@ export interface FileScopeLeaseOptions {
 /*
 FNXC:OverlapScheduling 2026-08-29-05:49:
 File-scope ownership is a lifetime contract: a task keeps its claim until its work has landed, is
-archived/deleted, or a non-WIP lane has released its worktree. Paused, failed, and external-blocked
-cards therefore retain their claim while their unmerged checkout exists; archiving, deleting, or
-clearing that checkout is the explicit escape hatch for a dead holder.
+archived/deleted, or a non-WIP lane has released its checkout. Paused, failed, and external-blocked
+cards therefore retain their claim while their unmerged singular or per-repository checkout exists;
+archiving, deleting, or clearing those checkouts is the explicit escape hatch for a dead holder.
 
-Check the worktree before granting a non-WIP card an active lease. A review card without one has
-already released its private work and must unblock peers. WIP deliberately skips that check because
-the scheduler moves a task there before implementation persists its worktree; gating that interval
-would let a second task begin editing the same files.
+Check every checkout form before granting a non-WIP card an active lease. A workspace task deliberately
+has no singular `task.worktree`, so review and dormant classification must recognize its repository
+checkouts. WIP deliberately skips that check because the scheduler moves a task there before implementation
+persists a checkout; gating that interval would let a second task begin editing the same files.
 */
 export function classifyFileScopeLease(
   task: Task,
@@ -627,10 +629,10 @@ export function classifyFileScopeLease(
     if (options?.mergeRequestContractShadowEnabled === true && options.handoffAccepted === true) {
       return { kind: "none", waivedForTaskIds: [] };
     }
-    return { kind: task.worktree ? "active" : "none", waivedForTaskIds: [] };
+    return { kind: taskHoldsUnmergedCheckout(task) ? "active" : "none", waivedForTaskIds: [] };
   }
 
-  return { kind: task.worktree ? "dormant" : "none", waivedForTaskIds: [] };
+  return { kind: taskHoldsUnmergedCheckout(task) ? "dormant" : "none", waivedForTaskIds: [] };
 }
 
 /**
@@ -2535,12 +2537,15 @@ export class Scheduler {
       const leaseWaiverIds = new Map<string, readonly string[]>();
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
-      const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
-        const cached = filteredScopeByTaskId.get(taskId);
+      const getFilteredFileScope = async (task: Pick<Task, "id" | "workspaceWorktrees">): Promise<string[]> => {
+        const cached = filteredScopeByTaskId.get(task.id);
         if (cached !== undefined) return cached;
-        const scope = await this.store.parseFileScopeFromPrompt(taskId);
-        const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths, { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths });
-        filteredScopeByTaskId.set(taskId, filteredScope);
+        const scope = await this.store.parseFileScopeFromPrompt(task.id);
+        const filteredScope = normalizeOverlapScopeForTask(
+          task,
+          filterPathsByIgnoreList(scope, overlapIgnorePaths, { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths }),
+        );
+        filteredScopeByTaskId.set(task.id, filteredScope);
         return filteredScope;
       };
 
@@ -2596,7 +2601,7 @@ export class Scheduler {
           });
           // Classification intentionally precedes prompt parsing: idle backlog cards do not own a lease.
           if (classification.kind === "none") continue;
-          const filteredScope = await getFilteredFileScope(task.id);
+          const filteredScope = await getFilteredFileScope(task);
           if (isCoordinationOnlyTask(task, filteredScope) || filteredScope.length === 0) continue;
 
           leaseWaiverIds.set(task.id, classification.waivedForTaskIds);
@@ -2712,7 +2717,7 @@ export class Scheduler {
             */
             let activeOverlapBlockedBy: string | null = null;
             try {
-              const taskScope = await getFilteredFileScope(task.id);
+              const taskScope = await getFilteredFileScope(task);
               if (taskScope.length > 0 && !isCoordinationOnlyTask(task, taskScope)) {
                 activeOverlapBlockedBy = findOverlappingFileScopeLease(task, taskScope)?.id ?? null;
               }
@@ -3077,7 +3082,7 @@ export class Scheduler {
           }
 
           if (settings.groupOverlappingFiles && missionAdmission.kind === "coarse-fallback") {
-            const taskScope = await getFilteredFileScope(task.id);
+            const taskScope = await getFilteredFileScope(task);
             if (taskScope.length > 0 && !isCoordinationOnlyTask(task, taskScope)) {
               const overlapLease = findOverlappingFileScopeLease(task, taskScope);
 

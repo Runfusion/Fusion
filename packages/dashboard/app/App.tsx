@@ -750,6 +750,10 @@ function AppInner() {
   across close/reopen so ChatView retains its selected session, transcript, and scroll position.
   Reset the latch when the project changes so a hidden ChatView cannot leak one project's state
   into another project; the FloatingWindow key supplies the matching React identity boundary.
+
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  Hidden Quick Chat now receives the same active gate as retained main Chat. Visibility alone is
+  insufficient because automatic read acknowledgements must stop until the operator reveals it.
   */
   useEffect(() => {
     const projectId = currentProject?.id;
@@ -2241,6 +2245,7 @@ function AppInner() {
               experimentalFeatures={experimentalFeatures}
               floating
               findActive={quickChatOpen}
+              active={quickChatOpen}
               initialComposerDraft={chatComposerPrefill?.text}
               initialComposerDraftNonce={chatComposerPrefill?.nonce}
               onSendAsReport={handleSendChatMessageAsReport}

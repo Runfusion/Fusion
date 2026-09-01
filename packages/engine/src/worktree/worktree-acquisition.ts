@@ -23,6 +23,8 @@ import { pinnedWorktreePathForTask } from "./worktree-pinning.js";
 import {
   NativeWorktreeBackend,
   WorktrunkOperationError,
+  persistWorktreeBackendKind,
+  readPersistedWorktreeBackendKind,
   resolveWorktreeBackend,
   type WorktreeBackend,
 } from "./worktree-backend.js";
@@ -48,6 +50,7 @@ import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "./workspace-base-branch.js";
 import { acquireActiveSessionPath, activeSessionRegistry, executingTaskLock, type ActiveSessionRegistry } from "../agents/active-session-registry.js";
 import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../worktree-base-refresh.js";
+import { refreshWorkspaceRepoWorktreeBases } from "./workspace-base-refresh.js";
 import { normalizeWorkspaceTaskRouting } from "../executor/workspace-config-resolver.js";
 import {
   ensureWorktreeDependencies,
@@ -56,31 +59,8 @@ import {
 } from "./worktree-dependency-install.js";
 
 const execAsync = promisify(exec);
-const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
 const PRESERVED_ORPHAN_RETENTION_COUNT = 10;
 const PRESERVED_ORPHAN_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
-async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
-  const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
-    cwd: worktreePath,
-    encoding: "utf-8",
-  });
-  const markerPath = stdout.trim();
-  return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
-}
-
-async function persistWorktreeBackendKind(worktreePath: string, backendKind: WorktreeBackend["kind"]): Promise<void> {
-  await writeFile(await resolveWorktreeBackendMarkerPath(worktreePath), `${backendKind}\n`, "utf-8");
-}
-
-async function readPersistedWorktreeBackendKind(worktreePath: string): Promise<WorktreeBackend["kind"] | undefined> {
-  try {
-    const backendKind = (await readFile(await resolveWorktreeBackendMarkerPath(worktreePath), "utf-8")).trim();
-    return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * Worktree acquisition contract:
@@ -380,6 +360,17 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   const { task, rootDir, store, settings, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore, workspaceContext } = opts;
   const ensureDependencyReadiness = opts.ensureDependencyReadiness ?? ensureWorktreeDependencies;
   /*
+   * FNXC:BranchWriteOrigin 2026-08-28-10:12:
+   * #3523 review (Greptile P1): hardcoded `branchWriteOrigin: "engine"` stamps on branch-value
+   * writes bypassed the classifier below, so operator-provided branches reaching fresh-create,
+   * warm-reuse, pool-acquire, or merge-reuse persisted as Fusion-owned and became eligible for
+   * engine cleanup of branches the operator supplied. Every branch-value write must derive its
+   * origin through `classifyTaskBranchOrigin`; null clears keep explicit stamps because they
+   * attribute the actor and cannot claim branch ownership.
+   */
+  const branchWriteOriginFor = (branch: string | null | undefined): "operator" | "engine" =>
+    classifyTaskBranchOrigin(task, branch ?? undefined) === "operator-supplied" ? "operator" : "engine";
+  /*
    * FNXC:BranchNaming 2026-08-21-09:09:
    * Singular assignment persistence is a real task-branch write. Derive its durable provenance
    * from the recorded operator override, never from a branch prefix; workspace writes strip both
@@ -390,7 +381,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       ? patch
       : {
           ...patch,
-          branchWriteOrigin: patch.branchWriteOrigin ?? (classifyTaskBranchOrigin(task, patch.branch ?? undefined) === "operator-supplied" ? "operator" : "engine") as "operator" | "engine",
+          branchWriteOrigin: patch.branchWriteOrigin ?? branchWriteOriginFor(patch.branch),
         };
     if (!opts.suppressSingularWorktreePersist) {
       await store.updateTask(task.id, provenancePatch);
@@ -765,8 +756,13 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
     worktreePath = created.path;
     branch = created.branch;
+    /*
+     * FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write.
+     * FNXC:BranchWriteOrigin 2026-08-28-10:12: the stamp derives from the classifier — an operator override branch reaching
+     * fresh-create finalize must persist "operator" provenance, not engine ownership.
+     */
     try {
-      await persistWorktreeAssignment({ worktree: created.path, branch: created.branch });
+      await persistWorktreeAssignment({ worktree: created.path, branch: created.branch, branchWriteOrigin: branchWriteOriginFor(created.branch) });
     } catch (error) {
       /*
        * FNXC:WorktreeAcquisition 2026-08-21-09:09:
@@ -1000,7 +996,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
          * was already correct.
          */
         if (task.worktree !== pinnedPath || task.branch !== resumedBranch) {
-          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch });
+          // FNXC:BranchWriteOrigin 2026-08-28-10:12: warm reuse can adopt an operator-override branch; derive origin (#3523 Greptile P1).
+          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch, branchWriteOrigin: branchWriteOriginFor(resumedBranch) });
         }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
       }
@@ -1287,6 +1284,8 @@ export interface AcquireWorkspaceTaskWorktreesOptions {
   taskEnv?: NodeJS.ProcessEnv;
   addActiveWorktree?: (taskId: string, path: string) => void;
   holderLiveProbe?: AcquireWorkspaceRepoWorktreeOptions["holderLiveProbe"];
+  /** Execution callers opt in after repository acquisition; planning, review, and merge remain unchanged. */
+  refreshStaleBase?: boolean;
 }
 
 export interface AcquireWorkspaceRepoWorktreeOptions {
@@ -2009,6 +2008,20 @@ export async function acquireWorkspaceTaskWorktrees(
     });
     opts.addActiveWorktree?.(opts.task.id, acquired.worktreePath);
     current = await opts.store.getTask(opts.task.id);
+  }
+
+  if (opts.refreshStaleBase) {
+    const refreshed = await refreshWorkspaceRepoWorktreeBases({
+      task: current,
+      workspaceRootDir: opts.workspaceRootDir,
+      repoRelPaths,
+      store: opts.store,
+      settings: opts.settings,
+      logger: opts.logger,
+      audit: opts.audit,
+      runContext: opts.runContext,
+    });
+    current = refreshed.task;
   }
 
   if (legacyLayout) {

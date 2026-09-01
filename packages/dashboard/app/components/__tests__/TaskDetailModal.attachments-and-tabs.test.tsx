@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -69,6 +69,10 @@ function selectActivityView(value: ActivitySegmentTestValue) {
 }
 
 describe("TaskDetailModal", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe("paste image upload", () => {
     it("uploads an image when pasting clipboard image data", async () => {
       const { uploadAttachment } = await import("../../api");
@@ -589,7 +593,9 @@ describe("TaskDetailModal", () => {
     });
 
     it("Feed segment preserves legacy text/detail and duplicate entries", () => {
-      const duplicateEntry = { timestamp: "2026-01-01T00:02:00Z", action: "Repeated diagnostic", outcome: "same payload" };
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 5, 17, 14, 32, 30, 0));
+      const duplicateEntry = { timestamp: new Date(2026, 5, 17, 14, 32, 7, 482).toISOString(), action: "Repeated diagnostic", outcome: "same payload" };
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -614,6 +620,58 @@ describe("TaskDetailModal", () => {
       const outcomes = Array.from(container.querySelectorAll(".detail-log-outcome")).map((entry) => entry.textContent);
       expect(actions).toEqual(["Repeated diagnostic", "Repeated diagnostic", "Legacy text entry"]);
       expect(outcomes).toEqual(["same payload", "same payload", "Legacy detail body"]);
+      const preciseTimestamps = Array.from(container.querySelectorAll(".detail-log-precise-timestamp")).map((entry) => entry.textContent);
+      expect(preciseTimestamps).toHaveLength(3);
+      expect(preciseTimestamps.slice(0, 2)).toEqual(["14:32:07.482", "14:32:07.482"]);
+    });
+
+    it("renders a precise clock beside each unchanged Feed relative label", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 5, 17, 14, 32, 30, 0));
+      const timestamp = new Date(2026, 5, 17, 14, 32, 7, 482).toISOString();
+      const { baseElement: container } = render(
+        <TaskDetailModal
+          task={makeTask({ log: [{ timestamp, action: "Recorded event" }] })}
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      selectActivityView("feed");
+
+      const entry = container.querySelector(".detail-log-entry") as HTMLElement;
+      expect(entry.querySelector(".detail-log-timestamp")).toHaveTextContent("just now");
+      expect(entry.querySelector(".detail-log-precise-timestamp")).toHaveTextContent("14:32:07.482");
+    });
+
+    it("keeps Feed precise timestamps present at the mobile width", () => {
+      const originalInnerWidth = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+      try {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 5, 17, 14, 32, 30, 0));
+        const timestamp = new Date(2026, 5, 17, 14, 32, 7, 482).toISOString();
+        render(
+          <TaskDetailModal
+            task={makeTask({ log: [{ timestamp, action: "Recorded event" }] })}
+            onClose={noop}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+        selectActivityView("feed");
+        expect(screen.getByTestId("task-activity-precise-timestamp")).toHaveTextContent("14:32:07.482");
+      } finally {
+        Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalInnerWidth });
+      }
     });
 
     it("Feed segment keeps action/outcome rendering intact", () => {
@@ -651,12 +709,14 @@ describe("TaskDetailModal", () => {
       const actionRule = getCssRuleBlock(stylesCssText, ".detail-log-action");
       const outcomeRule = getCssRuleBlock(stylesCssText, ".detail-log-outcome");
       const timestampRule = getCssRuleBlock(stylesCssText, ".detail-log-timestamp");
+      const timestampsRule = getCssRuleBlock(stylesCssText, ".detail-log-timestamps");
 
       expect(actionRule).toContain("color: var(--text);");
       expect(outcomeRule).toContain("color: var(--text);");
       expect(outcomeRule).toContain("background: var(--surface);");
       expect(timestampRule).toContain("color: var(--text-muted);");
       expect(timestampRule).not.toContain("color: var(--text);");
+      expect(timestampsRule).toContain("flex-wrap: wrap;");
     });
 
     it("Feed segment shows empty state when no logs", () => {

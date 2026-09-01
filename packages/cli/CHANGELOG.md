@@ -1,5 +1,90 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.12
+
+### Minor Changes
+
+- 71580ae: summary: Update Fusion from source in one click — pull, rebuild, and restart from Command Center.
+  category: feature
+  dev: New `POST /system/source/update` job (git status/pull --ff-only, pnpm install, workspace build, restart only on build success) plus `sourceUpdateSupported` on `/system/info`. The Docker entrypoint is now a restart supervisor (relaunches on exit 86, forwards signals, stamps `FUSION_SUPERVISOR_PID`) and accepts `--from-source`/`FUSION_FROM_SOURCE` with `FUSION_SOURCE_ROOT` (default `/home/node/fusion`).
+- 0fa15c4: summary: Keep task worktrees under .fusion and remove merged workspace checkouts.
+  category: feature
+  dev: Defaults to .fusion/worktrees, retains the legacy .worktrees root for cleanup, and adds workspace post-landing cleanup.
+- 4c7729c: summary: Preserve Board, List, and Chat state when returning to visited views.
+  category: feature
+  dev: Retained main views release shared header and unread-message side effects while hidden.
+- 863b440: summary: Show precise millisecond clock times beside task activity log timestamps.
+  category: feature
+  dev: Adds the precise-timestamp utility and PreciseTimestamp element across Live, Feed, Raw, and Interventions.
+
+### Patch Changes
+
+- f76d15f: summary: Include the scoping cwd and JSON-RPC diagnostic when the ACP runtime's session/new fails.
+
+  category: fix
+  dev: `newAcpSession` rethrew raw SDK errors, so a rejected `session/new` surfaced only the bare protocol message (typically "Invalid params" / -32602) with no indication of which agent binary rejected it, why, or which cwd scoped the failing session. The helper now wraps the rejection with the same `describeAcpTurnError` contract as `promptAcpSession`, prefixing `session/new failed (cwd <cwd>):` so operators can immediately tell a misconfigured spawn target from an agent-side fault. The original error is retained as `cause`. The message intentionally does not match `ACP_TRANSIENT_ERROR_PATTERNS` (caller-fault codes are non-retryable). Tests pin the message shape, cwd inclusion, and cause retention across flat/nested RPC envelopes, retryable and caller-fault codes, structured data payloads, and non-RPC passthrough.
+
+- 438cd55: summary: Remote access no longer reports "stopped" while the tunnel is serving traffic.
+  category: fix
+  dev: `restoreIfNeeded` gated funnel adoption behind the `wasRunningOnShutdown` marker, so one restart that lost track of the tunnel made `state:"stopped"` permanent — a service that believes it is stopped never writes a marker to recover from, and every later restart re-skipped with `no_prior_running_marker` while the public URL served 200. Adoption now runs before the marker gate and depends on what tailscaled can prove is serving the configured port; a funnel on a different port is still refused rather than clobbered.
+- 1b5e889: summary: A code review revision's fix steps can now start on the first try, with no manual retry.
+  category: fix
+  dev: The step-ledger reopen stamp was added only to `appendRemediationStepsImpl`, but `appendReviewRemediationSteps` takes an inline atomic branch whenever `attemptClaim` or a workspace remediation is present — which Code Review always supplies — so the failing path never reached it. The stamp is now written in that branch too, inside the same mutation as the steps.
+- 3789129: summary: Remote access now reports "running" for a tunnel that survived a restart.
+  category: fix
+  dev: `tailscale funnel <port>` registers a FOREGROUND session, so tailscaled files its config under `Foreground.<session-id>` rather than at the top level of `serve status --json`. `detectActiveFunnel` read only the top level, so the funnel Fusion actually spawns was undetectable: a tunnel surviving a supervised restart was never adopted and the status route reported `stopped` with `no_prior_running_marker` while the public URL served 200. Detection now scans foreground sessions as well as the persistent config.
+- f8d32fe: summary: Fix task dispatch and recovery stalling when Fusion re-pins a task's worktree branch.
+  category: fix
+  dev: FN-9161's store validation rejects branch writes without an explicit origin (even null clears); engine call sites (fresh-create finalize, warm-reuse re-pin, pool acquire, branch-conflict reclaim/sticky-park, merge-reuse fallback, PR-conflict reclaim, resume-limbo reclaim, post-merge cleanup, workspace stale-routing clear, recovery metadata rewrite) were still writing bare {worktree, branch} and failing every affected dispatch/recovery write. Branch-value stamps now derive provenance from `classifyTaskBranchOrigin` so operator-provided branches keep `branchWriteOrigin: "operator"` and stay protected from engine branch cleanup; null clears keep explicit engine attribution. `classifyTaskBranchOrigin` additionally keeps the operator marker through numeric sibling renames (`-2`..`-50`) of a Fusion-named override branch, while engine derivatives (`-step-<i>`, `-stranded`) stay engine-owned.
+- 534264e: summary: Honor the push-after-merge setting for workspace projects.
+  category: fix
+  dev: Uses the shared push-after-merge policy and workspace publication gate.
+- 85938b9: summary: A rejected review now writes its fix steps before returning the task to implementation.
+  category: fix
+  dev: Code Review REVISE hand-offs create structured remediation before the lifecycle bounce. Missing reviewer fix records receive a deterministic executor remediation step, while self-healing claims keyable review episodes before consuming retry budget or narrating an attempt, threads that claim through the recovery it authorized, retains it on a genuine refusal, and goes silent once a newer review round supersedes it.
+- 2fd2432: summary: A blocked review always explains itself, even when the concurrency marker cannot be written.
+  category: fix
+  dev: claimRemediationAttempt now reports `unavailable` instead of collapsing every declined admission to `held`; the graph-failure backstop and the self-healing sweep fail open on it, logging why the attempt is unfenced and producing remediation anyway. Silence stays reserved for outcomes with an owner (superseded/held/refused/missing).
+- 4896bf5: summary: Chat now focuses the message box when you open or create a conversation.
+  category: fix
+  dev: Adds a ChatView focus effect gated by findActive with phone and touch-tablet suppression.
+- 864bbf2: summary: Keep workspace tasks current and safely serialized when files overlap.
+  category: fix
+  dev: Refreshes workspace repository bases at implementation dispatch and shares workspace-aware overlap lease predicates.
+- efbc963: summary: Resume appended review fixes and return completed remediation to review.
+  category: fix
+  dev: Shares the post-completion step-ledger reopen marker across remediation appenders and pending-step starts.
+- 4970221: summary: A code review revision reliably reopens implementation instead of stalling on an internal lock.
+  category: fix
+  dev: The graph-failure backstop and the failed-pre-merge-step sweep no longer take a fenced remediation claim; they re-trigger the single producer, matching Plan Review's shape. The claim guarded a bounded problem (a duplicate remediation wave, capped by the revision budget) at the cost of an unbounded one — any unclaimable round returned silently, before the "remediation was not scheduled" park. FN-267's actual fix, the ordering guard plus the deterministic Fix-step fallback, is untouched. The advisory refusal filter goes with the claim that wrote its marker.
+- d299a0c: summary: A card sent back for review fixes can now actually start them instead of stalling on the first step.
+  category: fix
+  dev: `appendRemediationStepsImpl` now stamps the step-ledger reopen marker inside its atomic mutation when the log tail carries a clean-completion marker. `evaluateStepLedgerSeal` refuses step transitions after completion until a re-entry marker supersedes it, and `updateStep` wrote that marker only for a pending reset or operator edit — remediation arrives through the append path, so the seal survived and the new Fix step was refused as a post-completion projection.
+- 73261dc: summary: A blocked review that produces no fix steps now says why on the task instead of stopping silently.
+  category: fix
+  dev: `requestPreMergeOptionalStepFix` has 34 refusal exits and roughly half wrote nothing. The outer seam now observes whether the call narrated (via a store proxy over `logEntry`/`addTaskComment`) and emits one diagnostic entry when a `false` return left no explanation. The graph-failure remediation backstop also records its two previously-silent returns (deferred admission, unheld claim). Behaviour is unchanged; this is visibility only.
+- 14d3fb6: summary: Stopping or restarting the engine no longer kills remote access, and a stopped engine can be restarted from the UI.
+  category: fix
+  dev: TunnelProcessManager moves from ProjectEngine into a process-lifetime per-project registry (`@fusion/engine` remote-tunnel-service); tunnels are stopped only by ProjectEngineManager.stopAll(). `POST /remote/tunnel/start|stop|kill-external` and `GET /remote/status` work with no engine attached (`REMOTE_TUNNEL_ENGINE_UNAVAILABLE` is unreachable on the start path), and `POST /system/engine/restart` now resumes paused projects.
+- 9930850: summary: Fix code review revisions never producing fix steps — the card stayed blocked in review with no explanation.
+  category: fix
+  dev: `reviewInputSignature` and `deriveWorkspaceReviewRemediation` used NUL (U+0000) as a field separator. Both signatures became persisted state when FN-267 introduced the remediation claim (`remediationAttemptSignature`, `reviewRemediation.inputSignature`), and PostgreSQL rejects NUL in text/jsonb with SQLSTATE 22P05 — so every claim write threw and no remediation could ever be scheduled. Separators are now U+001F/U+001E. No migration: the broken write never persisted a signature.
+- 235d802: summary: Fix a code review revision producing no fix steps after a Retry, leaving the card stuck in review.
+  category: fix
+  dev: A new workflow-graph run now clears the task-keyed abort markers (`userCanceledTaskIds`, `pausedAborted`, `pausedAbortProvenance`) at run birth. Nothing cleared them on the review path, and `awaitAbortInFlightTaskWork` stamps `markPausedAborted` unconditionally, so the dashboard Retry's pause/hard-cancel/unpause left leftovers that the NEXT run read as its own — the FN-249 cancellation exit swallowed the REVISE and `genuinePauseAbort` misclassified it as a pause abort.
+- a5a8cc2: summary: Fix review cards frozen after a Retry, where a code review's revision produced no fix steps.
+  category: fix
+  dev: The FN-249 operator-cancellation exit in `handle-graph-failure.ts` honored a task-scoped in-memory `userCanceledTaskIds` marker whose only clear sites were the implementation loop and the move-into-WIP listener. A card canceled in the review lane reached neither, so the marker outlived its run and every later run exited before the FN-267 remediation claim — and the card could not reach WIP, the very move that clears the marker. The exit now requires abort evidence (pause-abort marker, abort provenance, paused row, or an interrupted node) and drops a stale marker otherwise.
+- 2576a75: summary: A card sent back for review fixes no longer gets permanently stuck unable to start them.
+  category: fix
+  dev: `evaluateStepLedgerSeal` now skips its own "Ignored post-completion …" narration, which quoted the completion marker verbatim and therefore re-sealed on a substring match — each refusal nesting inside the last, so no re-entry marker could ever lift it. Also adds the graph resume wording "Resuming execution after unpause" to the re-entry markers; only `run-implementation.ts`'s "Resumed agent session after unpause" was listed, so one of the two documented resume paths never lifted the seal.
+- fbd56a6: summary: Restarting Fusion no longer kills remote access — the Tailscale tunnel survives the restart.
+  category: fix
+  dev: A supervised restart (exit 86) now passes `stopAll({ supervisedRestart: true })`, which releases the tunnel child from `superviseSpawn`'s parent-death registry instead of stopping it; the relaunched process adopts a funnel proven live via `tailscale serve status --json` rather than spawning a competing one. Restore also keeps `remoteAccess.lifecycle.wasRunningOnShutdown` set through transient prerequisite/spawn failures.
+- 12f5393: summary: Fix remote access silently dying after a container restart.
+  category: fix
+  dev: The Docker entrypoint gated `tailscaled` startup on the absence of `/var/run/tailscale/tailscaled.sock`. `docker restart` reuses the writable layer, so that socket file survives with no daemon behind it and the guard skipped startup — the dashboard came back healthy while `tailscale` returned `connect: connection refused` and the tunnel was dead. Liveness is now decided by scanning `/proc` for a running `tailscaled`, and a stale socket file is removed before starting.
+
 ## 0.77.0-beta.11
 
 ### Minor Changes

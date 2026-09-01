@@ -31,6 +31,7 @@ import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessa
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
+import { isTabletTouchViewport } from "../hooks/useViewportMode";
 import { fetchSettings, fetchChatSession, type DiscoveredSkill } from "../api";
 import { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, type Agent, type ChatTag, type Settings } from "@fusion/core";
 import { MicButton } from "./MicButton";
@@ -114,6 +115,12 @@ export interface ChatViewProps {
    * A retained-but-hidden Quick Chat must release document Find ownership; visible hosts retain the default.
    */
   findActive?: boolean;
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  A kept-alive ChatView retains its selected session, transcript, and composer while hidden.
+  Inactive hosts must not acknowledge arriving messages; explicit user session selection remains active.
+  */
+  active?: boolean;
   /** Enables the "/" command registry (e.g. `/steer`) for this composer instance. See {@link ChatCommandContext}. */
   chatCommandContext?: ChatCommandContext;
   /*
@@ -360,7 +367,7 @@ function ChatDialogBackdrop({ children, onClose }: { children: React.ReactNode; 
 
 type CopyFeedbackState = "success" | "error" | null;
 
-export function ChatView({ projectId, addToast, floating = false, compactLayout = false, findActive = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   useEffect(() => {
@@ -744,22 +751,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const dockedSidebarVisible = dockedSidebarEligible && dockedSidebarOpen;
 
   useEffect(() => {
-    if (!activeSession?.id) {
+    if (!active || !activeSession?.id) {
       return;
     }
 
     markRead("direct", activeSession.id, activeSession.lastMessageAt ?? activeSession.updatedAt);
-  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead]);
+  }, [active, activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead]);
 
 
   useEffect(() => {
-    if (!activeSession?.id || messages.length === 0) {
+    if (!active || !activeSession?.id || messages.length === 0) {
       return;
     }
 
     const latestMessage = messages[messages.length - 1];
     markRead("direct", activeSession.id, latestMessage?.createdAt ?? activeSession.lastMessageAt ?? activeSession.updatedAt);
-  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead, messages]);
+  }, [active, activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead, messages]);
 
 
 
@@ -2442,6 +2449,28 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const cliTerminalSessionId = activeSession?.cliSessionFile || activeSession?.id || "";
 
   const previousDetailOpenRef = useRef(hasDetailSelection);
+  const focusedComposerThreadRef = useRef<string | null>(null);
+  const suppressComposerFocus = isMobile || isTabletTouchViewport(mode);
+
+  /*
+  FNXC:ChatComposerFocus 2026-09-01-01:04:
+  Opening or creating a conversation must put the caret in its composer so operators can type immediately without a mouse click. `findActive` is the focus-ownership gate because a retained-but-hidden Quick Chat stays mounted and portaled; reopening it onto an existing thread is itself an open.
+
+  Phone and touch-tablet hosts deliberately keep focus off the composer: an unsolicited software keyboard would cover a freshly opened thread, and programmatic focus without a user gesture cannot reliably raise the iOS keyboard. Record the thread before that suppression so a later viewport or orientation change cannot retroactively steal focus.
+  */
+  useEffect(() => {
+    if (!findActive || !hasDetailSelection || !activeSession) {
+      focusedComposerThreadRef.current = null;
+      return;
+    }
+
+    const threadKey = `${activeSession.id}:${initialDirectSessionNonce ?? 0}`;
+    if (focusedComposerThreadRef.current === threadKey) return;
+    focusedComposerThreadRef.current = threadKey;
+    if (suppressComposerFocus) return;
+
+    inputRef.current?.focus();
+  }, [activeSession?.id, findActive, hasDetailSelection, initialDirectSessionNonce, suppressComposerFocus]);
 
   useEffect(() => {
     if (initialDirectSessionNonce === previousInitialDirectSessionNonceRef.current) return;

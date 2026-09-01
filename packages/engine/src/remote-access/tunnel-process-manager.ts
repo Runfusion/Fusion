@@ -2,13 +2,14 @@ import { EventEmitter } from "node:events";
 import { exec, execFile, spawn, type ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
 import { promisify } from "node:util";
-import { superviseSpawn } from "@fusion/core";
+import { releaseSupervisedChild, superviseSpawn, type SupervisedChild } from "@fusion/core";
 import { remoteTunnelLog } from "../logger.js";
 import {
   getTunnelProviderAdapter,
   redactTunnelText,
 } from "./provider-adapters.js";
 import type {
+  ActiveFunnelInfo,
   ManagedTunnelProcess,
   ExternalTunnelInfo,
   TunnelErrorCode,
@@ -38,6 +39,38 @@ const DEFAULT_RESTART_BASE_DELAY_MS = 1_000;
 const DEFAULT_RESTART_MAX_DELAY_MS = 30_000;
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
+
+/** Shape of `tailscale serve status --json` that adoption depends on. Everything is optional: the
+ * command prints an empty object when nothing is served. */
+interface ServeConfigScope {
+  AllowFunnel?: Record<string, boolean>;
+  Web?: Record<string, { Handlers?: Record<string, { Proxy?: string } | undefined> }>;
+  TCP?: Record<string, { TCPForward?: string } | undefined>;
+}
+
+/*
+FNXC:RemoteAccess 2026-09-01-03:49:
+`tailscale funnel <port>` runs a FOREGROUND session, and tailscaled files that session's config under
+`Foreground.<session-id>` — NOT at the top level. Reading only the top level found nothing for the
+tunnel Fusion actually spawns, so a funnel surviving a supervised restart was never adopted: the
+status route reported `stopped` with `no_prior_running_marker` while traffic was demonstrably flowing
+and the public URL served 200. Measured on the live container; the same reason `tailscale funnel
+status` prints "No serve config" for a working funnel (it reports only the persistent config).
+
+Top-level scopes are still read first so a backgrounded `tailscale funnel --bg` (persistent config)
+keeps working; foreground sessions are then scanned in turn.
+*/
+interface ServeConfigJson extends ServeConfigScope {
+  Foreground?: Record<string, ServeConfigScope | undefined>;
+}
+
+/** Every scope a funnel may be declared in, most-authoritative first. */
+function serveConfigScopes(config: ServeConfigJson): ServeConfigScope[] {
+  const foreground = Object.values(config.Foreground ?? {}).filter(
+    (scope): scope is ServeConfigScope => Boolean(scope),
+  );
+  return [config, ...foreground];
+}
 
 class LineBuffer {
   private pending = "";
@@ -126,6 +159,15 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
   private readonly statusListeners = new Set<TunnelStatusListener>();
   private readonly logListeners = new Set<TunnelLogListener>();
   private processHandle: ManagedTunnelProcess | null = null;
+  private supervisedHandle: SupervisedChild | null = null;
+  /*
+  FNXC:RemoteAccess 2026-09-01-02:54:
+  True when this manager represents a funnel it did NOT spawn — one that survived a supervised restart
+  and was adopted on relaunch. There is no child to signal, so stop() must reset the provider's own
+  config instead; without this an operator "Stop remote access" after a restart would report stopped
+  while the funnel kept serving.
+  */
+  private adopted = false;
   private readinessTimer: NodeJS.Timeout | null = null;
   private stopTimer: NodeJS.Timeout | null = null;
   private restartTimer: NodeJS.Timeout | null = null;
@@ -247,6 +289,161 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
     }
   }
 
+  /**
+   * FNXC:RemoteAccess 2026-09-01-02:54:
+   * A SUPERVISED RESTART IS NOT A SHUTDOWN.
+   *
+   * Incident (twice on the operator's container): pressing "Restart" in Command Center — and the new
+   * "Update from source" control, which ends in the same restart — silently killed remote access. The
+   * dashboard exits with FUSION_RESTART_EXIT_CODE and the entrypoint's supervisor loop relaunches it,
+   * so the tunnel teardown that was scoped to "process exit" now ran on every routine restart. The
+   * container came back healthy while the public URL stayed dead.
+   *
+   * Release hands the funnel child over to the machine instead of killing it: it leaves the OS process
+   * alone and only removes it from `superviseSpawn`'s parent-death kill registry, which would otherwise
+   * SIGTERM its process group from the `process.on("exit")` hook. The child was spawned detached, so it
+   * survives as its own process-group leader and is reparented to the supervisor.
+   *
+   * MEASURED CAVEAT (2026-09-01): a released child whose stdout is still our pipe dies if it WRITES
+   * after we exit — the read end goes with us and the write takes EPIPE/SIGPIPE. A quiet child
+   * survives indefinitely. Survival is therefore best-effort, and the restore path is built to be
+   * correct either way: the running marker is persisted before release, the relaunch adopts a funnel
+   * it can prove is serving, and respawns one when it cannot. Worst case is a few seconds of restore,
+   * never the permanent dark URL this replaces.
+   *
+   * Returns true only when a live child was actually released.
+   */
+  releaseForSupervisedRestart(): boolean {
+    const handle = this.processHandle;
+    const supervised = this.supervisedHandle;
+    if (!handle || !supervised) {
+      return false;
+    }
+    if (this.status.state !== "running" && this.status.state !== "starting") {
+      return false;
+    }
+
+    this.clearReadinessTimer();
+    this.clearRestartTimer();
+    if (this.stopTimer) {
+      clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    // No auto-restart bookkeeping can outlive this process, and the child must never be re-adopted by
+    // a close handler that fires while we are exiting.
+    this.desiredTunnel = null;
+    this.expectedStop = false;
+    handle.child.removeAllListeners("close");
+    handle.child.removeAllListeners("error");
+
+    const released = releaseSupervisedChild(supervised.pid);
+    this.emitLog(
+      released ? "info" : "warn",
+      "manager",
+      released
+        ? `Releasing ${handle.provider} tunnel (pid=${handle.child.pid ?? "n/a"}) across a supervised restart — remote access must outlive the relaunch`
+        : `Could not release ${handle.provider} tunnel (pid=${handle.child.pid ?? "n/a"}) from process supervision`,
+    );
+
+    handle.child.unref?.();
+    this.processHandle = null;
+    this.supervisedHandle = null;
+    return released;
+  }
+
+  /**
+   * FNXC:RemoteAccess 2026-09-01-02:54:
+   * Take ownership of a funnel this process did not spawn (the one released by the process we are
+   * replacing). Reported as `running` so the UI and the merge of engine restarts see continuity, with
+   * `pid: null` because there is no child of ours behind it.
+   */
+  adoptRunningTunnel(provider: TunnelProvider, url: string | null): void {
+    if (this.processHandle) {
+      return;
+    }
+    this.adopted = true;
+    this.desiredTunnel = null;
+    this.updateStatus({
+      provider,
+      state: "running",
+      pid: null,
+      startedAt: nowIso(),
+      stoppedAt: null,
+      url,
+      lastError: null,
+    });
+    this.emitLog("info", "manager", `Adopted an already-running ${provider} tunnel${url ? ` (${url})` : ""}`);
+  }
+
+  /**
+   * FNXC:RemoteAccess 2026-09-01-02:54:
+   * Ask tailscaled what it is ACTUALLY serving. `detectExternalFunnel` only proves the node is logged
+   * in (it reads Self.DNSName), which is not evidence a funnel exists; adopting on that would report a
+   * dead URL as running. The serve config names the funnel host and the local port it proxies to, so
+   * the caller can tell our funnel from a foreign one before deciding to adopt or refuse.
+   *
+   * Bounded and failure-tolerant: any error means "cannot prove one", never a thrown restore.
+   */
+  async detectActiveFunnel(): Promise<ActiveFunnelInfo | null> {
+    let stdout = "";
+    try {
+      const result = await execFileAsync("tailscale", ["serve", "status", "--json"], { timeout: 5_000 });
+      stdout = String(result.stdout ?? "");
+    } catch (error) {
+      const failure = error as { stdout?: string };
+      stdout = String(failure.stdout ?? "");
+      if (!stdout.trim()) {
+        return null;
+      }
+    }
+
+    let config: ServeConfigJson;
+    try {
+      config = JSON.parse(stdout) as ServeConfigJson;
+    } catch {
+      return null;
+    }
+
+    let funnelHost: string | undefined;
+    let host: string | undefined;
+    let proxyPort: number | null = null;
+
+    for (const scope of serveConfigScopes(config)) {
+      const candidateHost = Object.entries(scope.AllowFunnel ?? {}).find(([, allowed]) => allowed === true)?.[0];
+      if (!candidateHost) continue;
+      const candidateName = candidateHost.split(":")[0];
+      if (!candidateName) continue;
+
+      let candidatePort: number | null = null;
+      const handlers = scope.Web?.[candidateHost]?.Handlers ?? {};
+      for (const handler of Object.values(handlers)) {
+        const match = handler?.Proxy?.match(/:(\d+)(?:\/|$)/);
+        if (match?.[1]) {
+          candidatePort = Number(match[1]);
+          break;
+        }
+      }
+      if (candidatePort === null) {
+        const tcpPort = Object.values(scope.TCP ?? {}).find((entry) => typeof entry?.TCPForward === "string")?.TCPForward;
+        const tcpMatch = tcpPort?.match(/:(\d+)$/);
+        if (tcpMatch?.[1]) {
+          candidatePort = Number(tcpMatch[1]);
+        }
+      }
+
+      funnelHost = candidateHost;
+      host = candidateName;
+      proxyPort = candidatePort;
+      if (proxyPort !== null) break;
+    }
+
+    if (!funnelHost || !host) {
+      return null;
+    }
+
+    return { provider: "tailscale", url: `https://${host}/`, proxyPort };
+  }
+
   async switchProvider(target: TunnelProvider, config: TunnelProviderConfig): Promise<void> {
     return this.runExclusive(async () => {
       this.clearRestartTimer();
@@ -359,6 +556,7 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
       throw error;
     }
     const child = supervised.child;
+    this.supervisedHandle = supervised;
 
     const managedHandle: ManagedTunnelProcess = {
       provider,
@@ -366,6 +564,7 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
       command,
     };
     this.processHandle = managedHandle;
+    this.adopted = false;
     this.expectedStop = false;
 
     this.updateStatus({ pid: child.pid ?? null });
@@ -426,6 +625,17 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
 
   private async stopInternal(): Promise<void> {
     if (!this.processHandle) {
+      if (this.adopted) {
+        // FNXC:RemoteAccess 2026-09-01-02:54: an adopted funnel has no child of ours; reset the
+        // provider config so "stopped" in the UI means the public URL is actually dark.
+        this.emitLog("info", "manager", "Stopping adopted tunnel (no owned child process) via provider reset");
+        try {
+          await this.killExternalFunnel();
+        } catch (error) {
+          this.emitLog("warn", "manager", `Adopted tunnel reset failed: ${normalizeError(error).message}`);
+        }
+        this.adopted = false;
+      }
       this.updateStatus({
         provider: null,
         state: "stopped",
@@ -522,6 +732,7 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
     this.expectedStop = false;
     const provider = this.processHandle?.provider ?? this.status.provider;
     this.processHandle = null;
+    this.supervisedHandle = null;
 
     this.updateStatus({
       provider,
@@ -586,6 +797,8 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
 
     this.expectedStop = false;
     this.processHandle = null;
+    this.supervisedHandle = null;
+    this.adopted = false;
 
     this.updateStatus({
       provider: null,

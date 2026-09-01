@@ -104,6 +104,7 @@ export async function ensureGraphCustomNodeWorktree(
           }),
         taskEnv: process.env,
         addActiveWorktree: deps.addActiveWorktree,
+        refreshStaleBase,
       });
       deps.onStart?.(workspace.task, workspace.taskWorktreeDir);
       executorLog.debug(`${task.id}: workflow node '${nodeId}' using workspace task directory ${workspace.taskWorktreeDir}`);

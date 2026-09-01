@@ -15,6 +15,7 @@ import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { ToolCallDetails, TOOL_CALL_PREVIEW_MAX_CHARS, TOOL_CALL_PREVIEW_MAX_LINES } from "./ToolCallDetails";
 import { ThinkingTrace } from "./ThinkingTrace";
+import { PreciseTimestamp } from "./PreciseTimestamp";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -741,16 +742,29 @@ export function AgentLogViewer({
 
         {renderGroups.map((group) => {
           const firstEntry = group.kind === "single" ? group.entry : group.entries[0];
+          /*
+          FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+          FN-272 keeps Raw Logs' established relative label for quick scanning and adds the logged action's precise wall-clock reading beside it.
+          Gate both labels on showBadge so grouped streamed output remains free of mid-message timestamp shells.
+          */
           const timestampSpan = group.showBadge ? (
             <span className="agent-log-timestamp" data-testid="agent-log-timestamp">
               {formatTimestamp(firstEntry.timestamp, t as TFunction<"app">)}
             </span>
+          ) : null;
+          const preciseTimestamp = group.showBadge ? (
+            <PreciseTimestamp
+              timestamp={firstEntry.timestamp}
+              className="agent-log-precise-timestamp"
+              testId="agent-log-precise-timestamp"
+            />
           ) : null;
 
           const agentBadge = group.showBadge ? (
             <span className="agent-log-badge-row">
               <span className="agent-log-agent-badge">[{getAgentDisplayName(firstEntry.agent!, t as TFunction<"app">)}]</span>
               {timestampSpan}
+              {preciseTimestamp}
             </span>
           ) : null;
 

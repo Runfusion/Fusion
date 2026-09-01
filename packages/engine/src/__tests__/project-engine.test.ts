@@ -18,6 +18,7 @@ import {
 } from "../merge/merger-ai.js";
 import { runtimeLog } from "../logger.js";
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
+import { __resetRemoteTunnelServicesForTests } from "../remote-access/remote-tunnel-service.js";
 import { setLocalDashboardPort, resetLocalDashboardPortForTests } from "../local-dashboard-port.js";
 import { NtfyNotifier } from "../util/notifier.js";
 import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthValidityLogger } from "../notification/index.js";
@@ -910,47 +911,75 @@ describe("ProjectEngine memory dreams wiring", () => {
 describe("ProjectEngine remote tunnel manager wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The tunnel service registry is process-lifetime by design; isolate tests from each other.
+    __resetRemoteTunnelServicesForTests();
     const mockStore = createMockStore(baseSettings);
     mocks.currentStore = mockStore.store;
   });
 
-  it("is unavailable before start and available after start", async () => {
+  /*
+  FNXC:RemoteAccess 2026-08-31-07:08:
+  Original symptom (reproduced twice in production): clicking "Stop engine" / "Restart engine" in
+  Command Center killed the Tailscale tunnel, so the operator lost the public URL — the very channel
+  they use to reach the box and undo it. Cause: TunnelProcessManager was a ProjectEngine field created
+  in start() and destroyed in stop().
+
+  These tests replace three that asserted exactly that coupling ("unavailable before start", "stop
+  once during shutdown", "clears manager reference"). The invariant is now the opposite, and is
+  asserted across every engine-lifecycle surface: stop, restart (stop -> new engine start), and
+  repeated cycles.
+  */
+  it("keeps one tunnel manager across engine stop and restart", async () => {
     const engine = createEngine();
 
-    expect(engine.getRemoteTunnelManager()).toBeUndefined();
+    const beforeStart = engine.getRemoteTunnelManager();
+    expect(beforeStart).toBeInstanceOf(TunnelProcessManager);
 
     await engine.start();
-
-    expect(engine.getRemoteTunnelManager()).toBeInstanceOf(TunnelProcessManager);
+    const afterStart = engine.getRemoteTunnelManager();
+    expect(afterStart).toBe(beforeStart);
 
     await engine.stop();
-    expect(engine.getRemoteTunnelManager()).toBeUndefined();
+    // The defect: this used to be undefined, and the tunnel process was dead.
+    expect(engine.getRemoteTunnelManager()).toBe(beforeStart);
+
+    // Restart = a fresh ProjectEngine for the same project. It must find the same live manager.
+    const restarted = createEngine();
+    await restarted.start();
+    expect(restarted.getRemoteTunnelManager()).toBe(beforeStart);
+    await restarted.stop();
+    expect(restarted.getRemoteTunnelManager()).toBe(beforeStart);
   });
 
-  it("calls tunnel manager stop once during shutdown", async () => {
-    const stopSpy = vi.spyOn(TunnelProcessManager.prototype, "stop").mockResolvedValueOnce(undefined);
+  it("never stops the tunnel process on engine stop or restart", async () => {
+    const stopSpy = vi.spyOn(TunnelProcessManager.prototype, "stop").mockResolvedValue(undefined);
     const engine = createEngine();
 
     await engine.start();
     await engine.stop();
 
-    expect(stopSpy).toHaveBeenCalledTimes(1);
+    const restarted = createEngine();
+    await restarted.start();
+    await restarted.stop();
+
+    expect(stopSpy).not.toHaveBeenCalled();
     stopSpy.mockRestore();
   });
 
-  it("warns when tunnel manager shutdown fails and clears manager reference", async () => {
+  it("stops the tunnel only on process shutdown, and warns without throwing when that fails", async () => {
     const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => {});
     const stopSpy = vi.spyOn(TunnelProcessManager.prototype, "stop").mockRejectedValueOnce(new Error("tunnel stop failed"));
     const engine = createEngine();
 
     await engine.start();
-    await engine.stop();
+    await engine.shutdownRemoteTunnelForProcessExit();
 
+    expect(stopSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Tunnel process manager stop failed"),
     );
-    expect(engine.getRemoteTunnelManager()).toBeUndefined();
 
+    await engine.stop();
     stopSpy.mockRestore();
     warnSpy.mockRestore();
   });
@@ -959,6 +988,7 @@ describe("ProjectEngine remote tunnel manager wiring", () => {
 describe("ProjectEngine remote lifecycle restore policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetRemoteTunnelServicesForTests();
     const mockStore = createMockStore(baseSettings);
     mocks.currentStore = mockStore.store;
   });
@@ -1103,28 +1133,44 @@ describe("ProjectEngine remote lifecycle restore policy", () => {
 
     const startSpy = vi.spyOn(TunnelProcessManager.prototype, "start").mockResolvedValue(undefined);
     const stopSpy = vi.spyOn(TunnelProcessManager.prototype, "stop").mockResolvedValue(undefined);
+    /*
+    FNXC:RemoteAccess 2026-08-31-07:08:
+    Status is driven by an explicit variable rather than call-ordered `mockReturnValueOnce`, because
+    restore-on-start now reads status first (to leave an already-running tunnel alone) and a
+    call-counted spy silently attributed the "running" answer to the wrong reader.
+    */
+    const stoppedStatus = {
+      provider: null,
+      state: "stopped" as const,
+      pid: null,
+      startedAt: null,
+      stoppedAt: "2026-04-26T12:05:00.000Z",
+      url: null,
+      lastError: null,
+    };
+    let managedStatus: ReturnType<TunnelProcessManager["getStatus"]> = stoppedStatus;
     const getStatusSpy = vi.spyOn(TunnelProcessManager.prototype, "getStatus")
-      .mockReturnValueOnce({
-        provider: "cloudflare",
-        state: "running",
-        pid: 4321,
-        startedAt: "2026-04-26T12:00:00.000Z",
-        stoppedAt: null,
-        url: "https://remote.example.com",
-        lastError: null,
-      })
-      .mockReturnValue({
-        provider: null,
-        state: "stopped",
-        pid: null,
-        startedAt: null,
-        stoppedAt: "2026-04-26T12:05:00.000Z",
-        url: null,
-        lastError: null,
-      });
+      .mockImplementation(() => managedStatus);
 
     const firstEngine = createEngine();
     await firstEngine.start();
+    managedStatus = {
+      provider: "cloudflare",
+      state: "running",
+      pid: 4321,
+      startedAt: "2026-04-26T12:00:00.000Z",
+      stoppedAt: null,
+      url: "https://remote.example.com",
+      lastError: null,
+    };
+    /*
+    FNXC:RemoteAccess 2026-08-31-07:08:
+    Shutdown markers are persisted on PROCESS exit, not on engine stop — engine stop must leave the
+    tunnel running. This is the ProjectEngineManager.stopAll() ordering: tunnel shutdown first (store
+    still open), then engine.stop().
+    */
+    await firstEngine.shutdownRemoteTunnelForProcessExit();
+    managedStatus = stoppedStatus;
     await firstEngine.stop();
 
     const persistedSettings = mockStore.getCurrentSettings() as {
@@ -1145,6 +1191,7 @@ describe("ProjectEngine remote lifecycle restore policy", () => {
       provider: "cloudflare",
     });
 
+    await secondEngine.shutdownRemoteTunnelForProcessExit();
     await secondEngine.stop();
     expect(stopSpy).toHaveBeenCalled();
 

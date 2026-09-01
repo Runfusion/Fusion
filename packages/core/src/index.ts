@@ -1079,7 +1079,9 @@ export type { NoCommitsNoOpFinalizeEvaluation } from "./merge/no-commits-finaliz
 export { evaluateCompletedPromotionFailureProvenance, CLEAN_COMPLETION_MARKERS, MAX_LOG_SCAN } from "./merge/completed-promotion-failure-provenance.js";
 export type { CompletedPromotionFailureProvenanceEvaluation } from "./merge/completed-promotion-failure-provenance.js";
 export {
+  buildStepLedgerReopenLog,
   evaluateStepLedgerSeal,
+  STEP_LEDGER_REFUSAL_MARKER_PREFIX,
   STEP_LEDGER_REENTRY_MARKERS,
   STEP_LEDGER_REOPEN_MARKER_PREFIX,
 } from "./task-store/step-ledger-seal.js";
@@ -1324,7 +1326,7 @@ export {
   readProjectIdentityAsync,
   writeProjectIdentityAsync,
 } from "./central/project-identity.js";
-export { ProcessSupervisor, superviseSpawn, FUSION_RESTART_EXIT_CODE, FUSION_NON_RETRYABLE_EXIT_CODE } from "./process/process-supervisor.js";
+export { ProcessSupervisor, superviseSpawn, releaseSupervisedChild, FUSION_RESTART_EXIT_CODE, FUSION_NON_RETRYABLE_EXIT_CODE } from "./process/process-supervisor.js";
 export { isPostgresUniqueError } from "./db/postgres-errors.js";
 export type {
   SuperviseSpawnOptions,
@@ -1965,7 +1967,7 @@ export type {
   BuildUnblockWeightMapOptions,
   PriorityFanoutComparatorContext,
 } from "./tasks/task-priority.js";
-export { fileScopeLeaseBlocksCandidate } from "./tasks/file-scope-lease.js";
+export { fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
 export type { FileScopeLeaseClassification, FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
 
 // ── Mission Hierarchy Types ────────────────────────────────────────────

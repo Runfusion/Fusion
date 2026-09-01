@@ -13,7 +13,7 @@
  * occurrence instead of rewriting the completed occurrence, while existing pending work prevents
  * duplicate growth.
  */
-import type { Task, TaskStore } from "@fusion/core";
+import { buildStepLedgerReopenLog, type Task, type TaskStore } from "@fusion/core";
 
 export async function reopenLastStepForRevision(
   store: TaskStore,
@@ -34,9 +34,23 @@ export async function reopenLastStepForRevision(
     const trailing = steps.at(-1)!;
     const index = steps.length;
     replay = { index, name: trailing.name, indexes: [index] };
+    /*
+    FNXC:StepLedgerIntegrity 2026-09-01-02:31:
+    Under `stepReopenPolicy: "reopen-trailing"`, this can be the only producer of new work for an
+    unclassified review gate. Callers in `request-pre-merge-optional-step-fix.ts`,
+    `recover-failed-pre-merge-step.ts`, `review-convergence-ladder.ts`, and
+    `bounce-verification-failure.ts` rerun the graph before any executor-session or unpause marker
+    exists. Publish the replay and the shared ledger reopen stamp in this one transaction so that
+    first `step-execute` start cannot be mistaken for a stale post-completion projection.
+    */
+    const log = buildStepLedgerReopenLog(
+      current.log,
+      `trailing replay step ${index} (${trailing.name}) appended after completion`,
+    );
     return {
       steps: [...steps, { name: trailing.name, status: "pending" }],
       currentStep: index,
+      ...(log ? { log } : {}),
     };
   });
 

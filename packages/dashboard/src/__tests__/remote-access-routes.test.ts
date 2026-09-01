@@ -31,6 +31,11 @@ import {
   validateCloudflaredManifest,
 } from "../routes/register-settings-memory-routes.js";
 import { request as performRequest } from "../test-request.js";
+import {
+  __resetRemoteTunnelServicesForTests,
+  getRemoteTunnelService,
+  remoteTunnelScopeKey,
+} from "@fusion/engine";
 
 function buildRemoteAccessSettings(overrides: Record<string, unknown> = {}) {
   return {
@@ -205,34 +210,88 @@ describe("remote access provider/lifecycle contracts", () => {
     });
   });
 
-  it("keeps repeated start/stop requests idempotent when no engine is available", async () => {
+  /*
+  FNXC:RemoteAccess 2026-08-31-07:08:
+  Original symptom: after "Stop engine", the Tailscale tunnel died with the engine and could not be
+  restarted — POST /remote/tunnel/start answered `lastErrorCode: "REMOTE_TUNNEL_ENGINE_UNAVAILABLE"`
+  because the TunnelProcessManager was a field of ProjectEngine. Remote access is how the operator
+  reaches the box, so this made the box unreachable and unrepairable from the UI.
+
+  Invariant asserted here (not just the one reported click): EVERY engine-less remote tunnel route —
+  start, stop, kill-external — reaches the process-lifetime tunnel service instead of dead-ending, and
+  ENGINE_UNAVAILABLE is no longer reachable on the plain start path.
+  */
+  it("drives the process-lifetime tunnel service when no engine is attached", async () => {
+    __resetRemoteTunnelServicesForTests();
+    const service = getRemoteTunnelService(remoteTunnelScopeKey({ rootDir: "/fake/root" }));
+    const runningStatus = {
+      provider: "cloudflare" as const,
+      state: "running" as const,
+      pid: 4321,
+      startedAt: null,
+      stoppedAt: null,
+      url: "https://demo.example.com",
+      lastError: null,
+    };
+    const stoppedStatus = { ...runningStatus, state: "stopped" as const, pid: null, url: null };
+    const startSpy = vi.spyOn(service, "start").mockResolvedValue(runningStatus);
+    const stopSpy = vi.spyOn(service, "stop").mockResolvedValue(stoppedStatus);
+    const killSpy = vi.spyOn(service, "killExternal").mockResolvedValue(undefined);
+
     const { app } = createApp();
 
     const firstStart = await REQUEST(app, "POST", "/api/remote/tunnel/start", {});
     const secondStart = await REQUEST(app, "POST", "/api/remote/tunnel/start", {});
     const firstStop = await REQUEST(app, "POST", "/api/remote/tunnel/stop", {});
     const secondStop = await REQUEST(app, "POST", "/api/remote/tunnel/stop", {});
+    const kill = await REQUEST(app, "POST", "/api/remote/tunnel/kill-external", {});
 
-    /*
-    FNXC:RemoteAuth 2026-08-19-01:10:
-    Still idempotent and still 200 — a dashboard legitimately runs without an engine — but the state
-    must be the TRUTH. This asserted `state: "starting"` when nothing could possibly start, so an
-    operator saw a tunnel "coming up" that settled to stopped with `lastError: null` forever, with no
-    way to distinguish it from a broken tunnel. The reason is now carried in lastError/lastErrorCode.
-    */
     for (const response of [firstStart, secondStart]) {
       expect(response.status).toBe(200);
-      expect(response.body.state).toBe("stopped");
-      expect(response.body.provider).toBe("cloudflare");
-      expect(response.body.lastErrorCode).toBe("REMOTE_TUNNEL_ENGINE_UNAVAILABLE");
-      expect(response.body.lastError).toMatch(/projectId/);
+      // The defect this replaces: a fabricated "stopped + ENGINE_UNAVAILABLE" answer.
+      expect(response.body.lastErrorCode).not.toBe("REMOTE_TUNNEL_ENGINE_UNAVAILABLE");
+      expect(response.body.state).toBe("running");
+      expect(response.body.url).toBe("https://demo.example.com");
     }
+    expect(startSpy).toHaveBeenCalledTimes(2);
 
     for (const response of [firstStop, secondStop]) {
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ state: "stopped", provider: "cloudflare" });
-      expect(response.body).toEqual(expect.objectContaining({ state: expect.any(String), provider: expect.any(String) }));
+      expect(response.body.state).toBe("stopped");
     }
+    expect(stopSpy).toHaveBeenCalledTimes(2);
+
+    expect(kill.status).toBe(200);
+    expect(killSpy).toHaveBeenCalledTimes(1);
+
+    startSpy.mockRestore();
+    stopSpy.mockRestore();
+    killSpy.mockRestore();
+    __resetRemoteTunnelServicesForTests();
+  });
+
+  /* FNXC:RemoteAccess 2026-08-31-07:08: engine-less GET /remote/status must report the service's real
+     state too, or the UI would show "stopped" over a live engine-less tunnel. */
+  it("reports the engine-less tunnel service state on GET /remote/status", async () => {
+    __resetRemoteTunnelServicesForTests();
+    const service = getRemoteTunnelService(remoteTunnelScopeKey({ rootDir: "/fake/root" }));
+    vi.spyOn(service, "getStatus").mockReturnValue({
+      provider: "cloudflare",
+      state: "running",
+      pid: 99,
+      startedAt: null,
+      stoppedAt: null,
+      url: "https://live.example.com",
+      lastError: null,
+    });
+
+    const { app } = createApp();
+    const status = await REQUEST(app, "GET", "/api/remote/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body.state).toBe("running");
+    expect(status.body.url).toBe("https://live.example.com");
+    __resetRemoteTunnelServicesForTests();
   });
 
   it("returns REMOTE_TUNNEL_PREREQUISITE_MISSING when provider is selected but runtime prerequisites are missing", async () => {

@@ -2,10 +2,35 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockExecFile, mockExec } = vi.hoisted(() => ({
-  mockExecFile: vi.fn(),
-  mockExec: vi.fn(),
-}));
+/*
+FNXC:RemoteAccess 2026-09-01-02:54:
+`child_process.execFile`/`exec` carry their own util.promisify.custom implementation that resolves to
+{ stdout, stderr }. A bare vi.fn() does not, so promisify() fell back to the callback convention and
+resolved to the bare stdout STRING — every `const { stdout } = await execFileAsync(...)` in the source
+then read undefined and the JSON-parsing probes silently returned null under test. Mirroring the custom
+symbol here is what makes those probes actually exercised.
+*/
+const { mockExecFile, mockExec } = vi.hoisted(() => {
+  const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+  const withPromisifiedShape = <T extends (...args: never[]) => unknown>(fn: T): T => {
+    const promisified = (...args: unknown[]) => new Promise((resolve, reject) => {
+      const callback = (error: (Error & { stdout?: string; stderr?: string }) | null, stdout?: string, stderr?: string) => {
+        if (error) {
+          reject(Object.assign(error, { stdout, stderr }));
+          return;
+        }
+        resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
+      };
+      (fn as unknown as (...callArgs: unknown[]) => unknown)(...args, callback);
+    });
+    Object.defineProperty(fn, promisifyCustom, { value: promisified, configurable: true });
+    return fn;
+  };
+  return {
+    mockExecFile: withPromisifiedShape(vi.fn()),
+    mockExec: withPromisifiedShape(vi.fn()),
+  };
+});
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -56,6 +81,14 @@ function cloudflareConfig(overrides: Partial<TunnelProviderConfig> = {}): Tunnel
     tokenEnvVar: "CLOUDFLARED_TOKEN",
     env: { CLOUDFLARED_TOKEN: "secret-token" },
     ...overrides,
+  } as TunnelProviderConfig;
+}
+
+function tailscaleConfig(): TunnelProviderConfig {
+  return {
+    provider: "tailscale",
+    executablePath: "tailscale",
+    args: ["funnel", "4040"],
   } as TunnelProviderConfig;
 }
 
@@ -449,14 +482,14 @@ describe("TunnelProcessManager", () => {
     });
 
     const manager = new TunnelProcessManager();
-    const detected = await manager.detectExternalFunnel();
-    if (detected !== null) {
-      expect(detected).toEqual({
-        provider: "tailscale",
-        url: "https://machine.tailnet.ts.net/",
-        pid: null,
-      });
-    }
+    // FNXC:RemoteAccess 2026-09-01-02:54: this assertion used to be wrapped in `if (detected !== null)`,
+    // which made it a no-op — the promisify shape above meant detection always returned null. Now that
+    // the probe really runs, assert the result unconditionally.
+    await expect(manager.detectExternalFunnel()).resolves.toEqual({
+      provider: "tailscale",
+      url: "https://machine.tailnet.ts.net/",
+      pid: null,
+    });
   });
 
   it("returns null when tailscale binary is unavailable", async () => {
@@ -509,5 +542,204 @@ describe("TunnelProcessManager", () => {
 
     const manager = new TunnelProcessManager();
     await expect(manager.killExternalFunnel()).resolves.toBeUndefined();
+  });
+  /*
+  FNXC:RemoteAccess 2026-09-01-02:54:
+  Original symptom: Command Center "Restart" (and "Update from source", which ends in the same
+  restart) came back with a healthy dashboard and a dead public URL — the funnel had been stopped
+  because a supervised restart went down the process-exit teardown. These tests pin the handover and
+  the adoption that replaces it.
+  */
+  describe("supervised restart handover", () => {
+    const makeManager = () => new TunnelProcessManager({
+      spawnImpl: () => {
+        const child = new FakeChildProcess(++pid);
+        children.set(child.pid, child);
+        return child as never;
+      },
+    });
+
+    async function startRunning(manager: TunnelProcessManager): Promise<FakeChildProcess> {
+      await manager.start("cloudflare", cloudflareQuickTunnelConfig());
+      const child = [...children.values()].at(-1) as FakeChildProcess;
+      child.emitStdout("Tunnel ready https://demo.trycloudflare.com");
+      await vi.waitFor(() => {
+        expect(manager.getStatus().state).toBe("running");
+      });
+      return child;
+    }
+
+    it("releases a running tunnel without signalling it, and keeps reporting it as running", async () => {
+      const manager = makeManager();
+      const child = await startRunning(manager);
+      processKillSpy.mockClear();
+
+      expect(manager.releaseForSupervisedRestart()).toBe(true);
+
+      // The whole point: nothing was killed. `stop()` would have SIGTERMed the process group here.
+      expect(processKillSpy).not.toHaveBeenCalled();
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      expect(manager.getStatus().state).toBe("running");
+      expect(manager.getStatus().url).toBe("https://demo.trycloudflare.com");
+    });
+
+    it("refuses to claim a release when there is no live tunnel to hand over", async () => {
+      const manager = makeManager();
+      expect(manager.releaseForSupervisedRestart()).toBe(false);
+
+      const child = await startRunning(manager);
+      await manager.stop();
+      expect(child.exitCode).toBe(0);
+      expect(manager.releaseForSupervisedRestart()).toBe(false);
+    });
+
+    it("does not resurrect a released child through its close handler", async () => {
+      const manager = makeManager();
+      const child = await startRunning(manager);
+      expect(manager.releaseForSupervisedRestart()).toBe(true);
+
+      // If the released child ever does exit, this process must not treat it as an unexpected exit
+      // and schedule a respawn — the restart is already handing ownership to the next process.
+      child.close(0, "SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(manager.getStatus().state).toBe("running");
+    });
+
+    it("adopts an already-running tunnel instead of spawning a second one", async () => {
+      const manager = makeManager();
+      manager.adoptRunningTunnel("tailscale", "https://box.tail1234.ts.net/");
+
+      const status = manager.getStatus();
+      expect(status.state).toBe("running");
+      expect(status.provider).toBe("tailscale");
+      // No child of ours is behind an adopted tunnel.
+      expect(status.pid).toBeNull();
+      expect(status.url).toBe("https://box.tail1234.ts.net/");
+      expect(children.size).toBe(0);
+
+      // An adopted tunnel is running, so a start must not spawn a competing funnel.
+      await expect(manager.start("tailscale", tailscaleConfig())).rejects.toThrow(/already_running/);
+      expect(children.size).toBe(0);
+    });
+
+    it("stops an adopted tunnel through the provider reset, since there is no child to signal", async () => {
+      const manager = makeManager();
+      manager.adoptRunningTunnel("tailscale", "https://box.tail1234.ts.net/");
+      mockExecFile.mockClear();
+
+      await manager.stop();
+
+      // "Stopped" in the UI has to mean the public URL is actually dark.
+      expect(mockExecFile).toHaveBeenCalledWith("tailscale", ["serve", "reset"], { timeout: 5_000 }, expect.any(Function));
+      expect(manager.getStatus().state).toBe("stopped");
+    });
+
+    it("proves an active funnel from the serve config, including the port it proxies", async () => {
+      mockExecFile.mockImplementation((_command: string, args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string) => void) => {
+        const callback = typeof optionsOrCallback === "function"
+          ? optionsOrCallback as (error: Error | null, stdout?: string) => void
+          : maybeCallback;
+        const payload = JSON.stringify({
+          TCP: { "443": { HTTPS: true } },
+          Web: { "box.tail1234.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:4040" } } } },
+          AllowFunnel: { "box.tail1234.ts.net:443": true },
+        });
+        callback?.(null, args.join(" ") === "serve status --json" ? payload : "");
+        return {} as never;
+      });
+
+      const manager = new TunnelProcessManager();
+      await expect(manager.detectActiveFunnel()).resolves.toEqual({
+        provider: "tailscale",
+        url: "https://box.tail1234.ts.net/",
+        proxyPort: 4040,
+      });
+    });
+
+    /*
+    FNXC:RemoteAccess 2026-09-01-03:30:
+    Payload captured verbatim from the operator's live container while its public URL was serving 200.
+    `tailscale funnel <port>` — the exact command this manager spawns — registers a FOREGROUND session,
+    so its config lands under `Foreground.<session-id>` and the top level is empty. Reading only the top
+    level made a healthy, traffic-serving funnel undetectable, so a tunnel that survived a supervised
+    restart was never adopted and the status route reported `stopped` while the URL worked.
+    */
+    it("proves a FOREGROUND funnel, which is the shape `tailscale funnel <port>` actually registers", async () => {
+      mockExecFile.mockImplementation((_command: string, args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string) => void) => {
+        const callback = typeof optionsOrCallback === "function"
+          ? optionsOrCallback as (error: Error | null, stdout?: string) => void
+          : maybeCallback;
+        const payload = JSON.stringify({
+          Foreground: {
+            bab18534080dc536: {
+              TCP: { "443": { HTTPS: true } },
+              Web: { "fusion-lab-1.barking-vibe.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:4040" } } } },
+              AllowFunnel: { "fusion-lab-1.barking-vibe.ts.net:443": true },
+            },
+          },
+        });
+        callback?.(null, args.join(" ") === "serve status --json" ? payload : "");
+        return {} as never;
+      });
+
+      await expect(new TunnelProcessManager().detectActiveFunnel()).resolves.toEqual({
+        provider: "tailscale",
+        url: "https://fusion-lab-1.barking-vibe.ts.net/",
+        proxyPort: 4040,
+      });
+    });
+
+    it("still proves a persistent (backgrounded) funnel when both scopes are present", async () => {
+      mockExecFile.mockImplementation((_command: string, args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string) => void) => {
+        const callback = typeof optionsOrCallback === "function"
+          ? optionsOrCallback as (error: Error | null, stdout?: string) => void
+          : maybeCallback;
+        const payload = JSON.stringify({
+          Web: { "box.tail1234.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:4040" } } } },
+          AllowFunnel: { "box.tail1234.ts.net:443": true },
+          Foreground: { session: { AllowFunnel: { "other.tail1234.ts.net:443": true } } },
+        });
+        callback?.(null, args.join(" ") === "serve status --json" ? payload : "");
+        return {} as never;
+      });
+
+      await expect(new TunnelProcessManager().detectActiveFunnel()).resolves.toEqual({
+        provider: "tailscale",
+        url: "https://box.tail1234.ts.net/",
+        proxyPort: 4040,
+      });
+    });
+
+    it("reports no active funnel when tailscaled is serving nothing or is unreachable", async () => {
+      mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string) => void) => {
+        const callback = typeof optionsOrCallback === "function"
+          ? optionsOrCallback as (error: Error | null, stdout?: string) => void
+          : maybeCallback;
+        callback?.(null, "{}");
+        return {} as never;
+      });
+      await expect(new TunnelProcessManager().detectActiveFunnel()).resolves.toBeNull();
+
+      // A logged-in node with no funnel must NOT read as adoptable — that was the weakness of the
+      // DNSName-only probe, and adopting on it would report a dead URL as running.
+      mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string) => void) => {
+        const callback = typeof optionsOrCallback === "function"
+          ? optionsOrCallback as (error: Error | null, stdout?: string) => void
+          : maybeCallback;
+        callback?.(null, JSON.stringify({ AllowFunnel: { "box.tail1234.ts.net:443": false } }));
+        return {} as never;
+      });
+      await expect(new TunnelProcessManager().detectActiveFunnel()).resolves.toBeNull();
+
+      mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null) => void) => {
+        const callback = typeof optionsOrCallback === "function"
+          ? optionsOrCallback as (error: Error | null) => void
+          : maybeCallback;
+        callback?.(new Error("failed to connect to local tailscaled"));
+        return {} as never;
+      });
+      await expect(new TunnelProcessManager().detectActiveFunnel()).resolves.toBeNull();
+    });
   });
 });

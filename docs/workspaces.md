@@ -61,6 +61,14 @@ Planning, prompt-based Plan Review, implementation, and read-only graph gates ru
 
 Agents do not choose, acquire, or extend individual repository checkouts. `.fusion/workspace.json` is the single source of membership; the durable repository scope is a confirmed snapshot for review evidence and landing, not a planner heading or an operator selection.
 
+### Dispatch-time base refresh
+
+At implementation dispatch, Fusion refreshes each configured repository checkout onto that repository's recorded base branch. This also runs after a task is released from a file-overlap hold, so work resumes from the latest landed base rather than the one captured when its checkout was first acquired. A dirty checkout, rebase conflict, or unresolvable base keeps its local base unchanged and defers rebase/conflict handling to the merge lane; these refresh outcomes do not block execution. Worktrunk-backed checkouts are not refreshed.
+
+### File overlap in workspace mode
+
+A workspace task retains its file-scope claim while any per-repository checkout exists, including while it waits in a review or hold lane. Prefer repository-qualified `## File Scope` entries such as `api/src/server.ts`. An unprefixed entry such as `src/server.ts` is conservatively interpreted as applying inside every configured repository, so it still serializes work against a repository-qualified peer.
+
 ### Dependency readiness before Plan Review
 
 Every fresh member worktree performs a bounded root-level dependency bootstrap. Fusion recognizes Node (`pnpm`, npm, Yarn, Bun), Python (`uv`, Poetry, Pipenv, pip), Rust, Go, PHP, Ruby, .NET, Maven, Gradle, Elixir, Dart/Flutter, and Swift manifests. A row runs only when its required binary is available on `PATH`; a plain static repository with no manifest or lock evidence starts no command and is `not-needed`.

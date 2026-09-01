@@ -2,6 +2,35 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.77.0-beta.12
+
+### Highlights
+
+- Update Fusion from source in one click — pull, rebuild, and restart from Command Center
+- Remote access survives engine and container restarts instead of silently dying
+- Code review revisions now start their fix steps on the first try instead of stalling
+- Task dispatch and recovery no longer stall when Fusion re-pins a worktree branch
+- Board, List, and Chat keep their state when you return to a visited view
+
+### New
+
+- Command Center can update Fusion from source in one click: git pull, install, workspace build, and a restart that only happens if the build succeeded. The Docker entrypoint now acts as a restart supervisor and supports running from source.
+- Task worktrees now live under `.fusion/worktrees` by default, the legacy `.worktrees` root is still cleaned up, and merged workspace checkouts are removed after landing.
+- Board, List, and Chat are retained when you navigate away and back, so scroll position and view state survive; hidden views release their header and unread-message side effects.
+- Task activity log timestamps now show precise millisecond clock times across Live, Feed, Raw, and Interventions.
+
+### Fixed
+
+- A code review revision now writes its fix steps and reopens implementation on the first try, instead of stalling with the card frozen in review. This covers the step-ledger reopen path, the inline atomic branch Code Review always takes, revisions after a dashboard Retry, cards canceled in the review lane, and the field-separator bug that made every remediation claim write fail against PostgreSQL.
+- A blocked or refused review always explains itself on the task now — including when the concurrency marker cannot be written — rather than returning silently with no entry.
+- Remote access reports its real state: a tunnel that survived a restart shows as running, a tunnel serving traffic is never reported as stopped, and a funnel on a different port is refused rather than clobbered.
+- Stopping or restarting the engine no longer kills remote access, tunnel start/stop/status work with no engine attached, and a stopped engine can be restarted from the UI. A supervised restart releases and re-adopts the live Tailscale funnel instead of spawning a competitor.
+- Remote access no longer dies after a `docker restart`: `tailscaled` liveness is now decided by an actual running process, not a stale socket file left behind in the writable layer.
+- Task dispatch and recovery no longer fail when Fusion re-pins a worktree branch. Operator-provided branches keep their operator marker (including through numeric sibling renames) and stay protected from engine branch cleanup.
+- Workspace projects now honor the push-after-merge setting, refresh repository bases at implementation dispatch, and serialize safely when file scopes overlap.
+- Chat focuses the message box when you open or create a conversation, with phone and touch-tablet suppression.
+- ACP runtime session failures now name the scoping cwd and the JSON-RPC diagnostic, so you can tell a misconfigured spawn target from an agent-side fault.
+
 ## 0.77.0-beta.11
 
 ### Highlights

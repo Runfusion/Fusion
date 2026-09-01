@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, rm } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Settings } from "@fusion/core";
 import {
@@ -239,6 +239,35 @@ export interface WorktreeBackend {
   sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }>;
   prune(input: WorktreePruneInput): Promise<void>;
   resolveWorktreePath(input: { rootDir: string; worktreeName: string; branch: string }): Promise<string>;
+}
+
+const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
+
+async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
+  const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
+    cwd: worktreePath,
+    encoding: "utf-8",
+  });
+  const markerPath = stdout.trim();
+  return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
+}
+
+export async function persistWorktreeBackendKind(
+  worktreePath: string,
+  backendKind: WorktreeBackend["kind"],
+): Promise<void> {
+  await writeFile(await resolveWorktreeBackendMarkerPath(worktreePath), `${backendKind}\n`, "utf-8");
+}
+
+export async function readPersistedWorktreeBackendKind(
+  worktreePath: string,
+): Promise<WorktreeBackend["kind"] | undefined> {
+  try {
+    const backendKind = (await readFile(await resolveWorktreeBackendMarkerPath(worktreePath), "utf-8")).trim();
+    return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export type WorktrunkOperationCode =

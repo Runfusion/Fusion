@@ -68,6 +68,7 @@ describe("step ledger transitions", () => {
     expect(first).toMatchObject({ accepted: true, disposition: "started" });
     expect(second).toMatchObject({ accepted: true, disposition: "resumed" });
     expect(stepLines(fixture.read())).toEqual(["Step 0 (Preflight) → in-progress"]);
+    expect(actions(fixture.read())).not.toContainEqual(expect.stringContaining("Step ledger reopened"));
   });
 
   it("does not repeat a done ledger line while retaining reports and stuck-kill cleanup", async () => {
@@ -105,15 +106,65 @@ describe("step ledger transitions", () => {
     expect(stepLines(fixture.read())).toEqual([]);
   });
 
-  it("returns a terminal start disposition and warns for a graph-source post-completion transition", async () => {
+  it("admits and reopens a graph-source pending-step start after completion", async () => {
     const task = withCompletion(makeTask({ steps: [{ name: "Preflight", status: "done" }, { name: "Implementation", status: "pending" }] }));
     const fixture = stepStore(task);
 
     const result = await startStepImpl(fixture.store, task.id, 1, { source: "graph" });
 
-    expect(result).toMatchObject({ accepted: false, disposition: "terminal" });
-    expect(fixture.read().steps[1]?.status).toBe("pending");
+    expect(result).toMatchObject({ accepted: true, disposition: "started" });
+    expect(fixture.read().steps[1]?.status).toBe("in-progress");
+    expect(actions(fixture.read())).toContain("Step ledger reopened — step 1 (Implementation) started after completion");
+    expect(actions(fixture.read())).not.toContainEqual(expect.stringContaining("Ignored post-completion in-progress for step 1"));
+    expect(actions(fixture.read())).not.toContainEqual(expect.stringContaining("[integrity-warning] graph-source updateStep suppressed"));
+  });
+
+  it("still warns when a graph-source completion projection arrives after completion", async () => {
+    const task = withCompletion(makeTask());
+    const fixture = stepStore(task);
+
+    await updateStepImpl(fixture.store, task.id, 1, "done", { source: "graph" });
+
+    expect(fixture.read().steps[1]?.status).toBe("in-progress");
+    expect(actions(fixture.read())).toContainEqual(expect.stringContaining("Ignored post-completion done for step 1 (Implementation)"));
     expect(actions(fixture.read())).toContainEqual(expect.stringContaining("[integrity-warning] graph-source updateStep suppressed"));
+  });
+
+  it("lets an admitted post-completion start finish in the reopened ledger", async () => {
+    const task = withCompletion(makeTask({ steps: [{ name: "Implementation", status: "pending" }] }));
+    const fixture = stepStore(task);
+
+    await startStepImpl(fixture.store, task.id, 0, { source: "graph" });
+    await updateStepImpl(fixture.store, task.id, 0, "done", { source: "graph" });
+
+    expect(fixture.read().steps[0]?.status).toBe("done");
+    expect(stepLines(fixture.read())).toEqual([
+      "Step 0 (Implementation) → in-progress",
+      "Step 0 (Implementation) → done",
+    ]);
+  });
+
+  it("still refuses a pending-to-done projection after completion", async () => {
+    const task = withCompletion(makeTask({ steps: [{ name: "Implementation", status: "pending" }] }));
+    const fixture = stepStore(task);
+
+    await updateStepImpl(fixture.store, task.id, 0, "done", { source: "graph" });
+
+    expect(fixture.read().steps[0]?.status).toBe("pending");
+    expect(actions(fixture.read())).toContainEqual(expect.stringContaining("Ignored post-completion done for step 0 (Implementation)"));
+    expect(actions(fixture.read())).toContainEqual(expect.stringContaining("[integrity-warning] graph-source updateStep suppressed"));
+  });
+
+  it("still refuses a completed-step restart before consulting the completion seal", async () => {
+    const task = withCompletion(makeTask({ steps: [{ name: "Implementation", status: "done" }] }));
+    const fixture = stepStore(task);
+
+    const result = await startStepImpl(fixture.store, task.id, 0, { source: "graph" });
+
+    expect(result).toMatchObject({ accepted: false, disposition: "terminal" });
+    expect(fixture.read().steps[0]?.status).toBe("done");
+    expect(actions(fixture.read())).toContainEqual(expect.stringContaining("Ignored done→in-progress regression"));
+    expect(actions(fixture.read())).not.toContainEqual(expect.stringContaining("Ignored post-completion"));
   });
 
   it("leaves a same-status write inside the completion window completely silent", async () => {

@@ -19,6 +19,7 @@ import { PLANNER_AGENT_ROLE } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { ProviderIcon } from "./ProviderIcon";
+import { PreciseTimestamp } from "./PreciseTimestamp";
 import {
   createChatInputAutosizeController,
   type ChatInputAutosizeController,
@@ -197,6 +198,10 @@ function getLatestEntryTimestamp(entries: readonly AgentLogEntry[]): string {
 /*
 FNXC:TaskChatTimestamps 2026-06-29-14:37:
 Task Detail Chat requires per-block timestamps in addition to existing group and user headers so operators can scan when each text, tool, thinking, or steering block was produced. Reuse the shared relative-time formatter and return null for empty or invalid dates so transcript blocks never render timestamp shells without meaningful time text.
+
+FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+FN-272 retains each Live transcript's relative timestamp for scanability and places a shared precise local wall-clock reading beside it.
+The relative-label early return remains the timestamp-shell guard, so invalid or absent log times still render neither label.
 */
 function getRelativeTimestamp(timestamp: string | undefined): string {
   return timestamp ? formatRelativeTimeAgo(timestamp) : "";
@@ -206,9 +211,12 @@ function TaskChatTimestamp({ timestamp, testId = "task-chat-block-time", label =
   const relativeTime = getRelativeTimestamp(timestamp);
   if (!relativeTime) return null;
   return (
-    <span className="task-chat-timestamp" data-testid={testId} aria-label={label}>
-      {relativeTime}
-    </span>
+    <>
+      <span className="task-chat-timestamp" data-testid={testId} aria-label={label}>
+        {relativeTime}
+      </span>
+      <PreciseTimestamp timestamp={timestamp} className="task-chat-precise-timestamp" testId={`${testId}-precise`} />
+    </>
   );
 }
 
@@ -665,9 +673,16 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
       <div className="task-chat-user-header">
         <div className="task-chat-role-label">{t("taskChat.you", "You")}</div>
         {relativeTime ? (
-          <span className="task-chat-timestamp" data-testid="task-chat-user-time">
-            {relativeTime}
-          </span>
+          <>
+            <span className="task-chat-timestamp" data-testid="task-chat-user-time">
+              {relativeTime}
+            </span>
+            <PreciseTimestamp
+              timestamp={message.createdAt}
+              className="task-chat-precise-timestamp"
+              testId="task-chat-user-time-precise"
+            />
+          </>
         ) : null}
       </div>
       <article className="task-chat-entry task-chat-entry--user" data-testid="task-chat-entry-user">

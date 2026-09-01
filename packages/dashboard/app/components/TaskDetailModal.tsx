@@ -52,6 +52,7 @@ import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
 import { runDuplicateTaskAction } from "../utils/duplicateTaskAction";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { PreciseTimestamp } from "./PreciseTimestamp";
 import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrPanel } from "./PrPanel";
 import { PrCreateModal } from "./PrCreateModal";
@@ -6254,9 +6255,21 @@ export function TaskDetailContent({
                               data-stall-highlight={isHighlighted ? "true" : undefined}
                             >
                               <div className="detail-log-header">
-                                <span className="detail-log-timestamp">
-                                  {formatTimestamp(entry.timestamp)}
-                                </span>
+                                {/*
+                                FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+                                FN-272 keeps Feed's compact relative timestamp for scanability and adds the task action's precise local wall-clock time beside it.
+                                This wrapper exists only at the activity-log render site, leaving task metadata timestamps on their established relative contract.
+                                */}
+                                <div className="detail-log-timestamps">
+                                  <span className="detail-log-timestamp">
+                                    {formatTimestamp(entry.timestamp)}
+                                  </span>
+                                  <PreciseTimestamp
+                                    timestamp={entry.timestamp}
+                                    className="detail-log-precise-timestamp"
+                                    testId="task-activity-precise-timestamp"
+                                  />
+                                </div>
                                 <span className="detail-log-action">{action}</span>
                               </div>
                               {outcome && (

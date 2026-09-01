@@ -129,6 +129,7 @@ import {
   resolveMergeOrchestrationColumn,
   resolveTaskLifecycleColumns,
   isFusionDeletableBranch,
+  classifyTaskBranchOrigin,
   type WorkflowIr
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
@@ -7215,7 +7216,12 @@ export async function aiMergeTask(
             rootDir,
             integrationBranch: mergeTarget.branch,
           });
-          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: "engine" as const });
+          /*
+           * FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write.
+           * FNXC:BranchWriteOrigin 2026-08-28-10:12: merge-reuse can re-pin an operator-override branch, so the stamp derives from the
+           * classifier (#3523 Greptile P1) — hardcoding "engine" here made cleanup eligible to delete operator-supplied branches.
+           */
+          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: classifyTaskBranchOrigin(task, reusableMatch.branch) === "operator-supplied" ? "operator" : "engine" });
           await emitReuseHandoffAuditEvent(
             "merge:reuse-fallback-reused-existing-registration",
             {

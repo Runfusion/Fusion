@@ -83,6 +83,9 @@ export type ExecuteWorkflowGraphDeps = {
     [k: string]: unknown;
   };
   activeWorkflowGraphAbortControllers: Map<string, AbortController>;
+  /* FNXC:WorkflowLifecycle 2026-08-31-06:41: reset at run birth so an abort marker can only describe THIS run. */
+  userCanceledTaskIds: Set<string>;
+  clearPausedAborted: (taskId: string) => void;
   workflowAgentCapacity: WorkflowAgentCapacity;
   activeWorkflowAuthorities: Map<string, ActiveWorkflowAuthority>;
   activeWorkflowPrincipals: Map<string, { agentId: string; nodeInstanceId: string; agent?: import("@fusion/core").Agent }>;
@@ -756,6 +759,31 @@ export async function executeWorkflowGraph(
       remain bound to the language target selected when this graph invocation began.
       */
       const outputLanguage = resolveTaskOutputLanguage(settings, task.description ?? "");
+      /*
+      FNXC:WorkflowLifecycle 2026-08-31-06:41:
+      A run is born here, so every abort marker still standing belongs to a PREVIOUS one. They are
+      plain task-keyed in-memory collections with no run identity, and nothing else clears them on
+      this path: `userCanceledTaskIds` is dropped only by the implementation loop and the
+      move-INTO-WIP listener, and `pausedAborted`/`pausedAbortProvenance` only by the implementation
+      loop and the pause-replay seams. A card canceled in the REVIEW lane reaches none of those, so
+      the markers outlived their run and poisoned every later one.
+
+      Measured on FN-270/FN-273. The dashboard Retry runs pause -> hard-cancel -> unpause to restart
+      a review step, and `awaitAbortInFlightTaskWork` stamps `markPausedAborted` UNCONDITIONALLY --
+      even though the idle card had no live surface to abort. Two minutes later the Code Review
+      returned REVISE and the teardown read those leftovers as its own: the operator-cancellation
+      exit swallowed the verdict, and `genuinePauseAbort` re-classified it as a pause abort. No fix
+      steps, no move to WIP -- and WIP is the very transition that would have cleared the marker.
+      Each Retry re-armed it, so retrying was the one action guaranteed not to help.
+
+      Resetting at the run boundary is what makes the FN-249 contract ("terminal for ITS in-flight
+      run") structurally true instead of aspirational, and it repairs both readers at once. A
+      genuinely canceled run is unaffected: its marker is set while it runs, and its own teardown
+      still sees it. Cleanup of a run that outlives its successor stays driven by the run-scoped
+      interruption fields the runner puts on the result.
+      */
+      deps.userCanceledTaskIds.delete(task.id);
+      deps.clearPausedAborted(task.id);
       graphAbortController = new AbortController();
       const graphAbortSignal = graphAbortController.signal;
       deps.activeWorkflowGraphAbortControllers.set(task.id, graphAbortController);

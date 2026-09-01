@@ -84,6 +84,26 @@ function normalizeConvergenceText(value: string | undefined): string {
 }
 
 /*
+FNXC:ReviewRemediation 2026-08-31-08:24:
+The field separator MUST NOT be NUL. This signature was in-memory-only when it was written, so
+`\u0000` was a sound "cannot occur in the content" choice. FN-267 then PERSISTED it as
+`remediationAttemptSignature` on the step result -- and PostgreSQL rejects NUL in text/jsonb with
+SQLSTATE 22P05 (`unsupported Unicode escape sequence`). Every remediation claim write therefore
+THREW against a real database while passing every mock-store test, because a JS string carries
+`\u0000` happily.
+
+Measured on FN-270/FN-273: from the moment the claim protocol landed, a Code Review REVISE could
+never be claimed, so no fix steps were ever produced and the cards sat blocked overnight with an
+empty timeline. Reproduced against real PostgreSQL in
+`review-remediation-claim.pg.test.ts`; no mock-store test can observe this.
+
+UNIT SEPARATOR (U+001F) keeps the original property -- it cannot appear in a file path, a verdict,
+a fingerprint, or normalized reviewer prose -- and is storable. No migration is needed precisely
+because the broken write never persisted a single signature.
+*/
+const SIGNATURE_FIELD_SEPARATOR = "\u001F";
+
+/*
 FNXC:RepositoryScope 2026-08-21-02:17:
 R10 convergence is keyed by the actual review input: review node, repository, confirmed scope generation, exact diff fingerprint, blocking verdict, and normalized findings. Reviewer prose is presentation only; it may change without a new defect or remain unchanged after the underlying diff changes.
 */
@@ -92,8 +112,9 @@ export function reviewInputSignature(result: CoreWorkflowStepResult): string | u
     .map((finding) => `${normalizeConvergenceText(finding.filePath)}:${finding.line ?? ""}:${normalizeConvergenceText(finding.body)}`)
     .sort()
     .join("|");
+  const sep = SIGNATURE_FIELD_SEPARATOR;
   if (result.reviewInputFingerprint && result.verdict === "REVISE") {
-    return `${result.workflowStepId}\u0000${result.reviewInputFingerprint}\u0000${result.verdict}\u0000${singularFindings}`;
+    return `${result.workflowStepId}${sep}${result.reviewInputFingerprint}${sep}${result.verdict}${sep}${singularFindings}`;
   }
   const blocking = (result.repositoryReviewOutcomes ?? [])
     .filter((outcome) => outcome.status === "REVIEWED" && (outcome.verdict === "REVISE" || outcome.verdict === "RETHINK"))
@@ -107,14 +128,14 @@ export function reviewInputSignature(result: CoreWorkflowStepResult): string | u
         .map((finding) => `${normalizeConvergenceText(finding.filePath)}:${finding.line ?? ""}:${normalizeConvergenceText(finding.body)}`)
         .sort()
         .join("|");
-      return `${outcome.repository}\u0000${outcome.fingerprint ?? ""}\u0000${outcome.verdict}\u0000${findings}`;
+      return `${outcome.repository}${sep}${outcome.fingerprint ?? ""}${sep}${outcome.verdict}${sep}${findings}`;
     })
     .sort();
   if (blocking.length === 0) return undefined;
   const scopeRevision = result.repositoryScopeRevision === undefined
     ? ""
-    : `\u0000${result.repositoryScopeRevision}`;
-  return `${result.workflowStepId}${scopeRevision}\u0000${blocking.join("\u0001")}`;
+    : `${sep}${result.repositoryScopeRevision}`;
+  return `${result.workflowStepId}${scopeRevision}${sep}${blocking.join("\u001E")}`;
 }
 
 export function hasRepeatedUnchangedReview(task: Task, info: RequestPreMergeOptionalStepFixInfo): boolean {
@@ -205,14 +226,60 @@ export async function requestPreMergeOptionalStepFix(
   info: RequestPreMergeOptionalStepFixInfo,
   options: { claim?: ReviewRemediationAttemptDescriptor } = {},
 ): Promise<boolean> {
-  const scopedDeps = options.claim
-    ? { ...deps, store: fenceStoreForClaim(deps.store, taskId, options.claim) }
-    : deps;
+  /*
+  FNXC:ReviewRemediation 2026-08-31-07:58:
+  A `false` from this function means BOTH "declined, correctly" and "could not, unexpectedly", and
+  the caller sees only the boolean. Of the 34 refusal exits below, roughly half narrate on the task
+  and the rest return in silence -- so a card can stop dead with a blocking review and NOTHING
+  written anywhere explaining why. Measured: FN-270 and FN-273 sat blocked for a full night, and
+  three separate diagnostic passes were spent deducing which exit had fired, because none of them
+  said so.
+
+  Rather than touch 34 sites (the churn that keeps missing the next one -- see the fence above for
+  the same lesson), observe whether the call narrated at all. Every honest refusal already writes to
+  the task; a `false` with no write is by definition the silent class, and only that class gets this
+  line. The message is diagnostic, not a verdict: it reports that remediation was declined without
+  explanation, which is the fact an operator needs to know a card is not merely slow.
+
+  Behaviour is unchanged -- this only observes and reports.
+  */
+  const baseStore = options.claim ? fenceStoreForClaim(deps.store, taskId, options.claim) : deps.store;
+  let narrated = false;
+  const narrationWitnesses = new Set(["logEntry", "addTaskComment"]);
+  const watchedStore = new Proxy(baseStore, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      const method = value as (...args: unknown[]) => unknown;
+      if (typeof property !== "string" || !narrationWitnesses.has(property)) return method.bind(target);
+      return (...args: unknown[]) => {
+        narrated = true;
+        return method.apply(target, args);
+      };
+    },
+  }) as typeof baseStore;
+  const scopedDeps = { ...deps, store: watchedStore };
+  let scheduled = false;
   try {
-    return await requestPreMergeOptionalStepFixInner(scopedDeps, taskId, fallbackTask, info, options);
+    scheduled = await requestPreMergeOptionalStepFixInner(scopedDeps, taskId, fallbackTask, info, options);
+    return scheduled;
   } catch (err: unknown) {
     if (err instanceof ClaimSupersededError) return false;
     throw err;
+  } finally {
+    if (!scheduled && !narrated) {
+      const gate = info.nodeId ?? info.stepName;
+      const silentDecline = `Pre-merge remediation declined without explanation — no fix steps were produced for '${gate}'`;
+      executorLog.warn(`${taskId}: ${silentDecline} (status=${info.status}, verdict=${info.verdict ?? "none"}, findings=${info.findings?.length ?? 0}, claimed=${Boolean(options.claim)})`);
+      await deps.store.logEntry(
+        taskId,
+        silentDecline,
+        `Gate: ${gate}\nReported status: ${info.status}\nReviewer verdict: ${info.verdict ?? "(none)"}\nFindings: ${info.findings?.length ?? 0}\n`
+        + "The remediation producer refused this round without recording a reason. That is a defect in the "
+        + "producer, not an operator action: a blocking review must never stop a card silently.",
+        deps.getRunContextFor(taskId),
+      ).catch(() => undefined);
+    }
   }
 }
 

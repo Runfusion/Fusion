@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ScrollText,
   Cpu,
+  GitPullRequestArrow,
 } from "lucide-react";
 import {
   createBackup,
@@ -30,6 +31,7 @@ import {
   startFnBinaryLinkLocal,
   startFnBinaryUseGlobal,
   startSystemRebuild,
+  startSystemSourceUpdate,
   type SystemInfoResponse,
   type SystemLogEntryDto,
   type SystemRebuildJobLine,
@@ -525,6 +527,22 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
     [adoptJob, info?.restartSupported, runAction],
   );
 
+  /*
+  FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+  "Update from source" is the one button a remote contributor with dashboard-only access presses to
+  ship: it pulls, rebuilds, and restarts into the new code. The restart is requested by the SERVER
+  and only after the build succeeded, so a failed build leaves this dashboard running and reachable —
+  the control deliberately does not schedule a client-side restart of its own.
+  */
+  const beginSourceUpdate = useCallback(
+    () =>
+      runAction("source-update", async () => {
+        const snapshot = await startSystemSourceUpdate(info?.restartSupported ?? false);
+        adoptJob(snapshot);
+      }),
+    [adoptJob, info?.restartSupported, runAction],
+  );
+
   const beginFnLinkLocal = useCallback(
     () =>
       runAction("fn-link-local", async () => {
@@ -697,6 +715,28 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   */
   const showRebuildControls = info?.rebuildSupported ?? false;
   /*
+  FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+  The update control is always VISIBLE (unlike the dev-only rebuild cards) but honestly disabled with
+  the reason, because a container operator needs to be told WHY the one action they were promised is
+  unavailable — "not running from source" and "unsupervised, so nothing would respawn me" are
+  different problems with different fixes, and silently hiding the card looks like a missing feature.
+  Both conditions must hold: a git checkout to pull into, and a supervising parent to restart into it.
+  */
+  const sourceUpdateEnabled = Boolean(info?.sourceUpdateSupported) && Boolean(info?.restartSupported);
+  const sourceUpdateDisabledNote = !info
+    ? undefined
+    : !info.sourceUpdateSupported
+      ? t(
+          "systemControls.sourceUpdateNotFromSource",
+          "Not running from a source checkout — start the container with --from-source (FUSION_SOURCE_ROOT) to enable this.",
+        )
+      : !info.restartSupported
+        ? t(
+            "systemControls.sourceUpdateUnsupervised",
+            "Needs a supervising parent to restart into the new build — restart the dashboard without --no-supervise.",
+          )
+        : undefined;
+  /*
   FNXC:SystemPanelFnBinary 2026-07-15-09:54:
   Link-local is HIDDEN unless the server advertises a Fusion source checkout
   (dev mode). Use-global and check-for-updates stay visible on packaged installs.
@@ -772,6 +812,20 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         disabled: false,
         run: () => void doCheckUpdates(),
         testId: "cc-syscontrol-check-updates",
+      },
+      {
+        key: "source-update",
+        icon: GitPullRequestArrow,
+        title: t("systemControls.sourceUpdate", "Update from source"),
+        description: t(
+          "systemControls.sourceUpdateDesc",
+          "Pull the latest source (fast-forward only), rebuild it, and restart into the new code. A failed build never restarts the server.",
+        ),
+        cta: t("systemControls.sourceUpdateCta", "Update & restart"),
+        disabled: !sourceUpdateEnabled || rebuildRunning,
+        note: sourceUpdateDisabledNote,
+        run: () => void beginSourceUpdate(),
+        testId: "cc-syscontrol-source-update",
       },
       {
         key: "restart",
@@ -863,6 +917,9 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
     ],
     [
       beginFnLinkLocal,
+      beginSourceUpdate,
+      sourceUpdateDisabledNote,
+      sourceUpdateEnabled,
       beginFnUseGlobal,
       beginRebuild,
       doAgentsRestart,
