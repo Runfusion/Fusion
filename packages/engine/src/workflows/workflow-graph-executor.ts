@@ -15,6 +15,7 @@ import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTO
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
+import { workflowStepMissingVerdictNotice } from "../executor/workflow-step-verdict.js";
 
 import {
   createDefaultNodeHandlers,
@@ -1197,6 +1198,7 @@ export class WorkflowGraphExecutor {
           const notRunReason = node.id === PLAN_REVIEW_GROUP_ID
             ? undefined
             : parseWorkflowStepNotRunReason(exitContextPatch?.notRunReason);
+          const verdictRequired = exitContextPatch?.verdictRequired === true;
           /*
           FNXC:WorkflowStepNotRun 2026-08-28-14:13:
           A successful graph edge can mean no check ran. Persist that outcome as terminal `skipped`
@@ -1209,9 +1211,15 @@ export class WorkflowGraphExecutor {
           else if (groupResult.value === "advisory_failure") stepStatus = "advisory_failure";
           else if (verdict === "REVISE") stepStatus = "advisory_failure";
           else if (notRunReason) stepStatus = "skipped";
+          else if (verdictRequired && !verdict) stepStatus = "failed";
           else stepStatus = "passed";
           let stepOutput = typeof exitContextPatch?.output === "string" ? exitContextPatch.output : undefined;
-          const stepNotes = typeof exitContextPatch?.notes === "string" ? exitContextPatch.notes : undefined;
+          let stepNotes = typeof exitContextPatch?.notes === "string" ? exitContextPatch.notes : undefined;
+          if (verdictRequired && !verdict && !notRunReason) {
+            const missingVerdictNotice = workflowStepMissingVerdictNotice("no-verdict");
+            stepOutput = missingVerdictNotice;
+            stepNotes = missingVerdictNotice;
+          }
           const closeMarker = verdict === "CLOSE_NO_OP" ? parseNoOpCompletionMarker(stepNotes) : null;
           if (verdict === "CLOSE_NO_OP" && !closeMarker) {
             stepStatus = "failed";
@@ -1280,6 +1288,7 @@ export class WorkflowGraphExecutor {
             source: "optional-group",
             status: stepStatus,
             ...(notRunReason && stepStatus === "skipped" ? { notRunReason } : {}),
+            ...(verdictRequired ? { verdictRequired: true } : {}),
             ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
             ...(verdict ? { verdict } : {}),
             ...(stepOutput !== undefined ? { output: stepOutput } : {}),

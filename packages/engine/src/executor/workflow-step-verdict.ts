@@ -12,7 +12,25 @@ import { normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, PLAN_RE
 /** Machine-readable workflow-step verdicts, including Plan Review CLOSE_NO_OP. */
 export type WorkflowStepVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
 
+export type WorkflowStepMalformedReason =
+  | "no-verdict"
+  | "unreadable-structured-verdict"
+  | "prose-approval-without-json";
+
 export const MAX_DERIVED_WORKFLOW_STEP_NOTES_CHARS = 2_000;
+
+/*
+FNXC:ReviewVerdictAuthority 2026-09-02-19:16:
+A verdict-required review may fail safely through prose REVISE, but only parsed structured JSON can authorize approval. Classify every missing-verdict response and narrate the protocol failure without inventing reviewer rationale so the card exposes why review did not complete.
+*/
+export function workflowStepMissingVerdictNotice(reason: WorkflowStepMalformedReason): string {
+  const reasonText: Record<WorkflowStepMalformedReason, string> = {
+    "no-verdict": "it emitted no structured JSON verdict object",
+    "unreadable-structured-verdict": "its structured JSON verdict object was unreadable or invalid",
+    "prose-approval-without-json": "its approval appeared only in prose without a structured JSON verdict object",
+  };
+  return `The review did not complete because ${reasonText[reason]}; no approval was recorded.`;
+}
 
 export const WORKFLOW_STEP_NOTES_REPAIR_PROMPT = (verdict: WorkflowStepVerdict): string => `Your previous answer carried verdict ${verdict} with an empty notes field. Do not re-review the work and do not change the verdict. Reply with exactly one JSON object of the form {"notes":"..."} containing one to three sentences that name what you checked and why the verdict was reached. Use no tools.`;
 
@@ -153,6 +171,12 @@ export interface WorkflowStepOutcome {
   error?: string;
   /** Machine-readable verdict extracted from structured JSON output. */
   verdict?: WorkflowStepVerdict;
+  /**
+   * FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+   * True when this execution owed a structured JSON verdict. Absence identifies a legacy or
+   * non-review outcome and preserves its prior status-only semantics.
+   */
+  verdictRequired?: boolean;
   /** Notes extracted from structured JSON output (distinct from raw output). */
   notes?: string;
   /**
@@ -179,7 +203,7 @@ export interface WorkflowStepOutcome {
    *  caller to escalate to the fallback model rather than treat the failure
    *  as a generic revision request. */
   timedOut?: boolean;
-  /** True when no structured or prose verdict could be inferred. */
+  /** True when no authoritative structured verdict or fail-safe prose revision could be inferred. */
   malformed?: boolean;
   /** Machine-readable graph failure used for deterministic recovery routing. */
   failureValue?: string;
@@ -216,13 +240,15 @@ export function parseWorkflowStepVerdict(
       const parsed = JSON.parse(candidates[i]) as { verdict?: unknown; notes?: unknown; findings?: unknown; supersededFindingIds?: unknown; supersededFindingSourceWorkflowStepId?: unknown };
       if (!parsed || typeof parsed.verdict !== "string") continue;
       /*
-      FNXC:ReviewLeniency 2026-07-01-23:30:
-      "Any approved" — accept approval-family verdict variants (APPROVE, APPROVED, APPROVE_WITH_NOTES, approve_with_verdict, …), not just the exact WORKFLOW_STEP_VERDICTS strings. A token starting with APPROVE maps to APPROVE_WITH_NOTES when it mentions notes, else APPROVE; REVISE-family → REVISE; anything else (e.g. "PASS") is not a verdict and the candidate is skipped.
+      FNXC:ReviewVerdictAuthority 2026-09-02-19:49:
+      Structured verdict authority is an exact protocol, not a prefix family. Only the declared gate tokens may affect lifecycle state; aliases such as APPROVED, APPROVE_ANYTHING, REQUEST_REVISION, and REJECT remain malformed instead of being normalized into an approval or revision.
       */
-      const token = parsed.verdict.trim().toUpperCase();
+      const token = parsed.verdict;
       let verdict: WorkflowStepVerdict | null = null;
-      if (token.startsWith("APPROVE") || token.startsWith("APPROVAL")) {
-        verdict = token.includes("NOTE") ? "APPROVE_WITH_NOTES" : "APPROVE";
+      if (token === "APPROVE") {
+        verdict = "APPROVE";
+      } else if (token === "APPROVE_WITH_NOTES") {
+        verdict = "APPROVE_WITH_NOTES";
       } else if (token === "CLOSE_NO_OP" && options.optionalGroupId === PLAN_REVIEW_GROUP_ID) {
         /*
          * FNXC:PlanReviewNoOp 2026-08-09-01:17:
@@ -230,7 +256,7 @@ export function parseWorkflowStepVerdict(
          * prevents prose or unrelated review groups from acquiring a terminal lifecycle path.
          */
         verdict = "CLOSE_NO_OP";
-      } else if (token.startsWith("REVISE") || token.startsWith("REQUEST_REVISION") || token.startsWith("REJECT")) {
+      } else if (token === "REVISE") {
         verdict = "REVISE";
       }
       if (!verdict) continue;
@@ -259,43 +285,22 @@ export function parseWorkflowStepVerdict(
 
 export function inferWorkflowStepVerdictFromProse(
   rawOutput: string,
-  options: { suppressLenientApprovalForStructuredVerdict?: boolean } = {},
-): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string } | null {
+): { verdict: "REVISE"; notes: string } | null {
   const trimmed = rawOutput.trim();
   const revisionMatch = trimmed.match(/^REQUEST REVISION\s*\n*/i);
   if (revisionMatch) {
     return { verdict: "REVISE", notes: trimmed.slice(revisionMatch[0].length).trim() || "Revision requested" };
   }
-  /*
-   * FNXC:PlanReview 2026-06-29-02:05:
-   * Plan Review runs through reviewer-style agents that often emit a markdown
-   * section such as `### Verdict: APPROVE` even when the prompt asks for trailing
-   * JSON. Treat that explicit verdict as authoritative so a real approval does
-   * not collapse into a synthetic pre-execution plan failure loop.
-   */
   const explicitVerdictMatch = trimmed.match(/(?:^|\n)\s*(?:#{1,6}\s*)?(?:verdict|status)\s*:\s*(APPROVE_WITH_NOTES|APPROVE|REVISE)\b/i);
-  if (explicitVerdictMatch) {
-    return {
-      verdict: explicitVerdictMatch[1].toUpperCase() as "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE",
-      notes: "",
-    };
-  }
-  /*
-  FNXC:ReviewLeniency 2026-07-01-22:15:
-  A gate review (code-review, browser-verification) whose text clearly approves must PASS even when it is not perfectly structured. Delegate to the shared proseSignalsClearApproval detector so this parser and the reviewer/plan-review parser agree on what "clearly approved" means, and so a prose rejection ("not approved", "please revise", "reject") is never promoted to APPROVE. Replaces the prior narrow approve/approved/looks good/no issues/out of scope regex (now a subset of the shared detector).
-
-  FNXC:ReviewLeniency 2026-08-11-18:44:
-  When the gate parser was unable to classify a visible structured verdict, do not invent an APPROVE from nearby prose. The reviewer lane uses this same detector before its lenient branch, while fail-closed merge/PR/mission gates remain untouched because they never used prose leniency.
-  */
-  if (!options.suppressLenientApprovalForStructuredVerdict && proseSignalsClearApproval(trimmed)) {
-    return { verdict: "APPROVE", notes: "" };
+  if (explicitVerdictMatch?.[1].toUpperCase() === "REVISE") {
+    return { verdict: "REVISE", notes: "" };
   }
   return null;
 }
 
 /**
- * FNXC:WorkflowGates 2026-06-17-18:22:
- * Gate-class workflow steps must emit a parseable JSON or prose verdict before they can approve pre-merge completion. A fully malformed response is surfaced explicitly so blocking gates fail while advisory gates can record a non-blocking advisory failure.
+ * FNXC:WorkflowGates 2026-09-02-19:16:
+ * Gate-class workflow steps must emit a parseable JSON verdict before they can approve pre-merge completion. Prose remains a fail-safe revision request only, while every verdict-less response is surfaced explicitly with a classified protocol failure.
  */
 /*
 FNXC:CodeOrganization 2026-08-03-12:15:
@@ -311,6 +316,7 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
   supersededFindingSourceWorkflowStepId?: string;
   supersededFindingIds?: string[];
   malformed?: boolean;
+  malformedReason?: WorkflowStepMalformedReason;
   notesMissing?: boolean;
 } {
   const trimmed = rawOutput.trim();
@@ -345,7 +351,7 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
     };
   }
 
-  const inferred = inferWorkflowStepVerdictFromProse(trimmed, { suppressLenientApprovalForStructuredVerdict: textHasStructuredVerdictKey(trimmed) });
+  const inferred = inferWorkflowStepVerdictFromProse(trimmed);
   if (inferred) {
     const notes = inferred.notes || trimmed;
     return {
@@ -359,5 +365,11 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
     return { output: trimmed };
   }
 
-  return { output: trimmed, malformed: true };
+  const explicitApprovalLine = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:verdict|status)\s*:\s*APPROVE(?:_WITH_NOTES)?\b/i.test(trimmed);
+  const malformedReason: WorkflowStepMalformedReason = textHasStructuredVerdictKey(trimmed)
+    ? "unreadable-structured-verdict"
+    : explicitApprovalLine || proseSignalsClearApproval(trimmed)
+      ? "prose-approval-without-json"
+      : "no-verdict";
+  return { output: trimmed, malformed: true, malformedReason };
 }

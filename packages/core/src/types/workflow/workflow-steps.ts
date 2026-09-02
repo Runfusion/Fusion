@@ -299,6 +299,12 @@ export interface WorkflowStepResult {
   /** Execution status */
   status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
   /**
+   * FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+   * True when this execution owed a structured JSON verdict. Absence identifies a legacy or
+   * non-review result and preserves its prior status-only merge semantics.
+   */
+  verdictRequired?: boolean;
+  /**
    * Author-declared direct-review category snapshotted when a supported top-level
    * graph node starts. Absent preserves historical and non-review semantics.
    */

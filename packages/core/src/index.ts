@@ -365,6 +365,8 @@ export {
   isReportingOnlyOptionalGroup,
 } from "./workflows/workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional-steps.js";
+export { resolveWorkflowStepVerdictRequirement } from "./workflows/review-verdict-authority.js";
+export type { WorkflowStepVerdictRequirementInput } from "./workflows/review-verdict-authority.js";
 export {
   FAST_LANE_STEP_NAME,
   FAST_LANE_SKIP_VALUE,
@@ -1422,6 +1424,7 @@ export {
   AUTOMATED_BYPASS_ACTORS,
   evaluatePreMergeApprovals,
   isAuditedOperatorBypass,
+  requiresAuthoredReviewVerdict,
   requiresContentReviewProof,
   resolveUnprovenReviewApproval,
 } from "./merge/pre-merge-approval.js";

@@ -28,6 +28,7 @@ import {
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
   resolveReviewBlockingSeverity,
+  resolveWorkflowStepVerdictRequirement,
   requiresContentReviewProof,
   resolveValidatorFallbackModel,
   resolveTaskOutputLanguage,
@@ -93,6 +94,7 @@ import { createSeenSteeringIds } from "./task-predicates.js";
 import {
   parseWorkflowStepNotesRepair,
   parseWorkflowStepOutput,
+  workflowStepMissingVerdictNotice,
   workflowStepVerdictNoNotesNotice,
   WORKFLOW_STEP_NOTES_REPAIR_PROMPT,
   type WorkflowStepOutcome,
@@ -526,18 +528,15 @@ CRITICAL SCOPING RULES — read before doing anything else:
      * Prompt/custom workflow-step reviewers, including Browser Verification agents, do not call reviewStep. They still gate quality, so their system prompt must carry the same canonical uncapped user comments plus legacy steering selected from a fresh task snapshot.
      */
 
-    // (KTD-6) Verdict-contract reconciliation. The trailing-verdict JSON is the
-    // gate-parsing contract — it only matters for steps that gate merge. A skill
-    // step that isn't a gate (e.g. ce-plan / ce-work / ce-compound) produces
-    // skill-native output (and may emit a ===FUSION_AWAIT_INPUT=== sentinel and
-    // stop), so forcing a verdict would contradict the U2 preamble. Require the
-    // verdict only for gate steps (and skill-less prompt steps, which keep the
-    // legacy reviewer contract); relax it for non-gate skill steps. The executor
-    // runs parseAwaitInputSentinel on output regardless, so the await-input
-    // sentinel always takes priority when present.
-    const isSkillStep = typeof workflowStep.skillName === "string" && workflowStep.skillName.trim().length > 0;
-    const isSummaryProjectionStep = (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget === "task";
-    const requireVerdict = !isSummaryProjectionStep && (workflowStep.gateMode === "gate" || !isSkillStep);
+    // (KTD-6) Verdict-contract reconciliation. Skill-native plan/work steps keep
+    // their own output contract, while prompt steps whose durable optional-group
+    // result reaches merge admission must author a structured verdict.
+    const requireVerdict = resolveWorkflowStepVerdictRequirement({
+      gateMode: workflowStep.gateMode,
+      skillName: workflowStep.skillName,
+      summaryTarget: (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget,
+      optionalGroupId,
+    });
     const reviewFindingsContract = workflowStepMetadata.reviewKind === "plan" || workflowStepMetadata.reviewKind === "code";
     /*
      * FNXC:ReviewSeverityGate 2026-08-10-17:33:
@@ -1203,7 +1202,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
           await accumulateSessionTokenUsage(deps.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
           try { session.dispose(); } catch { /* best-effort */ }
           await agentLogger.flush();
-          return { success: false, error: `workflow step timed out after ${timeoutMs}ms`, timedOut: true };
+          return {
+            success: false,
+            error: `workflow step timed out after ${timeoutMs}ms`,
+            timedOut: true,
+            ...(requireVerdict ? { verdictRequired: true } : {}),
+          };
         }
 
         // Completed within the timeout — let any post-completion errors surface.
@@ -1396,6 +1400,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
             revisionRequested,
             output: noNotesNotice ?? parsed.output,
             verdict: effectiveVerdict,
+            ...(requireVerdict ? { verdictRequired: true } : {}),
             notes: noNotesNotice ?? parsed.notes,
             ...(parsed.notesMissing ? { notesMissing: true } : {}),
             ...(parsed.findings ? { findings: parsed.findings } : {}),
@@ -1407,12 +1412,11 @@ CRITICAL SCOPING RULES — read before doing anything else:
         }
 
         if (parsed.malformed) {
-          // FNXC:ReviewLeniency 2026-07-02-00:30: malformed output (after the
-          // fallback-model retry) is recorded as a NON-BLOCKING advisory, not a
-          // hard gate block — see runGraphCustomNode's outcome mapping.
+          const malformedReason = parsed.malformedReason ?? "no-verdict";
+          const missingVerdictNotice = workflowStepMissingVerdictNotice(malformedReason);
           await deps.store.logEntry(
             task.id,
-            `[pre-merge] Workflow step '${workflowStep.name}' produced malformed output (no parseable verdict) — recorded as non-blocking advisory`,
+            `[pre-merge] Workflow step '${workflowStep.name}' produced malformed output (${malformedReason}) — ${missingVerdictNotice}`,
           );
           if (workflowStep.requiresBrowser === true) {
             await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: malformed output`);
@@ -1420,9 +1424,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
           return {
             success: false,
             output: parsed.output,
-            error: "malformed output — no verdict extracted",
-            notes: undefined,
+            error: `malformed output — ${malformedReason}`,
+            notes: missingVerdictNotice,
             malformed: true,
+            ...(requireVerdict ? { verdictRequired: true } : {}),
             ...(reviewedCommitSha ? { reviewedCommitSha } : {}),
           };
         }

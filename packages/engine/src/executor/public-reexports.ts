@@ -173,6 +173,7 @@ export {
   FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
   MAX_DERIVED_WORKFLOW_STEP_NOTES_CHARS,
   WORKFLOW_STEP_NOTES_REPAIR_PROMPT,
+  workflowStepMissingVerdictNotice,
   workflowStepVerdictNoNotesNotice,
   stripStructuredVerdictPayload,
   deriveWorkflowStepNotes,
@@ -184,6 +185,7 @@ export {
 export type {
   WorkflowStepOutcome,
   WorkflowStepResult,
+  WorkflowStepMalformedReason,
   WorkflowStepVerdict,
   WorkflowStepVerdictNoNotesReason,
 } from "./workflow-step-verdict.js";

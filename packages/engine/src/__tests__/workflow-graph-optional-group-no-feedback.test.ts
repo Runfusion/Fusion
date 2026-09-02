@@ -73,6 +73,92 @@ function nodeGateIr(): WorkflowIr {
 }
 
 describe("workflow-graph-executor: non-verdict failure diagnostic (Runfusion/Fusion#1946)", () => {
+  it("records a verdict-required success without a verdict as a visible failure", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logTaskEntry = vi.fn();
+    const handler: WorkflowNodeHandler = async (node) => node.id === "review"
+      ? {
+          outcome: "success",
+          contextPatch: {
+            verdictRequired: true,
+            output: "The deliverables are absent.",
+          },
+        }
+      : { outcome: "success" };
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      logTaskEntry,
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result as unknown as Record<string, unknown>); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    const terminal = records.find((record) => record.workflowStepId === "code-review" && record.status !== "pending");
+    expect(terminal).toMatchObject({ status: "failed", verdictRequired: true });
+    expect(terminal).not.toHaveProperty("verdict");
+    expect(terminal?.output).toMatch(/JSON verdict object/i);
+    expect(logTaskEntry).not.toHaveBeenCalledWith(
+      "[pre-merge] Workflow step completed: Code Review",
+      expect.anything(),
+    );
+  });
+
+  it("records a structured approving verdict as passed when a verdict was required", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const handler: WorkflowNodeHandler = async (node) => node.id === "review"
+      ? {
+          outcome: "success",
+          value: "APPROVE",
+          contextPatch: { verdictRequired: true, output: "Reviewed." },
+        }
+      : { outcome: "success" };
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result as unknown as Record<string, unknown>); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    expect(records.find((record) => record.workflowStepId === "code-review" && record.status !== "pending"))
+      .toMatchObject({ status: "passed", verdict: "APPROVE", verdictRequired: true });
+  });
+
+  it("keeps verdict-free script-style outcomes status-only and passed", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const handler: WorkflowNodeHandler = async () => ({ outcome: "success", value: "passed" });
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result as unknown as Record<string, unknown>); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    const terminal = records.find((record) => record.workflowStepId === "code-review" && record.status !== "pending");
+    expect(terminal).toMatchObject({ status: "passed" });
+    expect(terminal).not.toHaveProperty("verdictRequired");
+  });
+
+  it("keeps a verdict-required not-run outcome terminally skipped", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const handler: WorkflowNodeHandler = async () => ({
+      outcome: "success",
+      value: "passed",
+      contextPatch: {
+        verdictRequired: true,
+        notRunReason: "not-configured",
+      },
+    });
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result as unknown as Record<string, unknown>); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    expect(records.find((record) => record.workflowStepId === "code-review" && record.status !== "pending"))
+      .toMatchObject({ status: "skipped", notRunReason: "not-configured", verdictRequired: true });
+  });
+
   it("SYMPTOM: a code-review dispatch exception records a non-empty diagnostic output, never (no feedback captured)", async () => {
     const records: Array<Record<string, unknown>> = [];
     const handler: WorkflowNodeHandler = async (node) => {

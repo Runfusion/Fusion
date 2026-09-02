@@ -15,6 +15,16 @@ export function requiresContentReviewProof(
   return workflowStepId === "code-review" || result.reviewKind === "code";
 }
 
+/** Whether merge admission must see a positive machine-authored review verdict. */
+export function requiresAuthoredReviewVerdict(
+  workflowStepId: string,
+  result: Pick<WorkflowStepResult, "reviewKind" | "verdictRequired">,
+): boolean {
+  return requiresContentReviewProof(workflowStepId, result)
+    || result.reviewKind !== undefined
+    || result.verdictRequired === true;
+}
+
 export const AUTOMATED_BYPASS_ACTORS: ReadonlySet<string> = new Set([FAST_MODE_BYPASS_ACTOR]);
 
 /*
@@ -94,13 +104,14 @@ function evaluateStep(
   if (!result && descriptor?.kind !== "workspace") return { workflowStepId, state: "missing" };
   if (result) {
     /*
-    FNXC:PreMergeApproval 2026-08-23-08:51:
-    FN-180 requires a positive current Code Review verdict, not a passed transport result. Code-review
-    results may reach `passed` without a reviewer callback, so only APPROVE/APPROVE_WITH_NOTES opens a
-    diff-bound gate; plan-domain rows retain their established status-only behavior because they bind
-    plan text rather than source content. An absent verdict therefore exits as not-approved.
+    FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+    Authored-verdict authority and source-content binding are separate invariants. Review-kind and
+    verdictRequired rows need APPROVE/APPROVE_WITH_NOTES, but only the narrow content-review predicate
+    may feed `bindsContent`; widening that predicate made plan and deterministic gates require a diff
+    fingerprint they cannot produce and rendered builtin:coding-ideas-v2 unmergeable.
     */
     const requiresExplicitVerdict = requiresContentReviewProof(workflowStepId, result);
+    const requiresAuthoredVerdict = requiresAuthoredReviewVerdict(workflowStepId, result);
     const approvedVerdict = result.verdict === "APPROVE" || result.verdict === "APPROVE_WITH_NOTES";
     /*
     FNXC:WorkflowStepNotRun 2026-08-28-14:13:
@@ -110,8 +121,8 @@ function evaluateStep(
     unexecuted Plan Review open the merge door despite `isPlanReviewSatisfied` refusing it.
     */
     const isPlanDomain = workflowStepId === PLAN_REVIEW_GROUP_ID || result.reviewKind === "plan";
-    const notRunApproves = isWorkflowStepNotRun(result) && !requiresExplicitVerdict && !isPlanDomain;
-    const approved = (result.status === "passed" && (requiresExplicitVerdict ? approvedVerdict : (result.verdict === undefined || approvedVerdict)))
+    const notRunApproves = isWorkflowStepNotRun(result) && !requiresAuthoredVerdict && !isPlanDomain;
+    const approved = (result.status === "passed" && (requiresAuthoredVerdict ? approvedVerdict : (result.verdict === undefined || approvedVerdict)))
       || (result.status === "skipped" && !!result.bypassedBy)
       || notRunApproves;
     if (!approved || !!result.remediationArchivedAt) return { workflowStepId, state: "not-approved" };

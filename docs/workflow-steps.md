@@ -546,7 +546,7 @@ Use `toolMode: "coding"` for any prompt step that must modify files, run shell c
 A gate node also has a `gateMode`:
 
 - **`gate`**: failures block merge/completion and follow normal remediation/retry flows.
-- **`advisory`**: failures are recorded as `advisory_failure` and shown as polish feedback, but never block merge.
+- **`advisory`**: failures are recorded as `advisory_failure` and shown as polish feedback, but never block merge. A prompt step inside a merge-consulted optional group must still emit a structured verdict even when its gate mode is advisory; advisory controls routing severity, not whether an approval may be unauthored.
 
 Defaults:
 - gates are `advisory` by default (advisory-by-default per FN-4368); opt in to `gate` by setting the node's `gateMode` in the [Workflow Editor](./workflow-editor.md).
@@ -630,9 +630,9 @@ A gate can request implementation revisions instead of just blocking completion.
 
 Prompt-mode gate output is parsed in this order:
 
-1. Structured JSON verdict (`parseWorkflowStepVerdict`)
-2. Legacy prose fallback (`inferWorkflowStepVerdictFromProse`)
-3. `malformed` when neither format can be interpreted
+1. A structured JSON verdict (`parseWorkflowStepVerdict`), which is the only form that can approve
+2. Fail-safe prose revision requests (`inferWorkflowStepVerdictFromProse`)
+3. A classified `malformed` result when no authoritative verdict was emitted
 
 #### Structured Verdict Output
 
@@ -664,18 +664,15 @@ Additional example:
 
 #### Prose Fallback
 
-Legacy prose is still supported when structured JSON is missing. A visible but unreadable quoted JSON `"verdict":` key is never converted into a prose approval: prompt-gate parsing reports `malformed`, while reviewer and plan-review lanes return retryable `UNAVAILABLE`. Plain prose with no structured verdict key remains lenient:
+Prose is supported only in the fail-safe direction: it may request a revision, but it can never grant approval. Output beginning with `REQUEST REVISION` (case-insensitive), or an explicit prose `Verdict: REVISE` / `Status: REVISE` line, maps to `REVISE`. Remaining text is retained as reviewer-authored notes; when nothing follows `REQUEST REVISION`, notes default to `"Revision requested"`.
 
-- Output beginning with `REQUEST REVISION` (case-insensitive) maps to `REVISE`.
-  - Remaining prose becomes `notes`.
-  - If nothing follows, notes default to `"Revision requested"`.
-- Output containing one of these phrases maps to `APPROVE`, and the full reviewer-authored prose becomes the note: `approve`, `approved`, `looks good`, `no issues`, `out of scope`.
-
-For new workflow step prompts, prefer the structured JSON contract.
+Approving prose such as `looks good`, `LGTM`, `ship it`, or `Verdict: APPROVE` is not authoritative without the trailing JSON object and is recorded as malformed. The same rule governs the reviewer and Plan Review lane: reviewer prompt templates require a trailing JSON verdict object, while human-readable verdict headings may only downgrade to `REVISE` or `RETHINK`.
 
 #### Malformed Output
 
-If output matches neither structured JSON nor known prose fallback patterns, Fusion records the step output as `malformed`. Operationally, this means no workflow verdict could be inferred from that response. A malformed `gateMode: "gate"` prompt step is a blocking failure rather than an approval; a malformed `gateMode: "advisory"` step is recorded as `advisory_failure` and does not block completion.
+When a verdict-required response has no authoritative JSON verdict and is not a fail-safe prose revision, Fusion records it as `malformed` with one of three reasons: `no-verdict`, `unreadable-structured-verdict`, or `prose-approval-without-json`. The original reviewer output remains visible, and deterministic engine narration explains that the review did not complete because no usable JSON verdict object was emitted.
+
+A verdict-required optional-group result with no verdict is persisted as non-approving and can never become a `passed` approval. A malformed `gateMode: "gate"` prompt step is a blocking failure; advisory routing may continue, but merge admission still refuses any required review record that lacks an authored verdict.
 
 ### Behavior
 
@@ -690,7 +687,7 @@ When a revision is requested:
 
 ### Feedback Format
 
-Recommended (structured JSON, prompt-mode):
+Required for every approving prompt-mode review:
 
 ```json
 {"verdict":"REVISE","notes":"[Clear, actionable description of what needs to be fixed]"}
@@ -703,7 +700,7 @@ Also valid for approvals:
 {"verdict":"APPROVE_WITH_NOTES","notes":"The implementation is correct; the non-blocking follow-up is described below."}
 ```
 
-Legacy fallback (still supported via prose inference):
+Fail-safe revision fallback (never an approval):
 
 ```
 REQUEST REVISION

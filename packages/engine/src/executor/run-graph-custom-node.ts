@@ -286,11 +286,19 @@ export function toWorkspaceRepoReviewResult(repoOutcome: WorkflowStepOutcome): R
     || repoOutcome.output?.trim()
     || repoOutcome.error?.trim()
     || WORKSPACE_REPO_REVIEW_NO_NOTES_NOTICE;
+  /*
+  FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+  A successful deterministic script still approves from its exit code, but a prompt review that owed
+  JSON cannot be promoted from transport success alone. Preserve its missing verdict as UNAVAILABLE
+  so workspace aggregation never fabricates authored approval evidence.
+  */
+  const verdict = repoOutcome.verdict
+    ?? (repoOutcome.success && !repoOutcome.verdictRequired ? "APPROVE" : "UNAVAILABLE");
   return {
-    verdict: (repoOutcome.verdict ?? (repoOutcome.success ? "APPROVE" : "UNAVAILABLE")) as ReviewResult["verdict"],
+    verdict: verdict as ReviewResult["verdict"],
     review: reviewText,
     summary: reviewText,
-    retryable: !repoOutcome.success,
+    retryable: !repoOutcome.success || verdict === "UNAVAILABLE",
     ...(repoOutcome.findings ? { findings: repoOutcome.findings } : {}),
   };
 }
@@ -1082,6 +1090,7 @@ export async function runGraphCustomNode(
     if (outcome.repositoryScopeRevision !== undefined) contextPatch.repositoryScopeRevision = outcome.repositoryScopeRevision;
     if (outcome.reviewInputFingerprint !== undefined) contextPatch.reviewInputFingerprint = outcome.reviewInputFingerprint;
     if (outcome.reviewedCommitSha !== undefined) contextPatch.reviewedCommitSha = outcome.reviewedCommitSha;
+    if (outcome.verdictRequired) contextPatch.verdictRequired = true;
     if (outcome.supersededFindingIds?.length && outcome.supersededFindingSourceWorkflowStepId) {
       contextPatch.supersededFindingSourceWorkflowStepId = outcome.supersededFindingSourceWorkflowStepId;
       contextPatch.supersededFindingIds = outcome.supersededFindingIds;
@@ -1127,27 +1136,17 @@ export async function runGraphCustomNode(
     FNXC:ReviewLeniency 2026-07-02-00:30 (SUPERSEDED for blocking gates — see below):
     Malformed review output (no parseable verdict, even after the fallback-model retry in executeWorkflowStep) was treated as a NON-BLOCKING advisory rather than a hard gate failure. Operators asked that an unparseable reviewer response not block a task in review — a genuine REVISE (parsed verdict) still blocks, and the advisory_failure value keeps the malformed result visible on the Workflow tab.
 
-    FNXC:ReviewLeniency 2026-08-26-09:34:
-    A BLOCKING gate no longer approves on malformed output. Operator decision, reversing the line
-    above with the reason it was missing: "the only valid reason a task can be blocked is an LLM
-    problem (429, 503); everything else is fixed at the source, or the AI is made unable to return
-    anything other than what is expected — and if it does anyway, restart cleanly".
+    FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+    A verdict-less review can never authorize approval. The shared core requirement makes every
+    merge-consulted prompt request JSON; both parsers allow prose only to downgrade; this bridge
+    forwards `verdictRequired` and refuses workspace success-to-APPROVE synthesis; graph persistence
+    records a missing required verdict as failed; and merge admission independently rejects legacy
+    review-kind or marked rows without an authored approval verdict.
 
-    Restarting cleanly is ALREADY implemented, twice: `executeWorkflowStep` retries a malformed
-    primary on the fallback model, or self-retries once on the primary when no fallback is
-    configured. `malformed` therefore does not mean "one fumbled response" — it means the reviewer
-    failed to return a usable verdict across every attempt, which IS the LLM-class condition the
-    operator accepts as a legitimate stop.
-
-    What it must never mean is APPROVAL. Measured on a real card: a reviewer reported in prose that
-    the deliverables were absent, carried no verdict JSON, and the gate recorded success — unreviewed
-    work merged on a rejection nobody could see. The prose classifier cannot close this: that text
-    contained no rejection marker at all (no "revise", "reject", "must fix"), because it was a
-    factual statement of absence. Only the ABSENCE of a verdict is detectable, so absence must not
-    approve.
-
-    Advisory gates are untouched: `!blocking` still passes, keeping the original operator ask exactly
-    where it applies — a step that was never allowed to hold a card cannot start holding one.
+    The measured failure was a reviewer reporting absent deliverables in prose with no rejection
+    keyword and no JSON, followed by an advisory success record and merge. Keep the original text
+    visible, but never infer a verdict or rationale from it. Deterministic scripts remain governed by
+    exit status because they never carry `verdictRequired`.
     */
     return {
       /*
