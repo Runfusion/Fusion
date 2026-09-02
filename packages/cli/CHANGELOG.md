@@ -1,5 +1,19 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.0
+
+### Minor Changes
+
+- c974b22: summary: Add Claude Fable 5.1 to Anthropic and Claude CLI model pickers with pricing.
+  category: feature
+  dev: Registers claude-fable-5-1 through the supplemental Anthropic catalog, pi-claude-cli extra models, and MODEL_PRICING.
+
+### Patch Changes
+
+- 4f4b8ab: summary: Recover review cards whose enabled pre-merge checks never ran.
+  category: fix
+  dev: Adds the pre-merge gate reseed module, in-place review-gate boundary entry, and reroute audit event.
+
 ## 0.77.0
 
 ### Minor Changes
@@ -910,7 +924,7 @@
   dev: Adds workspace-main-checkout-guard, main_checkout_edit precedence, retry-stable anchoring, warn-vs-block evidence handling, bounded HEAD commit scanning, and audit telemetry.
 - 9fa8b38: summary: Prevent multi-node workspace operations from overlapping or double-landing shared repositories.
   category: fix
-  dev: Adds migration 0060 lease and land-intent tables, FUSION_NODE_ID plus process incarnation ownership, resource fence tokens and one-publish-per-tenancy refs under refs/fusion/workspace-lease/_ and refs/fusion/merge-dispatch/_. Merge-dispatch tenancy pins publish on every target sub-repository remote before any workspace land begins; merge and land commit points use fence-validated target/fence CAS operations. `isMergePending` consults durable dispatch leases after local state, while startup and periodic sweeps conservatively retire only expired leases. Pending land intents recover project-wide from remote reachability through holder or no-live-lease recovery authority.
+  dev: Adds migration 0060 lease and land-intent tables, FUSION*NODE_ID plus process incarnation ownership, resource fence tokens and one-publish-per-tenancy refs under refs/fusion/workspace-lease/* and refs/fusion/merge-dispatch/\_. Merge-dispatch tenancy pins publish on every target sub-repository remote before any workspace land begins; merge and land commit points use fence-validated target/fence CAS operations. `isMergePending` consults durable dispatch leases after local state, while startup and periodic sweeps conservatively retire only expired leases. Pending land intents recover project-wide from remote reachability through holder or no-live-lease recovery authority.
 - ebd345d: summary: Workspace tasks with no acquired sub-repo now complete or fail review consistently.
   category: fix
   dev: Uses classifyWorkspaceZeroAcquire and the retryable review seam flag to avoid deterministic retry exhaustion.

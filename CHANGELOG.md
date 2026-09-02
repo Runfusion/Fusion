@@ -2,6 +2,22 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.0
+
+### Highlights
+
+- Claude Fable 5.1 selectable in Anthropic and Claude CLI model pickers, with pricing
+- Review cards with enabled pre-merge checks that never ran now recover automatically
+- Skipped pre-merge gates re-enter review in place instead of stalling the card
+
+### New
+
+- Claude Fable 5.1 is available in the Anthropic and Claude CLI model pickers, with pricing wired in so cost tracking stays accurate.
+
+### Fixed
+
+- A review card whose enabled pre-merge checks never ran is now detected and reseeded, so it re-enters the missing gate in place instead of sitting in review unmerged. The reroute is recorded in the run audit.
+
 ## 0.77.0
 
 ### Highlights
