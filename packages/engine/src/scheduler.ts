@@ -2,6 +2,7 @@ import {
   getCurrentRepo,
   computeBlockerFanoutMap,
   compareTasksByPriorityThenAgeAndId,
+  fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
@@ -58,6 +59,7 @@ import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./mi
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 
 const SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
+type TaskUpdatePatch = Parameters<TaskStore["updateTask"]>[1];
 
 /*
 FNXC:WorkflowScheduling 2026-07-15-12:55:
@@ -2525,6 +2527,7 @@ export class Scheduler {
         dispatchTimestamp: string;
         effectiveNodeId: string | null;
         effectiveNodeSource: string;
+        observedOverlapBlockedBy: string | null;
         task: Task;
       }>();
       const activeScopes = new Map<string, string[]>();
@@ -2654,6 +2657,71 @@ export class Scheduler {
           kind: "dormant",
           column: dormantScopeColumns.get(dormantHolder.id) ?? "todo",
         };
+      };
+
+      const freshOverlapBlockerStillBlocks = async (
+        candidate: Task,
+        blockerId: string,
+      ): Promise<boolean> => {
+        const freshSettings = await this.store.getSettings();
+        if (freshSettings.groupOverlappingFiles !== true) return false;
+        const blocker = await this.store.getTask(blockerId).catch(() => null);
+        if (!blocker) return false;
+        const liveTasks = tasks.map((entry) => {
+          if (entry.id === candidate.id) return candidate;
+          if (entry.id === blocker.id) return blocker;
+          return entry;
+        });
+        if (!liveTasks.some((entry) => entry.id === blocker.id)) liveTasks.push(blocker);
+        if (!liveTasks.some((entry) => entry.id === candidate.id)) liveTasks.push(candidate);
+        const classification = classifyFileScopeLease(blocker, liveTasks, {
+          mergeRequestContractShadowEnabled: freshSettings.mergeRequestContractShadowEnabled === true,
+          handoffAccepted: freshSettings.mergeRequestContractShadowEnabled === true && isReviewColumnTask(blocker)
+            ? (await this.store.getCompletionHandoffAcceptedMarker(blocker.id)) !== null
+            : false,
+          schedulingDependencyOptions,
+          isWipColumn: isWipColumnTask(blocker),
+          isReviewColumn: isReviewColumnTask(blocker),
+          isTerminalColumn: isTerminalColumnTask(blocker),
+        });
+        if (!fileScopeLeaseBlocksCandidate(blocker, candidate, classification)) return false;
+        const freshIgnorePaths = freshSettings.overlapIgnorePaths ?? [];
+        const candidateScope = normalizeOverlapScopeForTask(candidate, filterPathsByIgnoreList(
+          await this.store.parseFileScopeFromPrompt(candidate.id),
+          freshIgnorePaths,
+          { ignoreHiddenOverlapPaths: freshSettings.ignoreHiddenOverlapPaths },
+        ));
+        if (candidateScope.length === 0 || isCoordinationOnlyTask(candidate, candidateScope)) return false;
+        const blockerScope = normalizeOverlapScopeForTask(blocker, filterPathsByIgnoreList(
+          await this.store.parseFileScopeFromPrompt(blocker.id),
+          freshIgnorePaths,
+          { ignoreHiddenOverlapPaths: freshSettings.ignoreHiddenOverlapPaths },
+        ));
+        if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
+        return this.pathsOverlap(candidateScope, blockerScope);
+      };
+      const clearObservedOverlapIfStillStale = async (
+        candidate: Task,
+        observedBlockerId: string | null | undefined,
+      ): Promise<boolean> => {
+        if (typeof observedBlockerId !== "string" || observedBlockerId.trim().length === 0) return false;
+        if (await freshOverlapBlockerStillBlocks(candidate, observedBlockerId)) return false;
+        let cleared = false;
+        const clearIfUnchanged = (live: Task): TaskUpdatePatch | null => {
+          if (live.deletedAt != null || (live.overlapBlockedBy ?? null) !== observedBlockerId) return null;
+          cleared = true;
+          return { overlapBlockedBy: null };
+        };
+        if (typeof this.store.updateTaskAtomic === "function") {
+          await this.store.updateTaskAtomic(candidate.id, clearIfUnchanged);
+          return cleared;
+        }
+        // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+        const live = await this.store.getTask(candidate.id).catch(() => null);
+        if (!live) return false;
+        const patch = clearIfUnchanged(live);
+        if (patch) await this.store.updateTask(candidate.id, patch);
+        return cleared;
       };
 
       const result = await runHoldReleaseSweep(this.store, {
@@ -2817,6 +2885,7 @@ export class Scheduler {
             }
             return null;
           }
+          let observedOverlapBlockedBy = freshTask.overlapBlockedBy ?? null;
 
           if (freshTask.checkedOutBy && this.options.leaseManager) {
             const recovered = await this.options.leaseManager.recoverAbandonedLease(
@@ -3073,7 +3142,11 @@ export class Scheduler {
             { planApprovalRequired: latestSettings.planApprovalMode === "require-all" },
           );
           if (missionAdmission.kind === "lineage-blocked") {
-            await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+            if (observedOverlapBlockedBy) {
+              const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+              if (cleared) observedOverlapBlockedBy = null;
+            }
+            await this.store.updateTask(task.id, { status: "queued", blockedBy: null });
             await this.logDispatchQueuedReason(task.id, `queued — mission lineage blocked: ${missionAdmission.reason}`);
             return null;
           }
@@ -3094,8 +3167,9 @@ export class Scheduler {
                 return null;
               }
 
-              if (task.overlapBlockedBy) {
-                await this.store.updateTask(task.id, { overlapBlockedBy: null });
+              if (observedOverlapBlockedBy) {
+                const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+                if (cleared) observedOverlapBlockedBy = null;
               }
 
               priorActiveScope = activeScopes.get(task.id);
@@ -3115,8 +3189,9 @@ export class Scheduler {
               activeScopeColumns.set(task.id, "in-progress");
               leaseWaiverIds.set(task.id, []);
               reservedScope = true;
-            } else if (task.overlapBlockedBy) {
-              await this.store.updateTask(task.id, { overlapBlockedBy: null });
+            } else if (observedOverlapBlockedBy) {
+              const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+              if (cleared) observedOverlapBlockedBy = null;
               if (isCoordinationOnlyTask(task, taskScope)) {
                 await this.store.logEntry(
                   task.id,
@@ -3232,7 +3307,11 @@ export class Scheduler {
                 if (dropPreHeldExecutorSlot(task.id)) sem?.release();
                 releaseReservedScope();
                 const conflict = lockResult.conflicts[0];
-                await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+                if (observedOverlapBlockedBy) {
+                  const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+                  if (cleared) observedOverlapBlockedBy = null;
+                }
+                await this.store.updateTask(task.id, { status: "queued", blockedBy: null });
                 await this.logDispatchQueuedReason(
                   task.id,
                   `queued — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`,
@@ -3249,6 +3328,7 @@ export class Scheduler {
               dispatchTimestamp,
               effectiveNodeId: effectiveNode.nodeId ?? null,
               effectiveNodeSource: effectiveNode.source,
+              observedOverlapBlockedBy,
               task: freshTask,
             });
 
@@ -3296,30 +3376,65 @@ export class Scheduler {
         */
         schedulerLog.log(`Starting ${taskId}: ${prep.task.title || taskId} (deps satisfied)`);
         const latest = await this.store.getTask(taskId).catch(() => null);
-        const dispatchUpdate = {
+        const dispatchUpdate: TaskUpdatePatch = {
           status: null,
           blockedBy: null,
           executionStartBranch: prep.baseBranch ?? undefined,
           effectiveNodeId: prep.effectiveNodeId,
-          effectiveNodeSource: prep.effectiveNodeSource,
+          effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
           mergeRetries: 0,
           dispatchStormCount: prep.dispatchStormCount,
           lastDispatchAt: prep.dispatchTimestamp,
         };
-        const scheduledTask = {
-          ...(latest?.id === taskId ? latest : prep.task),
-          ...dispatchUpdate,
-          status: undefined,
-          blockedBy: undefined,
-          effectiveNodeId: prep.effectiveNodeId ?? undefined,
-          effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
-          column: "in-progress" as const,
+        const observedOverlapBlockedBy = prep.observedOverlapBlockedBy;
+        const mayClearObservedOverlap = typeof observedOverlapBlockedBy === "string"
+          && observedOverlapBlockedBy.trim().length > 0
+          && latest?.id === taskId
+          && (latest.overlapBlockedBy ?? null) === observedOverlapBlockedBy
+          && !await freshOverlapBlockerStillBlocks(latest, observedOverlapBlockedBy);
+        let overlapClearApplied = false;
+        let persistedTask = latest?.id === taskId ? latest : prep.task;
+        const buildDispatchPatch = (live: Task): TaskUpdatePatch => {
+          const clearObservedOverlap = mayClearObservedOverlap
+            && live.deletedAt == null
+            && (live.overlapBlockedBy ?? null) === observedOverlapBlockedBy;
+          if (clearObservedOverlap) overlapClearApplied = true;
+          return {
+            ...dispatchUpdate,
+            ...(clearObservedOverlap ? { overlapBlockedBy: null } : {}),
+          };
         };
+        /*
+        FNXC:OverlapScheduling 2026-09-02-04:46:
+        Hold → WIP has no workflow-hook overlap clear, so the committed dispatch must scrub the stale
+        blocker it actually reserved against. Build the whole metadata patch under the task lock and
+        clear only that exact observed id: the executor pre-dispatch gate can stamp a different fresh
+        in-place hold between reservation and commit, and that newer edge must reach onSchedule intact.
+        */
         try {
-          await this.store.updateTask(taskId, dispatchUpdate);
+          if (typeof this.store.updateTaskAtomic === "function") {
+            persistedTask = await this.store.updateTaskAtomic(taskId, buildDispatchPatch);
+          } else {
+            // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+            persistedTask = await this.store.updateTask(taskId, buildDispatchPatch(persistedTask));
+          }
         } catch (error) {
+          overlapClearApplied = false;
           schedulerLog.error(`Post-release dispatch metadata update failed for ${taskId}:`, error);
         }
+        const scheduledTask: Task = {
+          ...persistedTask,
+          status: undefined,
+          blockedBy: undefined,
+          executionStartBranch: prep.baseBranch ?? undefined,
+          effectiveNodeId: prep.effectiveNodeId ?? undefined,
+          effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
+          mergeRetries: 0,
+          dispatchStormCount: prep.dispatchStormCount,
+          lastDispatchAt: prep.dispatchTimestamp,
+          ...(overlapClearApplied ? { overlapBlockedBy: undefined } : {}),
+          column: "in-progress",
+        };
         try {
           this.options.onSchedule?.(scheduledTask);
         } catch (error) {
