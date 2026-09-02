@@ -1647,6 +1647,20 @@ export class ChatReplacementError extends Error {
 
 export class ChatManager {
   private agentStoreReady?: Promise<void>;
+  /**
+   * FNXC:ChatContextBudget 2026-09-02-15:58 (merge origin/main 572beadbb2 → main):
+   * Latest settings snapshot used ONLY by the RUFU-135 chat-context-budget kill switch
+   * on the direct-chat send path. Upstream FN-9241 made "sending never waits on
+   * settings" a hard invariant (title work moved into a detached read; pinned by
+   * chat-manager.test "does not wait for title settings before prompting the chat
+   * agent"), which the awaited kill-switch read violated. The switch now reads this
+   * cache (undefined → default ON) and refreshes it fire-and-forget per send AFTER the
+   * detached title block, so the refresh never steals the title operation's first
+   * settings-read slot (the FN-9241 pin mock hangs read #1 and asserts summarizeTitle
+   * stays uncalled). The hot toggle still takes effect from the next send without ever
+   * gating a prompt.
+   */
+  private chatBudgetSnapshot?: { chatContextBudgetEnabled?: boolean };
   private generationCounter = 0;
   private inFlightPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private inFlightPersistChains = new Map<string, Promise<void>>();
@@ -3022,7 +3036,11 @@ export class ChatManager {
       // a redeploy. Read per send (hot) like the pre-overflow guard toggle;
       // declared here (function scope) so the session-creation toolsAllowlist
       // below uses the same value as the prompt build.
-      const directChatBudgetOn = (await this.getChatModelSettings()).chatContextBudgetEnabled !== false;
+      // FNXC:ChatContextBudget 2026-09-02-15:58: the read is now non-blocking — this
+      // path reads only the cached snapshot (no settings call here) — to honor upstream
+      // FN-9241's invariant that prompting the chat agent never awaits settings; the
+      // fire-and-forget refresh runs below, after the detached title block.
+      const directChatBudgetOn = this.chatBudgetSnapshot?.chatContextBudgetEnabled !== false;
       let agent: Agent | null = null;
 
       if (this.agentStore && session.agentId) {
@@ -3144,6 +3162,14 @@ export class ChatManager {
           }
         })();
       }
+
+      // FNXC:ChatContextBudget 2026-09-02-16:02: per-send kill-switch refresh, fired
+      // AFTER the title block so the detached title read keeps the first settings-read
+      // slot that upstream FN-9241's pin mock relies on. Never awaited — see
+      // chatBudgetSnapshot.
+      void this.getChatModelSettings()
+        .then((snapshot) => { this.chatBudgetSnapshot = snapshot; })
+        .catch(() => { /* keep last-known snapshot; default-ON covers cold cache */ });
 
       if (mentions.length > 0) {
         const mentionContext = await this.buildMentionContext(mentions, mentionAgents);
