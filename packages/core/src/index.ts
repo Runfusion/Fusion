@@ -87,6 +87,7 @@ export { customProviderRegistryKey } from "./ai/custom-provider-key.js";
 export {
   ANTHROPIC_PROVIDER_ID,
   ANTHROPIC_API_KEY_PROVIDER_ID,
+  CLAUDE_FABLE_5_1_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
   mergeSupplementalAnthropicModels,

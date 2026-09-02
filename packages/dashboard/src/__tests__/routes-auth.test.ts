@@ -544,7 +544,7 @@ describe("GET /models", () => {
     }
   });
 
-  it("dedupes Claude Sonnet 5 when upstream registry already includes it", async () => {
+  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
     const modelRegistry = createMutableModelRegistry([
       { id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
     ]);
@@ -554,12 +554,13 @@ describe("GET /models", () => {
     expect(res.status).toBe(200);
     const sonnetFiveRows = res.body.models.filter((model: { provider: string; id: string }) => model.provider === "anthropic" && model.id === "claude-sonnet-5");
     expect(sonnetFiveRows).toHaveLength(1);
-    // FNXC:ModelCatalog 2026-07-10: FN-7745's supplemental GPT-5.6 codex merge
-    // legitimately registers the missing openai-codex provider on this bare
-    // registry; the dedupe invariant under test is only that ANTHROPIC is not
-    // re-registered when the upstream registry already advertises Sonnet 5.
+    // The upstream Sonnet row wins while missing supplemental rows are added.
     const anthropicRegistrations = (modelRegistry.registerProvider as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(0);
+    expect(anthropicRegistrations).toHaveLength(1);
+    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
+      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
+    ]));
   });
 
   // Regression guard: FN-2370's auto-resolved squash inverted this filter,

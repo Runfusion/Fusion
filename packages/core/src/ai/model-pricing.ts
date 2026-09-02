@@ -199,6 +199,19 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheWritePer1M: 12.5,
     source: "platform.claude.com/docs/en/pricing",
   },
+  /*
+   * FNXC:ModelCatalog 2026-09-02-01:01:
+   * Fable 5.1 mirrors the verified Fable 5 rate while its published price row is
+   * upstream-pending-verification. Do not bump pricingAsOf: this adds a new key
+   * without editing or re-verifying an existing baseline rate.
+   */
+  "anthropic:claude-fable-5-1": {
+    inputPer1M: 10,
+    outputPer1M: 50,
+    cacheReadPer1M: 1,
+    cacheWritePer1M: 12.5,
+    source: "platform.claude.com/docs/en/pricing",
+  },
 
   // ── OpenAI ──────────────────────────────────────────────────────────
   // OpenAI has no separate cache-write charge → cacheWrite = input rate.

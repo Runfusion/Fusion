@@ -2483,7 +2483,7 @@ describe("createFnAgent", () => {
     }));
   });
 
-  it("does not duplicate Claude Sonnet 5 when the Anthropic registry already has it", async () => {
+  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
     getAllMock.mockReturnValue([
       {
         provider: "anthropic",
@@ -2508,7 +2508,11 @@ describe("createFnAgent", () => {
     });
 
     const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(0);
+    expect(anthropicRegistrations).toHaveLength(1);
+    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
+      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
+    ]));
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {

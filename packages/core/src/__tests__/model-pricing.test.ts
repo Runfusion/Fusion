@@ -46,6 +46,22 @@ describe("model-pricing", () => {
     expect(result.usd).toBeCloseTo(4, 2);
   });
 
+  it("prices Claude Fable 5.1 instead of reporting it as unavailable", () => {
+    const result = costFor(
+      {
+        ...ZERO,
+        inputTokens: 1_000_000,
+        outputTokens: 200_000,
+        cachedTokens: 500_000,
+        cacheWriteTokens: 400_000,
+      },
+      { provider: "anthropic", model: "claude-fable-5-1" },
+    );
+
+    expect(result).toMatchObject({ unavailable: false, stale: false });
+    expect(result.usd).toBeCloseTo(25.5, 2);
+  });
+
   it("prices direct Anthropic Claude Sonnet 5 from the restored static catalog row", () => {
     const usage = {
       inputTokens: 1_000_000,
