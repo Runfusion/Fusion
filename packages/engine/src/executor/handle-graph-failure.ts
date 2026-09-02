@@ -21,6 +21,7 @@ import {
   resolveReboundTarget,
   resolveStepReopenPolicy,
   resolveWorkflowIrForTask,
+  resolvePreMergeGateForTask,
   TransitionRejectionError,
 } from "@fusion/core";
 import {
@@ -34,6 +35,8 @@ import { getPromptPath } from "../execution/spec-staleness.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
+import { rerouteUnrunPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
 import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
@@ -1179,6 +1182,22 @@ export async function handleGraphFailure(
             "Retry the task after restoring its remediation checkout or revision policy. Use the privileged review bypass only when this failed review is known to be non-blocking.",
             deps.getRunContextFor(task.id),
           );
+          return;
+        }
+        // FN-9243: failure after crossing into review must leave a producer for genuinely unrun gates.
+        const reroute = await (async () => {
+          const gate = await resolvePreMergeGateForTask(deps.store, live.id, live.enabledWorkflowSteps, live);
+          const settings = await deps.store.getSettings();
+          const mergeContent = await captureMergeContentDescriptor(live, { workspaceRootDir: deps.rootDir, settings });
+          return rerouteUnrunPreMergeGateToReview(deps.store, live, {
+            requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
+            mergeContent,
+          });
+        })().catch(() => undefined);
+        if (reroute?.rerouted) {
+          const message = `Workflow graph re-seeded at unrun pre-merge gate '${reroute.nodeId ?? "unknown"}' after review-lane failure`;
+          executorLog.warn(`${task.id}: ${message}`);
+          await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
           return;
         }
         const benignMessage = `Workflow graph run ended after task already advanced to '${live.column}' — no further action needed`;
