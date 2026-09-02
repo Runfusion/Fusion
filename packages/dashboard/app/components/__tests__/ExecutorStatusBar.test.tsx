@@ -349,7 +349,7 @@ describe("ExecutorStatusBar", () => {
           onOpenScripts={vi.fn()}
           onRunScript={vi.fn()}
           quickChatButtonMode="footer"
-          onOpenQuickChat={vi.fn()}
+          onToggleQuickChat={vi.fn()}
         />,
       );
 
@@ -360,7 +360,7 @@ describe("ExecutorStatusBar", () => {
 
     it("renders the Quick Chat footer launcher beside Terminal when footer mode is enabled", async () => {
       const user = userEvent.setup();
-      const onOpenQuickChat = vi.fn();
+      const onToggleQuickChat = vi.fn();
 
       render(
         <ExecutorStatusBar
@@ -369,7 +369,7 @@ describe("ExecutorStatusBar", () => {
           onOpenScripts={vi.fn()}
           onRunScript={vi.fn()}
           quickChatButtonMode="footer"
-          onOpenQuickChat={onOpenQuickChat}
+          onToggleQuickChat={onToggleQuickChat}
         />,
       );
 
@@ -377,7 +377,25 @@ describe("ExecutorStatusBar", () => {
       expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
       await user.click(screen.getByTestId("executor-quick-chat-launcher"));
 
-      expect(onOpenQuickChat).toHaveBeenCalledTimes(1);
+      expect(onToggleQuickChat).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["open-quick-chat", "Open Quick Chat"],
+      ["minimize-all", "Minimize all chats"],
+      ["restore-all", "Restore all chats"],
+    ] as const)("announces the %s footer toggle action", (quickChatToggleAction, accessibleName) => {
+      render(
+        <ExecutorStatusBar
+          tasks={emptyTasks}
+          quickChatButtonMode="footer"
+          onToggleQuickChat={vi.fn()}
+          quickChatToggleAction={quickChatToggleAction}
+        />,
+      );
+
+      const launcher = screen.getByRole("button", { name: accessibleName });
+      expect(launcher).toHaveAttribute("data-chat-toggle-action", quickChatToggleAction);
     });
 
     it("keeps Quick Chat and Terminal footer launchers on the same font and color tokens", () => {
@@ -388,7 +406,7 @@ describe("ExecutorStatusBar", () => {
           onOpenScripts={vi.fn()}
           onRunScript={vi.fn()}
           quickChatButtonMode="footer"
-          onOpenQuickChat={vi.fn()}
+          onToggleQuickChat={vi.fn()}
         />,
       );
 
@@ -449,7 +467,7 @@ describe("ExecutorStatusBar", () => {
         <ExecutorStatusBar
           tasks={emptyTasks}
           quickChatButtonMode="floating"
-          onOpenQuickChat={vi.fn()}
+          onToggleQuickChat={vi.fn()}
         />,
       );
 
@@ -459,7 +477,7 @@ describe("ExecutorStatusBar", () => {
         <ExecutorStatusBar
           tasks={emptyTasks}
           quickChatButtonMode="off"
-          onOpenQuickChat={vi.fn()}
+          onToggleQuickChat={vi.fn()}
         />,
       );
       expect(screen.queryByTestId("executor-quick-chat-launcher-segment")).toBeNull();
@@ -469,7 +487,7 @@ describe("ExecutorStatusBar", () => {
         <ExecutorStatusBar
           tasks={emptyTasks}
           quickChatButtonMode="footer"
-          onOpenQuickChat={vi.fn()}
+          onToggleQuickChat={vi.fn()}
         />,
       );
       expect(screen.queryByTestId("executor-quick-chat-launcher-segment")).toBeNull();

@@ -1429,7 +1429,9 @@
     "restore": "",
     "quoteMessage": "Citer le message",
     "agentRepliesFailed": "Certains agents n’ont pas pu répondre : {{agents}}",
-    "noDefaultModelConfigured": "Configurez un modèle de chat par défaut dans les Paramètres avant de créer une conversation."
+    "noDefaultModelConfigured": "Configurez un modèle de chat par défaut dans les Paramètres avant de créer une conversation.",
+    "minimizeAllChats": "Réduire tous les chats",
+    "restoreAllChats": "Restaurer tous les chats"
   },
   "chatRooms": {
     "error": {

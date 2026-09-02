@@ -35,6 +35,9 @@ describe("ChatView pop-out host inventory", () => {
     expect(popOut).toContain("initialDirectSessionNonce={entry.focusNonce}");
     expect(popOut).toContain("raiseToFrontSignal={entry.focusNonce}");
     expect(popOut).toContain("cascadeOffsetIndex={entry.cascadeSlot + 1}");
+    expect(popOut).toContain("hidden={entry.minimized}");
+    expect(popOut).toContain("active={!entry.minimized}");
+    expect(popOut).toContain("findActive={!entry.minimized}");
     const chatView = readAppFile("components/ChatView.tsx");
     const affordanceFiles = sourceFiles.filter((file) => readAppFile(file).includes("chat-context-open-window"));
     expect(affordanceFiles).toEqual(["components/ChatView.tsx"]);

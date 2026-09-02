@@ -89,6 +89,7 @@ import { useMainPanelTaskDetail } from "./hooks/useMainPanelTaskDetail";
 import { useBoardScrollRestore } from "./hooks/useBoardScrollRestore";
 import { usePoppedOutTasks, type PoppedOutTaskEntry } from "./hooks/usePoppedOutTasks";
 import { usePoppedOutChats, type PoppedOutChatEntry } from "./hooks/usePoppedOutChats";
+import { shouldCloseQuickChatOnOutsideClick, useChatVisibilityToggle } from "./hooks/useChatVisibilityToggle";
 import { NativeShellOnboardingModal } from "./components/NativeShellOnboardingModal";
 import { NativeShellConnectionManager } from "./components/NativeShellConnectionManager";
 import { ShellConnectionStatus } from "./components/ShellConnectionStatus";
@@ -252,7 +253,7 @@ export function getBoardTaskOpenRoute(options: {
 
 export interface DashboardShortcutPopupState {
   poppedOutTaskEntries: Array<Pick<PoppedOutTaskEntry, "task" | "originTaskView">>;
-  poppedOutChatEntries: Array<Pick<PoppedOutChatEntry, "projectId" | "session">>;
+  poppedOutChatEntries: Array<Pick<PoppedOutChatEntry, "projectId" | "session" | "minimized">>;
   quickChatOpen: boolean;
   terminalOpen: boolean;
   modalClosers: Array<[boolean, () => void]>;
@@ -285,6 +286,9 @@ export function taskPopupIdentityKey(taskId: string, originTaskView?: TaskView):
 /*
 FNXC:DashboardShortcuts 2026-07-04-12:02:
 The App-level Escape close order is factored into a pure helper so regression tests can prove the real dashboard shell ordering without rendering every lazy dashboard surface. The helper must close exactly one surface and return false when no popup is open so component-local Escape handlers remain authoritative.
+
+FNXC:DashboardShortcuts 2026-09-02-05:24:
+Escape must never dismiss a chat window the operator cannot see, mirroring the existing visible-only rule for task pop-outs while preserving the surrounding close order.
 */
 export function closeTopmostDashboardPopupForShortcut(
   state: DashboardShortcutPopupState,
@@ -295,7 +299,7 @@ export function closeTopmostDashboardPopupForShortcut(
     handlers.closePoppedOutTask(lastPoppedOutTask.task.id, lastPoppedOutTask.originTaskView);
     return true;
   }
-  const lastPoppedOutChat = state.poppedOutChatEntries[state.poppedOutChatEntries.length - 1];
+  const lastPoppedOutChat = [...state.poppedOutChatEntries].reverse().find((entry) => !entry.minimized);
   if (lastPoppedOutChat) {
     handlers.closePoppedOutChat(lastPoppedOutChat.projectId, lastPoppedOutChat.session.id);
     return true;
@@ -649,7 +653,14 @@ function AppInner() {
   FN-8016 identifies a popped-out task detail by task id plus origin view. The same task can therefore coexist in separate view-scoped FloatingWindows while re-opening it on one view refreshes only that entry.
   */
   const { entries: poppedOutTaskEntries, popOut: popOutTaskDetail, close: closePoppedOutTask, closeAll: closeAllPoppedOutTasks } = usePoppedOutTasks();
-  const { entries: poppedOutChatEntries, popOut: popOutChat, close: closePoppedOutChat, closeAll: closeAllPoppedOutChats } = usePoppedOutChats();
+  const {
+    entries: poppedOutChatEntries,
+    popOut: popOutChat,
+    close: closePoppedOutChat,
+    closeAll: closeAllPoppedOutChats,
+    minimizeAll: minimizeAllPoppedOutChats,
+    restoreAll: restoreAllPoppedOutChats,
+  } = usePoppedOutChats();
   const popupNavCloseRef = useRef(new Map<string, () => void>());
 
   /*
@@ -730,6 +741,17 @@ function AppInner() {
   }, [initialLoadComplete]);
 
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const {
+    action: chatVisibilityToggleAction,
+    toggle: toggleChatVisibility,
+    reset: resetChatVisibilityToggle,
+  } = useChatVisibilityToggle({
+    quickChatOpen,
+    setQuickChatOpen,
+    poppedOutChatEntries,
+    minimizeAllPoppedOutChats,
+    restoreAllPoppedOutChats,
+  });
   /*
   FNXC:ChatWindows 2026-08-27-09:23:
   FN-193 requires a newly created conversation to open beside its origin only inside a resolved project. Chat hosts are unreachable before project resolution, but this callback still refuses a missing id so it cannot create an unowned pop-out entry after the server session already exists.
@@ -758,13 +780,14 @@ function AppInner() {
     const projectId = currentProject?.id;
     if (quickChatProjectIdRef.current !== projectId) {
       quickChatProjectIdRef.current = projectId;
+      resetChatVisibilityToggle();
       setQuickChatEverOpenedProjectId(quickChatOpen && projectId ? projectId : null);
       return;
     }
     if (quickChatOpen && projectId) {
       setQuickChatEverOpenedProjectId(projectId);
     }
-  }, [currentProject?.id, quickChatOpen]);
+  }, [currentProject?.id, quickChatOpen, resetChatVisibilityToggle]);
 
   /*
   FNXC:PlanningKeepAlive 2026-07-22-12:30:
@@ -1448,7 +1471,7 @@ function AppInner() {
   */
   useDashboardKeyboardShortcuts({
     shortcuts: dashboardKeyboardShortcuts,
-    toggleQuickChat: () => setQuickChatOpen((open) => !open),
+    toggleQuickChat: toggleChatVisibility,
     toggleTerminal: toggleTerminalWithNav,
     closeTopmostPopup: closeTopmostPopupForShortcut,
     toggleFiles: () => modalManager.filesOpen ? closeFilesWithNav() : openFilesWithNav(),
@@ -1701,6 +1724,7 @@ function AppInner() {
     modalManager.closeProjectScopedModals();
     closeAllPoppedOutTasks();
     closeAllPoppedOutChats();
+    resetChatVisibilityToggle();
     if (mainPanelDetailTask) {
       closeTaskDetailMainPanel();
     }
@@ -2127,7 +2151,8 @@ function AppInner() {
           hideWhenKeyboardOpen={mobileKeyboardOpen}
           onToggleTerminal={toggleTerminalWithNav}
           quickChatButtonMode={quickChatButtonMode}
-          onOpenQuickChat={() => setQuickChatOpen(true)}
+          onToggleQuickChat={toggleChatVisibility}
+          quickChatToggleAction={chatVisibilityToggleAction}
           onOpenScripts={openScriptsWithNav}
           onRunScript={runScriptWithNav}
         />
@@ -2200,7 +2225,8 @@ function AppInner() {
         <QuickChatFAB
           showFAB={quickChatButtonMode === "floating"}
           open={quickChatOpen}
-          onOpenChange={setQuickChatOpen}
+          onToggle={toggleChatVisibility}
+          toggleAction={chatVisibilityToggleAction}
         />
       )}
       {currentProject && quickChatEverOpenedProjectId === currentProject.id && (
@@ -2210,7 +2236,10 @@ function AppInner() {
           hidden={!quickChatOpen}
           title="Chat"
           onClose={() => setQuickChatOpen(false)}
-          closeOnOutsidePointerDown={poppedOutChatEntries.length === 0 && quickChatCloseOnOutsideClick}
+          closeOnOutsidePointerDown={shouldCloseQuickChatOnOutsideClick({
+            quickChatCloseOnOutsideClick,
+            poppedOutChatEntries,
+          })}
           hideHeader
           dragHandleSelector=".chat-view--floating .view-header"
           className="floating-window--chat"

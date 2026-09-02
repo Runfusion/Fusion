@@ -1439,7 +1439,9 @@
     "currentAgentTarget": "Current agent: {{name}}",
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
-    "restore": "Restore"
+    "restore": "Restore",
+    "minimizeAllChats": "Minimize all chats",
+    "restoreAllChats": "Restore all chats"
   },
   "chatRooms": {
     "error": {
