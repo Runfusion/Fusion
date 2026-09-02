@@ -367,6 +367,43 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     source: "openai.com/api/pricing",
   },
 
+  /*
+   * FNXC:ModelCatalog 2026-09-02-22:06:
+   * FN-9244 prices Muse Spark only where Fusion exposes a credentialed provider: OpenRouter
+   * and opencode-go. Plain opencode and vercel-ai-gateway remain intentionally unpriced because
+   * Fusion cannot record their usage today; do not add a fabricated zero rate for the free row.
+   * These are additive keys, not baseline rate edits, so pricingAsOf stays unchanged.
+   */
+  // ── Muse Spark ───────────────────────────────────────────────────────
+  "openrouter:meta/muse-spark-1.1": {
+    inputPer1M: 1.25,
+    outputPer1M: 4.25,
+    cacheReadPer1M: 0.15,
+    cacheWritePer1M: 0,
+    source: "@earendil-works/pi-ai@0.84.4 models/openrouter.ts",
+  },
+  "openrouter:meta/muse-spark-1.2": {
+    inputPer1M: 1.25,
+    outputPer1M: 4.25,
+    cacheReadPer1M: 0.15,
+    cacheWritePer1M: 0,
+    source: "@earendil-works/pi-ai@0.84.4 models/openrouter.ts",
+  },
+  "openrouter:meta/muse-spark-1.2-contributor": {
+    inputPer1M: 0.1,
+    outputPer1M: 0.2,
+    cacheReadPer1M: 0.002,
+    cacheWritePer1M: 0,
+    source: "@earendil-works/pi-ai@0.84.4 models/openrouter.ts",
+  },
+  "opencode-go:muse-spark-1.2-contributor": {
+    inputPer1M: 0.1,
+    outputPer1M: 0.2,
+    cacheReadPer1M: 0.002,
+    cacheWritePer1M: 0,
+    source: "@earendil-works/pi-ai@0.84.4 models/opencode-go.ts",
+  },
+
   // ── Google Gemini ───────────────────────────────────────────────────
   // No distinct cache-write token charge → cacheWrite = input rate.
   "google:gemini-2.5-pro": {

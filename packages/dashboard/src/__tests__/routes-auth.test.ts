@@ -383,9 +383,13 @@ describe("GET /models", () => {
     /*
     FNXC:ModelThinkingCapabilities 2026-08-23-23:50:
     FN-021 derives `supportedThinkingLevels` for every /api/models row; a non-reasoning model derives ["off"], while a reasoning model with no thinkingLevelMap derives nothing.
+
+    FNXC:ModelCatalog 2026-09-02-22:06:
+    FN-9244's Pi 0.84.4 Muse Spark rows can omit thinkingLevelMap. Every route row now has
+    a defined capability array, using [] when the registry does not publish that metadata.
     */
     expect(res.body.models).toEqual([
-      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000, supportedThinkingLevels: [] },
       { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000, supportedThinkingLevels: ["off"] },
     ]);
     expect(modelRegistry.refresh).toHaveBeenCalled();

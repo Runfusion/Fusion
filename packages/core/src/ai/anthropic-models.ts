@@ -48,7 +48,7 @@ export interface AnthropicProviderRegistration {
  * Re-advertise `claude-sonnet-5`: the pinned pi-ai builtin registry ships opus-4-8/sonnet-4-6/fable-5 but NOT sonnet-5, and FN-7374 removed the static row expecting the live registry to carry it — so Sonnet 5 was left visible on no surface at all. FN-7374's "404 for direct accounts" premise is disproven by a live probe: `claude-sonnet-5` returns 200 on `api.anthropic.com/v1` with a raw `ANTHROPIC_API_KEY`, and runs via the Claude CLI/`pi-claude-cli` (claude.ai backend). It DOES 403 (scope) on subscription-OAuth `/v1`, so OAuth-only users fall back to the runtime actionable-failure path; keep it advertised so API-key and CLI users can select it.
  *
  * FNXC:ModelCatalog 2026-09-02-01:01:
- * Fable 5.1 postdates pinned pi-ai 0.84.1, so register it additively and dedupe against
+ * Fable 5.1 postdates pinned pi-ai 0.84.4, so register it additively and dedupe against
  * the live catalog so a future upstream row wins unchanged. Thread its thinkingLevelMap
  * through this mapper because /api/models derives supported thinking levels from it.
  */

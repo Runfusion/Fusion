@@ -3015,6 +3015,11 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     FN-9007 advances the exact matched Pi runtime closure from 0.82.1 to 0.84.1.
     Keep constructing sessions through ModelRuntime so Fusion inherits the updated provider
     catalog and SDK behavior without duplicating upstream runtime policy.
+
+    FNXC:ModelCatalog 2026-09-02-22:06:
+    FN-9244 advances the exact matched Pi runtime closure from 0.84.1 to 0.84.4. Continue
+    constructing sessions through ModelRuntime with `noTools: "builtin"`; this upgrade's
+    optional PowerShell builtin remains disabled unless Fusion explicitly allowlists it.
     */
     const createSessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]> = {
       cwd: options.cwd,

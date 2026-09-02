@@ -222,7 +222,7 @@ describe("FN-7745: GPT-5.6 codenamed OpenAI Codex variants — /api/models", () 
     expect(model?.supportedThinkingLevels).toEqual(["off", "minimal", "low", "medium", "high", "max"]);
   });
 
-  it("exposes an explicit xhigh map and omits capability metadata when the map is absent", async () => {
+  it("exposes an explicit xhigh map and an empty capability list when the map is absent", async () => {
     const modelRegistry = createFakeModelRegistry([{
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
@@ -241,7 +241,7 @@ describe("FN-7745: GPT-5.6 codenamed OpenAI Codex variants — /api/models", () 
     const explicit = response.models.find((row) => row.provider === "openai-codex" && row.id === "gpt-5.6-sol");
     expect(explicit?.supportedThinkingLevels).toEqual(["off", "minimal", "low", "medium", "high", "xhigh"]);
     const metadataUnknown = response.models.find((row) => row.provider === "openai-codex" && row.id === "unmapped-model");
-    expect(metadataUnknown).not.toHaveProperty("supportedThinkingLevels");
+    expect(metadataUnknown?.supportedThinkingLevels).toEqual([]);
   });
 
   it("keeps real-registry GPT-5.6 rows gated when openai-codex auth is absent", async () => {
