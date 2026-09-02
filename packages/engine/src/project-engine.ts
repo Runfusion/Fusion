@@ -118,7 +118,7 @@ import {
   formatAdmissionCapacityQueuedReason,
   persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
 } from "./concurrency/concurrency.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
 import { clearOwnedMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
@@ -942,6 +942,7 @@ export class ProjectEngine {
             taskId: task.id,
             projectId,
             lane: "review",
+            consumesWorktree: false,
             createdAt: task.createdAt,
             start: async () => {
               // Do not run merge work in the coordinator; hand the exact queued
@@ -4459,10 +4460,8 @@ export class ProjectEngine {
             */
             await projectAdmissionCoordinator.admitNext({
               projectId: cwd,
-              maxConcurrent: resolveActiveTaskCapacityLimit({
+              maxConcurrent: resolveAgentCapacityLimit({
                 maxConcurrent: admissionSettings.maxConcurrent,
-                maxWorktrees: admissionSettings.maxWorktrees,
-                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               }),
               claimed: async () => (await getMergeClaimSnapshot()).count,
               claimedTaskIds: async () => (await getMergeClaimSnapshot()).ids,
@@ -4470,6 +4469,7 @@ export class ProjectEngine {
                 taskId,
                 projectId: cwd,
                 lane: "review",
+                consumesWorktree: false,
                 createdAt: mergeCandidate?.createdAt,
                 start: async () => {
                   selected = true;
@@ -4479,10 +4479,8 @@ export class ProjectEngine {
             });
             if (!selected) {
               const snapshot = await getMergeClaimSnapshot();
-              const limit = resolveActiveTaskCapacityLimit({
+              const limit = resolveAgentCapacityLimit({
                 maxConcurrent: admissionSettings.maxConcurrent,
-                maxWorktrees: admissionSettings.maxWorktrees,
-                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               });
               if (snapshot.count >= limit) {
                 /*
@@ -4492,9 +4490,8 @@ export class ProjectEngine {
                 snapshot proves exhaustion rather than a higher-priority candidate winning.
                 */
                 const reason = formatAdmissionCapacityQueuedReason({
-                  maxConcurrent: admissionSettings.maxConcurrent,
-                  maxWorktrees: admissionSettings.maxWorktrees,
-                  worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
+                  gate: "maxConcurrent",
+                  limit,
                   claimed: snapshot.count,
                   holderTaskIds: snapshot.ids,
                 });

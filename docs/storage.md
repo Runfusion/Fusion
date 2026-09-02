@@ -405,7 +405,7 @@ API endpoints reviewed:
 | `globalPause` | Project | `GET/PUT /api/settings` | Hard stop for engine activity |
 | `enginePaused` | Project | `GET/PUT /api/settings` | Soft pause for dispatch |
 | `maxConcurrent` | Project | `GET/PUT /api/settings` | Max concurrent task-lane agents. Utility AI workflows bypass this limit. |
-| `maxWorktrees` | Project | `GET/PUT /api/settings` | Worktree cap |
+| `maxWorktrees` | Project | `GET/PUT /api/settings` | Execution-checkout holder cap; does not include planning |
 | `pollIntervalMs` | Project | `GET/PUT /api/settings` | Scheduler poll interval |
 | `groupOverlappingFiles` | Project | `GET/PUT /api/settings` | Serialize overlapping file work |
 | `overlapIgnorePaths` | Project | `GET/PUT /api/settings` | Project-relative file/directory paths ignored by overlap blocking |

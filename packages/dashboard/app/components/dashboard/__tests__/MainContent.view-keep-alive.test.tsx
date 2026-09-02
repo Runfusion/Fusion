@@ -126,7 +126,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     capacityRiskDismissed: false,
     capacityRiskSignal: { level: "low", reasons: [] } as MainContentProps["capacityRiskSignal"],
     maxConcurrent: 2,
-    effectiveMaxConcurrent: 2,
+    maxWorktrees: 4,
     showWorktreeGrouping: false,
     moveTask: vi.fn(async () => taskFixture()),
     pauseTask: vi.fn(async () => taskFixture()),

@@ -87,13 +87,13 @@ describe("groupByWorktree", () => {
     expect(groups.find((g) => g.label === "Up Next")).toBeUndefined();
   });
 
-  it("caps Up Next at the effective worktree-bound ceiling, not configured max concurrent", () => {
+  it("caps Up Next at maxWorktrees independently from maxConcurrent", () => {
     const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
     const queued = ["FN-010", "FN-011", "FN-012", "FN-013", "FN-014"].map((id) => makeTask({ id, column: "todo" }));
     const capacity = resolveEffectiveConcurrency({ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: true });
 
-    const upNext = groupByWorktree([active], [active, ...queued], capacity.effectiveLimit).find((group) => group.label === "Up Next");
-    expect(capacity).toMatchObject({ maxConcurrent: 8, effectiveLimit: 4, bindingKnob: "maxWorktrees" });
+    const upNext = groupByWorktree([active], [active, ...queued], capacity.worktreeLimit!).find((group) => group.label === "Up Next");
+    expect(capacity).toEqual({ maxConcurrent: 8, worktreeLimit: 4 });
     expect(upNext?.queuedTasks).toHaveLength(4);
   });
 

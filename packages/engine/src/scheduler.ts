@@ -24,9 +24,10 @@ import {
   dropPreHeldExecutorSlot,
   projectAdmissionCoordinator,
   persistedTopLevelAgentTaskIdsFromStore,
+  persistedWorktreeHolderTaskIdsFromStore,
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
   type AgentSemaphore,
 } from "./concurrency/concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
@@ -590,6 +591,11 @@ Check every checkout form before granting a non-WIP card an active lease. A work
 has no singular `task.worktree`, so review and dormant classification must recognize its repository
 checkouts. WIP deliberately skips that check because the scheduler moves a task there before implementation
 persists a checkout; gating that interval would let a second task begin editing the same files.
+
+FNXC:OverlapScheduling 2026-09-01-14:49:
+A card whose only live state is checkout-free planning owns no lease, so overlapping planners remain
+independently dispatchable. A hold-lane card retaining a checkout after a replan bounce still owns
+unmerged work and keeps its dormant lease; never replace this checkout proof with a column exemption.
 */
 export function classifyFileScopeLease(
   task: Task,
@@ -843,15 +849,7 @@ export function formatConcurrencyLimitReason(diagnostic: ConcurrencyGateDiagnost
     return holders && holders.length > 0 ? holders.join(", ") : "none";
   };
   const gateLabel = diagnostic.bindingGates.join(", ");
-  const effectiveLimit = Math.min(
-    diagnostic.maxConcurrentGate.limit,
-    diagnostic.maxWorktreesGate?.limit ?? Infinity,
-  );
-  const bindingKnob = diagnostic.maxWorktreesGate && diagnostic.maxWorktreesGate.limit <= diagnostic.maxConcurrentGate.limit
-    ? "maxWorktrees"
-    : "maxConcurrent";
   const details = [
-    `effectiveLimit=${effectiveLimit} (bindingKnob=${bindingKnob})`,
     `maxConcurrent used=${diagnostic.maxConcurrentGate.used}/${diagnostic.maxConcurrentGate.limit} (holders: ${holdersText("maxConcurrent")})`,
   ];
   /*
@@ -1085,6 +1083,7 @@ export class Scheduler {
           taskId: task.id,
           projectId,
           lane: "execute",
+          consumesWorktree: true,
           createdAt: task.createdAt,
           reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
@@ -2392,7 +2391,7 @@ export class Scheduler {
       };
       const maxWorktrees = resolveWorktreeCapacityLimit(capacitySettings);
       const maxConcurrent = resolveMaxConcurrentSetting(capacitySettings);
-      const activeTaskLimit = resolveActiveTaskCapacityLimit(capacitySettings);
+      const activeTaskLimit = resolveAgentCapacityLimit(capacitySettings);
       /*
       FNXC:WorkflowScheduling 2026-07-19-02:35 (U4/KTD-9):
       Count active WIP reservations by the `wip` trait, not the literal
@@ -2488,13 +2487,11 @@ export class Scheduler {
         .filter((task) => isWipColumnTask(task) && task.status !== "failed")
         .map((task) => task.id);
       /*
-      FNXC:WorktreeCapacity 2026-08-01-04:38 (inactive retained-worktree capacity inversion):
-      Worktree capacity is a LIVE-TASK budget, not a count of directories retained on disk. The
-      dashboard showed seven active tasks against maxWorktrees=9, but two dependency-blocked queued
-      cards retained worktree paths. Counting those inactive paths filled the ledger and prevented
-      the dependency-free roots from starting. Use the canonical enriched running-agent predicate
-      shared with the board; planning, WIP, and active review count, while queued/paused/terminal
-      tasks do not. Same-sweep reservations below keep newly released tasks visible immediately.
+      FNXC:CapacityModel 2026-09-01-14:49:
+      Worktree capacity counts canonically live tasks that are in WIP or retain an unmerged singular
+      or workspace checkout. Checkout-free planning is excluded, while WIP counts before acquisition
+      to close the dispatch-to-persistence window and a live replan card retains its real disk slot.
+      Same-sweep reservations below keep newly released execution candidates visible immediately.
       */
       /*
       FNXC:WorkflowScheduling 2026-08-09-11:01:
@@ -2519,7 +2516,7 @@ export class Scheduler {
           return typeof value === "function" ? value.bind(target) : value;
         },
       });
-      const activeWorktreeTaskIds = await persistedTopLevelAgentTaskIdsFromStore(selectionCachedStore, tasks);
+      const activeWorktreeTaskIds = await persistedWorktreeHolderTaskIdsFromStore(selectionCachedStore, tasks);
       let reservedWorktreeSlots = activeWorktreeTaskIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
       const dispatchPrepByTaskId = new Map<string, {
@@ -3136,33 +3133,46 @@ export class Scheduler {
           claim the final slot. The reservation remains until the executor observes the persisted
           WIP row and takes the handoff.
           */
-          let finalClaimSnapshot: Promise<{ count: number; ids: string[] }> | undefined;
+          let finalClaimSnapshot: Promise<{
+            agent: { count: number; ids: string[] };
+            worktree: { count: number; ids: string[] };
+          }> | undefined;
           const getFinalClaimSnapshot = () => finalClaimSnapshot ??= (async () => {
             /*
-            FNXC:WorkflowContinuationCapacity 2026-08-01-07:10:
-            Worktree preparation and startup recovery can make the sweep's original task list stale
-            before this serialized admission point. A planner that became live after that snapshot
-            was absent from `activeWorktreeTaskIds`; once its handoff reservation transferred to the
-            durable planning status, the coordinator could no longer see either claim and admitted a
-            tenth active task against maxWorktrees=9. Re-read full rows lazily inside the coordinator
-            drain so pending workflow-step leases and every newly durable lane holder participate in
-            the final decision. Same-sweep transient starts remain covered by coordinator reservations.
+            FNXC:CapacityModel 2026-09-01-14:49:
+            Re-read full rows inside the serialized drain and derive each dimension from its own
+            canonical predicate. Reservations bridge both persistence transfers without making
+            checkout-free planners appear in the worktree holder set.
             */
             const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false });
-            const ids = await persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks);
-            return { count: ids.length, ids };
+            const [agentIds, worktreeIds] = await Promise.all([
+              persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks),
+              persistedWorktreeHolderTaskIdsFromStore(this.store, liveTasks),
+            ]);
+            return {
+              agent: { count: agentIds.length, ids: agentIds },
+              worktree: { count: worktreeIds.length, ids: worktreeIds },
+            };
           })();
           let projectSlotReserved = false;
           const admittedTaskId = await projectAdmissionCoordinator.admitNext({
             projectId: this.store.getRootDir(),
             maxConcurrent: activeTaskLimit,
-            claimed: async () => (await getFinalClaimSnapshot()).count,
-            claimedTaskIds: async () => (await getFinalClaimSnapshot()).ids,
+            claimed: async () => (await getFinalClaimSnapshot()).agent.count,
+            claimedTaskIds: async () => (await getFinalClaimSnapshot()).agent.ids,
+            ...(maxWorktrees === null ? {} : {
+              worktreeGate: {
+                limit: maxWorktrees,
+                claimed: async () => (await getFinalClaimSnapshot()).worktree.count,
+                claimedTaskIds: async () => (await getFinalClaimSnapshot()).worktree.ids,
+              },
+            }),
             semaphore: this.options.semaphore,
             refresh: async () => [{
               taskId: task.id,
               projectId: this.store.getRootDir(),
               lane: "execute",
+              consumesWorktree: true,
               createdAt: task.createdAt,
               reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
               start: async () => {
@@ -3183,14 +3193,14 @@ export class Scheduler {
             const freshClaims = await getFinalClaimSnapshot();
             const exhausted = admittedTaskId === undefined;
             const freshDiagnostic = computeConcurrencyGateDiagnostic({
-              agentSlots: freshClaims.count,
+              agentSlots: freshClaims.agent.count,
               maxConcurrent,
-              activeWorktrees: freshClaims.count,
+              activeWorktrees: freshClaims.worktree.count,
               maxWorktrees,
-              worktreeHolderTaskIds: freshClaims.ids,
+              worktreeHolderTaskIds: freshClaims.worktree.ids,
               semaphore: this.options.semaphore,
-              inProgressTaskIds: freshClaims.ids,
-              topLevelClaimedSlots: freshClaims.count,
+              inProgressTaskIds: freshClaims.agent.ids,
+              topLevelClaimedSlots: freshClaims.agent.count,
             });
             const reason = exhausted
               ? formatConcurrencyLimitReason(freshDiagnostic)

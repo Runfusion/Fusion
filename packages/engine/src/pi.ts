@@ -1974,6 +1974,7 @@ export function wrapToolsWithBoundary(
   projectRoot: string | null,
   readOnlyExtraRoots: readonly string[] = [],
   readOnlyBoundary = false,
+  writableAllowlist: readonly string[] = [],
 ): ToolDefinition[] {
   if (!worktreePath || !projectRoot) {
     return tools; // Not a worktree session, no wrapping needed
@@ -1990,6 +1991,21 @@ export function wrapToolsWithBoundary(
     join(homedir(), ".agents", "skills"),
     ...readOnlyExtraRoots,
   ]);
+  const boundaryProjectRoot = resolve(projectRoot);
+  const canonicalBoundaryProjectRoot = normalizePathThroughExistingAncestor(boundaryProjectRoot);
+  const normalizedWritableAllowlist = writableAllowlist.flatMap((root) => {
+    const lexicalRoot = resolve(root);
+    if (!isSameOrInsidePath(boundaryProjectRoot, lexicalRoot)) return [];
+    const canonicalRoot = normalizePathThroughExistingAncestor(lexicalRoot);
+    return isSameOrInsidePath(canonicalBoundaryProjectRoot, canonicalRoot) ? [canonicalRoot] : [];
+  });
+  const isAllowlistedWritePath = (requestedPath: string): boolean => {
+    const requestedResolved = isAbsolute(requestedPath)
+      ? resolve(requestedPath)
+      : resolve(worktreePath, requestedPath);
+    const requestedCanonical = normalizePathThroughExistingAncestor(requestedResolved);
+    return normalizedWritableAllowlist.some((root) => isSameOrInsidePath(root, requestedCanonical));
+  };
 
   return tools.map((tool) => {
     // Only wrap tools that access the filesystem
@@ -2010,12 +2026,29 @@ export function wrapToolsWithBoundary(
         const params = args[1] as Record<string, unknown>;
         const _signal = args[2] as AbortSignal | undefined;
 
-        if (readOnlyBoundary && new Set(["write", "edit", "bash"]).has(tool.name)) {
-          return boundaryRejection("This session has a read-only workspace boundary and cannot modify files or run shell commands.");
-        }
-
         // Check path argument for file operations
         const pathArg = params.path as string | undefined;
+        if (readOnlyBoundary && (tool.name === "bash" || tool.name === "fn_run_verification")) {
+          return boundaryRejection("This session has a read-only workspace boundary and cannot run shell or verification commands.");
+        }
+        if (
+          readOnlyBoundary
+          && (tool.name === "write" || tool.name === "edit")
+          && (!pathArg || !isAllowlistedWritePath(pathArg))
+        ) {
+          /*
+          FNXC:PlanningBoundary 2026-09-01-14:49:
+          Checkout-free planning reads the dependency-installed project root but may write only inside
+          `.fusion/`. Canonical ancestor containment closes symlink escapes for both existing and new
+          targets; durable plan and document writers remain the supported publication surfaces.
+          */
+          return boundaryRejection(
+            "This planning session may write only inside its declared .fusion allowlist. "
+            + "Use fn_task_prompt_write for PROMPT.md and fn_task_document_write for durable task documents.",
+          );
+        }
+
+
         if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg, tool.name, normalizedReadOnlyExtraRoots)) {
           const relToProject = relative(projectRoot, pathArg);
           return boundaryRejection(
@@ -2991,6 +3024,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       boundaryContext.worktreeProjectRoot,
       normalizedAdditionalSkillPaths,
       options.sessionBoundary?.kind === "read-only-root",
+      options.sessionBoundary?.writableAllowlist ?? [],
     );
     // FNXC:ToolOutputBudget 2026-08-03-16:00:
     // Keep this outermost so policy-gate and boundary rejection text is bounded too;

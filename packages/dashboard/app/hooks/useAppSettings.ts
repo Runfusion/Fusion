@@ -22,8 +22,8 @@ export function normalizeChatMessageLayout(value: unknown): ChatMessageLayout {
  */
 export interface UseAppSettingsResult {
   maxConcurrent: number;
-  /** Engine-enforced ceiling after the optional worktree limit is applied. */
-  effectiveMaxConcurrent: number;
+  /** Configured execution-worktree holder ceiling used by worktree grouping. */
+  maxWorktrees: number;
   rootDir: string;
   autoMerge: boolean;
   mergeStrategy: string;
@@ -83,7 +83,7 @@ export interface UseAppSettingsResult {
  */
 export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [maxConcurrent, setMaxConcurrent] = useState(DEFAULT_PROJECT_SETTINGS.maxConcurrent);
-  const [effectiveMaxConcurrent, setEffectiveMaxConcurrent] = useState(DEFAULT_PROJECT_SETTINGS.maxConcurrent);
+  const [maxWorktrees, setMaxWorktrees] = useState(DEFAULT_PROJECT_SETTINGS.maxWorktrees);
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
   const [mergeStrategy, setMergeStrategy] = useState("direct");
@@ -148,7 +148,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
 
     if (configResult.status === "fulfilled") {
       setMaxConcurrent(configResult.value.maxConcurrent);
-      setEffectiveMaxConcurrent(configResult.value.effectiveMaxConcurrent);
+      setMaxWorktrees(configResult.value.maxWorktrees);
       setRootDir(configResult.value.rootDir);
     }
 
@@ -376,7 +376,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
 
   return {
     maxConcurrent,
-    effectiveMaxConcurrent,
+    maxWorktrees,
     rootDir,
     autoMerge,
     mergeStrategy,

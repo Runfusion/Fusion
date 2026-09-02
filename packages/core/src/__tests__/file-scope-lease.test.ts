@@ -6,6 +6,7 @@ import {
   type FileScopeLeaseClassification,
   type Task,
 } from "../index.js";
+import { classifyRepairFileScopeLease } from "../store.js";
 
 const active: FileScopeLeaseClassification = { kind: "active", waivedForTaskIds: [] };
 const none: FileScopeLeaseClassification = { kind: "none", waivedForTaskIds: [] };
@@ -55,6 +56,26 @@ describe("fileScopeLeaseBlocksCandidate", () => {
 
   it("never blocks when no lease exists", () => {
     expect(fileScopeLeaseBlocksCandidate(task("FN-001"), task("FN-002"), none)).toBe(false);
+  });
+});
+
+describe("planning checkout evidence", () => {
+  const lanes = {
+    wip: new Set(["building"]),
+    review: new Set(["reviewing"]),
+    terminal: new Set(["shipped", "filed"]),
+  };
+
+  it("classifies a checkout-free planning card as no repair lease", () => {
+    expect(classifyRepairFileScopeLease({ column: "drafting" }, lanes)).toBe("none");
+  });
+
+  it("keeps a replanned hold card with a retained checkout as a dormant repair lease", () => {
+    expect(classifyRepairFileScopeLease({ column: "drafting", worktree: "/worktrees/FN-282" }, lanes)).toBe("dormant");
+    expect(classifyRepairFileScopeLease({
+      column: "drafting",
+      workspaceWorktrees: { repo: { worktreePath: "/worktrees/FN-282/repo", branch: "fusion/fn-282" } },
+    }, lanes)).toBe("dormant");
   });
 });
 

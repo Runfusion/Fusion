@@ -57,12 +57,12 @@ function resolveDependencyOrder(tasks: Task[]): string[] {
  * Queued tasks (eligible "todo" tasks whose dependencies are all satisfied)
  * are always placed in the "Up Next" group — they are never distributed
  * to worktree-specific groups since they have no worktree assignment yet.
- * The number of queued tasks shown is capped at the engine's effective concurrency ceiling.
+ * The number of queued tasks shown is capped at the execution-worktree ceiling.
  */
 export function groupByWorktree(
   inProgressTasks: Task[],
   allTasks: Task[],
-  effectiveConcurrencyLimit: number,
+  worktreeLimit: number,
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   The ids of TASKS whose own column is a hold lane in their own workflow, when the caller
@@ -186,8 +186,8 @@ export function groupByWorktree(
     });
   }
 
-  // All eligible queued tasks go into the "Up Next" group (capped at the effective ceiling).
-  const queued = orderedEligible.slice(0, effectiveConcurrencyLimit);
+  // All eligible queued tasks go into the "Up Next" group (capped at worktree capacity).
+  const queued = orderedEligible.slice(0, worktreeLimit);
   if (queued.length > 0) {
     groups.push({
       id: "up-next",

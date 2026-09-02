@@ -1498,7 +1498,7 @@ Command Center is the combined analytics and live-operations surface for a proje
 
 ### Task concurrency capacity
 
-**Settings → Scheduling**, Command Center controls, and the Engine Control menu all edit the same project-scoped **Max Concurrent Tasks** setting (range 1–50; default 2). When worktree limiting is on, Fusion shows the effective ceiling as the lower of Max Concurrent Tasks and Max Worktrees and names the setting that binds. Team status and the board's **Up Next** grouping use that effective ceiling, so they do not promise more parallel work than admission can start.
+**Settings → Scheduling**, Command Center controls, and the Engine Control menu edit two independent project limits. **Max Concurrent Tasks** (range 1–50; default 2) caps every AI-active task, including planning, to protect provider load. **Max Worktrees** (default 4) caps tasks holding or entering execution checkouts to protect host CPU, RAM, and disk; it does not limit planning and can be disabled structurally. Team status displays both values separately, and the board's **Up Next** worktree grouping uses Max Worktrees.
 
 Navigation:
 - Desktop/tablet: primary header view toggle, immediately after **Agents**

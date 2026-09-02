@@ -498,19 +498,24 @@ export const DEFAULT_PROJECT_SETTINGS = {
   approvedCliAutonomyAdapters: undefined,
   enginePaused: false,
   engineLastActiveAt: undefined,
+  /*
+  FNXC:CapacityModel 2026-09-01-14:49:
+  Max Concurrent Tasks limits every AI-active task, including checkout-free planning. It is the
+  provider/LLM-load dimension and remains independent from execution-worktree capacity.
+  */
   maxConcurrent: 2,
   /*
   FNXC:VerificationConcurrency 2026-07-15-03:35:
   Default one verification at a time process-wide so concurrent tasks cannot each run verify:fast / full builds simultaneously and peg the host. Operators with spare cores may raise this in Scheduling settings (clamped 1–8 at runtime).
   */
   maxConcurrentVerifications: 1,
+  /* Execution-worktree holders only; planning runs read-only on the project root. */
   maxWorktrees: 4,
   /*
-  FNXC:CapacityModel 2026-07-28-11:20:
-  Worktrees ON is the default and the supported shape — everything (planning
-  included) runs in a worktree. OFF drops maxWorktrees from the dispatch gate so
-  capacity is total agents only; it is a counting statement, not permission for
-  concurrent agents to share one checkout.
+  FNXC:CapacityModel 2026-09-01-14:49:
+  Worktree limiting is ON by default and independently caps tasks that hold or are entering an
+  execution checkout. OFF removes that gate structurally; write-capable execution remains isolated
+  in task worktrees while checkout-free planning continues to count only against maxConcurrent.
   */
   worktreeLimitEnabled: true,
   pollIntervalMs: 15000,

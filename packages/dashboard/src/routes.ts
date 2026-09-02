@@ -1249,8 +1249,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         globalPause: settings.globalPause ?? false,
         enginePaused: settings.enginePaused ?? false,
         maxConcurrent: capacity.maxConcurrent,
-        effectiveMaxConcurrent: capacity.effectiveLimit,
-        concurrencyBindingKnob: capacity.bindingKnob,
+        maxWorktrees: capacity.worktreeLimit ?? settings.maxWorktrees,
+        worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
         lastActivityAt,
       });
     } catch (err: unknown) {

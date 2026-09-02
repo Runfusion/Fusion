@@ -1,21 +1,9 @@
 /*
-FNXC:WorktreeCapacity 2026-08-01-04:38:
-PLANNING ADMISSION'S WORKTREE LEDGER COUNTS LIVE TASKS BY ROLE, NOT RETAINED DIRECTORIES.
-
-The worktree cap limits simultaneous task activity. Planning, WIP, and live review sessions count;
-queued, paused, dependency-blocked, and terminal cards do not count even when their worktree path is
-retained for reuse or cleanup. The canonical running-agent predicate resolves renamed workflow roles
-before making that decision.
-
-WHY THIS FILE RATHER THAN A CASE IN `triage-plan-admission-throttle-audit.test.ts`: that suite's
-fixture deliberately exhausts `maxConcurrent` (1 slot, consumed by a running card) so the AGENT gate
-binds. The agent gate is checked with the worktree gate via `Math.min`, so an exhausted agent count
-masks the worktree answer entirely — the conversion under test would never decide anything. This
-fixture leaves agent headroom so the worktree ledger is the only gate that can bind.
-
-The assertion is the run-audit event, not a return value: `task:plan-admission-throttled` is what
-the withhold path DOES, and it names the binding gate. A boolean "did anything start" would also be
-satisfied by an unrelated early return.
+FNXC:CapacityModel 2026-09-01-14:49:
+Planning admission is bounded only by the agent/provider ceiling, including on renamed boards.
+Execution-worktree holders remain independently trait-resolved, but they cannot throttle a
+checkout-free planner; this suite pins that inverse across empty, retained, WIP, review-lease,
+and disabled worktree states.
 */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -35,6 +23,7 @@ const RENAMED_IR = {
   columns: [
     { id: "drafting", name: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "reviewing", name: "Reviewing", traits: [{ trait: "merge-blocker" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
     { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
   ],
@@ -57,10 +46,7 @@ function task(id: string, column: string, extra: Partial<Task> = {}): Task {
   } as Task;
 }
 
-/**
- * `maxConcurrent` is generous on purpose — admission takes `min(projectRoom, worktreeRoom)`, so an
- * exhausted agent count would mask the ledger this file is about.
- */
+/** `maxConcurrent` is generous so every case isolates checkout-free planning from worktree capacity. */
 function createStore(
   tasks: Task[],
   recorded: RecordedEvent[],
@@ -188,7 +174,7 @@ describe("planning admission's worktree ledger on a renamed board", () => {
     expect(specifyTask).toHaveBeenCalledOnce();
   });
 
-  it("admits only one planner when one active-task worktree slot remains", async () => {
+  it("admits multiple planners even when maxWorktrees is one", async () => {
     const store = createStore([
       task("FN-WAITING-1", "drafting"),
       task("FN-WAITING-2", "drafting"),
@@ -196,16 +182,12 @@ describe("planning admission's worktree ledger on a renamed board", () => {
 
     const specifyTask = await pollOnce(store);
 
-    expect(specifyTask).toHaveBeenCalledOnce();
+    expect(specifyTask).toHaveBeenCalledTimes(2);
     expect(specifyTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WAITING-1" }));
+    expect(specifyTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WAITING-2" }));
   });
 
-  /*
-  THE PAIRED POSITIVE. The absence cases would also pass if maxWorktrees were ignored entirely. This
-  pins that the same renamed board still withholds when a task is genuinely live, so the inactive
-  cases measure liveness rather than a dead gate.
-  */
-  it("still withholds when a card in a live RENAMED lane holds the last worktree", async () => {
+  it("does not withhold planning when a live renamed WIP card holds the last worktree", async () => {
     const store = createStore([
       task("FN-WAITING", "drafting"),
       task("FN-LIVE", "building", { worktree: "/tmp/wt-live" }),
@@ -213,19 +195,18 @@ describe("planning admission's worktree ledger on a renamed board", () => {
 
     const specifyTask = await pollOnce(store);
 
-    const throttle = recorded.filter((event) => event.type === "task:plan-admission-throttled");
-    expect(throttle.length, "a live task must still consume its worktree-capacity slot").toBeGreaterThan(0);
-    expect(specifyTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(
+    expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(0);
+    expect(specifyTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WAITING" }));
+    expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-WAITING",
-      expect.stringContaining("maxWorktrees capacity exhausted: used=1/1"),
+      expect.stringContaining("maxWorktrees capacity exhausted"),
     );
   });
 
-  it("counts a pending optional workflow-step lease in final planning admission", async () => {
+  it("does not let a checkout-free review lease consume planning worktree capacity", async () => {
     const store = createStore([
       task("FN-WAITING", "drafting"),
-      task("FN-LIVE-REVIEW", "drafting", {
+      task("FN-LIVE-REVIEW", "reviewing", {
         steps: [{ name: "Implementation", status: "pending" }] as Task["steps"],
         workflowStepResults: [{
           workflowStepId: "code-review",
@@ -241,6 +222,6 @@ describe("planning admission's worktree ledger on a renamed board", () => {
     const specifyTask = await pollOnce(store);
 
     expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
-    expect(specifyTask).not.toHaveBeenCalled();
+    expect(specifyTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WAITING" }));
   });
 });

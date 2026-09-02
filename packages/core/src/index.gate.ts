@@ -723,6 +723,10 @@ export {
   type RunningAgentCounts,
 } from "./agents/live-agent-count.js";
 export {
+  isWorktreeCapacityHolder,
+  type WorktreeCapacityTaskShape,
+} from "./agents/worktree-capacity-holder.js";
+export {
   setTaskCreatedHook,
   getTaskCreatedHook,
   type TaskCreatedHook,

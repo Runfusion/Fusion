@@ -40,7 +40,7 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
     filteredBoardTasks,
     currentProject,
     maxConcurrent,
-    effectiveMaxConcurrent,
+    maxWorktrees,
     showWorktreeGrouping,
     moveTask,
     pauseTask,
@@ -102,7 +102,7 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
         tasks={filteredBoardTasks}
         projectId={currentProject?.id}
         maxConcurrent={maxConcurrent}
-        effectiveMaxConcurrent={effectiveMaxConcurrent}
+        maxWorktrees={maxWorktrees}
         showWorktreeGrouping={showWorktreeGrouping}
         onMoveTask={moveTask}
         onPauseTask={pauseTask}

@@ -209,7 +209,7 @@ export async function runPlanReviewDependencyGate(
       }
       targets.push({ repository, worktreePath: path });
     }
-  } else if (input.worktreePath && existsSync(input.worktreePath)) {
+  } else if (input.task.worktree && input.worktreePath && existsSync(input.worktreePath)) {
     targets.push({ repository: "task worktree", worktreePath: input.worktreePath });
   } else {
     await input.store.logEntry(
@@ -491,14 +491,13 @@ export async function runGraphCustomNode(
     }
 
     if (workspaceConfig?.repos.length) {
-      // Always re-read and acquire from the configured set. Repository scope remains durable review
-      // evidence, but is no longer an admission request or a way to narrow task provisioning.
+      // Re-read the configured set, but only write-capable execution may provision it.
       executionTarget = await deps.store.getTask(live.id);
       const missingRepository = workspaceConfig.repos.find((repository) => {
         const path = executionTarget.workspaceWorktrees?.[repository]?.worktreePath;
         return typeof path !== "string" || !existsSync(path);
       });
-      if (missingRepository) {
+      if (writeCapable && missingRepository) {
         await deps.store.logEntry(
           live.id,
           `Workflow node '${node.id}' is acquiring configured workspace checkout '${missingRepository}'`,
@@ -510,10 +509,12 @@ export async function runGraphCustomNode(
     } else if (!workspaceConfig) {
       const recordedWorktreeMissing = Boolean(executionTarget.worktree) && !existsSync(executionTarget.worktree!);
       /*
-      A node with no recorded worktree is pre-execution. A vanished implementation checkout is
-      not silently replaced for ordinary review, while Plan Review can re-acquire its plan tree.
+      FNXC:PlanningBoundary 2026-09-01-14:49:
+      Checkout provisioning belongs exclusively to write-capable execution nodes. Plan Review uses
+      main read-only and never reacquires a vanished path; write-capable nodes preserve stale-path
+      recovery by clearing the missing pointer before acquisition.
       */
-      const shouldAcquire = !executionTarget.worktree || (recordedWorktreeMissing && isPlanReviewNode);
+      const shouldAcquire = writeCapable && (!executionTarget.worktree || recordedWorktreeMissing);
       if (shouldAcquire) {
         const acquisitionTask = recordedWorktreeMissing
           ? ({ ...executionTarget, worktree: undefined, sessionFile: undefined } as TaskDetail)
@@ -577,24 +578,34 @@ export async function runGraphCustomNode(
       }
     }
 
-    const worktreePath = isWorkspaceTask
-      ? legacyWorkspacePath ?? workspaceTaskDir!
-      : executionTarget.worktree!;
-    const nodeSessionBoundary = resolveGraphNodeSessionBoundary({
-      isWorkspace: isWorkspaceTask,
-      writeCapable,
-      legacyWorkspaceLayout: Boolean(legacyWorkspacePath),
-      rootDir: deps.rootDir,
-      worktreePath,
-      confirmedRepositories: workspaceConfig?.repos,
-    });
+    const singularCheckoutAvailable = Boolean(executionTarget.worktree && existsSync(executionTarget.worktree));
+    const planLaneRootFallback = isPlanReviewNode && !singularCheckoutAvailable
+      && !legacyWorkspacePath && !hasWorkspaceCheckout;
+    const worktreePath = planLaneRootFallback
+      ? deps.rootDir
+      : isWorkspaceTask
+        ? legacyWorkspacePath ?? workspaceTaskDir!
+        : executionTarget.worktree ?? deps.rootDir;
+    const nodeSessionBoundary: SessionBoundaryDescriptor | undefined = planLaneRootFallback
+      ? {
+          kind: "read-only-root",
+          writableRoot: null,
+          projectRoot: deps.rootDir,
+          writableAllowlist: [join(deps.rootDir, ".fusion")],
+        }
+      : resolveGraphNodeSessionBoundary({
+          isWorkspace: isWorkspaceTask,
+          writeCapable,
+          legacyWorkspaceLayout: Boolean(legacyWorkspacePath),
+          rootDir: deps.rootDir,
+          worktreePath,
+          confirmedRepositories: workspaceConfig?.repos,
+        });
     /*
-    FNXC:WorktreeDependencies 2026-08-29-06:59:
-    Plan Review is the single lifecycle blocker for dependency readiness. It retries deterministic
-    matrix rows once at this pre-dispatch point, but unfamiliar package-manager evidence remains
-    unrecognized until the planning-only installer records an engine-observed resolution. The
-    returned REVISE follows the existing review budget/replan cap to awaiting-approval; acquisition
-    itself merely logs failures and optional/disabled Plan Review groups never reach this node.
+    FNXC:WorktreeDependencies 2026-09-01-14:49:
+    Fresh Plan Review owns no checkout, so dependency readiness is not determined here and the gate
+    falls through after logging. Execution-time acquisition owns dependency initialization; this
+    compatibility probe remains only for replans that already retain an execution checkout.
     */
     if (isPlanReviewNode) {
       const dependencyGate = await runPlanReviewDependencyGate({

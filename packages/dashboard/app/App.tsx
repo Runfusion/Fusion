@@ -916,7 +916,7 @@ function AppInner() {
   // Settings state
   const {
     maxConcurrent,
-    effectiveMaxConcurrent,
+    maxWorktrees,
     autoMerge,
     mergeStrategy,
     planAutoApproveEnabled,
@@ -1818,7 +1818,7 @@ function AppInner() {
     mainPanelDetailTask,
     filteredBoardTasks,
     maxConcurrent,
-    effectiveMaxConcurrent,
+    maxWorktrees,
     showWorktreeGrouping,
     moveTask,
     pauseTask,
