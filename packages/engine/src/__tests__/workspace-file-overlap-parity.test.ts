@@ -187,7 +187,7 @@ describe("workspace implementation base-refresh enablement", () => {
       { id: "review", kind: "prompt" } as WorkflowIrNode,
       live,
       settings,
-      { requiresWorktree: true },
+      { requiresWorktree: false },
     );
 
     expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledOnce();
