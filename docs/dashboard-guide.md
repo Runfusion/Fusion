@@ -6,7 +6,7 @@ In **Settings → General**, workspace projects also show a **Workspace reposito
 
 ### Workspace landing progress
 
-Task Detail lists each acquired workspace repository as pending, landed, or failed. A landed entry shows its recorded landing SHA; a structured environment failure names the affected resource and the recovery action without exposing raw Git stderr. After the operator repairs that environment, use the existing in-review **Retry** action: landed repositories remain intact and only unresolved repositories are considered. Automatic, retry, and human-requested merge attempts share this progress view; repeated observations of the same failure should not require a second workspace-specific control.
+Task Detail's **Details** tab lists each acquired workspace repository as pending, landed, or failed. A landed entry shows its recorded landing SHA; a structured environment failure names the affected resource and the recovery action without exposing raw Git stderr. After the operator repairs that environment, use the existing in-review **Retry** action: landed repositories remain intact and only unresolved repositories are considered. Automatic, retry, and human-requested merge attempts share this progress view; repeated observations of the same failure should not require a second workspace-specific control.
 
 In **Settings → General**, operators can choose a default GitHub report target (**Issue** or **Discussion**) and add an optional per-action override for Bug, Feedback, Idea, or Help. Leaving these settings unset preserves the built-in routing: Bug and Idea file Issues; Feedback and Help file Discussions. The `reportDiscussionCategory` setting selects the category for Discussion reports.
 
@@ -2664,11 +2664,11 @@ The Memory view also includes a fourth **Knowledge Graph** tab. It provides capp
 
 ### Workspace per-repository land status
 
-Task Detail shows each acquired workspace repository as **landed**, **pending**, or **failed**. Landed repositories include a short commit SHA; a partial land shows the aggregate landed count and retained task failure detail. The compact TaskCard chip deliberately remains count-only. The engine records a durable per-repository failure for both `landWorkspaceTask` failed-result branches and self-healing's unrecoverable partial-land park; busy leases, aborts, persist-after-advance recovery, and empty merges intentionally do not record one. Older partial-land rows and empty repositories remain pending, with any available failure detail shown only in the aggregate block.
+Task Detail's **Details** tab shows each acquired workspace repository as **landed**, **pending**, or **failed**. Landed repositories include a short commit SHA; a partial land shows the aggregate landed count and retained task failure detail. The compact TaskCard chip deliberately remains count-only. The engine records a durable per-repository failure for both `landWorkspaceTask` failed-result branches and self-healing's unrecoverable partial-land park; busy leases, aborts, persist-after-advance recovery, and empty merges intentionally do not record one. Older partial-land rows and empty repositories remain pending, with any available failure detail shown only in the aggregate block.
 
 ### Workspace task scope status
 
-Task Detail's workspace repository summary distinguishes acquired repositories from explicit task scope. Each repository shows whether it is modified, out of scope, or **No changes — not reviewed**, alongside landed, pending, or failed land state. An acquired repository outside the selected scope is informational only; it does not receive a review verdict or block task completion. The same summary remains readable in compact task-card presentation without adding empty controls on mobile.
+The workspace repository summary in Task Detail's **Details** tab distinguishes acquired repositories from explicit task scope. Each repository shows whether it is modified, out of scope, or **No changes — not reviewed**, alongside landed, pending, or failed land state. An acquired repository outside the selected scope is informational only; it does not receive a review verdict or block task completion. The same summary remains readable in compact task-card presentation without adding empty controls on mobile.
 
 ### Update restart recovery
 

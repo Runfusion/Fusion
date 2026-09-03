@@ -1601,7 +1601,6 @@ Planner Chat should not open expanded by default. When the user expands it, the 
 .task-detail-content--planner-chat-expanded .detail-plan-approval-banner,
 .task-detail-content--planner-chat-expanded .task-fields-section,
 .task-detail-content--planner-chat-expanded .branch-group-card,
-.task-detail-content--planner-chat-expanded .workspace-worktrees-summary,
 .task-detail-content--planner-chat-expanded .modal-actions,
 .task-detail-content--planner-chat-expanded .detail-tabs,
 .task-detail-content--planner-chat-expanded .detail-meta-inline-controls,
@@ -3666,9 +3665,16 @@ Reuse the near-duplicate banner layout; replan-cap escalations use a stronger wa
 FNXC:Workspace 2026-06-21-00:00:
 Flat read-only per-sub-repo worktree list for a workspace task (U3/KTD5 dashboard floor).
 Read-only list/placeholder only — not the deferred rich per-repo-status component.
+
+FNXC:Workspace 2026-09-03-14:19:
+FN-289 moves the full summary into the Details section, so Planner Chat no longer needs to hide it.
+Let the canonical detail-section margin own spacing instead of stacking the summary's header margin.
 */
 .workspace-worktrees-summary {
   margin: var(--space-sm) 0 0;
+}
+.detail-section--workspace-repos .workspace-worktrees-summary {
+  margin-top: 0;
 }
 .workspace-worktrees-placeholder {
   font-size: 0.75rem;
