@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
+import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
 const taskPlannerChatCss = readFileSync(resolve(__dirname, "../TaskPlannerChatTab.css"), "utf8");
 const originalScrollTopDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
@@ -20,7 +21,7 @@ const mockModelCatalog = vi.hoisted(() => ({
   ],
 }));
 
-const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchSettings, mockFetchTaskDetail, mockUpdateChatSession, mockStreamChatResponse, mockAttachChatStream, mockCancelChatResponse, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
+const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchSettings, mockFetchGlobalSettings, mockUpdateGlobalSettings, mockFetchTaskDetail, mockUpdateChatSession, mockStreamChatResponse, mockAttachChatStream, mockCancelChatResponse, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
   const translations = new Map<string, string>();
   return {
     mockEnsureTaskPlannerChatSession: vi.fn(),
@@ -28,6 +29,8 @@ const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockF
     mockFetchChatSession: vi.fn(),
     mockFetchChatMessages: vi.fn(),
     mockFetchSettings: vi.fn().mockResolvedValue({}),
+    mockFetchGlobalSettings: vi.fn().mockResolvedValue({ chatSnippets: [] }),
+    mockUpdateGlobalSettings: vi.fn().mockResolvedValue({ chatSnippets: [] }),
     mockFetchTaskDetail: vi.fn(),
     mockUpdateChatSession: vi.fn(),
     mockStreamChatResponse: vi.fn(),
@@ -66,6 +69,8 @@ vi.mock("../../api", async (importOriginal) => {
     fetchChatSession: mockFetchChatSession,
     fetchChatMessages: mockFetchChatMessages,
     fetchSettings: mockFetchSettings,
+    fetchGlobalSettings: mockFetchGlobalSettings,
+    updateGlobalSettings: mockUpdateGlobalSettings,
     fetchTaskDetail: mockFetchTaskDetail,
     updateChatSession: mockUpdateChatSession,
     streamChatResponse: mockStreamChatResponse,
@@ -194,7 +199,10 @@ function plannerQuestionMessage(id: string, args: Record<string, unknown>, creat
 
 describe("TaskPlannerChatTab", () => {
   beforeEach(() => {
+    __test_resetChatSnippetsCache();
     vi.clearAllMocks();
+    mockFetchGlobalSettings.mockReturnValue(new Promise(() => {}));
+    mockUpdateGlobalSettings.mockResolvedValue({ chatSnippets: [] });
     mockTranslations.clear();
     const plannerSession = makePlannerSession();
     mockFetchTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
@@ -1112,6 +1120,36 @@ describe("TaskPlannerChatTab", () => {
     const mobileCss = taskPlannerChatCss.slice(taskPlannerChatCss.indexOf("@media (max-width: 768px)"));
     expect(mobileCss).not.toMatch(/\.task-planner-chat-transcript\s*\{/);
     expect(mobileCss).not.toMatch(/\.task-planner-chat-transcript[^}]*\b(?:overflow|scroll-behavior|height|flex)\s*:/);
+  });
+
+  it("inserts a chat snippet on the first submit without stream or persistent queue, then sends it normally", async () => {
+    const prompt = "lance toujours les tests avec chrome devtool mcp";
+    mockFetchGlobalSettings.mockResolvedValue({ chatSnippets: [{ name: "test", prompt }] });
+    const storageSpy = vi.spyOn(Storage.prototype, "setItem");
+    renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+    const input = screen.getByLabelText("Message task chat");
+    const send = screen.getByRole("button", { name: "Send" });
+
+    await userEvent.type(input, "/test");
+    await screen.findByRole("option", { name: /\/test/i });
+    fireEvent.click(send);
+
+    await waitFor(() => expect(input).toHaveValue(prompt));
+    expect(mockStreamChatResponse).not.toHaveBeenCalled();
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
+    expect(storageSpy.mock.calls.some(([, value]) => String(value).includes(prompt))).toBe(false);
+
+    fireEvent.click(send);
+    await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledWith(
+      "chat-planner",
+      prompt,
+      expect.any(Object),
+      undefined,
+      undefined,
+      { taskId: "FN-7310" },
+    ));
+    storageSpy.mockRestore();
   });
 
   it("sends messages through the chat stream and appends success responses", async () => {
@@ -2398,15 +2436,14 @@ describe("TaskPlannerChatTab", () => {
       expect(textarea).toHaveValue("next message");
     });
 
-    // The planner command menu renders only commands (not skills), so its
-    // accessible copy must say "command", not the reused skill-menu copy.
-    it("labels the command menu with command-specific copy, not skill copy", async () => {
+    // The unified slash menu can render commands and snippets, so its accessible copy must describe the shared affordance rather than the skill picker it reuses visually.
+    it("labels the command menu with slash-specific copy, not skill copy", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
       const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/" } });
 
-      const menu = await screen.findByRole("listbox", { name: /command suggestions/i });
+      const menu = await screen.findByRole("listbox", { name: /slash suggestions/i });
       expect(menu).toBeInTheDocument();
       expect(screen.queryByRole("listbox", { name: /skill suggestions/i })).not.toBeInTheDocument();
     });

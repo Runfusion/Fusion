@@ -81,7 +81,11 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   FN-6886 promotes Planning Mode into a persisted top-level docked task view instead of treating it as a modal-only overlay.
   */
   { id: "planning", label: "Planning", labelKey: "nav.planning" },
-  { id: "skills", label: "Skills", labelKey: "header.skillsView" },
+  /*
+  FNXC:ChatSnippets 2026-09-03-16:32:
+  The existing `skills` route and persistence identity stay stable while every navigation label presents the combined Skills & Snippets destination.
+  */
+  { id: "skills", label: "Skills & Snippets", labelKey: "header.skillsView" },
   { id: "mailbox", label: "Mailbox", labelKey: "nav.mailbox" },
   { id: "insights", label: "Insights", labelKey: "header.insightsView" },
   { id: "memory", label: "Memory", labelKey: "header.memoryView" },

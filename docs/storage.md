@@ -370,6 +370,7 @@ API endpoints reviewed:
 | `themeMode` | Global | `GET/PUT /api/settings/global` (+ merged via `GET /api/settings`) | Theme mode preference |
 | `colorTheme` | Global | `GET/PUT /api/settings/global` | Color/accent theme |
 | `dashboardFontScalePct` | Global | `GET/PUT /api/settings/global` | Dashboard Appearance font scale percentage (85–125, default 100) applied before hydration. |
+| `chatSnippets` | Global | `GET/PUT /api/settings/global` | Ordered reusable chat prompts (`{ name, prompt }`), normalized and validated atomically; the dashboard inserts `/name` into composers without implicit send and keeps its shared cache memory-only. |
 | `defaultProvider` | Global | `GET/PUT /api/settings/global` | Default model provider |
 | `defaultModelId` | Global | `GET/PUT /api/settings/global` | Default model id |
 | `fallbackProvider` | Global | `GET/PUT /api/settings/global` | Fallback model provider |

@@ -230,7 +230,7 @@ Task Detail modal opens from onboarding, activity log, and task-to-task navigati
 <!-- FNXC:DashboardDocs 2026-06-22-00:00: The dashboard navigation docs must mirror the post-reshuffle source of truth: the left sidebar owns primary content views plus Workflows, Import Tasks, and Automations, while the right dock owns only inline tool panels. -->
 <!-- FNXC:DashboardNavigationDocs 2026-06-22-09:30: FN-6897 synced the user-facing navigation guide after the sidebar/dock reshuffle. Desktop/tablet navigation is split between left-sidebar main-content destinations, a persistent far-right tools dock, and the footer-launched Terminal; stale Header overflow, duplicate dock/sidebar, and standalone Stash Recovery affordances must not be documented as current behavior. -->
 
-When enabled on desktop or tablet project screens, the sidebar starts with a centered **New Task** button that opens the existing New Task dialog from any project screen. Expanded mode shows the plus icon and **New Task** label; collapsed rail mode keeps the centered icon-only button accessible through its label/title. Below that action, the sidebar contains primary destinations (**Board**, **List**, **Agents** when enabled, **Command Center**, **Planning**, **Missions**, **Chat**, **Artifacts**, **Mailbox**, and plugin primary views) followed by secondary destinations (**Workflows**, **Import Tasks**, **Automations**, optional **Evals**, **Goals**, **Research**, **Insights**, **Skills**, **Memory**, **Dev Server**, and plugin overflow views when their flags/plugins are enabled). The footer contains the sidebar collapse toggle directly above **Settings**.
+When enabled on desktop or tablet project screens, the sidebar starts with a centered **New Task** button that opens the existing New Task dialog from any project screen. Expanded mode shows the plus icon and **New Task** label; collapsed rail mode keeps the centered icon-only button accessible through its label/title. Below that action, the sidebar contains primary destinations (**Board**, **List**, **Agents** when enabled, **Command Center**, **Planning**, **Missions**, **Chat**, **Artifacts**, **Mailbox**, and plugin primary views) followed by secondary destinations (**Workflows**, **Import Tasks**, **Automations**, optional **Evals**, **Goals**, **Research**, **Insights**, **Skills & Snippets**, **Memory**, **Dev Server**, and plugin overflow views when their flags/plugins are enabled). The footer contains the sidebar collapse toggle directly above **Settings**.
 
 Use the desktop/tablet sidebar this way:
 
@@ -293,7 +293,7 @@ Use the desktop/tablet right dock this way:
 6. Use the Header right-sidebar toggle.
    Expected outcome: the far-right surface opens or closes without creating duplicate left-sidebar destinations; mobile viewports never render or reserve space for the right dock.
 
-Content views such as Artifacts, Research, Insights, Skills, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
+Content views such as Artifacts, Research, Insights, **Skills & Snippets**, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
 
 On mobile viewports, the Right Dock never renders. The compact Header actions and bottom `MobileNavBar` keep their existing mobile behavior even when the experiment is enabled.
 
@@ -1884,9 +1884,17 @@ Settings form edits auto-save after a short debounce. The Settings footer has no
 
 For setup prerequisites, security caveats for tokenized URLs/QR links, and troubleshooting, use the canonical **[Remote Access runbook](./remote-access.md)**.
 
-## Skills API
+## Skills & Snippets
 
-The Skills view now supports the full browse-and-install loop for skills.sh entries: use **Skills Catalog** to search the catalog, click **Install** on any card with a source repository, and the dashboard will run the same installer as the CLI (`npx skills add <owner/repo> -y -a pi`, with `--skill <slug>` when applicable). On success, the view refreshes **Discovered Skills** and the catalog immediately; entries already installed for the selected project show **Installed** rather than an install button.
+<!-- FNXC:ChatSnippets 2026-09-03-16:32: Operators manage global reusable prompts beside execution skills, then explicitly insert rather than dispatch them from all three dashboard chat composers. -->
+
+The **Skills & Snippets** view includes a global **Chat Snippets** manager above the existing execution-skill surfaces. Add a unique name and prompt, edit either field, or delete an entry; validation reserves built-in slash names (`clear`, `new`, `steer`, `focus`, and `skill`), accepts 1–48 letters, numbers, underscores, or hyphens, limits prompts to 4,000 characters, and caps the list at 50 entries. The authoritative `chatSnippets` array is stored in global settings through `GET/PUT /api/settings/global`, so the same ordered list is available across projects. The dashboard keeps this cache in memory only and serializes overlapping create, update, and delete actions so a stale response cannot overwrite a newer change.
+
+Type `/name` in **Chat**, task **Planning Chat**, or task **Activity Chat** to choose the matching snippet with the pointer or keyboard. Selecting it—or submitting a standalone `/name`—only inserts the saved prompt into the composer at the cursor and returns focus; it never sends, streams, creates a refinement, posts steering, or queues a planner follow-up until you explicitly submit the inserted text. In Chat, existing attachments remain selected and inserted snippet text is not copied into the saved-draft `localStorage` entry. Built-in commands keep priority over snippets, skills remain available after snippets in Chat autocomplete, and unknown, partial, mid-text, or suffixed forms continue through their existing behavior.
+
+### Skills API
+
+The Skills & Snippets view supports the full browse-and-install loop for skills.sh entries: use **Skills Catalog** to search the catalog, click **Install** on any card with a source repository, and the dashboard will run the same installer as the CLI (`npx skills add <owner/repo> -y -a pi`, with `--skill <slug>` when applicable). On success, the view refreshes **Discovered Skills** and the catalog immediately; entries already installed for the selected project show **Installed** rather than an install button.
 
 Discovery is scoped to the requested project root. It merges `<root>/.fusion/skills`, `<root>/.pi/skills`, `<root>/.agents/skills` and its repository ancestors, user/global agent sources, and project-enabled plugin skills. For duplicate project-local skills, Fusion-owned `.fusion/skills` takes precedence over `.pi/skills`, which takes precedence over project `.agents/skills`; plugin skills remain a final bare-name deduplicated merge. Catalog `installation.installed` is computed from this same project inventory.
 
