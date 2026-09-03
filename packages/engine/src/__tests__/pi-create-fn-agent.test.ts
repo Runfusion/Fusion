@@ -2483,7 +2483,7 @@ describe("createFnAgent", () => {
     }));
   });
 
-  it("does not duplicate Claude Sonnet 5 when the Anthropic registry already has it", async () => {
+  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
     getAllMock.mockReturnValue([
       {
         provider: "anthropic",
@@ -2508,7 +2508,11 @@ describe("createFnAgent", () => {
     });
 
     const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(0);
+    expect(anthropicRegistrations).toHaveLength(1);
+    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
+      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
+    ]));
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
@@ -3469,6 +3473,28 @@ describe("createFnAgent", () => {
       const result = await runtime.getAuth(anyModel);
 
       expect(result?.auth.headers).toEqual({});
+    });
+
+    it("adds OAuth identity alongside task routing headers", async () => {
+      modelRuntimeGetAuthMock.mockResolvedValueOnce({ auth: { apiKey: "sk-ant-oat-test", headers: {} } });
+      const runtime = await createAndCaptureRuntime({ taskId: "FN-9245" });
+
+      const result = await runtime.getAuth(anyModel);
+
+      expect(result?.auth.headers).toEqual({
+        "X-Session-Id": "FN-9245",
+        "X-Session-Affinity": "FN-9245",
+        "user-agent": "claude-cli/2.1.251",
+      });
+    });
+
+    it("adds OAuth identity without a task or pi session id", async () => {
+      modelRuntimeGetAuthMock.mockResolvedValueOnce({ auth: { apiKey: "sk-ant-oat-test", headers: {} } });
+      const runtime = await createAndCaptureRuntime();
+
+      const result = await runtime.getAuth(anyModel);
+
+      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.251" });
     });
   });
 

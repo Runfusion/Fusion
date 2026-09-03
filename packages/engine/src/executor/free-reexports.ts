@@ -215,7 +215,6 @@ export { acquireSessionRegistryPath as acquireSessionRegistryPathFree } from "./
 export { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseFree } from "./should-defer-completion-for-global-pause.js";
 export { parkApprovalSuspension as parkApprovalSuspensionFree } from "./park-approval-suspension.js";
 export { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededFree } from "./resume-approval-after-unwind.js";
-export { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningFree } from "./ensure-task-worktree-for-planning.js";
 export { foreachActiveForTask as foreachActiveForTaskFree } from "./foreach-active-for-task.js";
 export { buildBranchPersistence as buildBranchPersistenceFree } from "./build-branch-persistence.js";
 export {

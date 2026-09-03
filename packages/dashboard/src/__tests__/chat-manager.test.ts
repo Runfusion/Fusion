@@ -8,7 +8,7 @@ FN-6444 confirmed this ChatManager API-path suite is deterministic under dashboa
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal } from "@fusion/core";
+import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal, type Settings } from "@fusion/core";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -111,16 +111,7 @@ function createChatManagerForRoot(rootDir: string): ChatManager {
   return new ChatManager(mockChatStore as any, rootDir, mockAgentStore as any);
 }
 
-function createChatManagerWithSettings(settings: {
-  fallbackProvider?: string;
-  fallbackModelId?: string;
-  defaultProvider?: string;
-  defaultModelId?: string;
-  defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  defaultThinkingLevelOverride?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  executionThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  executionGlobalThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-}): ChatManager {
+function createChatManagerWithSettings(settings: Partial<Settings>): ChatManager {
   return new ChatManager(
     mockChatStore as any,
     "/tmp/test",
@@ -3387,6 +3378,7 @@ describe("ChatManager.sendMessage", () => {
         "/tmp/test",
         undefined,
         undefined,
+        expect.objectContaining({ mode: "english", locale: "en" }),
       );
 
       // Assert - session was updated with the generated title
@@ -3394,6 +3386,82 @@ describe("ChatManager.sendMessage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // Chat title generation is a single server-side seam shared by every desktop and mobile chat host.
+  it("passes configured interface language to background title generation", async () => {
+    mockSummarizeTitle.mockResolvedValue("Titre court");
+    __setCreateFnAgent(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [] },
+      },
+    }));
+
+    const chatManager = createChatManagerWithSettings({ taskOutputLanguage: "interface", language: "fr" });
+    await chatManager.sendMessage("chat-001", "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.");
+    await vi.waitFor(() => expect(mockSummarizeTitle).toHaveBeenCalled());
+
+    expect(mockSummarizeTitle).toHaveBeenLastCalledWith(
+      "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.",
+      "/tmp/test",
+      undefined,
+      undefined,
+      expect.objectContaining({ mode: "interface", locale: "fr" }),
+    );
+  });
+
+  it("falls back to English titles when loading settings rejects", async () => {
+    mockSummarizeTitle.mockResolvedValue("Short Title");
+    __setCreateFnAgent(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [] },
+      },
+    }));
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      async () => Promise.reject(new Error("settings unavailable")),
+    );
+
+    await chatManager.sendMessage("chat-001", "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.");
+    await vi.waitFor(() => expect(mockSummarizeTitle).toHaveBeenCalled());
+
+    expect(mockSummarizeTitle).toHaveBeenLastCalledWith(
+      "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.",
+      "/tmp/test",
+      undefined,
+      undefined,
+      expect.objectContaining({ mode: "english", locale: "en" }),
+    );
+  });
+
+  it("does not wait for title settings before prompting the chat agent", async () => {
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    __setCreateFnAgent(async () => ({
+      session: { prompt, dispose: vi.fn(), state: { messages: [] } },
+    }));
+    let settingsReadCount = 0;
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      undefined,
+      undefined,
+      async () => {
+        settingsReadCount += 1;
+        return settingsReadCount === 1 ? new Promise<Partial<Settings>>(() => undefined) : {};
+      },
+    );
+
+    await chatManager.sendMessage("chat-001", "A message must still reach the chat agent.");
+
+    expect(prompt).toHaveBeenCalled();
+    expect(mockSummarizeTitle).not.toHaveBeenCalled();
   });
 
   it("uses truncated content when summarizeTitle returns null", async () => {

@@ -112,12 +112,13 @@ import {
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./merge/group-merge-coordinator.js";
 import { rerouteWorkspaceReviewToCodeReview } from "./merge/workspace-review-reroute.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
+import { rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
 import { WorkspaceEnvironmentError } from "./merge/workspace-integration-target.js";
 import {
   formatAdmissionCapacityQueuedReason,
   persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
 } from "./concurrency/concurrency.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
 import { clearOwnedMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
@@ -941,6 +942,7 @@ export class ProjectEngine {
             taskId: task.id,
             projectId,
             lane: "review",
+            consumesWorktree: false,
             createdAt: task.createdAt,
             start: async () => {
               // Do not run merge work in the coordinator; hand the exact queued
@@ -2888,6 +2890,20 @@ export class ProjectEngine {
       requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
       mergeContent,
     });
+    if (blocker === PRE_MERGE_STEPS_NOT_RUN_BLOCKER && mergeContent.kind === "singular") {
+      const reroute = await rerouteUnrunPreMergeGateToReview(store, task, {
+        requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+        mergeContent,
+      }).catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
+      if (reroute.rerouted) {
+        await store.logEntry(task.id, "[pre-merge] The workflow graph was re-seeded at an enabled pre-merge gate that never ran.");
+      }
+      await emitBoundedRunAudit(store, {
+        taskId: task.id, agentId: "merge-gate", runId: `${task.id}:merge-gate`, domain: "database",
+        mutationType: "task:merge-unrun-pre-merge-gate-rerouted", target: task.id,
+        metadata: { taskId: task.id, nodeId: reroute.nodeId, workflowStepId: reroute.workflowStepId, reason: reroute.reason, source: "merge-gate", missingGateCount: mergeGate.requiredPreMergeStepIds.size },
+      });
+    }
     if (blocker === "task has a pre-merge approval recorded against different content" && mergeContent.kind === "singular") {
       const reroute = await rerouteSingularStaleContentToReview(store, task, {
         requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
@@ -4444,10 +4460,8 @@ export class ProjectEngine {
             */
             await projectAdmissionCoordinator.admitNext({
               projectId: cwd,
-              maxConcurrent: resolveActiveTaskCapacityLimit({
+              maxConcurrent: resolveAgentCapacityLimit({
                 maxConcurrent: admissionSettings.maxConcurrent,
-                maxWorktrees: admissionSettings.maxWorktrees,
-                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               }),
               claimed: async () => (await getMergeClaimSnapshot()).count,
               claimedTaskIds: async () => (await getMergeClaimSnapshot()).ids,
@@ -4455,6 +4469,7 @@ export class ProjectEngine {
                 taskId,
                 projectId: cwd,
                 lane: "review",
+                consumesWorktree: false,
                 createdAt: mergeCandidate?.createdAt,
                 start: async () => {
                   selected = true;
@@ -4464,10 +4479,8 @@ export class ProjectEngine {
             });
             if (!selected) {
               const snapshot = await getMergeClaimSnapshot();
-              const limit = resolveActiveTaskCapacityLimit({
+              const limit = resolveAgentCapacityLimit({
                 maxConcurrent: admissionSettings.maxConcurrent,
-                maxWorktrees: admissionSettings.maxWorktrees,
-                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               });
               if (snapshot.count >= limit) {
                 /*
@@ -4477,9 +4490,8 @@ export class ProjectEngine {
                 snapshot proves exhaustion rather than a higher-priority candidate winning.
                 */
                 const reason = formatAdmissionCapacityQueuedReason({
-                  maxConcurrent: admissionSettings.maxConcurrent,
-                  maxWorktrees: admissionSettings.maxWorktrees,
-                  worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
+                  gate: "maxConcurrent",
+                  limit,
                   claimed: snapshot.count,
                   holderTaskIds: snapshot.ids,
                 });

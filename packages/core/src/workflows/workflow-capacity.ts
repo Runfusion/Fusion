@@ -111,22 +111,20 @@ export function resolveMaxConcurrentSetting(settings: ConcurrencySettingsInput):
 export interface EffectiveConcurrency {
   maxConcurrent: number;
   worktreeLimit: number | null;
-  effectiveLimit: number;
-  bindingKnob: "maxConcurrent" | "maxWorktrees";
 }
 
-/** Resolves the configured capacity and its visible, enforced effective ceiling. */
+/*
+FNXC:CapacityModel 2026-09-01-14:49:
+The two concurrency knobs are orthogonal. `maxConcurrent` bounds provider/LLM load across every
+AI-active task, including planning, while `maxWorktrees` bounds host build, memory, and disk load
+across execution checkouts only. Reintroducing one `Math.min(maxConcurrent, maxWorktrees)` ceiling
+would recreate FN-282: a small worktree cap would throttle checkout-free planning.
+*/
+/** Resolves the independent agent and worktree capacity dimensions. */
 export function resolveEffectiveConcurrency(settings: ConcurrencySettingsInput): EffectiveConcurrency {
-  const maxConcurrent = resolveMaxConcurrentSetting(settings);
-  const worktreeLimit = resolveWorktreeCapacityLimit(settings);
-  const bindingKnob = worktreeLimit !== null && worktreeLimit <= maxConcurrent
-    ? "maxWorktrees"
-    : "maxConcurrent";
   return {
-    maxConcurrent,
-    worktreeLimit,
-    effectiveLimit: worktreeLimit === null ? maxConcurrent : Math.min(maxConcurrent, worktreeLimit),
-    bindingKnob,
+    maxConcurrent: resolveMaxConcurrentSetting(settings),
+    worktreeLimit: resolveWorktreeCapacityLimit(settings),
   };
 }
 

@@ -1205,6 +1205,7 @@ export function TaskDetailContent({
   FN-173 makes the duplicate flag acknowledgeable rather than an opaque decision. The actions row only
   exists for Delete or Archive so ordinary cards without archive access do not leave an empty shell.
   */
+  // FNXC:WorkflowLifecycle 2026-08-31-07:33: DELIBERATE-LITERAL — absent canonical workflow flags require legacy terminal-column fallback semantics.
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
@@ -1310,6 +1311,7 @@ export function TaskDetailContent({
   const isArchivedColumn = isArchivedColumnRole(detailColumnFlags, task.column);
   const isWipColumn = isWipColumnRole(detailColumnFlags, task.column);
   const isReviewColumn = isReviewColumnRole(detailColumnFlags, task.column);
+  // FNXC:WorkflowLifecycle 2026-08-31-07:33: DELIBERATE-LITERAL — absent detail workflow flags require the legacy mutable-column fallback.
   const isMutableLiveColumn = detailColumnFlags
     ? detailColumnFlags.complete !== true && detailColumnFlags.archived !== true
     : task.column !== "done" && task.column !== "archived";

@@ -469,6 +469,11 @@ proper-lockfile-guarded withLockAsync rereads auth.json and AuthStorage.modify m
 { ...currentData, [provider]: next } before writing. This preserves the per-provider
 read-modify-merge contract rather than flushing a whole-file in-memory snapshot as the
 credential-store adapter handles new upstream providers.
+
+FNXC:ProviderAuth 2026-09-02-22:06:
+FN-9244 re-verified pi-coding-agent@0.84.4 dist/core/auth-storage.js. Its proper-lockfile-
+guarded mutation rereads auth.json and merges `{ ...currentData, [provider]: next }`, so
+Fusion's credential adapter still preserves concurrent credentials for other providers.
 */
 
 /*

@@ -2,6 +2,130 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.1
+
+### Highlights
+
+- Claude Fable 5.1 works again when signing in with an Anthropic subscription
+- Muse Spark models are selectable in the model picker with pricing attached
+- Bundled Pi runtime moves from 0.84.1 to 0.84.4
+- Pin the reported Claude Code client version with an environment override
+
+### New
+
+- Muse Spark models are now selectable wherever you pick a model, with pricing configured for the four credentialed-provider keys.
+- The bundled Pi runtime advances from 0.84.1 to 0.84.4.
+
+### Fixed
+
+- Claude Fable 5.1 no longer fails on Anthropic subscription login with a too-old-client error. A new client-identity policy sends a current version, and an environment override lets you pin the reported Claude Code version yourself if a future upstream bump gets ahead of the release.
+
+## 0.78.0-beta.0
+
+### Highlights
+
+- Claude Fable 5.1 selectable in Anthropic and Claude CLI model pickers, with pricing
+- Review cards with enabled pre-merge checks that never ran now recover automatically
+- Skipped pre-merge gates re-enter review in place instead of stalling the card
+
+### New
+
+- Claude Fable 5.1 is available in the Anthropic and Claude CLI model pickers, with pricing wired in so cost tracking stays accurate.
+
+### Fixed
+
+- A review card whose enabled pre-merge checks never ran is now detected and reseeded, so it re-enters the missing gate in place instead of sitting in review unmerged. The reroute is recorded in the run audit.
+
+## 0.77.0
+
+### Highlights
+
+- Breaking: executing agents no longer create tasks — findings become completion recommendations
+- Remote login links now mint expiring sessions instead of handing over the dashboard token
+- Auto-merge waits for Code Review, and an in-flight merge no longer aborts itself every 15 seconds
+- Idle and paused projects drop from ~98% CPU to under 50% by backing off polling and git sweeps
+- New Coding (Ideas) V2 workflow runs verification and documentation as visible review gates
+
+### Breaking
+
+- Executing agents no longer create tasks; out-of-scope findings are recorded as completion recommendations instead.
+- Complex requests stay as one planned task — task splitting and the subtask/fan-out routes are removed.
+- Revision findings are the only thing that can move a task backward; the assorted automatic replan and terminal-failure sweeps are gone.
+- Task recovery is simplified to Retry, Reset, and Delete; Reset opens an editable original-description dialog and replaces Respecify.
+- Unplanned tasks can no longer be force-started into execution on any surface.
+- The per-task manual plan-approval toggle and shield badges are removed; plan approval is resolved from settings.
+- Every configured repository is prepared in a task-ID worktree before work starts; `worktreeNaming`, `recycleWorktrees`, and `fn_acquire_repo_worktree` are removed.
+
+### Security
+
+- Remote login links no longer redirect with the dashboard's real non-expiring token. They now mint an opaque, expiring, revocable session delivered as an HttpOnly cookie, so revoking a remote token actually signs the recipient out.
+- A remote tunnel that cannot start now reports `stopped` with a reason instead of claiming it is starting.
+
+### New
+
+- Coding (Ideas) V2 workflow: verification and documentation run as review-lane gates rather than hidden checklist entries, with Code Review running lint/test/build itself and quoting output as evidence.
+- Update Fusion from source in one click — pull, rebuild, and restart from Command Center; the Docker entrypoint is now a restart supervisor.
+- Add OrcaRouter as a named model provider with startup catalog sync, plus Grok 4.6 in the built-in Grok catalog.
+- Stash memory backend: complete-chat-session capture, per-task capture, executor transcript upload for finished or failed tasks, a per-chat "Preserve to Stash" backfill action, and opt-in semantic recall.
+- New Patchnode/History view with a searchable, permanent daily log of completed and reverted tasks.
+- Terminal sessions are now shared across browsers, with close-here vs end-session and a Reopen control.
+- Prometheus-format `/metrics` endpoint on the dashboard for runtime and domain metrics.
+- Fast lane for quick task changes without planning or pre-merge review.
+- Task detail gains a History tab and a consolidated Summary with merge details and per-step timings; reports, changes, and spend each have one home.
+- Chat: agent mentions and quoting, a docked resizable conversation sidebar, multiple pop-out Quick Chat windows, contextual Find, and bubble-or-full-width message layout.
+- Board and List gain arrival and task-ID sorting, desktop click-drag panning, and preserved view state.
+- ACP runtimes can expose Fusion `fn_*` tools to external agents such as Hermes ACP and Prime.
+- Cursor CLI runs through Fusion's supervised runtime, with Fusion task tools bridged into its sessions and cross-runtime fallback support.
+- New Velvet, Iceberg, Flexoki, Cozy Cartoon, and Medieval color themes.
+- `pnpm dev --tunnel` publishes a dev server through a Cloudflare quick tunnel, and `pnpm dev --isolated` runs the dev server against its own database and project directory.
+- Workspace tasks can use one custom branch name across every sub-repository, choose a verified base branch per repository, and derive branch names from configured JIRA issues.
+
+### Fixed
+
+- Merges no longer stall forever: an in-flight merge stopped aborting itself every 15 seconds, and a landed merge finalizes even when the task row has no steps.
+- Auto-merge no longer merges a task before its workflow's code review has finished; every merge door is now a recovery servicer rather than a merge initiator.
+- A rejected code review now reliably produces named fix steps that start on the first try, instead of leaving the card stuck in review with no explanation.
+- A blocking review gate no longer records approval when the reviewer never returned a usable verdict.
+- Fixed a startup crash where Fusion rejected the database it had just migrated, and a chat failure from a renumbered migration leaving `memory_focus` missing.
+- Starting Fusion no longer interrupts a working install with onboarding questions; onboarding always creates the central database.
+- First-ever provider logins no longer fail silently on a fresh install; Anthropic Subscription and OpenAI Codex sign-in are fixed, and a persistent sign-in dialog keeps the paste field and status visible.
+- Remote access reports "running" for a tunnel that survived a restart, targets the port the dashboard is really on, survives an engine restart, and works in Docker.
+- The Docker image now ships ca-certificates, git-lfs, ripgrep, gh, tailscale, cloudflared, and Google Chrome; builds no longer OOM and first-run volume permissions are correct.
+- Fusion sets its own git identity for commits, so hosts with no ambient git config no longer stall an auto-merge.
+- Workspace/multi-repository work: code review no longer reports delivered files as missing, approvals persist, per-repository landing status is visible, uncommitted edits in a shared checkout no longer stall completion, and concurrent acquisition no longer loses sub-repo worktrees.
+- Task worktrees and branches are preserved through recovery, reclaim, and rebind instead of being lost to the idle sweep.
+- Task Feed no longer shows "(no activity)" when opened directly on the activity view.
+- Chat fixes across mobile and desktop: keyboard-aware composers, five-line caps, preserved streamed prefixes after Stop, focus on open, back-arrow icon, and readable source links.
+- Dashboard event streams for an unknown project return 404 instead of logging a 500.
+- Board fixes: task detail opens on card click, columns stop scrolling on text selection, controls stay clickable in narrow windows, and mobile column releases settle smoothly.
+- Verification gates that reported PASS without running your tests now actually run them; a failing test or build creates named fix steps.
+- A failed database query now explains what went wrong instead of printing the whole SQL statement.
+
+### Performance
+
+- Idle and paused projects no longer poll in a tight loop: task-lifecycle outbox consumers back off toward a 60s cadence, targeting ~98% CPU down to under 50%.
+- Periodic self-healing no longer runs git churn on paused projects, and repair sweeps are bounded so health and UI stay fast.
+- Each task's workflow selection is read once per scheduler tick instead of ~6x, cutting scheduler CPU and health-API latency.
+- Creating a task from an Insights recommendation is no longer slow on large boards.
+
+### Internal
+
+- Bundled Pi runtime upgraded from 0.82.1 to 0.84.1 for updated provider and model support.
+- Retired the Coding (review-gated) workflow, superseded by Coding (Ideas) V2.
+- Added dedicated pipeline coverage proving a rejected code review produces fix steps that run and merge.
+
+## 0.77.0-beta.14
+
+### Highlights
+
+- Auto-generated chat titles stay in your configured output language
+- Mixed-language chats no longer get mislabeled titles from ambiguous text
+
+### Fixed
+
+- Chat title summarization now honors the resolved output language target, so English chats keep English titles
+- Language detection is stricter on medium-confidence Latin-script text, cutting mislabeled titles
+
 ## 0.77.0-beta.13
 
 ### Highlights

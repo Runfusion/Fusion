@@ -1073,7 +1073,7 @@ describe("WorkflowGraphExecutor optional-group", () => {
         stepName: groupId === "code-review" ? "Code Review" : "Browser Verification",
         feedback: `${groupId} finding`,
         nodeId: groupId,
-        maxRevisions: groupId === "code-review" ? "unbounded" : 3,
+        maxRevisions: 3,
       }));
       expect(calls).not.toContain("review");
       expect(result.context[`node:${groupId}:fixScheduled`]).toBe(true);
@@ -1137,7 +1137,7 @@ describe("WorkflowGraphExecutor optional-group", () => {
         stepName: groupId === "code-review" ? "Code Review" : "Browser Verification",
         feedback: `stepwise ${groupId} finding`,
         nodeId: groupId,
-        maxRevisions: groupId === "code-review" ? "unbounded" : 3,
+        maxRevisions: 3,
       }));
       expect(stepwiseResult.context[`node:${groupId}:fixScheduled`]).toBe(true);
     }

@@ -46,6 +46,62 @@ describe("model-pricing", () => {
     expect(result.usd).toBeCloseTo(4, 2);
   });
 
+  it("prices Claude Fable 5.1 instead of reporting it as unavailable", () => {
+    const result = costFor(
+      {
+        ...ZERO,
+        inputTokens: 1_000_000,
+        outputTokens: 200_000,
+        cachedTokens: 500_000,
+        cacheWriteTokens: 400_000,
+      },
+      { provider: "anthropic", model: "claude-fable-5-1" },
+    );
+
+    expect(result).toMatchObject({ unavailable: false, stale: false });
+    expect(result.usd).toBeCloseTo(25.5, 2);
+  });
+
+  it("prices OpenRouter Muse Spark 1.2 with its catalog rates", () => {
+    const result = costFor(
+      { ...ZERO, inputTokens: 1_000_000, outputTokens: 200_000, cachedTokens: 500_000, cacheWriteTokens: 400_000 },
+      { provider: "openrouter", model: "meta/muse-spark-1.2" },
+    );
+
+    expect(result).toMatchObject({ unavailable: false, stale: false });
+    expect(result.usd).toBeCloseTo(2.175, 6);
+  });
+
+  it("uses the cheaper Muse Spark contributor rate", () => {
+    const usage = { ...ZERO, inputTokens: 1_000_000, outputTokens: 200_000, cachedTokens: 500_000, cacheWriteTokens: 400_000 };
+    const standard = costFor(usage, { provider: "openrouter", model: "meta/muse-spark-1.2" });
+    const contributor = costFor(usage, { provider: "openrouter", model: "meta/muse-spark-1.2-contributor" });
+
+    expect(contributor).toMatchObject({ unavailable: false, stale: false });
+    expect(contributor.usd).not.toBeNull();
+    expect(contributor.usd!).toBeLessThan(standard.usd!);
+  });
+
+  it("keeps the unpriced opencode Muse Spark id unavailable", () => {
+    const result = costFor({ ...ZERO, inputTokens: 1_000_000 }, { provider: "opencode", model: "muse-spark-1.2" });
+
+    expect(lookupPricing({ provider: "opencode", model: "muse-spark-1.2" })).toBeUndefined();
+    expect(result).toMatchObject({ usd: null, unavailable: true });
+  });
+
+  it("keeps the deliberately unpriced free Muse Spark variant unavailable", () => {
+    // FNXC:ModelCatalog 2026-09-02-22:06: Pricing Scope Decision forbids fabricating a zero-rate Fusion key.
+    const result = costFor({ ...ZERO, inputTokens: 1_000_000 }, { provider: "opencode", model: "muse-spark-1.2-contributor-free" });
+
+    expect(result).toMatchObject({ usd: null, unavailable: true });
+  });
+
+  it("uses the documented bare-model fallback for the Muse Spark contributor id", () => {
+    expect(lookupPricing({ provider: "opencode", model: "muse-spark-1.2-contributor" })).toBe(
+      MODEL_PRICING["opencode-go:muse-spark-1.2-contributor"],
+    );
+  });
+
   it("prices direct Anthropic Claude Sonnet 5 from the restored static catalog row", () => {
     const usage = {
       inputTokens: 1_000_000,

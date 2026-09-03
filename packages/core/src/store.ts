@@ -462,6 +462,11 @@ while a singular or per-repository checkout exists; other retained checkouts are
 by priority, age, then task id. The explicit archive/delete/checkout-clear escape hatch remains the only way to
 release unfinished work early.
 
+FNXC:OverlapScheduling 2026-09-01-14:49:
+Checkout-free planning has no repair lease, so a stale blocker pointing at another planner is cleared.
+A hold-lane card with a retained execution checkout remains a dormant holder; checkout evidence, not
+planning-column membership, is the shared scheduler/repair contract.
+
 FNXC:OverlapScheduling 2026-08-29-06:34:
 An unresolvable workflow retains the shared legacy role answer through core column-role helpers. Do
 not reintroduce local lifecycle literals here: that would make a compatibility fallback a new

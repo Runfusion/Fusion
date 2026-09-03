@@ -496,10 +496,10 @@ describe("graph failure visibility after review advancement", () => {
 
     await (executor as any).handleGraphFailure(live, graphFailure);
 
-    /* FN-267 added a fourth argument: the admission claim this backstop now holds while it hands off. */
+    /* FNXC:ReviewRemediation 2026-09-02-10:50: the graph-failure backstop re-triggers the sole remediation producer without an admission-claim argument. */
     expect(request).toHaveBeenCalledWith(live.id, expect.objectContaining({ id: live.id }), expect.objectContaining({
       nodeId: "code-review-step", reviewKind: "code", verdict: "REVISE",
-    }), expect.anything());
+    }));
     expect(store.logEntry.mock.calls.some((call) => String(call[1]).includes("no further action needed"))).toBe(false);
   });
 

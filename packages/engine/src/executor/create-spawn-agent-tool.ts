@@ -140,7 +140,7 @@ export function createSpawnAgentTool(
           store: deps.store,
           tasks: await deps.store.listTasks({ slim: true, includeArchived: false }),
         });
-        const spawnCap = resolveEffectiveConcurrency(settings).effectiveLimit;
+        const spawnCap = resolveEffectiveConcurrency(settings).maxConcurrent;
         const liveChildren = deps.getTotalSpawnedCount();
         if (spawnClaimed + liveChildren >= spawnCap) {
           return {

@@ -209,7 +209,6 @@ export { acquireSessionRegistryPath as acquireSessionRegistryPathImpl } from "./
 export { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseImpl } from "./should-defer-completion-for-global-pause.js";
 export { parkApprovalSuspension as parkApprovalSuspensionImpl } from "./park-approval-suspension.js";
 export { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededImpl } from "./resume-approval-after-unwind.js";
-export { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningImpl } from "./ensure-task-worktree-for-planning.js";
 export { foreachActiveForTask as foreachActiveForTaskImpl } from "./foreach-active-for-task.js";
 export { buildBranchPersistence as buildBranchPersistenceImpl } from "./build-branch-persistence.js";
 export { sessionRegistryPath as sessionRegistryPathImpl } from "./session-registry-path.js";

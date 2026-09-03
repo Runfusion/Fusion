@@ -35,6 +35,7 @@ import {
   ApprovalRequestStore,
   isEphemeralAgent,
   resolveEffectiveAgentPermissionPolicy,
+  resolveTaskOutputLanguage,
   summarizeTitle,
   FUSION_RUNTIME_SELF_AWARENESS,
   createLogger,
@@ -2942,14 +2943,22 @@ export class ChatManager {
       // Auto-generate chat title on first message if session has no title.
       // Run after the agent fetch so the title-summarizer uses the agent's model.
       if (needsTitle) {
+        const titleSettingsPromise = this.getChatModelSettings();
+        /*
+        FNXC:ChatTitleLanguage 2026-09-01-21:25:
+        Chat titles follow the resolved taskOutputLanguage policy just like task titles. Resolve the
+        settings only inside this detached title operation so message sending never waits on title work.
+        */
         // Fire-and-forget title generation (non-blocking)
         (async () => {
           try {
+            const titleLanguageTarget = resolveTaskOutputLanguage(await titleSettingsPromise, content.trim());
             const generated = await summarizeTitle(
               content.trim(),
               this.rootDir,
               effectiveModelProvider,
               effectiveModelId,
+              titleLanguageTarget,
             );
             const title = generated ?? content.trim().slice(0, 60).trim();
             if (title) {

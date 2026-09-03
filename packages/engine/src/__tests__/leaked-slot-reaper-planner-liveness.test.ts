@@ -5,36 +5,11 @@ import { SelfHealingManager } from "../self-healing.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../healing/self-healing-constants.js";
 
 /*
-FNXC:NodeWorktreeIsolation 2026-07-29-02:10 (FN-6756 — planner worktrees reaped from under live planners):
-REGRESSION SUITE for a bug users hit: worktrees reaped while a planner was still
-working in them.
-
-MECHANISM. Under plan-in-place, specification runs while the card sits in
-`todo`/`triage`. `reapLeakedConcurrencySlots` treats both columns as reapable
-("a task waiting to run must not pin a worktree" — written before planning moved
-there), and every gate ahead of the last one passes for a planner:
-
-  - it IS a `listWorktreeHolders()` row: ensureTaskWorktreeForPlanning ->
-    ensureGraphCustomNodeWorktree -> addActiveWorktree
-  - `todo`/`triage` is a reapable column
-  - it is NOT in the executor's `executing` set — a planner is triage-owned
-  - planning routinely outlives the 60s LEAKED_WORKTREE_SLOT_GRACE_MS
-
-...leaving `clearPhantomExecutorBinding` deciding alone. It computed liveness from
-four TaskExecutor-owned sets only, so a triage planning session — which lives in
-TriageProcessor's OWN activeSessions map and registers in the module-level
-activeSessionRegistry — matched none of them. It returned true, released the slot,
-and then unregistered the planner's registry paths: destroying the evidence that
-proved the planner alive.
-
-This is FN-8600 recurring through a second sweep. That fix registered planning
-paths in the registry and taught the self-owned-branch reclaim sweep to consult
-`isPathActive`. The leaked-slot reaper never got the same signal — fixed at one
-surface, not enumerated across all.
-
-The tests below assert the invariant at BOTH levels, because either alone is
-insufficient: the unit case pins the guard, and the sweep case pins that the guard
-is actually reached and honored by the reaper.
+FNXC:PlanningBoundary 2026-09-01-14:49:
+Fresh planning owns no execution checkout and therefore never appears in `listWorktreeHolders()`;
+the leaked-slot reaper has nothing to reclaim from a planning-only card. The generic active-session
+guard remains required for real executor and review worktree holders, so this suite protects both
+the new structural absence and the existing live-checkout refusal.
 */
 
 function makeExecutorWithHeldWorktree(taskId: string, worktreePath: string): TaskExecutor {
@@ -64,18 +39,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("FN-6756: a live planner's worktree survives the leaked-slot reaper", () => {
+describe("worktree-holder liveness and checkout-free planning", () => {
   /*
   Reverting the `registeredSessionPaths.length > 0` term in
   clearPhantomExecutorBinding turns this red: the method returns true and, worse,
   unregisters the planner's path on its way out.
   */
-  it("clearPhantomExecutorBinding refuses when the task holds a registered session path", () => {
+  it("clearPhantomExecutorBinding protects a live executor's held worktree path", () => {
     const executor = makeExecutorWithHeldWorktree(PLANNER_TASK, PLANNER_WORKTREE);
     activeSessionRegistry.registerPath(PLANNER_WORKTREE, {
       taskId: PLANNER_TASK,
-      kind: "planning",
-      ownerKey: "triage:plan",
+      kind: "executor",
+      ownerKey: "executor:task",
     });
 
     expect(executor.clearPhantomExecutorBinding(PLANNER_TASK)).toBe(false);
@@ -93,8 +68,8 @@ describe("FN-6756: a live planner's worktree survives the leaked-slot reaper", (
   someone is working in that worktree. Pinning one representative non-executor kind
   keeps a future "only refuse for kind === planning" narrowing honest.
   */
-  it("refuses for any registered session kind, not just planning", () => {
-    for (const kind of ["planning", "ai-merge", "step-session"] as const) {
+  it("refuses for every registered worktree session kind", () => {
+    for (const kind of ["executor", "ai-merge", "step-session"] as const) {
       activeSessionRegistry.clear();
       const executor = makeExecutorWithHeldWorktree(PLANNER_TASK, PLANNER_WORKTREE);
       activeSessionRegistry.registerPath(PLANNER_WORKTREE, {
@@ -130,61 +105,27 @@ describe("FN-6756: a live planner's worktree survives the leaked-slot reaper", (
     expect(priv.executing.has(phantomTask)).toBe(false);
   });
 
-  /*
-  END TO END through the sweep itself. The unit case above proves the guard; this
-  proves the reaper reaches and honors it for a card in a reapable column, past the
-  grace, with the executor's sets empty — i.e. the exact reported shape.
-  */
-  /*
-  BOTH reaper surfaces, not just the reported one. `reapLeakedConcurrencySlots`
-  treats `todo` AND `triage` as reapable, and plan-in-place puts specification in
-  `todo` while Coding (Ideas) intake sits in `triage` — so a repro-only test would
-  leave half the exposed surface unguarded. AGENTS.md Surface Enumeration: the
-  regression test asserts the invariant across ALL known surfaces, not the single
-  reported reproduction.
-  */
   it.each(["todo", "triage"] as const)(
-    "reapLeakedConcurrencySlots does not reap a planning card in %s past the grace",
+    "does not expose a checkout-free planning card in the %s worktree-holder ledger",
     async (column) => {
-    const executor = makeExecutorWithHeldWorktree(PLANNER_TASK, PLANNER_WORKTREE);
-    activeSessionRegistry.registerPath(PLANNER_WORKTREE, {
-      taskId: PLANNER_TASK,
-      kind: "planning",
-      ownerKey: "triage:plan",
-    });
+      const listWorktreeHolders = vi.fn(() => []);
+      const clearPhantomExecutorBinding = vi.fn(() => true);
+      const manager = Object.create(SelfHealingManager.prototype) as SelfHealingManager;
+      (manager as unknown as Record<string, unknown>).store = {
+        getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
+        getTask: vi.fn(async () => ({ id: PLANNER_TASK, column, status: "planning" })),
+        logEntry: vi.fn(async () => undefined),
+      };
+      (manager as unknown as Record<string, unknown>).options = {
+        listWorktreeHolders,
+        getExecutingTaskIds: () => new Set<string>(),
+        clearPhantomExecutorBinding,
+      };
 
-    // Entered the column well past LEAKED_WORKTREE_SLOT_GRACE_MS (60s).
-    const staleEntry = new Date(Date.now() - 10 * 60_000).toISOString();
-    const store = {
-      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
-      getTask: vi.fn(async () => ({
-        id: PLANNER_TASK,
-        column,
-        status: "planning",
-        columnMovedAt: staleEntry,
-        updatedAt: staleEntry,
-      })),
-      logEntry: vi.fn(async () => undefined),
-    };
-
-    const manager = Object.create(SelfHealingManager.prototype) as SelfHealingManager;
-    (manager as unknown as Record<string, unknown>).store = store;
-    (manager as unknown as Record<string, unknown>).options = {
-      listWorktreeHolders: () => [{ taskId: PLANNER_TASK, worktreePath: PLANNER_WORKTREE }],
-      getExecutingTaskIds: () => new Set<string>(),
-      clearPhantomExecutorBinding: (taskId: string) => executor.clearPhantomExecutorBinding(taskId),
-    };
-
-    const reaped = await manager.reapLeakedConcurrencySlots();
-
-    expect(reaped, `a live planner's slot must not be reaped from ${column}`).toBe(0);
-    expect(activeSessionRegistry.isPathActive(PLANNER_WORKTREE)).toBe(true);
-    // The binding must SURVIVE, not merely go unreported.
-    expect(
-      (executor as unknown as { activeWorktrees: Map<string, Set<string>> }).activeWorktrees.get(PLANNER_TASK),
-    ).toEqual(new Set([PLANNER_WORKTREE]));
-    expect(store.logEntry).not.toHaveBeenCalled();
-  },
+      expect(await manager.reapLeakedConcurrencySlots()).toBe(0);
+      expect(listWorktreeHolders).toHaveReturnedWith([]);
+      expect(clearPhantomExecutorBinding).not.toHaveBeenCalled();
+    },
   );
   /*
   FNXC:NodeWorktreeIsolation 2026-07-29-04:20 (FN-6756 — the SECOND door, PR #2531 review):

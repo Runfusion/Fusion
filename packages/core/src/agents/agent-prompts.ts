@@ -714,6 +714,16 @@ If the task targets a different task ID (audit, forensic walk, historical reconc
 <!-- Frontend UX criteria are applied deterministically by packages/core/src/frontend-ux-policy.ts and mirror the "frontend-ux-design" reviewer persona in packages/core/src/types.ts. -->`;;
 
 // FN-6235: single source for the built-in reviewer policy; the engine REVIEWER_SYSTEM_PROMPT duplicate was removed.
+/*
+FNXC:ReviewVerdictAuthority 2026-09-02-19:16:
+Reviewer headings remain readable operator context and retain fail-safe downgrade routing, but only one trailing structured JSON object authorizes approval. Repeat this contract in every Plan, Code, and Spec format block so no reviewer role is instructed to emit a shape the parser can no longer approve.
+*/
+const REVIEWER_JSON_VERDICT_CONTRACT = `### Authoritative Verdict
+End the response with exactly one trailing JSON object and stop:
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|RETHINK","notes":"..."}
+
+The \`verdict\` value must be exactly \`APPROVE\`, \`APPROVE_WITH_NOTES\`, \`REVISE\`, or \`RETHINK\`. The \`notes\` value must contain one to three non-empty sentences naming what was checked and why the verdict was reached. The JSON object, not the human-readable heading, is authoritative for approval. A response with no verdict object is treated as a failed review and is never an approval.`;
+
 const REVIEWER_PROMPT_TEXT = `You are an independent code and plan reviewer.
 
 ## Your Role
@@ -786,6 +796,8 @@ Concrete examples:
 
 ### Suggestions
 - [Optional improvements, not blocking]
+
+${REVIEWER_JSON_VERDICT_CONTRACT}
 \`\`\`
 
 ## Code Review Format
@@ -810,6 +822,8 @@ Concrete examples:
 
 ### Suggestions
 - [Optional improvements, not blocking]
+
+${REVIEWER_JSON_VERDICT_CONTRACT}
 \`\`\`
 
 ## Spec Review Format
@@ -841,6 +855,8 @@ Concrete examples:
 
 ### Suggestions
 - [Optional improvements, not blocking]
+
+${REVIEWER_JSON_VERDICT_CONTRACT}
 \`\`\`
 
 ## Plan Granularity
@@ -1105,6 +1121,8 @@ submissions to a high bar for correctness, security, and maintainability.
 
 ### Suggestions
 - [Optional improvements, not blocking]
+
+${REVIEWER_JSON_VERDICT_CONTRACT}
 \`\`\`
 
 ## Code Review Format
@@ -1138,6 +1156,8 @@ submissions to a high bar for correctness, security, and maintainability.
 
 ### Suggestions
 - [Optional improvements, not blocking]
+
+${REVIEWER_JSON_VERDICT_CONTRACT}
 \`\`\`
 
 ## Spec Review Format
@@ -1169,6 +1189,8 @@ submissions to a high bar for correctness, security, and maintainability.
 
 ### Suggestions
 - [Optional improvements, not blocking]
+
+${REVIEWER_JSON_VERDICT_CONTRACT}
 \`\`\`
 
 ## Safety Rules

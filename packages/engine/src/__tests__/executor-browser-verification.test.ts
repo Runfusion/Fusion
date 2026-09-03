@@ -664,7 +664,7 @@ describe("browser-verification workflow-step browser capability", () => {
         optionalGroupId: "plan-review",
       }),
       "/tmp/wt",
-      {},
+      { reviewerInlineFixes: true },
       undefined,
       undefined,
     );

@@ -21,6 +21,11 @@ const log = createLogger("ai-summarize");
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
+/*
+FNXC:TitleSummaryInputLanguage 2026-09-01-21:25:
+FN-9241 removes a single French worked example because inexpensive title models can anchor on it.
+Keep the language rule neutral so the resolved output target or content signal determines the title language.
+*/
 /** System prompt for title summarization */
 export const SUMMARIZE_SYSTEM_PROMPT = `You are a title summarization assistant for a task management system.
 
@@ -34,7 +39,7 @@ Your ONLY job is to create a concise title (max 60 characters) that summarizes t
 
 ## Style
 - Clear, descriptive, actionable, professional
-- Write the title in the SAME language as the task description content. For example, a French description requires a French title.
+- Write the title in the SAME language as the task description content.
 - Maximum 60 characters
 - Focus on the main goal or deliverable of the task`;
 

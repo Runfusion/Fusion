@@ -14,6 +14,11 @@ Workspace tasks deliberately clear the singular `task.worktree` through
 `normalizeWorkspaceTaskWorktreeMetadata({ clearSingularWorktree: true })`, so overlap lifetime must also
 recognize their per-repository checkouts. A retained entry is the unfinished-work proof; executor and archive
 cleanup delete those entries when the checkout is removed, preserving checkout clearing as the early-release hatch.
+
+FNXC:OverlapScheduling 2026-09-01-14:49:
+A planning-only card owns neither checkout form and therefore owns no file-scope lease; planning never
+serializes planning. A hold-lane card retaining a real checkout after execution still owns unmerged work
+and deliberately keeps its dormant lease. Checkout evidence, not a column exception, decides the outcome.
 */
 export function taskHoldsUnmergedCheckout(
   task: Pick<Task, "worktree" | "workspaceWorktrees">,

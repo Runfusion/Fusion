@@ -572,13 +572,46 @@ describe("Scheduler workflow cutover", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      expect.stringContaining("gate=maxWorktrees; effectiveLimit=1 (bindingKnob=maxWorktrees); maxConcurrent used=1/4"),
+      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=1/4"),
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
       expect.stringContaining("maxWorktrees used=1/1"),
     );
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
+    expect(ready.column).toBe("todo");
+  });
+
+  it.each<[string, Partial<Task>]>([
+    ["singular", { worktree: "/tmp/project/.worktrees/fn-replan" }],
+    ["workspace", {
+      workspaceWorktrees: {
+        "packages/core": {
+          worktreePath: "/tmp/project/.worktrees/fn-replan/core",
+          branch: "fusion/fn-replan-core",
+        },
+      },
+    }],
+  ])("keeps a retained needs-replan %s checkout in scheduler worktree capacity", async (_kind, checkout) => {
+    const retainedReplan = task({
+      id: "FN-REPLAN",
+      status: "needs-replan",
+      ...checkout,
+    });
+    const ready = task({ id: "FN-READY", status: "queued" });
+    const store = storeWith([retainedReplan, ready], { maxConcurrent: 4, maxWorktrees: 1 });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-READY", "in-progress", expect.anything(), expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-READY",
+      expect.stringContaining("maxWorktrees used=1/1"),
+    );
+    expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-READY" }));
     expect(ready.column).toBe("todo");
   });
 
@@ -596,7 +629,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
-      expect.stringContaining("gate=maxWorktrees; effectiveLimit=4 (bindingKnob=maxWorktrees); maxConcurrent used=5/10"),
+      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=5/10"),
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
@@ -620,12 +653,12 @@ describe("Scheduler workflow cutover", () => {
     expect(onSchedule).not.toHaveBeenCalled();
   });
 
-  it("counts only active tasks when retained queued worktrees would strand execution slots", async () => {
+  it("excludes paused retained worktrees without dropping live execution holders", async () => {
     /*
-    FNXC:WorktreeCapacity 2026-08-01-04:38:
-    Live regression: seven active tasks plus two dependency-blocked queued cards with retained
-    worktrees filled a nine-slot ledger. The inactive holders then blocked both dependency-free
-    roots from starting. Slots represent live task execution, not directories retained on disk.
+    FNXC:WorktreeCapacity 2026-09-01-16:01:
+    Pause remains an explicit capacity-release state even when checkout metadata is retained. Live
+    planners and executors still consume their own execution-checkout slots, while paused dependency
+    waits do not prevent the remaining worktree budget from admitting ready roots.
     */
     const planners = Array.from({ length: 6 }, (_, index) => task({
       id: `FN-PLAN-${index}`,
@@ -638,8 +671,8 @@ describe("Scheduler workflow cutover", () => {
       worktree: "/tmp/project/.worktrees/executing",
     });
     const parkedDependents = [
-      task({ id: "FN-PARKED-1", status: "queued", worktree: "/tmp/project/.worktrees/parked-1", dependencies: ["FN-ROOT-1"] }),
-      task({ id: "FN-PARKED-2", status: "queued", worktree: "/tmp/project/.worktrees/parked-2", dependencies: ["FN-ROOT-1"] }),
+      task({ id: "FN-PARKED-1", status: "queued", paused: true, worktree: "/tmp/project/.worktrees/parked-1", dependencies: ["FN-ROOT-1"] }),
+      task({ id: "FN-PARKED-2", status: "queued", paused: true, worktree: "/tmp/project/.worktrees/parked-2", dependencies: ["FN-ROOT-1"] }),
     ];
     const roots = [
       task({ id: "FN-ROOT-1", status: "queued" }),
@@ -746,7 +779,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-402", "in-progress", expect.anything(), expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-402",
-      expect.stringContaining("gate=maxWorktrees; effectiveLimit=4 (bindingKnob=maxWorktrees); maxConcurrent used=4/10"),
+      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=4/10"),
     );
     expect(onSchedule).toHaveBeenCalledTimes(1);
   });
@@ -771,7 +804,7 @@ describe("Scheduler workflow cutover", () => {
     expect(second.status).toBe("queued");
   });
 
-  it("rechecks canonical live tasks inside final admission after the sweep snapshot goes stale", async () => {
+  it("does not let a late checkout-free planner consume the final worktree slot", async () => {
     const active = Array.from({ length: 8 }, (_, index) =>
       task({ id: `FN-ACTIVE-${index}`, column: "in-progress" }),
     );
@@ -788,18 +821,17 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
-    expect(store.moveTaskIf).not.toHaveBeenCalledWith(
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
       ready.id,
       "in-progress",
       expect.any(Function),
       expect.anything(),
     );
-    expect(onSchedule).not.toHaveBeenCalled();
-    expect(ready.column).toBe("todo");
-    expect(ready.status).toBe("queued");
+    expect(onSchedule).toHaveBeenCalledOnce();
+    expect(ready.column).toBe("in-progress");
   });
 
-  it("counts a pending optional workflow-step lease in final scheduler admission", async () => {
+  it("does not count a checkout-free optional-step lease as a worktree holder", async () => {
     const active = Array.from({ length: 8 }, (_, index) =>
       task({ id: `FN-LEASE-ACTIVE-${index}`, column: "in-progress" }),
     );
@@ -824,8 +856,8 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
-    expect(onSchedule).not.toHaveBeenCalled();
-    expect(ready.column).toBe("todo");
+    expect(onSchedule).toHaveBeenCalledOnce();
+    expect(ready.column).toBe("in-progress");
   });
 
   it("does not let a stale full sweep hide capacity that freed before final admission", async () => {
@@ -887,7 +919,7 @@ describe("Scheduler workflow cutover", () => {
   it("returns a rejected active-task reservation so the next candidate can start", async () => {
     const retained = task({ id: "FN-001", status: "queued", worktree: "/tmp/project/.worktrees/fn-001" });
     const fresh = task({ id: "FN-002", status: "queued" });
-    const store = storeWith([retained, fresh], { maxConcurrent: 4, maxWorktrees: 1 });
+    const store = storeWith([retained, fresh], { maxConcurrent: 4, maxWorktrees: 2 });
     vi.mocked(store.moveTaskIf).mockRejectedValueOnce(
       new TransitionRejectionError(
         makeTransitionRejection(

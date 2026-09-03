@@ -2,7 +2,7 @@
 FNXC:ThinkingTrace 2026-08-27-10:45:
 Pi-coding-agent streams Responses models through `streamSimple`, which forwards reasoning effort but cannot carry `reasoningSummary`. Pi therefore defaults Responses payloads to the short `"auto"` summary that can contain titles without bodies.
 
-Pi 0.84.1 exposes `Agent.onPayload` as the request-shaping seam. This helper upgrades only already-enabled Responses reasoning; CLI and ACP runtimes are structurally exempt because they never construct a pi Agent.
+Pi 0.84.4 exposes `Agent.onPayload` as the request-shaping seam. This helper upgrades only already-enabled Responses reasoning; CLI and ACP runtimes are structurally exempt because they never construct a pi Agent.
 */
 
 export const RESPONSES_FAMILY_APIS = new Set([

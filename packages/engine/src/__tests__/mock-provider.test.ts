@@ -123,6 +123,9 @@ describe("MockAgentRuntime", () => {
     if (sessionPurpose === "reviewer" || sessionPurpose === "validation") {
       expect(onText).toHaveBeenCalledWith(expect.stringContaining("Verdict: APPROVE"));
     }
+    if (sessionPurpose === "reviewer") {
+      expect(onText).toHaveBeenCalledWith(expect.stringContaining('{"verdict":"APPROVE","notes":'));
+    }
   });
 
   it("prefers a task-scoped override over the default script", async () => {
@@ -193,6 +196,7 @@ describe("MockAgentRuntime", () => {
 
     await runtime.promptWithFallback(session, "review");
     expect(deltas.join("")).toContain("Verdict: APPROVE");
+    expect(deltas.join("")).toContain('{"verdict":"APPROVE","notes":');
   });
 
   it("emits an approval verdict for executor-backed workflow steps without lifecycle tools", async () => {

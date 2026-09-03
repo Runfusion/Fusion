@@ -3009,7 +3009,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
-  it("does not admit a merge over a pending optional workflow-step lease", async () => {
+  it("does not admit a merge over the maxConcurrent agent ceiling", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true, maxConcurrent: 1, maxWorktrees: 1 });
     mockStore.store.getTask.mockResolvedValue({
       id: "FN-MERGE-WAITING",
@@ -3057,7 +3057,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     expect(await engine.isMergePending("FN-MERGE-WAITING")).toBe(true);
     expect(mockStore.store.logEntry).toHaveBeenCalledWith(
       "FN-MERGE-WAITING",
-      expect.stringContaining("maxWorktrees capacity exhausted: used=1/1"),
+      expect.stringContaining("maxConcurrent capacity exhausted: used=1/1"),
     );
 
     // An unrelated queue wake must not make the deferred task runnable before its timer.
@@ -3079,6 +3079,45 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
     expect(privateEngine.capacityDeferredMergeTaskIds.size).toBe(0);
     expect(await engine.isMergePending("FN-MERGE-WAITING")).toBe(false);
+  });
+
+  it("admits a merge claim when maxWorktrees is full but maxConcurrent has slack", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true, maxConcurrent: 2, maxWorktrees: 1 });
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-MERGE-WORKTREE-FULL",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+      branch: "fusion/fn-merge-worktree-full",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    mockStore.store.listTasks.mockImplementation(async (options?: { slim?: boolean }) => options?.slim === false
+      ? [{
+          id: "FN-WORKTREE-HOLDER",
+          column: "in-progress",
+          paused: false,
+          status: null,
+          worktree: "/tmp/fn-worktree-holder",
+        }]
+      : []);
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+    engine.enqueueMerge("FN-MERGE-WORKTREE-FULL");
+
+    await vi.waitFor(() => expect(mocks.runAiMerge).toHaveBeenCalledWith(
+      mockStore.store,
+      "/tmp/proj_test",
+      "FN-MERGE-WORKTREE-FULL",
+      expect.any(Object),
+    ));
+    expect(mockStore.store.logEntry).not.toHaveBeenCalledWith(
+      "FN-MERGE-WORKTREE-FULL",
+      expect.stringContaining("maxWorktrees capacity exhausted"),
+    );
+    await engine.stop();
   });
 
   it("records an audit event (not silent) when auto-promotion of a branch-group member fails (Fix #4)", async () => {

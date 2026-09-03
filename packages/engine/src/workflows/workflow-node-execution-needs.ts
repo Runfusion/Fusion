@@ -2,20 +2,20 @@ import type { WorkflowIrNode } from "@fusion/core";
 
 export interface WorkflowNodeExecutionNeedsOptions {
   optionalGroupId?: string;
-  /** Inline review fixes are enabled unless settings explicitly disable them. */
-  reviewerInlineFixes?: boolean;
 }
 
 /**
- * FNXC:WorkflowExecution 2026-07-15-00:00:
- * Issue #2075 exposed divergent worktree classifiers: graph preparation treated
- * inline-fix reviews as read-only while runtime rejected them without a worktree.
- * This pure helper is the single source of truth for write-capable workflow nodes;
- * preparation and runtime must both use it before selecting an execution target.
+ * FNXC:WorkflowExecution 2026-09-03-05:40:
+ * A Code Review is read-only by default but still needs the task checkout: modified-file capture,
+ * diff-base resolution, and content-review proof all consume its worktree path. Making checkout
+ * preparation depend on inline-fix permission left the execution target stale and fell back to the
+ * shared repository root, so reviewers inspected the wrong tree or failed closed on unprovable input.
+ * This helper classifies checkout need independently from the session's write-tool policy; preparation
+ * and runtime must both use it before selecting an execution target.
  */
 export function workflowNodeRequiresWorktree(
   node: WorkflowIrNode,
-  { optionalGroupId, reviewerInlineFixes }: WorkflowNodeExecutionNeedsOptions = {},
+  { optionalGroupId }: WorkflowNodeExecutionNeedsOptions = {},
 ): boolean {
   const cfg = node.config ?? {};
   const executorKind = typeof cfg.executor === "string" ? cfg.executor : "model";
@@ -40,8 +40,7 @@ export function workflowNodeRequiresWorktree(
     || optionalGroupId === "plan-review"
     || cfg.reviewKind === "plan";
   const isDeterministicGate = cfg.workflowAction === "deterministic-verification";
-  const isInlineFixReview = reviewerInlineFixes !== false
-    && executorKind !== "cli"
+  const isCheckoutReview = executorKind !== "cli"
     && !isPlanReview
     && !isDeterministicGate
     && (
@@ -56,5 +55,5 @@ export function workflowNodeRequiresWorktree(
     || executorKind === "cli-agent"
     || Boolean(scriptName)
     || Boolean(rawCliCommand)
-    || isInlineFixReview;
+    || isCheckoutReview;
 }

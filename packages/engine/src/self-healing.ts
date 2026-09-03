@@ -88,6 +88,7 @@ import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, ty
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
+import { rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
 import { cleanupLandedTaskWorktree, removeEmptyWorkspaceTaskDirectory } from "./merge/post-landing-worktree-cleanup.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
@@ -148,6 +149,24 @@ type FileScopeLeaseTaskRoles = {
   isReviewColumn: boolean;
   isTerminalColumn: boolean;
 };
+
+type TaskUpdatePatch = Parameters<TaskStore["updateTask"]>[1];
+type OverlapBlockerClearPatch = Pick<TaskUpdatePatch, "overlapBlockedBy"> | Record<string, never>;
+
+function overlapBlockerClearPatch(
+  live: Task,
+  observedBlockerId: string | null | undefined,
+): OverlapBlockerClearPatch {
+  if (
+    typeof observedBlockerId !== "string"
+    || observedBlockerId.trim().length === 0
+    || (live.overlapBlockedBy ?? null) !== observedBlockerId
+    || live.deletedAt != null
+  ) {
+    return {};
+  }
+  return { overlapBlockedBy: null };
+}
 
 /*
 FNXC:OverlapScheduling 2026-08-29-06:34:
@@ -882,6 +901,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private maintenanceTickCounter = 0;
   private readonly taskLifecycleRetentionLastPrunedAt = new Map<string, number>();
   private readonly staleContentRerouteAuditKeys = new Set<string>();
+  private readonly unrunPreMergeGateRerouteAuditKeys = new Set<string>();
   private readonly githubCheckStateRetentionLastPrunedAt = new Map<string, number>();
   private readonly processBootStartedAt = Date.now();
   private lastDbCorruptionNotifiedAt: number | null = null;
@@ -5406,9 +5426,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         filteredScopeByTaskId.set(scopeTask.id, filteredScope);
         return filteredScope;
       };
-      const hasActiveFileScopeOverlapBlocker = async (dependent: Task, blockerId: string | null | undefined): Promise<boolean> => {
+      const hasActiveFileScopeOverlapBlocker = async (
+        dependent: Task,
+        blockerId: string | null | undefined,
+        blockerOverride?: Task | null,
+      ): Promise<boolean> => {
         if (!blockerId) return false;
-        const blocker = taskById.get(blockerId);
+        const blocker = blockerOverride === undefined ? taskById.get(blockerId) : blockerOverride;
         if (!blocker) return false;
         /*
         FNXC:OverlapScheduling 2026-08-29-05:49:
@@ -5432,6 +5456,41 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const blockerScope = await getFilteredFileScope(blocker);
         if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
         return pathsOverlap(dependentScope, blockerScope);
+      };
+      const resolveFreshDependentOverlap = async (snapshot: Task): Promise<{
+        dependent: Task;
+        blockerId: string | null;
+        hasActiveBlocker: boolean;
+      }> => {
+        const dependent = await this.store.getTask(snapshot.id);
+        const blockerId = dependent.overlapBlockedBy ?? null;
+        if (!blockerId) return { dependent, blockerId: null, hasActiveBlocker: false };
+        const blocker = await this.store.getTask(blockerId).catch(() => null);
+        const freshSettings = await this.store.getSettings();
+        const hasActiveBlocker = freshSettings.groupOverlappingFiles === true
+          && await hasActiveFileScopeOverlapBlocker(dependent, blockerId, blocker);
+        return { dependent, blockerId, hasActiveBlocker };
+      };
+      const updateDependentWithOverlapClear = async (
+        dependentId: string,
+        observedBlockerId: string | null | undefined,
+        basePatch: TaskUpdatePatch,
+      ): Promise<boolean> => {
+        let overlapCleared = false;
+        const buildPatch = (live: Task): TaskUpdatePatch => {
+          const overlapPatch = overlapBlockerClearPatch(live, observedBlockerId);
+          if (Object.keys(overlapPatch).length > 0) overlapCleared = true;
+          return { ...basePatch, ...overlapPatch };
+        };
+        if (typeof this.store.updateTaskAtomic === "function") {
+          await this.store.updateTaskAtomic(dependentId, buildPatch);
+          return overlapCleared;
+        }
+        // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+        const live = await this.store.getTask(dependentId).catch(() => null);
+        if (!live) return false;
+        await this.store.updateTask(dependentId, buildPatch(live));
+        return overlapCleared;
       };
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirteenth sweep):
@@ -5519,8 +5578,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               : isDependencySatisfiedWithoutWorkflowMetadata(dep.column);
             if (!satisfied) unresolvedDeps.push(depId);
           }
-          const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
-          const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
+          /*
+          FNXC:OverlapSelfHealing 2026-09-02-04:46:
+          Completion fan-out is a one-shot state eraser, so it must re-read the dependent and named
+          blocker instead of propagating the batch snapshot into a new dependency queue episode. A
+          scheduler may have re-stamped a different overlap edge meanwhile; carry that live edge only
+          when the freshly read holder still owns the files, and compare-and-set any direct clear.
+          */
+          const freshOverlap = await resolveFreshDependentOverlap(dependent);
+          const overlapBlockedBy = freshOverlap.hasActiveBlocker ? freshOverlap.blockerId : null;
+          const hasActiveOverlapBlocker = freshOverlap.hasActiveBlocker;
 
           if (todoTaskIds.has(dependent.id)) {
             /*
@@ -5546,17 +5613,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 action: `Auto-recovered (FN-4523): preserved queued status — still blocked by file scope overlap with ${overlapBlockedBy}`,
               });
             } else {
-              await this.store.updateTask(dependent.id, { blockedBy: null, overlapBlockedBy: null, ...clearBlockedStatusOnly(dependent) });
+              await updateDependentWithOverlapClear(
+                dependent.id,
+                freshOverlap.blockerId,
+                { blockedBy: null, ...clearBlockedStatusOnly(freshOverlap.dependent) },
+              );
               await this.store.logEntry(
                 dependent.id,
                 `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
               );
             }
           } else {
-            await this.store.updateTask(dependent.id, {
-              blockedBy: null,
-              ...(dependent.overlapBlockedBy === taskId ? { overlapBlockedBy: null } : {}),
-            });
+            await updateDependentWithOverlapClear(
+              dependent.id,
+              hasActiveOverlapBlocker ? null : freshOverlap.blockerId,
+              { blockedBy: null },
+            );
             await this.store.logEntry(
               dependent.id,
               `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
@@ -6534,8 +6606,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const queuedDependencyTasks = todoTasks.filter(
         (task) => task.status === "queued" && (task.dependencies.length > 0 || Boolean(task.overlapBlockedBy)),
       );
+      const overlapReconciliationTasks = [
+        ...todoTasks,
+        ...inProgressTasks,
+        ...inReviewTasks.filter((task) => !task.paused),
+      ].filter(
+        (task) => typeof task.overlapBlockedBy === "string" && task.overlapBlockedBy.trim().length > 0,
+      );
 
-      if (blockedTasks.length === 0 && queuedDependencyTasks.length === 0) {
+      if (blockedTasks.length === 0 && queuedDependencyTasks.length === 0 && overlapReconciliationTasks.length === 0) {
         return 0;
       }
 
@@ -6558,9 +6637,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       FNXC:OverlapSelfHealing 2026-06-25-04:34:
       Stale blockedBy cleanup must mirror scheduler lease semantics before preserving queued overlap state. Empty-scope cache hits matter here because no-write-scope advisory tasks should not repeatedly reparse specs or look active by accident.
       */
-      const getFilteredFileScope = async (scopeTask: Pick<Task, "id" | "workspaceWorktrees">): Promise<string[]> => {
+      const getFilteredFileScope = async (
+        scopeTask: Pick<Task, "id" | "workspaceWorktrees">,
+        forceFresh = false,
+      ): Promise<string[]> => {
         const cached = filteredScopeByTaskId.get(scopeTask.id);
-        if (cached !== undefined) return cached;
+        if (!forceFresh && cached !== undefined) return cached;
         const scope = await this.store.parseFileScopeFromPrompt(scopeTask.id);
         const filteredScope = normalizeOverlapScopeForTask(
           scopeTask,
@@ -6569,9 +6651,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         filteredScopeByTaskId.set(scopeTask.id, filteredScope);
         return filteredScope;
       };
-      const hasActiveFileScopeOverlapBlocker = async (task: Task, blockerId: string | null | undefined): Promise<boolean> => {
+      const hasActiveFileScopeOverlapBlocker = async (
+        task: Task,
+        blockerId: string | null | undefined,
+        blockerOverride?: Task | null,
+        forceFreshScopes = false,
+      ): Promise<boolean> => {
         if (!blockerId) return false;
-        const blocker = taskById.get(blockerId);
+        const blocker = blockerOverride === undefined ? taskById.get(blockerId) : blockerOverride;
         if (!blocker) return false;
         const roles = await resolveLeaseRolesFor(blocker);
         const classification = classifyFileScopeLease(blocker, allTasks, {
@@ -6585,20 +6672,83 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         });
         if (!fileScopeLeaseBlocksCandidate(blocker, task, classification)) return false;
 
-        const taskScope = await getFilteredFileScope(task);
+        const taskScope = await getFilteredFileScope(task, forceFreshScopes);
         if (taskScope.length === 0 || isCoordinationOnlyTask(task, taskScope)) return false;
-        const blockerScope = await getFilteredFileScope(blocker);
+        const blockerScope = await getFilteredFileScope(blocker, forceFreshScopes);
         if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
         return pathsOverlap(taskScope, blockerScope);
       };
+      const readFreshOverlapBlocker = async (blockerId: string): Promise<Task | null> => {
+        try {
+          return await this.store.getTask(blockerId);
+        } catch {
+          return null;
+        }
+      };
+      const canClearObservedOverlap = async (
+        task: Task,
+        observedBlockerId: string | null | undefined,
+      ): Promise<boolean> => {
+        if (typeof observedBlockerId !== "string" || observedBlockerId.trim().length === 0) return false;
+        const freshTask = await this.store.getTask(task.id).catch(() => null);
+        if (
+          !freshTask
+          || freshTask.deletedAt != null
+          || (freshTask.overlapBlockedBy ?? null) !== observedBlockerId
+        ) {
+          return false;
+        }
+        const freshBlocker = await readFreshOverlapBlocker(observedBlockerId);
+        if (settings.groupOverlappingFiles !== true) {
+          const freshSettings = await this.store.getSettings();
+          return freshSettings.groupOverlappingFiles !== true;
+        }
+        return !await hasActiveFileScopeOverlapBlocker(
+          freshTask,
+          observedBlockerId,
+          freshBlocker,
+          true,
+        );
+      };
+      const updateWithOverlapClear = async (
+        taskId: string,
+        observedBlockerId: string | null | undefined,
+        basePatch: TaskUpdatePatch = {},
+      ): Promise<boolean> => {
+        let overlapCleared = false;
+        const buildPatch = (live: Task): TaskUpdatePatch | null => {
+          const overlapPatch = overlapBlockerClearPatch(live, observedBlockerId);
+          if (Object.keys(overlapPatch).length > 0) overlapCleared = true;
+          const patch = { ...basePatch, ...overlapPatch };
+          return Object.keys(patch).length > 0 ? patch : null;
+        };
+        if (typeof this.store.updateTaskAtomic === "function") {
+          await this.store.updateTaskAtomic(taskId, buildPatch);
+          return overlapCleared;
+        }
+        // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+        const live = await this.store.getTask(taskId).catch(() => null);
+        if (!live) return false;
+        const patch = buildPatch(live);
+        if (patch) await this.store.updateTask(taskId, patch);
+        return overlapCleared;
+      };
 
       let recovered = 0;
+      const recoveredTaskIds = new Set<string>();
+      const markRecovered = (taskId: string): void => {
+        if (recoveredTaskIds.has(taskId)) return;
+        recoveredTaskIds.add(taskId);
+        recovered++;
+      };
       const todoTaskIds = new Set(todoTasks.map((task) => task.id));
       const blockedTaskIds = new Set(blockedTasks.map((task) => task.id));
       const queuedDependencyTaskIds = new Set(queuedDependencyTasks.map((task) => task.id));
+      const overlapReconciliationTaskIds = new Set(overlapReconciliationTasks.map((task) => task.id));
       const candidates = new Map<string, typeof todoTasks[number]>();
       for (const task of blockedTasks) candidates.set(task.id, task);
       for (const task of queuedDependencyTasks) candidates.set(task.id, task);
+      for (const task of overlapReconciliationTasks) candidates.set(task.id, task);
 
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (batch-engine — every lane question here is about ANOTHER task):
@@ -6621,6 +6771,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const referencedIds = new Set<string>();
       for (const task of candidates.values()) {
         if (task.blockedBy) referencedIds.add(task.blockedBy);
+        if (task.overlapBlockedBy) referencedIds.add(task.overlapBlockedBy);
         for (const depId of task.dependencies ?? []) referencedIds.add(depId);
         referencedIds.add(task.id);
       }
@@ -6661,7 +6812,41 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const depLanes = lanesOf(depId);
           return !depLanes.complete.has(dep.column) && !depLanes.review.has(dep.column) && !depLanes.archived.has(dep.column);
         });
-        const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(task, task.overlapBlockedBy);
+        const observedOverlapBlockerId = task.overlapBlockedBy;
+        const freshOverlapBlocker = typeof observedOverlapBlockerId === "string" && observedOverlapBlockerId.trim().length > 0
+          ? await readFreshOverlapBlocker(observedOverlapBlockerId)
+          : null;
+        const hasActiveOverlapBlocker = settings.groupOverlappingFiles === true
+          && await hasActiveFileScopeOverlapBlocker(task, observedOverlapBlockerId, freshOverlapBlocker);
+
+        /*
+        FNXC:OverlapSelfHealing 2026-09-02-04:46:
+        `overlapBlockedBy` has no unconditional re-derivation owner: dependency, capacity, pause, and
+        non-hold states can all bypass Scheduler.reserveSlot indefinitely. Reconcile that denormalized
+        edge independently without changing `blockedBy`, status, pause, or lane. Every clear re-reads
+        both task rows and their scopes, then compare-and-sets the exact observed id because
+        `transitionQueuedEpisode` can unconditionally stamp a fresh scheduler or executor hold between
+        the batch read and this write.
+
+        FNXC:OverlapSelfHealing 2026-09-02-05:11:
+        The dependent scope is part of blocker liveness, so the reconciliation verdict must bypass the
+        batch scope cache after re-reading the dependent. An unchanged blocker id cannot authorize a
+        clear when a concurrent prompt or workspace-scope update makes that same blocker valid again.
+        */
+        const handledByExistingQueuedClear = queuedDependencyTaskIds.has(task.id) && unresolvedDeps.length === 0;
+        if (overlapReconciliationTaskIds.has(task.id) && !handledByExistingQueuedClear) {
+          const canClearOverlap = await canClearObservedOverlap(task, observedOverlapBlockerId);
+          if (canClearOverlap) {
+            const overlapCleared = await updateWithOverlapClear(task.id, observedOverlapBlockerId);
+            if (overlapCleared) {
+              await this.store.logEntry(
+                task.id,
+                `Auto-recovered: cleared stale file-scope overlap blocker ${observedOverlapBlockerId}`,
+              );
+              markRecovered(task.id);
+            }
+          }
+        }
 
         if (blockedTaskIds.has(task.id)) {
           if (!blockerId) continue;
@@ -6762,7 +6947,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   });
                   didRecover = transition.appended;
                 } else {
-                  await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, ...clearBlockedStatusOnly(task) });
+                  const canClearOverlap = await canClearObservedOverlap(task, observedOverlapBlockerId);
+                  await updateWithOverlapClear(
+                    task.id,
+                    canClearOverlap ? observedOverlapBlockerId : null,
+                    { blockedBy: null, ...clearBlockedStatusOnly(task) },
+                  );
                   await this.store.logEntry(task.id, `Auto-recovered (FN-5488): cleared stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}`);
                   didRecover = true;
                 }
@@ -6771,7 +6961,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 await this.store.logEntry(task.id, `Auto-recovered (FN-4091): cleared stale blockedBy — ${reason}`);
                 didRecover = true;
               }
-              if (didRecover) recovered++;
+              if (didRecover) markRecovered(task.id);
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);
               log.error(`Failed to clear stale blockedBy for ${task.id}: ${errorMessage}`);
@@ -6794,10 +6984,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   overlapBlockedBy: task.overlapBlockedBy ?? null,
                   action: `Auto-recovered: preserved queued status — still blocked by file scope overlap with ${task.overlapBlockedBy}`,
                 });
-                if (transition.appended) recovered++;
+                if (transition.appended) markRecovered(task.id);
               } else {
                 // FN-5434: routine scheduler↔self-healing queued-status churn should stay silent; keep state cleanup only.
-                await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, ...clearBlockedStatusOnly(task) });
+                const canClearOverlap = await canClearObservedOverlap(task, observedOverlapBlockerId);
+                await updateWithOverlapClear(
+                  task.id,
+                  canClearOverlap ? observedOverlapBlockerId : null,
+                  { blockedBy: null, ...clearBlockedStatusOnly(task) },
+                );
               }
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);
@@ -9282,6 +9477,35 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     return true;
   }
 
+  private async routeUnrunPreMergeGateBackToReview(task: Task, reviewColumns: ReadonlySet<string>, settings: Settings): Promise<boolean> {
+    let mergeGate;
+    try { mergeGate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task); } catch { return false; }
+    if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) return false;
+    const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: this.options.rootDir, settings });
+    if (getTaskMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent }) !== "task has enabled pre-merge workflow steps that never ran") return false;
+    const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, { requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent })
+      .catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
+    if (reroute.rerouted) {
+      await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded the workflow graph at an enabled pre-merge gate that never ran.");
+      log.warn(`Unrun pre-merge gate for ${task.id} re-seeded at ${reroute.nodeId ?? "unknown"}`);
+    }
+    const auditKey = `${task.id}:${reroute.reason}:${reroute.nodeId ?? ""}`;
+    if (!this.unrunPreMergeGateRerouteAuditKeys.has(auditKey)) {
+      this.unrunPreMergeGateRerouteAuditKeys.add(auditKey);
+      await emitBoundedRunAudit(this.store, {
+        taskId: task.id, agentId: "self-healing", runId: generateSyntheticRunId("self-healing", task.id), domain: "database",
+        mutationType: "task:merge-unrun-pre-merge-gate-rerouted", target: task.id,
+        metadata: { taskId: task.id, nodeId: reroute.nodeId, workflowStepId: reroute.workflowStepId, reason: reroute.reason, source: "self-healing", missingGateCount: mergeGate.requiredPreMergeStepIds.size },
+      });
+    }
+    /*
+    FNXC:PreMergeApproval 2026-09-02-10:50:
+    The blocker is proven before the idle seed races. Once another run owns the continuation, this
+    sweep must still suppress its merge enqueue because that door would defer until the real gate runs.
+    */
+    return true;
+  }
+
   /**
    * Recover `in-review` tasks that are fully mergeable but never had
    * `mergeTask()` invoked.
@@ -9397,6 +9621,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const reviewColumns = await ownReviewLanesFor(task);
         if (!reviewColumns.has(task.column)) continue;
         if (await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, settings)) continue;
+        if (await this.routeUnrunPreMergeGateBackToReview(task, reviewColumns, settings)) continue;
         if (getTaskMergeBlocker(task, { reviewColumns }) !== undefined) continue;
         laneQualifiedMergeable.push(task);
       }
@@ -9574,8 +9799,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
        * FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:34:
        * Self-healing pre-computes the same optional-step budget the live graph seam uses before the synchronous candidate filter runs. The target step is the latest blocking pre-merge failure, matching `recoverFailedPreMergeWorkflowStep`; IR lookup failures fall back to the effective global `maxPostReviewFixes` so older tasks remain recoverable.
        *
-       * FNXC:WorkflowRevisionBudget 2026-06-30-20:50:
-       * Offline recovery must share live execution's workflow-value precedence: explicit `planReviewMaxRevisions`/`codeReviewMaxRevisions` caps win, unset Plan Review/spec and Code Review values are unbounded, and Browser Verification keeps the existing fallback budget.
+       * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
+       * Offline recovery shares live execution's workflow-value precedence: explicit `planReviewMaxRevisions`/`codeReviewMaxRevisions` values win, an unset Code Review uses the finite built-in default, Plan Review remains unbounded behind its replan cap, and Browser Verification keeps the existing fallback budget.
        *
        * FNXC:WorkflowRevisionBudget 2026-06-30-22:06:
        * Self-healing uses the same per-step attempt partition as live execution. `postReviewFixCount` remains an aggregate observability counter, but cap exhaustion is computed from prior log markers for the failed workflow step so Plan Review and Code Review budgets do not consume each other.

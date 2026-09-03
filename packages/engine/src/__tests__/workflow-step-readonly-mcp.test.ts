@@ -57,7 +57,9 @@ function captureSession() {
 function makeExecutor() {
   const store = createMockStore();
   store.getTask.mockImplementation(async (id: string) => task({ id }));
-  store.getSettings.mockResolvedValue({ reviewerInlineFixes: true });
+  store.getWorkflowDefinition = vi.fn(async () => undefined);
+  store.getWorkflowSettingValues = vi.fn(() => ({ reviewerInlineFixes: true }));
+  store.getWorkflowSettingsProjectId = vi.fn(() => "project-fn-288");
   return {
     store,
     executor: new TaskExecutor(store as any, "/tmp/test", {

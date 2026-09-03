@@ -162,7 +162,7 @@ async function repairWorkspaceOverlap(
 afterEach(() => vi.clearAllMocks());
 
 describe("workspace implementation base-refresh enablement", () => {
-  it("forwards refresh only from a code node through graph preparation", async () => {
+  it("forwards refresh from write-capable code and skips read-only graph preparation", async () => {
     const live = task();
     const ensureGraphCustomNodeWorktree = vi.fn(async (value: TaskDetail) => value);
     const deps = {
@@ -177,7 +177,7 @@ describe("workspace implementation base-refresh enablement", () => {
 
     await prepareGraphNodeExecution(
       deps,
-      { id: "implementation", kind: "code" } as WorkflowIrNode,
+      { id: "implementation", kind: "code", config: { toolMode: "coding" } } as WorkflowIrNode,
       live,
       settings,
       { requiresWorktree: true },
@@ -190,8 +190,8 @@ describe("workspace implementation base-refresh enablement", () => {
       { requiresWorktree: true },
     );
 
-    expect(ensureGraphCustomNodeWorktree).toHaveBeenNthCalledWith(1, live, settings, "implementation", true);
-    expect(ensureGraphCustomNodeWorktree).toHaveBeenNthCalledWith(2, live, settings, "review", false);
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledOnce();
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "implementation", true);
   });
 
   it("passes the graph refresh flag into workspace acquisition", async () => {
@@ -244,6 +244,52 @@ describe("workspace implementation base-refresh enablement", () => {
 });
 
 describe("workspace overlap consumer parity", () => {
+  it("does not serialize overlapping workspace planners when neither has acquired a repository checkout", async () => {
+    const first = overlapTask("FN-WORKSPACE-PLAN-1", { status: "planning", workspaceWorktrees: {} });
+    const second = overlapTask("FN-WORKSPACE-PLAN-2", {
+      status: "planning",
+      workspaceWorktrees: {},
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    const { store, byId } = createOverlapStore([first, second], {
+      [first.id]: ["repo-a/src/shared.ts"],
+      [second.id]: ["repo-a/src/shared.ts"],
+    });
+    vi.spyOn(Scheduler.prototype as never, "validateTaskFilesystem" as never).mockResolvedValue({ valid: true } as never);
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    try {
+      await scheduler.schedule();
+    } finally {
+      scheduler.stop();
+    }
+
+    expect(byId.get(first.id)).toMatchObject({ column: "todo", status: "planning" });
+    expect(byId.get(second.id)).toMatchObject({ column: "todo", status: "planning" });
+    expect(byId.get(first.id)?.overlapBlockedBy).toBeFalsy();
+    expect(byId.get(second.id)?.overlapBlockedBy).toBeFalsy();
+    expect(vi.mocked(store.logEntry).mock.calls.flat().join("\n")).not.toContain("file-scope overlap");
+  });
+
+  it("lets outer dispatch and core repair clear a checkout-free workspace planning blocker", async () => {
+    const holder = overlapTask("FN-WORKSPACE-PLAN-HOLDER", { status: "planning", workspaceWorktrees: {} });
+    const candidate = overlapTask("FN-WORKSPACE-PLAN-CANDIDATE", {
+      status: "queued",
+      workspaceWorktrees: {},
+      overlapBlockedBy: holder.id,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    const scopes = {
+      [holder.id]: ["repo-a/src/shared.ts"],
+      [candidate.id]: ["repo-a/src/shared.ts"],
+    };
+    const { store } = createOverlapStore([holder, candidate], scopes);
+
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(false);
+    await expect(repairWorkspaceOverlap([candidate, holder], scopes, candidate)).resolves.toMatchObject({ repaired: true });
+  });
+
   it("adds a workspace review holder to the scheduler's active registry and queues its qualified overlap", async () => {
     const holder = overlapTask("FN-WORKSPACE-HOLDER", {
       column: "in-review",
@@ -357,6 +403,24 @@ describe("workspace overlap consumer parity", () => {
     await store.updateTask(dependent.id, { blockedBy: completed.id, overlapBlockedBy: holder.id, status: "queued" });
     await manager.reconcileCompletedTask(completed.id);
     expect(byId.get(dependent.id)).toMatchObject({ status: null, overlapBlockedBy: null, blockedBy: null });
+  });
+
+  it("self-healing clears a stale blocker that points at checkout-free workspace planning", async () => {
+    const planner = overlapTask("FN-WORKSPACE-PLANNER", { status: "planning", workspaceWorktrees: {} });
+    const dependent = overlapTask("FN-WORKSPACE-DEPENDENT", {
+      status: "queued",
+      overlapBlockedBy: planner.id,
+      workspaceWorktrees: {},
+    });
+    const { store, byId } = createOverlapStore([planner, dependent], {
+      [planner.id]: ["repo-a/src/shared.ts"],
+      [dependent.id]: ["repo-a/src/shared.ts"],
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/workspace" });
+
+    await manager.clearStaleBlockedBy();
+
+    expect(byId.get(dependent.id)).toMatchObject({ status: null, overlapBlockedBy: null });
   });
 
   it("uses the normalized workspace scope in stale-block cleanup", async () => {

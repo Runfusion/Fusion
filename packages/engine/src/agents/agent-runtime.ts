@@ -42,6 +42,8 @@ export interface SessionBoundaryDescriptor {
   writableRoot: string | null;
   projectRoot: string;
   readOnlyRoots?: readonly string[];
+  /** Absolute roots writable under an otherwise read-only boundary. */
+  writableAllowlist?: readonly string[];
   repoRoots?: readonly { repoRelPath: string; repoRootDir: string }[];
 }
 

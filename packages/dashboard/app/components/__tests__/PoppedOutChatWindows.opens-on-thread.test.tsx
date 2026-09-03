@@ -67,7 +67,7 @@ function session(id = "requested-thread", title = "Requested thread"): ChatSessi
 }
 
 function entry(id = "requested-thread", focusNonce = 1) {
-  return { projectId: "project-a", session: session(id), focusNonce, cascadeSlot: 0 };
+  return { projectId: "project-a", session: session(id), focusNonce, cascadeSlot: 0, minimized: false };
 }
 
 function deferred<T>() {

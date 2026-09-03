@@ -1429,7 +1429,9 @@
     "quoteMessage": "引用消息",
     "agentRepliesFailed": "部分代理无法回复：{{agents}}",
     "noDefaultModelConfigured": "请先在设置中配置默认聊天模型，再创建对话。",
-    "newChatOpenInNewWindowHint": ""
+    "newChatOpenInNewWindowHint": "",
+    "minimizeAllChats": "最小化所有聊天",
+    "restoreAllChats": "恢复所有聊天"
   },
   "chatRooms": {
     "error": {
@@ -9735,7 +9737,11 @@
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": ""
+    "retry": "",
+    "zoomIn": "",
+    "zoomOut": "",
+    "resetZoom": "",
+    "zoomLevel": ""
   },
   "taskHistory": {
     "stage": {

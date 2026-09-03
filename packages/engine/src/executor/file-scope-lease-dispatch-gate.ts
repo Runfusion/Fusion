@@ -4,6 +4,10 @@ Execution can enter outside the scheduler, so this outer gate repeats the file-s
 before graph routing. It holds only a task that has not acquired a checkout yet; singular and workspace
 per-repository checkouts both prove a scheduler-admitted resume. The hold is in-place and preserves dependency
 state so it never moves a card backward merely for overlap serialization.
+
+FNXC:OverlapScheduling 2026-09-01-14:49:
+A checkout-less planning peer is not a holder and cannot block this dispatch. A hold-lane peer with a
+retained execution checkout remains a dormant holder, preserving unmerged work across replan bounces.
 */
 import {
   compareTasksByPriorityThenAgeAndId,

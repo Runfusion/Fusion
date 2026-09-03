@@ -1429,7 +1429,9 @@
     "quoteMessage": "메시지 인용",
     "agentRepliesFailed": "일부 에이전트가 응답하지 못했습니다: {{agents}}",
     "noDefaultModelConfigured": "대화를 만들기 전에 설정에서 기본 채팅 모델을 구성하세요.",
-    "newChatOpenInNewWindowHint": ""
+    "newChatOpenInNewWindowHint": "",
+    "minimizeAllChats": "모든 채팅 최소화",
+    "restoreAllChats": "모든 채팅 복원"
   },
   "chatRooms": {
     "error": {
@@ -9735,7 +9737,11 @@
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": ""
+    "retry": "",
+    "zoomIn": "",
+    "zoomOut": "",
+    "resetZoom": "",
+    "zoomLevel": ""
   },
   "taskHistory": {
     "stage": {

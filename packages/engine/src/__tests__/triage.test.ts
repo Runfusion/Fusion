@@ -1872,6 +1872,7 @@ Planner rewrote mission without the raw request.
 
     expect(projectAdmissionCoordinator.inspectProjectStateForTests(projectId)).toEqual({
       reservedCount: 0,
+      reservedWorktreeCount: 0,
       draining: false,
       providerIds: [],
     });

@@ -899,7 +899,7 @@ export async function executeWorkflowGraph(
             || (node.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined)
               ?.nodes?.every((inner) => inner.config?.workflowAction === "deterministic-verification") === true;
           const writeCapable = !deterministicVerification
-            && (workflowNodeRequiresWorktree(node, { reviewerInlineFixes: settings.reviewerInlineFixes === false ? false : undefined }) || node.kind === "code");
+            && (workflowNodeRequiresWorktree(node) || node.kind === "code");
           const hasCurrentCodeReviewApproval = live.workflowStepResults?.some((result) =>
             result.reviewKind === "code"
             && result.status === "passed"
@@ -1199,7 +1199,29 @@ export async function executeWorkflowGraph(
           }).catch(() => undefined);
         }));
       }
+      /*
+      FNXC:WorkflowExecution 2026-09-02-10:36:
+      FN-9243 closes a dispatched continuation before a fell-back graph failure. Previously the
+      early return retained a running lease, so the dispatcher retried the same refusal indefinitely.
+      */
+      const closeContinuation = async (state: "failed" | "succeeded"): Promise<void> => {
+        if (!continuation || typeof deps.store.transitionWorkflowWorkItem !== "function") return;
+        if (directWorkflowPrincipalHeldWorkItemIds.has(continuation.id)) return;
+        try {
+          await deps.store.transitionWorkflowWorkItem(continuation.id, state, {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: state === "failed" ? "workflow-continuation-failed" : null,
+          });
+        } catch (closeErr) {
+          executorLog.debug(
+            `[workflow-graph] ${task.id}: continuation ${continuation.id} could not be closed as ${state} `
+            + `(likely already terminal): ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`,
+          );
+        }
+      };
       if (result.disposition === "fell-back") {
+        await closeContinuation("failed");
         executorLog.warn(`[workflow-graph] ${task.id} could not resolve workflow — parking task instead of legacy fallback: ${result.reason}`);
         await deps.handleGraphFailure(task, {
           ...result,
@@ -1238,26 +1260,6 @@ export async function executeWorkflowGraph(
         );
         return;
       }
-      /*
-       * FNXC:WorkflowExecution 2026-08-08-03:20:
-       * Closing the continuation is bookkeeping and must never skip handleGraphFailure.
-       */
-      const closeContinuation = async (state: "failed" | "succeeded"): Promise<void> => {
-        if (!continuation || typeof deps.store.transitionWorkflowWorkItem !== "function") return;
-        if (directWorkflowPrincipalHeldWorkItemIds.has(continuation.id)) return;
-        try {
-          await deps.store.transitionWorkflowWorkItem(continuation.id, state, {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: state === "failed" ? "workflow-continuation-failed" : null,
-          });
-        } catch (closeErr) {
-          executorLog.debug(
-            `[workflow-graph] ${task.id}: continuation ${continuation.id} could not be closed as ${state} `
-            + `(likely already terminal): ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`,
-          );
-        }
-      };
       if (result.disposition === "failed") {
         await closeContinuation("failed");
         await deps.handleGraphFailure(task, result);

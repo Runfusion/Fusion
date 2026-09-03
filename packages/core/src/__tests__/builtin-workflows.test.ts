@@ -13,7 +13,7 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-coding-workflow-ir.js";
 import { BUILTIN_PR_WORKFLOW_IR } from "../workflows/builtin-pr-workflow-ir.js";
 import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../workflows/builtin-browser-verification-group.js";
-import { CODE_REVIEW_STEP_NODE_ID } from "../workflows/builtin-code-review-group.js";
+import { CODE_REVIEW_STEP_NODE_ID, DEFAULT_CODE_REVIEW_MAX_REVISIONS } from "../workflows/builtin-code-review-group.js";
 import { PLAN_REVIEW_GROUP_ID, PLAN_REVIEW_STEP_NODE_ID } from "../workflows/builtin-plan-review-group.js";
 import { builtinPromptConfig, BUILTIN_SEAM_PROMPTS } from "../workflows/builtin-workflow-prompts.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
@@ -231,7 +231,9 @@ describe("built-in workflows", () => {
               ? 3
               : workflow.id === "builtin:compound-engineering" && gate === "code-review"
                 ? 2
-                : "unbounded",
+                : gate === "code-review"
+                  ? DEFAULT_CODE_REVIEW_MAX_REVISIONS
+                  : "unbounded",
         });
       }
     }
@@ -802,7 +804,7 @@ describe("built-in workflows", () => {
     });
     expect(ir.settings?.find((setting) => setting.id === "codeReviewMaxRevisions")).toMatchObject({
       type: "number",
-      description: expect.stringMatching(/workflow's authored default/i),
+      description: expect.stringMatching(/workflow's authored bounded default/i),
     });
   });
 

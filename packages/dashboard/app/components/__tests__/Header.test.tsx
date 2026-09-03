@@ -201,6 +201,35 @@ describe("Header", () => {
       expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
     });
 
+    it("keeps the mobile New Task action last and after search and usage", () => {
+      const { container } = renderHeader({
+        mobileNavEnabled: true,
+        projectId: "project-1",
+        onNewTask: vi.fn(),
+        onSearchChange: vi.fn(),
+        onOpenUsage: vi.fn(),
+      }, "mobile");
+
+      const actions = container.querySelector(".header-actions");
+      const newTask = screen.getByTestId("mobile-header-new-task");
+      const search = screen.getByTestId("mobile-header-search-btn");
+      const usage = screen.getByTestId("mobile-header-usage-btn");
+      const children = Array.from(actions?.children ?? []);
+
+      expect(actions?.lastElementChild).toBe(newTask);
+      expect(children.indexOf(search)).toBeLessThan(children.indexOf(newTask));
+      expect(children.indexOf(usage)).toBeLessThan(children.indexOf(newTask));
+      expect(screen.getAllByTestId("mobile-header-new-task")).toHaveLength(1);
+      expect(actions?.firstElementChild).not.toBe(newTask);
+      expect(actions?.firstElementChild?.matches("button.btn-icon")).toBe(true);
+      expect(actions?.firstElementChild?.querySelector("svg")).not.toBeNull();
+    });
+
+    it.each(["desktop", "tablet"] as const)("does not render the mobile New Task action at the %s tier", (tier) => {
+      renderHeader({ mobileNavEnabled: true, projectId: "project-1", onNewTask: vi.fn() }, tier);
+      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+    });
+
     it("shows board view as active by default", () => {
       renderHeader({ onChangeView: noop });
       const boardBtn = screen.getByTitle("Board view");

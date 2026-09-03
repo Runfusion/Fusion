@@ -92,7 +92,7 @@ function ControlledTaskForm() {
 function QuickChatVoicePath() {
   const [open, setOpen] = useState(false);
   return <>
-    <QuickChatFAB open={open} onOpenChange={setOpen} />
+    <QuickChatFAB open={open} onToggle={() => setOpen((current) => !current)} />
     {open && <ChatView projectId="project-1" addToast={vi.fn()} floating />}
   </>;
 }

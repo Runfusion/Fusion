@@ -32,12 +32,15 @@ remediation budget was exhausted. Keep browser verification advisory, but make C
 Review a gate so REVISE records a blocking failed workflow step and cannot advance to
 review or merge.
 
-FNXC:CodeReviewStep 2026-06-29-17:55:
-Code Review REVISE is ordinary repair feedback, not a terminal task failure. FN-7242
-exhausted the old built-in three-pass default and parked failed at
-`code-review-remediation`; default built-in Code Review must keep recovering until it
-passes unless a workflow author explicitly sets a numeric maxRevisions cap.
+FNXC:WorkflowRemediationBudget 2026-09-03-05:40:
+A Code Review REVISE is repair feedback rather than an immediate terminal task failure, but an
+unbounded loop has no automatic terminal state. Three automatic remediation rounds give ordinary
+feedback time to converge, then hand an unresolved review to the existing convergence ladder and
+audited operator bypass instead of spending reviewer sessions indefinitely.
 */
+
+/** Default number of automatic built-in Code Review remediation rounds. */
+export const DEFAULT_CODE_REVIEW_MAX_REVISIONS = 3;
 
 /** Stable per-task enable key + group node id. */
 export const CODE_REVIEW_GROUP_ID = "code-review";
@@ -116,11 +119,7 @@ export function codeReviewOptionalGroupNode(
       defaultOn: options.defaultOn ?? true,
       reworkRegion: true,
       maxReworkCycles: 3,
-      /*
-       * FNXC:WorkflowRemediationBudget 2026-06-29-17:55:
-       * Built-in Code Review should never terminal-fail merely because repair feedback repeated. Default to unbounded fix→review recovery while preserving workflow-authored numeric caps through `config.maxRevisions`.
-       */
-      maxRevisions: options.maxRevisions ?? "unbounded",
+      maxRevisions: options.maxRevisions ?? DEFAULT_CODE_REVIEW_MAX_REVISIONS,
       template: {
         nodes: [
           {

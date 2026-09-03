@@ -42,7 +42,6 @@ import {
   resolveWorkflowIrForTaskWithProvenance,
   resolveProjectColumnsForRoles,
   isWorkflowAgentNodeForRole,
-  resolveWorktreeCapacityLimit,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
@@ -63,8 +62,6 @@ import {
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
   loadWorkspaceConfig,
-  isLegacyWorkspaceWorktreeLayout,
-  resolveWorkspaceTaskWorktreeDir,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -188,7 +185,7 @@ import {
   projectAdmissionCoordinator,
   registerPreHeldExecutorSlot,
   releasePreHeldAdmissionReservation,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
   takePreHeldExecutorSlot,
   recoverIdleSemaphoreLeakCandidate,
   type AgentSemaphore,
@@ -196,7 +193,7 @@ import {
 import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
-import { acquireActiveSessionPath, activeSessionRegistry } from "./agents/active-session-registry.js";
+import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { isPlanningResetHoldClearingUpdate, PlanningResetFence } from "./planning-reset-fence.js";
 import { registerPlanningLivenessProbe } from "./agents/planning-liveness.js";
 import {
@@ -240,7 +237,7 @@ export function buildPlanningDependencyInstallationInstruction(
   const lines = [
     "## Dependency installation",
     "",
-    "This planning worktree is the same task-pinned directory execution will use. Resolve every item below through `fn_install_worktree_dependencies`; planner prose or a shell claim is not a durable resolution.",
+    "This task already holds an execution checkout from prior work. Resolve every item below through `fn_install_worktree_dependencies`; fresh checkout-free planning defers dependency readiness to execution acquisition.",
   ];
   for (const target of blocking) {
     const { readiness } = target;
@@ -263,6 +260,12 @@ async function resolvePlanningDependencyInstruction(input: {
   planningCwd: string;
   settings: Settings;
 }): Promise<string> {
+  /*
+  FNXC:PlanningBoundary 2026-09-01-14:49:
+  Planning runs against the dependency-installed main checkout without shell access. Dependency
+  installation and readiness are execution-lane concerns handled by acquireTaskWorktree's init pass.
+  */
+  if (input.planningCwd === input.rootDir) return "";
   const workspace = await loadWorkspaceConfig(input.rootDir).catch(() => null);
   const targets: PlanningDependencyInstructionTarget[] = [];
   const inspect = (repository: string, worktreePath: string) => {
@@ -319,7 +322,6 @@ import {
 } from "./execution/tool-availability.js";
 import { runGhostBugPreflight } from "./triage-domain/triage-preflight.js";
 import { runConfiguredCommand } from "./executor/configured-command.js";
-import { resolveGraphNodeSessionBoundary } from "./executor/run-graph-custom-node.js";
 import {
   detectUnrecognizedDependencyEvidence,
   detectWorktreeDependencyPlan,
@@ -386,16 +388,8 @@ export interface TriageProcessorOptions {
   messageStore?: import("@fusion/core").MessageStore;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
   pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
-  /*
-  FNXC:NodeWorktreeIsolation 2026-07-25-22:10:
-  Acquires (or reuses) the task-specific worktree so the planning session runs there instead of in the
-  shared main checkout. Planning uses the CODING tool surface, so running it at the repo root gave every
-  planner write tools in the operator's tree and made concurrent planners share one path. Optional: when
-  unwired (older callers, tests) or when it resolves null (workspace projects, acquisition failure),
-  planning falls back to the repo root exactly as before.
-  */
-  acquirePlanningWorktree?: (taskId: string) => Promise<string | null>;
 }
+
 
 /**
  * Processes tasks in the triage column by running an AI agent to generate
@@ -780,7 +774,7 @@ export class TriageProcessor {
           now,
         );
         return tasks.filter((task) => !this.coordinatorAdmittedTaskIds.has(task.id)).map((task) => ({
-          taskId: task.id, projectId: this.rootDir, lane: "planning", createdAt: task.createdAt,
+          taskId: task.id, projectId: this.rootDir, lane: "planning", consumesWorktree: false, createdAt: task.createdAt,
           reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
             this.coordinatorAdmittedTaskIds.add(task.id);
@@ -2397,22 +2391,15 @@ export class TriageProcessor {
       registration (`reserve`), the release on drop, the leak-recovery path, and the
       two admission-reservation hand-offs. Only its use as an ADMISSION LIMIT is gone.
       */
-      const projectRoom = Math.max(0, maxConcurrent - claimed);
       /*
-      FNXC:WorktreeCapacity 2026-08-01-04:38:
-      Worktree slots follow the canonical LIVE-TASK count (`claimed`), not retained directory
-      metadata. A queued, paused, dependency-blocked, or terminal card may keep a worktree path for
-      reuse/cleanup without consuming admission capacity. Every newly admitted planner becomes live
-      and spends one slot below, even when it reuses an existing directory.
+      FNXC:CapacityModel 2026-09-01-14:49:
+      Planning consumes provider capacity but no execution checkout. Its admission budget therefore
+      uses only maxConcurrent; consulting maxWorktrees here would recreate the coupled FN-282 limit.
       */
-      const maxWorktrees = resolveWorktreeCapacityLimit(settings);
-      const activeTaskLimit = resolveActiveTaskCapacityLimit(settings);
-      const worktreeRoom = maxWorktrees === null
-        ? Number.POSITIVE_INFINITY
-        : Math.max(0, maxWorktrees - claimed);
-      const maxToStart = Math.min(projectRoom, worktreeRoom);
+      const projectRoom = Math.max(0, maxConcurrent - claimed);
+      const activeTaskLimit = resolveAgentCapacityLimit(settings);
 
-      if (maxToStart <= 0 && triageTasks.length > 0) {
+      if (projectRoom <= 0 && triageTasks.length > 0) {
         const processingIds = [...this.processing].slice(0, 5);
         const eligibleIds = triageTasks.slice(0, 5).map((t) => t.id);
         /*
@@ -2424,11 +2411,10 @@ export class TriageProcessor {
         queued?", and a named reason answers it even when there is only one — while
         a payload with no reason field at all would read as "unknown".
         */
-        const blockedBy = worktreeRoom <= 0 && projectRoom > 0 ? "worktree cap" : "running-agent cap";
+        const blockedBy = "running-agent cap";
         const capacityReason = formatAdmissionCapacityQueuedReason({
-          maxConcurrent,
-          maxWorktrees: settings.maxWorktrees,
-          worktreeLimitEnabled: settings.worktreeLimitEnabled,
+          gate: "maxConcurrent",
+          limit: maxConcurrent,
           claimed,
           holderTaskIds: await persistedTopLevelAgentTaskIdsFromStore(this.store, allTasks),
         });
@@ -2547,17 +2533,10 @@ export class TriageProcessor {
       // Keep handoff reservations visible even when a test/runtime wrapper delays
       // the planner's synchronous processing claim until after this poll returns.
       const admittedThisPoll = new Set<string>();
-      /*
-      FNXC:WorktreeCapacity 2026-08-01-04:38:
-      Each admitted planner becomes an active task and therefore spends one worktree-capacity slot.
-      Whether its directory is newly created or retained is deliberately irrelevant.
-      */
       let agentBudget = projectRoom;
-      let worktreeBudget = worktreeRoom;
       for (let i = 0; i < triageTasks.length; i++) {
-        if (agentBudget <= 0 || worktreeBudget <= 0) break;
+        if (agentBudget <= 0) break;
         agentBudget -= 1;
-        worktreeBudget -= 1;
         let freshClaimSnapshot: Promise<{ count: number; ids: string[] }> | undefined;
         const getFreshClaimSnapshot = () => freshClaimSnapshot ??= (async () => {
           // Full rows are required here: a pending optional workflow-step lease can be the task's
@@ -2584,6 +2563,7 @@ export class TriageProcessor {
               taskId: task.id,
               projectId: this.rootDir,
               lane: "planning",
+              consumesWorktree: false,
               createdAt: task.createdAt,
               // FNXC:ConcurrencyAdmission 2026-08-05-10:00: the planner must
               // own the coordinator's real host reservation before it starts;
@@ -2801,13 +2781,6 @@ export class TriageProcessor {
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
 
-    /*
-    FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
-    Holds the worktree path this planning run published to `activeSessionRegistry`, so the outer
-    `finally` can release exactly what it registered (and nothing when planning ran in the shared
-    checkout). Declared at method scope because registration happens deep inside the try.
-    */
-    let registeredPlanningPath: string | null = null;
     let workflowCapacityAttemptId: string | undefined;
     let workflowCapacityProjectId: string | undefined;
     let planningWorkItemId: string | undefined;
@@ -3270,89 +3243,19 @@ export class TriageProcessor {
           : { provider: undefined, modelId: undefined };
 
         /*
-        FNXC:TriagePromptPersistence 2026-07-21-17:50:
-        Planning must use the coding tool surface. The shared readonly policy filters
-        mutation tools, including fn_task_prompt_write, before the model sees them;
-        advertising that writer in the prompt while running readonly stranded triage
-        on the original PROMPT.md stub and sent the stub into Plan Review.
+        FNXC:TriagePromptPersistence 2026-09-01-14:49:
+        Planning reads the dependency-installed main checkout while a declared read-only boundary
+        refuses shell and verification commands and permits generic writes only under .fusion/.
+        This is stronger concurrent-planner isolation than private writable worktrees because sessions
+        that cannot modify source files cannot collide; plans publish through Fusion's durable writers.
         */
-        /*
-        FNXC:NodeWorktreeIsolation 2026-07-25-22:10:
-        Planning runs in the TASK's own worktree, not the shared main checkout. This session carries the
-        coding tool surface (see FNXC:TriagePromptPersistence above), so rooting it at `this.rootDir`
-        put write tools in the operator's tree and made every concurrent planner share one path — the
-        same shared-path shape behind the reported Plan Review session collision. The worktree acquired
-        here is the one Plan Review and the implementation session then reuse.
-        */
-        let planningCwd = (await this.options.acquirePlanningWorktree?.(task.id).catch(() => null)) || this.rootDir;
-        const workspacePlanningConfig = await loadWorkspaceConfig(this.rootDir).catch(() => null);
-        let planningSessionBoundary: ReturnType<typeof resolveGraphNodeSessionBoundary> | { kind: "task-worktree"; writableRoot: string; projectRoot: string } | undefined;
-        if (planningCwd !== this.rootDir) {
-          /*
-          FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
-          Publish the planner's worktree as a live session for as long as this planning run owns it.
-          Registration is what makes `activeSessionRegistry.isPathActive()` true, which is the single
-          guard every worktree-removal path consults. Without it the self-healing reclaim sweep tore
-          the worktree out from under a running planner and paused the task
-          `branch-conflict-unrecoverable` (FN-8600). Registered ONLY for a real task worktree — the
-          shared `rootDir` fallback is the operator's checkout and must never be marked task-owned.
-          The reciprocal unregister lives in this method's outer `finally`, so an early throw between
-          here and there cannot leak a permanent entry that blocks later legitimate cleanup.
-          */
-          /*
-          FNXC:NodeWorktreeIsolation 2026-07-26-10:25:
-          Acquire through the reclaim-aware seam, not raw `registerPath`. `acquireActiveSessionPath`
-          is what lets a leaked entry from a crashed/dead holder be reclaimed instead of hard-failing
-          a legitimate new registration; raw `registerPath` throws on any foreign-held path, so one
-          stale record would wedge planning for that worktree until the engine restarted. The
-          executor already registers exclusively through this seam
-          (`TaskExecutor.acquireSessionRegistryPath`) — planning must not be the one holder that
-          bypasses it. `contended` means a genuinely live foreign holder, so planning falls back to
-          the shared checkout rather than running in a worktree someone else owns.
-          */
-          if (this.resetFence.isStale(task.id, planningGeneration)) return;
-          const acquired = acquireActiveSessionPath(activeSessionRegistry, planningCwd, {
-            taskId: task.id,
-            kind: "planning",
-            ownerKey: `planning:${task.id}`,
-          }, {
-            holderLiveProbe: (holderTaskId) => this.processing.has(holderTaskId) || this.hasLivePlanningWork(holderTaskId),
-          });
-          if (acquired.action === "contended") {
-            if (workspacePlanningConfig?.repos.length) {
-              throw new Error(`Workspace planning task directory is held by live task ${acquired.holderTaskId}; refusing shared-checkout fallback`);
-            }
-            planLog.warn(
-              `${task.id}: planning worktree ${planningCwd} is held by live task ${acquired.holderTaskId} (${acquired.holderKind}) — planning in the shared checkout instead`,
-            );
-            planningCwd = this.rootDir;
-          } else {
-            if (acquired.action === "reclaimed-stale-foreign") {
-              planLog.warn(
-                `${task.id}: reclaimed a stale active-session entry on ${planningCwd} from dead task ${acquired.holderTaskId} (idle ${acquired.ageMs}ms)`,
-              );
-            }
-            registeredPlanningPath = planningCwd;
-          }
-          await this.store.logEntry(task.id, `Planning session running in task worktree ${planningCwd}`).catch(() => undefined);
-        }
-        if (workspacePlanningConfig?.repos.length) {
-          if (planningCwd === this.rootDir) {
-            throw new Error("Workspace planning requires a private task directory, not the workspace root");
-          }
-          const planningTask = await this.store.getTask(task.id);
-          const taskDir = resolveWorkspaceTaskWorktreeDir(this.rootDir, settings, task.id);
-          planningSessionBoundary = resolveGraphNodeSessionBoundary({
-            isWorkspace: true,
-            writeCapable: true,
-            legacyWorkspaceLayout: isLegacyWorkspaceWorktreeLayout(planningTask, taskDir),
-            rootDir: this.rootDir,
-            worktreePath: planningCwd,
-            confirmedRepositories: workspacePlanningConfig.repos,
-          });
-        } else if (planningCwd !== this.rootDir) {
-          planningSessionBoundary = { kind: "task-worktree", writableRoot: planningCwd, projectRoot: this.rootDir };
-        }
+        const planningCwd = this.rootDir;
+        const planningSessionBoundary = {
+          kind: "read-only-root" as const,
+          writableRoot: null,
+          projectRoot: this.rootDir,
+          writableAllowlist: [join(this.rootDir, ".fusion")],
+        };
 
         const planningDependencyInstruction = await resolvePlanningDependencyInstruction({
           task: await this.store.getTask(task.id),
@@ -4266,32 +4169,6 @@ export class TriageProcessor {
       // early setup failure must return that untransferred host slot; after a
       // successful transfer this is intentionally a no-op.
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
-      /*
-      FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
-      Release the planner's registry entry on EVERY exit path (success, planning failure, abort,
-      pause). A leaked entry is not merely untidy: `isPathActive` would stay true forever and
-      permanently veto legitimate reclaim/cleanup of that worktree, converting this fix into the
-      opposite stall. Unregister is keyed on what we registered, so it is a no-op for planning runs
-      that used the shared checkout.
-      */
-      if (registeredPlanningPath) {
-        /*
-        FNXC:NodeWorktreeIsolation 2026-07-26-10:20:
-        Release ONLY if this planning run still owns the record. A bare path delete would reintroduce
-        this fix's own symptom on the execution side: `finalizeApprovedTask` moves the card to `todo`
-        while still inside the try, and several awaited writes (log flush, token-usage record,
-        getTask/updateTask, dispose) run before this finally. The scheduler can dispatch in that
-        window and the executor registers the SAME worktree path — `registerPath` permits a same-task
-        overwrite, so the record becomes `kind:"executor"`. Deleting by path alone would then clear a
-        LIVE executor entry, making `isPathActive` false and handing the reclaim sweep the same
-        worktree it tore out from under a planner in FN-8600.
-        */
-        const record = activeSessionRegistry.lookupByPath(registeredPlanningPath);
-        if (record?.ownerKey === `planning:${task.id}`) {
-          activeSessionRegistry.unregisterPath(registeredPlanningPath);
-        }
-        registeredPlanningPath = null;
-      }
       if (planningWorkItemId) {
         await this.store.transitionWorkflowWorkItem(planningWorkItemId, planningSessionCompleted ? "succeeded" : "failed", {
           leaseOwner: null,

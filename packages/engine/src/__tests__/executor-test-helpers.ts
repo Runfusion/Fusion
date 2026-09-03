@@ -252,6 +252,16 @@ vi.mock("../worktree/worktree-pool.js", async (importOriginal) => {
     RemovalReason: backend.RemovalReason,
     removeWorktree: vi.fn(actual.removeWorktree),
     classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: true }),
+    /*
+    FNXC:ExecutorTests 2026-09-02-19:43:
+    Shared executor fixtures model FN-001's already-acquired pinned checkout. The acquisition boundary
+    now requires a non-empty registered branch probe in addition to classification, so provide matching
+    evidence rather than letting every session-oriented test fail before it opens an agent session.
+    */
+    getRegisteredWorktreeBranches: vi.fn().mockResolvedValue([{
+      worktreePath: "/tmp/test/.fusion/worktrees/fn-001",
+      branch: "fusion/fn-001",
+    }]),
     describeRegisteredWorktrees: vi.fn().mockResolvedValue({ rawOutput: "", canonicalized: [] }),
     isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
   };

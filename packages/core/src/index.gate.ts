@@ -74,12 +74,22 @@ export { customProviderRegistryKey } from "./ai/custom-provider-key.js";
 export {
   ANTHROPIC_PROVIDER_ID,
   ANTHROPIC_API_KEY_PROVIDER_ID,
+  CLAUDE_FABLE_5_1_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
   mergeSupplementalAnthropicModels,
   toExecutionModelProviderId,
 } from "./ai/anthropic-models.js";
 export type { AnthropicProviderRegistration } from "./ai/anthropic-models.js";
+export {
+  ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION,
+  buildAnthropicClaudeCodeIdentityHeaders,
+  CLAUDE_CODE_CLIENT_VERSION_ENV,
+  CLAUDE_CODE_IMPERSONATED_VERSION,
+  compareClaudeCodeVersions,
+  parseClaudeCodeVersion,
+  resolveClaudeCodeClientVersion,
+} from "./ai/claude-code-identity.js";
 export {
   OPENAI_CODEX_PROVIDER_ID,
   GPT_5_6_LUNA_MODEL_ID,
@@ -297,6 +307,8 @@ export {
   isReportingOnlyOptionalGroup,
 } from "./workflows/workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional-steps.js";
+export { resolveWorkflowStepVerdictRequirement } from "./workflows/review-verdict-authority.js";
+export type { WorkflowStepVerdictRequirementInput } from "./workflows/review-verdict-authority.js";
 export {
   FAST_LANE_STEP_NAME,
   FAST_LANE_SKIP_VALUE,
@@ -712,6 +724,10 @@ export {
   type RunningAgentCountSource,
   type RunningAgentCounts,
 } from "./agents/live-agent-count.js";
+export {
+  isWorktreeCapacityHolder,
+  type WorktreeCapacityTaskShape,
+} from "./agents/worktree-capacity-holder.js";
 export {
   setTaskCreatedHook,
   getTaskCreatedHook,
@@ -1190,6 +1206,7 @@ export {
   AUTOMATED_BYPASS_ACTORS,
   evaluatePreMergeApprovals,
   isAuditedOperatorBypass,
+  requiresAuthoredReviewVerdict,
   requiresContentReviewProof,
   resolveUnprovenReviewApproval,
 } from "./merge/pre-merge-approval.js";

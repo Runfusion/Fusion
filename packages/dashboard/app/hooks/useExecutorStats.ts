@@ -138,15 +138,15 @@ function hasActionableBlockedBy(blockedBy: Task["blockedBy"] | string[] | null):
  * - Derives executorState from globalPause and enginePaused flags, with globalPause mapping to "stopped" and enginePaused to "paused" at any running count
  * - Returns ExecutorStats object with reactive updates
  */
-const DEFAULT_API_DATA: Pick<ExecutorStats, "maxConcurrent" | "effectiveMaxConcurrent" | "concurrencyBindingKnob" | "lastActivityAt"> & {
+const DEFAULT_API_DATA: Pick<ExecutorStats, "maxConcurrent" | "maxWorktrees" | "worktreeLimitEnabled" | "lastActivityAt"> & {
   globalPause: boolean;
   enginePaused: boolean;
 } = {
   globalPause: false,
   enginePaused: false,
   maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
-  effectiveMaxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
-  concurrencyBindingKnob: "maxConcurrent",
+  maxWorktrees: DEFAULT_PROJECT_SETTINGS.maxWorktrees,
+  worktreeLimitEnabled: true,
 };
 
 export function useExecutorStats(tasks: Task[], projectId?: string, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): UseExecutorStatsResult {
@@ -262,8 +262,8 @@ export function useExecutorStats(tasks: Task[], projectId?: string, columnFlagsB
     ...taskStats,
     executorState,
     maxConcurrent: apiData.maxConcurrent,
-    effectiveMaxConcurrent: apiData.effectiveMaxConcurrent,
-    concurrencyBindingKnob: apiData.concurrencyBindingKnob,
+    maxWorktrees: apiData.maxWorktrees,
+    worktreeLimitEnabled: apiData.worktreeLimitEnabled,
     lastActivityAt: apiData.lastActivityAt,
   };
 

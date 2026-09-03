@@ -17,6 +17,11 @@ export interface PoppedOutChatEntry {
   focusNonce: number;
   /** Stable per-project cascade slot used to visibly separate stacked chat windows. */
   cascadeSlot: number;
+  /**
+   * FNXC:ChatWindows 2026-09-02-05:24:
+   * A minimized secondary chat stays mounted and hidden so its geometry, transcript, scroll position, and draft survive restoration.
+   */
+  minimized: boolean;
 }
 
 export interface UsePoppedOutChatsResult {
@@ -24,6 +29,8 @@ export interface UsePoppedOutChatsResult {
   popOut: (projectId: string, session: ChatSessionInfo) => void;
   close: (projectId: string, sessionId: string) => void;
   closeAll: () => void;
+  minimizeAll: () => void;
+  restoreAll: () => void;
 }
 
 export function usePoppedOutChats(): UsePoppedOutChatsResult {
@@ -40,11 +47,17 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
       if (index === -1) {
         const occupiedSlots = new Set(current.filter((entry) => entry.projectId === projectId).map((entry) => entry.cascadeSlot));
         const cascadeSlot = Array.from({ length: current.length + 1 }, (_, slot) => slot).find((slot) => !occupiedSlots.has(slot)) ?? current.length;
-        return [...current, { projectId, session, focusNonce: 1, cascadeSlot }];
+        return [...current, { projectId, session, focusNonce: 1, cascadeSlot, minimized: false }];
       }
       const refreshed = [...current];
       const previous = refreshed[index];
-      refreshed[index] = { projectId, session, focusNonce: previous.focusNonce + 1, cascadeSlot: previous.cascadeSlot };
+      refreshed[index] = {
+        projectId,
+        session,
+        focusNonce: previous.focusNonce + 1,
+        cascadeSlot: previous.cascadeSlot,
+        minimized: false,
+      };
       return refreshed;
     });
   }, []);
@@ -54,6 +67,12 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
   }, []);
 
   const closeAll = useCallback(() => setEntries([]), []);
+  const minimizeAll = useCallback(() => {
+    setEntries((current) => current.map((entry) => ({ ...entry, minimized: true })));
+  }, []);
+  const restoreAll = useCallback(() => {
+    setEntries((current) => current.map((entry) => ({ ...entry, minimized: false })));
+  }, []);
 
-  return { entries, popOut, close, closeAll };
+  return { entries, popOut, close, closeAll, minimizeAll, restoreAll };
 }

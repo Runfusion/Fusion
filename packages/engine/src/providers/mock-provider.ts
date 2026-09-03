@@ -259,7 +259,7 @@ const DEFAULT_SCRIPTS: Record<MockSessionPurpose, MockScript> = {
   },
   reviewer: {
     async run(ctx) {
-      ctx.options.onText?.("Verdict: APPROVE\n\nSummary: Mock reviewer approved scripted output.\n");
+      ctx.options.onText?.("### Verdict: APPROVE\n\n### Summary\nMock reviewer approved scripted output.\n\n{\"verdict\":\"APPROVE\",\"notes\":\"Mock reviewer approved scripted output.\"}");
     },
   },
   merger: {
