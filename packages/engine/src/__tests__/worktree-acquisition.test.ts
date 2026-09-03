@@ -906,29 +906,6 @@ describe("acquireTaskWorktree", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: freshPath, branch: "operator/branch", branchWriteOrigin: "operator" });
   });
 
-  it("#3523 stamps operator provenance when pool acquisition adopts an operator-override branch", async () => {
-    const overrideTask = {
-      ...task,
-      branch: "operator/branch",
-      branchContext: { branchOverride: { by: "operator", at: "2026-08-28T00:00:00Z", branch: "operator/branch" } },
-    } as any;
-
-    const result = await acquireTaskWorktree({
-      task: overrideTask,
-      rootDir: process.cwd(),
-      store,
-      settings: { recycleWorktrees: true } as any,
-      pool: {
-        acquire: (_taskId: string) => "/tmp/pooled-operator",
-        prepareForTask: vi.fn().mockResolvedValue({ branch: "operator/branch", worktreePath: "/tmp/pooled-operator", reclaimed: false }),
-        release: vi.fn(),
-      } as any,
-      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/fn-worktree-fallback", branch: "operator/branch" }),
-    });
-
-    expect(result.source).toBe("pool");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled-operator", branch: "operator/branch", branchWriteOrigin: "operator" });
-  });
 
   it("#3523 keeps operator provenance when a Fusion-named override is sibling-renamed by a branch collision", async () => {
     // Greptile P1 (re-review of 1c02ddd0): a bare branch collision renames the

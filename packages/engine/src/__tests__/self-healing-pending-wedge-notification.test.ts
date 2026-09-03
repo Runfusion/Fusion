@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
@@ -37,7 +37,13 @@ describe("reconcile pending wedge notifications", () => {
     getActiveNotificationServiceMock.mockReturnValue({ getWedgeNotificationSettleMs: () => 1_000, completePendingWedgeNotification: completePendingWedgeNotificationMock });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("selects elapsed markers and audits the completion outcome verbatim", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T12:00:00.000Z"));
     const old = new Date(Date.now() - 1_001).toISOString();
     const young = new Date(Date.now() - 999).toISOString();
     const store = Object.assign(new EventEmitter(), {

@@ -128,17 +128,18 @@ describe("TaskDetailModal resolved column roles are identity-safe", () => {
   });
 
   /*
-  The paired completeness check: the guard above is vacuous if no effect reads a role at all. This
-  fails if a future refactor moves the reconciliation out from under the invariant.
+  The paired completeness check: the guard above is vacuous if no effect reads a role at all. The
+  done-tab reconciliation disappeared when Task Detail tabs were consolidated; the PR-tab redirect
+  remains the destructive role-driven effect this invariant protects.
   */
-  it("still has reconciliation effects reading resolved roles for the guard to protect", () => {
+  it("still has a reconciliation effect reading a resolved role for the guard to protect", () => {
     const effects = collectEffects();
     const guarded = effects.filter(
       (effect) =>
         effect.used.has("detailFlagsAreForThisTask")
-        && ["isReviewColumn", "isDoneColumn"].some((role) => effect.used.has(role)),
+        && effect.used.has("isReviewColumn"),
     );
 
-    expect(guarded.length, "expected the PR-tab and done-tab reconciliation effects").toBeGreaterThanOrEqual(2);
+    expect(guarded.length, "expected the PR-tab reconciliation effect").toBeGreaterThanOrEqual(1);
   });
 });
