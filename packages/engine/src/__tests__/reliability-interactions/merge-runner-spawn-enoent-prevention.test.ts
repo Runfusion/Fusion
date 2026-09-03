@@ -19,6 +19,7 @@ vi.mock("../../pi.js", () => ({
 import type { Settings } from "@fusion/core";
 import { activeSessionRegistry, executingTaskLock } from "../../agents/active-session-registry.js";
 import { aiMergeTask } from "../../merger.js";
+import { resolveTaskWorktreePath } from "../../worktree/worktree-paths.js";
 /*
 FNXC:PgMigrationQuarantine 2026-07-18-04:10:
 VAL-REMOVAL-005 reliability fixtures use PostgreSQL AsyncDataLayer storage. Read
@@ -170,7 +171,15 @@ describe("FN-6278 reliability interactions: merge runner cwd preflight", () => {
         },
       });
       const acquired = audits.find((event) => event.mutationType === "merge:reuse-handoff-acquired");
-      expect(acquired?.target).toBe(worktreePath);
+      /*
+      FNXC:WorktreeLocationUnification 2026-09-03-00:12:
+      FN-268 unified the default worktree root from the historic `<rootDir>-worktrees` sibling to
+      `<rootDir>/.fusion/worktrees`. When the reuse worktree cwd vanished, the merger re-acquires a
+      fresh checkout at the unified default layout (not the stale prior sibling path this fixture
+      registered as `priorWorktreePath`). Assert the freshly acquired handoff target resolves through
+      the canonical layout helper so this stays correct if the default relocates again.
+      */
+      expect(acquired?.target).toBe(resolveTaskWorktreePath(rootDir, fixture.settings, taskId.toLowerCase()));
       expect(git(rootDir, "git ls-files")).toContain("packages/engine/src/fn-6278-ri-vanished.ts");
     } finally {
       await cleanupFixture(fixture, worktreeRoot);
