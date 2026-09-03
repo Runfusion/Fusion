@@ -41,6 +41,8 @@
   },
   "changesets": [
     "fn-9242-fable-5-1",
-    "fn-9243-unrun-pre-merge-gate-reseed"
+    "fn-9243-unrun-pre-merge-gate-reseed",
+    "fn-9244-pi-0-84-4-muse-spark",
+    "fn-9245-claude-code-client-version"
   ]
 }

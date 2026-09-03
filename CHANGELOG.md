@@ -2,6 +2,24 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.1
+
+### Highlights
+
+- Claude Fable 5.1 works again when signing in with an Anthropic subscription
+- Muse Spark models are selectable in the model picker with pricing attached
+- Bundled Pi runtime moves from 0.84.1 to 0.84.4
+- Pin the reported Claude Code client version with an environment override
+
+### New
+
+- Muse Spark models are now selectable wherever you pick a model, with pricing configured for the four credentialed-provider keys.
+- The bundled Pi runtime advances from 0.84.1 to 0.84.4.
+
+### Fixed
+
+- Claude Fable 5.1 no longer fails on Anthropic subscription login with a too-old-client error. A new client-identity policy sends a current version, and an environment override lets you pin the reported Claude Code version yourself if a future upstream bump gets ahead of the release.
+
 ## 0.78.0-beta.0
 
 ### Highlights

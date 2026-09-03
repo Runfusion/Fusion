@@ -1,5 +1,19 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.1
+
+### Minor Changes
+
+- a7951f4: summary: Update the bundled Pi runtime and add selectable, priced Muse Spark models.
+  category: feature
+  dev: Advances the Pi closure from 0.84.1 to 0.84.4 and adds four credentialed-provider MODEL_PRICING keys.
+
+### Patch Changes
+
+- c032adb: summary: Fix Claude Fable 5.1 failing on Anthropic subscription login with a too-old-client error.
+  category: fix
+  dev: Adds core claude-code-identity policy, a pi.ts getAuth decorator, and FUSION_ANTHROPIC_CLAUDE_CODE_VERSION override.
+
 ## 0.78.0-beta.0
 
 ### Minor Changes
