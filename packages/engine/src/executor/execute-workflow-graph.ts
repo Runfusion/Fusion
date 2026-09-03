@@ -899,7 +899,7 @@ export async function executeWorkflowGraph(
             || (node.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined)
               ?.nodes?.every((inner) => inner.config?.workflowAction === "deterministic-verification") === true;
           const writeCapable = !deterministicVerification
-            && (workflowNodeRequiresWorktree(node, { reviewerInlineFixes: settings.reviewerInlineFixes === false ? false : undefined }) || node.kind === "code");
+            && (workflowNodeRequiresWorktree(node) || node.kind === "code");
           const hasCurrentCodeReviewApproval = live.workflowStepResults?.some((result) =>
             result.reviewKind === "code"
             && result.status === "passed"

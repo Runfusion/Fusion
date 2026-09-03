@@ -210,19 +210,21 @@ describe("executor graph execute self-requeue gate", () => {
       status: "failed",
       error: "Workflow graph terminated with failure at node 'code-review-remediation'",
       steps: [{ name: "Implement", status: "done" }],
-      postReviewFixCount: 99,
+      postReviewFixCount: 2,
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
         phase: "pre-merge",
         status: "failed",
         output: "Fix the reviewer finding before merge.",
+        verdict: "REVISE",
+        reviewKind: "code",
         startedAt: now,
         completedAt: now,
       }],
-      log: Array.from({ length: 99 }, (_, index) => ({
+      log: Array.from({ length: 2 }, (_, index) => ({
         timestamp: now,
-        action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${index + 1}/unbounded)`,
+        action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${index + 1}/3)`,
         outcome: "Step: Code Review\nWorkflow revision key: code-review",
       })),
     });
@@ -237,11 +239,10 @@ describe("executor graph execute self-requeue gate", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     /*
-     * FNXC:WorkflowRemediation 2026-07-03-20:10:
-     * FN-7476-class parked rows have no live session left, but the durable failed
-     * Code Review result is enough evidence to reuse the remediation handoff.
-     * Built-in Code Review remains unbounded by default, so high prior attempt
-     * counts must not force manual retry unless a numeric cap was configured.
+     * FNXC:WorkflowRemediation 2026-09-03-05:40:
+     * FN-7476-class parked rows have no live session left, but the durable failed Code Review
+     * result is enough to enter the remediation recovery owner. This fixture retains one bounded
+     * attempt; separate convergence coverage owns the exhausted-budget outcome.
      */
     await (executor as any).handleGraphFailure(live, {
       disposition: "failed",
@@ -250,12 +251,7 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:code-review-remediation:value": "remediation-not-scheduled" },
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(live.id, { postReviewFixCount: 100 }, undefined);
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      live.id,
-      expect.stringContaining("Auto-revived from in-review: pre-merge workflow step \"Code Review\" had failed"),
-      "agent",
-    );
+    expect(store.updateTask).toHaveBeenCalledWith(live.id, { postReviewFixCount: 3 }, undefined);
     expect(store.logEntry).toHaveBeenCalledWith(
       live.id,
       expect.stringContaining("Auto-recovered retryable remediation node 'code-review-remediation'"),

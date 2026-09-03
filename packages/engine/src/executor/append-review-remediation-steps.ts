@@ -44,10 +44,10 @@ export type AppendReviewRemediationOutcome =
  * work is recorded and released as non-blocking rather than producing either an empty executor
  * dispatch or an engine-authored human hold.
  *
- * FNXC:ReviewGatedRemediation 2026-08-28-16:10:
- * Review-to-fix passes are unbounded here, and `wave` is provenance rather than a count budget.
- * Only an optional group's authored `maxRevisions` may impose a numeric cap; all appender releases
- * are evidence-based so an unsatisfied plan with new actionable evidence keeps receiving fix work.
+ * FNXC:ReviewGatedRemediation 2026-09-03-05:40:
+ * `wave` remains provenance rather than a second budget. The caller resolves stored workflow policy
+ * and authored `maxRevisions`, then the atomic attempt claim enforces that bound while publishing
+ * named work; evidence-based releases remain separate from budget exhaustion.
  *
  * FNXC:ReviewGatedRemediation 2026-08-28-07:48:
  * Review remediation may ask for human action only when an operator authored that gate. Automatic

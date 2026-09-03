@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { TaskDetail, WorkflowIr } from "@fusion/core";
+import { getLatestFailedPreMergeReviewStep, type TaskDetail, type WorkflowIr } from "@fusion/core";
 
 import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
+import { workflowStepMissingVerdictNotice } from "../executor/workflow-step-verdict.js";
 
 /*
 FNXC:WorkflowStepResults 2026-07-07-00:00:
@@ -101,6 +102,51 @@ describe("workflow-graph-executor: non-verdict failure diagnostic (Runfusion/Fus
       "[pre-merge] Workflow step completed: Code Review",
       expect.anything(),
     );
+  });
+
+  it("makes a verdict-less advisory outcome terminally failed and bypass-selectable", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const handler: WorkflowNodeHandler = async (node) => node.id === "review"
+      ? {
+          outcome: "success",
+          value: "advisory_failure",
+          contextPatch: {
+            verdictRequired: true,
+            output: "The reviewer omitted the verdict envelope.",
+          },
+        }
+      : { outcome: "success" };
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result as unknown as Record<string, unknown>); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    const terminal = records.find((record) => record.workflowStepId === "code-review" && record.status !== "pending");
+    expect(terminal).toMatchObject({
+      status: "failed",
+      verdictRequired: true,
+      output: workflowStepMissingVerdictNotice("no-verdict"),
+    });
+    expect(getLatestFailedPreMergeReviewStep({ workflowStepResults: records as any }))
+      .toMatchObject({ workflowStepId: "code-review", status: "failed" });
+  });
+
+  it("keeps a genuine advisory REVISE mapped to advisory failure", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const handler: WorkflowNodeHandler = async (node) => node.id === "review"
+      ? { outcome: "success", value: "REVISE", contextPatch: { verdictRequired: true, output: "Fix the issue." } }
+      : { outcome: "success" };
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result as unknown as Record<string, unknown>); },
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    expect(records.find((record) => record.workflowStepId === "code-review" && record.status !== "pending"))
+      .toMatchObject({ status: "advisory_failure", verdict: "REVISE", verdictRequired: true });
   });
 
   it("records a structured approving verdict as passed when a verdict was required", async () => {

@@ -447,24 +447,12 @@ export async function runGraphCustomNode(
     const rawCliCommand = executorKind === "cli" && typeof cfg.cliCommand === "string" && cfg.cliCommand.trim()
       ? cfg.cliCommand.trim()
       : undefined;
-    // Isolation guard: write-capable nodes must run inside a task worktree, not
-    // the shared repo root. Before the execute seam runs, live.worktree is unset
-    // — a coding/script/CLI node falling back to deps.rootDir would mutate the
-    // main checkout and cross-contaminate other tasks. Reject such nodes until a
-    // worktree exists. Read-only nodes (default toolMode) are safe against root.
-    /*
-    FNXC:WorkflowReviewers 2026-07-15-00:00:
-    Inline-fix Code Review, Browser Verification, and custom review nodes become
-    write-capable even when their workflow definition says `toolMode: readonly`.
-    Use the shared classifier consumed by graph preparation so issue #2075 cannot
-    leave runtime requiring a worktree that preparation declined to acquire.
-    Plan Review remains excluded because it uses the narrow PROMPT.md writer.
-    */
+    // Nodes that inspect or mutate delivered work must run inside a task worktree,
+    // not the shared repo root. Review nodes still need the checkout when their
+    // session tool policy is read-only; the classifier therefore answers checkout
+    // need rather than whether mutation tools will be exposed.
     const isDeterministicVerificationGate = cfg.workflowAction === "deterministic-verification";
-    const writeCapable = isDeterministicVerificationGate || workflowNodeRequiresWorktree(node, {
-      optionalGroupId,
-      reviewerInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes,
-    });
+    const writeCapable = isDeterministicVerificationGate || workflowNodeRequiresWorktree(node, { optionalGroupId });
     const workspaceConfig = deps.ensureWorkspaceConfig
       ? await deps.ensureWorkspaceConfig()
       : deps.workspaceConfig;

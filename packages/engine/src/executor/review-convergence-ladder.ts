@@ -143,7 +143,7 @@ export async function routeReviewConvergenceLadder(
       && (result.status === "failed" || result.status === "advisory_failure"))) return "declined";
   /*
   FNXC:ReviewEmptyContent 2026-08-28-13:14:
-  Empty Code Review input is terminal on first detection, including the built-in unbounded budget.
+  Empty Code Review input is terminal on first detection, independent of the configured revision budget.
   The checks above are only a pre-filter; the close owns its own exact-gate CAS because concurrent
   lifecycle writers can land after this read. Do not claim a ladder stage, increment convergence,
   dispatch escalation, or arbitrate content that does not exist.

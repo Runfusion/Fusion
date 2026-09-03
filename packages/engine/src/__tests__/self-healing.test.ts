@@ -6551,7 +6551,7 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
-    it("recovers a parked failed code-review-remediation row after restart when Code Review is unbounded", async () => {
+    it("routes a parked failed code-review-remediation row through the bounded recovery owner", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -6585,18 +6585,17 @@ describe("SelfHealingManager", () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(failedCodeReviewTask);
 
       /*
-       * FNXC:WorkflowRemediation 2026-07-03-20:10:
-       * Restart self-healing must recognize the FN-7476 signature: in-review,
-       * status=failed, terminal `code-review-remediation`, and a durable failed
-       * Code Review result. Code Review's default budget is unbounded, so the
-       * global maxPostReviewFixes fallback must not strand high-attempt rows.
+       * FNXC:WorkflowRemediation 2026-09-03-05:40:
+       * Restart self-healing recognizes the FN-7476 signature and hands even an exhausted Code
+       * Review to the recovery owner, which applies the bounded convergence ladder instead of
+       * silently dropping the parked row during candidate filtering.
        */
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
       expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 51 });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1572",
-        expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step (attempt 51/unbounded)"),
+        expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step (attempt 51/3)"),
         expect.stringContaining("Workflow revision key: code-review"),
       );
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572", status: "failed" }));

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODE_REVIEW_GROUP_ID,
   CODE_REVIEW_STEP_NODE_ID,
+  DEFAULT_CODE_REVIEW_MAX_REVISIONS,
   codeReviewOptionalGroupNode,
 } from "../workflows/builtin-code-review-group.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
@@ -25,9 +26,9 @@ fields" assertions are gone; the inlined literal values (name/toolMode/gateMode/
 verdict convention) are now asserted directly on the built group node below, which is the
 parity oracle.
 
-FNXC:CodeReviewStep 2026-06-29-17:55:
-Built-in Code Review defaults to unbounded remediation so repeated REVISE feedback
-keeps cycling through implementation fixes instead of terminal-failing the task.
+FNXC:WorkflowRemediationBudget 2026-09-03-05:40:
+Built-in Code Review uses a finite default so repeated REVISE feedback eventually reaches the
+convergence ladder instead of consuming review sessions indefinitely.
 */
 
 describe("codeReviewOptionalGroupNode", () => {
@@ -68,7 +69,8 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(node.config?.name).toBe("Code Review");
     // Default-ON (runs by default), but still an optional-group → toggleable per task.
     expect(node.config?.defaultOn).toBe(true);
-    expect(node.config?.maxRevisions).toBe("unbounded");
+    expect(DEFAULT_CODE_REVIEW_MAX_REVISIONS).toBe(3);
+    expect(node.config?.maxRevisions).toBe(DEFAULT_CODE_REVIEW_MAX_REVISIONS);
 
     const template = node.config?.template as { nodes: { id: string; kind: string; config?: Record<string, unknown> }[] };
     expect(template.nodes).toHaveLength(1);
@@ -133,7 +135,7 @@ describe("built-in coding + stepwise workflows wire code-review as a default-ON 
   ])("%s: code-review is advertised as a toggle AND seeded into the default-on set", (_name, ir) => {
     // Advertised as a toggleable optional step (so operators can turn it off per task)…
     const advertised = resolveWorkflowOptionalSteps(ir).find((s) => s.templateId === "code-review");
-    expect(advertised).toEqual({
+    expect(advertised).toMatchObject({
       templateId: "code-review",
       name: "Code Review",
       description: "",

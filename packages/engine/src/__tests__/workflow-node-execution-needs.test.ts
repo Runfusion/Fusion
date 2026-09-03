@@ -18,30 +18,27 @@ describe("workflowNodeRequiresWorktree", () => {
   });
 
   it.each([
-    ["review name", node({ id: "review", config: { name: "Code Review" } }), undefined],
-    ["verification name", node({ id: "verify", config: { name: "Browser Verification" } }), undefined],
-    ["explicit inline fix config", node({ config: { reviewCanFixInline: true } }), undefined],
+    ["explicit review checkout config", node({ config: { reviewCanFixInline: true } }), undefined],
+    ["code-review-kind node", node({ config: { reviewKind: "code" } }), undefined],
     ["code review optional group", node(), "code-review"],
     ["browser verification optional group", node(), "browser-verification"],
-  ])("requires a worktree for inline fixes from %s", (_name, workflowNode, optionalGroupId) => {
+  ])("requires a worktree for %s without an inline-fix option", (_name, workflowNode, optionalGroupId) => {
     expect(workflowNodeRequiresWorktree(workflowNode, { optionalGroupId })).toBe(true);
   });
 
-  it("keeps inline-fix reviews read-only when disabled", () => {
-    expect(workflowNodeRequiresWorktree(node({ config: { name: "Code Review" } }), { reviewerInlineFixes: false })).toBe(false);
-    expect(workflowNodeRequiresWorktree(node(), {
-      optionalGroupId: "code-review",
-      reviewerInlineFixes: false,
-    })).toBe(false);
+  it.each([
+    node({ id: "review", config: { name: "Code Review" } }),
+    node({ id: "verify", config: { name: "Browser Verification" } }),
+  ])("does not derive checkout requirements from display names", (workflowNode) => {
+    expect(workflowNodeRequiresWorktree(workflowNode)).toBe(false);
   });
 
   it.each([
-    node({ id: "plan-review-step", config: { name: "Code Review" } }),
-    node({ config: { name: "Plan Review" } }),
-    node(),
-  ])("keeps Plan Review read-only", (workflowNode) => {
-    expect(workflowNodeRequiresWorktree(workflowNode, {
-      optionalGroupId: workflowNode.id === "node" ? "plan-review" : undefined,
-    })).toBe(false);
+    ["canonical Plan Review node", node({ id: "plan-review-step", config: { reviewKind: "code" } }), undefined],
+    ["Plan Review kind", node({ config: { reviewKind: "plan", reviewCanFixInline: true } }), undefined],
+    ["Plan Review optional group", node({ config: { reviewKind: "code" } }), "plan-review"],
+    ["deterministic verification", node({ config: { workflowAction: "deterministic-verification", reviewKind: "code" } }), undefined],
+  ])("keeps %s excluded from checkout preparation", (_name, workflowNode, optionalGroupId) => {
+    expect(workflowNodeRequiresWorktree(workflowNode, { optionalGroupId })).toBe(false);
   });
 });

@@ -94,9 +94,11 @@ import { createSeenSteeringIds } from "./task-predicates.js";
 import {
   parseWorkflowStepNotesRepair,
   parseWorkflowStepOutput,
+  parseWorkflowStepVerdictRepair,
   workflowStepMissingVerdictNotice,
   workflowStepVerdictNoNotesNotice,
   WORKFLOW_STEP_NOTES_REPAIR_PROMPT,
+  WORKFLOW_STEP_VERDICT_REPAIR_PROMPT,
   type WorkflowStepOutcome,
   type WorkflowStepVerdictNoNotesReason,
 } from "./workflow-step-verdict.js";
@@ -121,8 +123,10 @@ import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agen
 const execAsync = promisify(exec);
 
 export const WORKFLOW_STEP_NOTES_REPAIR_TIMEOUT_MS = 120_000;
+export const WORKFLOW_STEP_VERDICT_REPAIR_TIMEOUT_MS = 120_000;
 
 type WorkflowStepNotesRepairOutcome = "repaired" | Exclude<WorkflowStepVerdictNoNotesReason, "reused-empty">;
+type WorkflowStepVerdictRepairOutcome = "repaired" | "empty" | "timed-out" | "failed-soft" | "unavailable";
 
 /** Find the current reusable review result for one node, scope generation, and exact input fingerprint. */
 export function findReusableReviewResult(
@@ -279,14 +283,17 @@ export async function executeWorkflowStep(
       || optionalGroupId === "plan-review"
       || optionalGroupId === "code-review"
       || optionalGroupId === "browser-verification";
-    const reviewerInlineFixesEnabled = (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false;
+    /*
+     * FNXC:WorkflowReviewers 2026-09-03-05:40:
+     * Graph execution supplies the raw project settings map, but `reviewerInlineFixes` is workflow-owned and absent from `DEFAULT_PROJECT_SETTINGS`. Resolve the review step's effective workflow settings once so both its declaration default and an operator's stored value reach the tool-policy decision; reading the raw map made both unreachable. The two-tier merge still lets an explicit base value win over a declaration default.
+     */
+    const effectiveReviewSettings = isReviewTypeWorkflowStep
+      ? await mergeEffectiveSettings(deps.store, task, settings).catch(() => settings)
+      : settings;
+    const reviewerInlineFixesEnabled = (effectiveReviewSettings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes === true;
     const allowReviewerInlineFixes = reviewerInlineFixesEnabled && isReviewTypeWorkflowStep && workflowStep.mode === "prompt";
     const allowPlanReviewPromptWrite = allowReviewerInlineFixes && isPlanReviewStep;
     if (allowReviewerInlineFixes && !isPlanReviewStep) {
-      /*
-       * FNXC:WorkflowReviewers 2026-07-01-12:36:
-       * Review-type workflow nodes can now repair their own findings when the workflow setting `reviewerInlineFixes` is on. Use coding tools for implementation review sessions so Code Review, Browser Verification, and custom review/verification gates do not have to bounce through executor remediation for issues they can safely fix inline. Plan Review stays on a narrow PROMPT.md writer because it runs before implementation.
-       */
       toolMode = "coding";
     }
     const requireExternalIntegrationEvidence =
@@ -554,8 +561,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
     const reviewBlockingSeverity = reviewFindingsContract
       ? resolveReviewBlockingSeverity({
         reviewKind: workflowStepMetadata.reviewKind as WorkflowReviewKind,
-        workflowSettings: await mergeEffectiveSettings(deps.store, task, settings)
-          .catch(() => settings) as unknown as Record<string, unknown>,
+        workflowSettings: effectiveReviewSettings as unknown as Record<string, unknown>,
         nodeBlockingSeverity: (workflowStep as WorkflowStep & { blockingSeverity?: unknown }).blockingSeverity,
       })
       : undefined;
@@ -1220,6 +1226,79 @@ CRITICAL SCOPING RULES — read before doing anything else:
         let parsed = requireVerdict
           ? parseWorkflowStepOutput(output, { optionalGroupId })
           : parseWorkflowStepOutput(output, { requireVerdict: false, optionalGroupId });
+
+        /*
+        FNXC:ReviewVerdictAuthority 2026-09-03-05:40:
+        A verdict-required review cannot finish without authored lifecycle authority. Ask the already-live
+        reviewer exactly once for the verdict envelope only, before token accounting and disposal; never
+        re-review, use tools, infer approval from prose, or loop. A missing, invalid, failed, or timed-out
+        repair remains malformed and is persisted as a failed review by the graph.
+        */
+        let verdictRepairResult: WorkflowStepVerdictRepairOutcome = "unavailable";
+        let repairedVerdict: ReturnType<typeof parseWorkflowStepVerdictRepair> = null;
+        if (requireVerdict && parsed.malformed) {
+          const repairStart = output.length;
+          const originalReviewOutput = output;
+          const repairTimeoutMs = Math.min(timeoutMs, WORKFLOW_STEP_VERDICT_REPAIR_TIMEOUT_MS);
+          let repairTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const repairTimeout = new Promise<"timeout">((resolve) => {
+              repairTimer = setTimeout(() => resolve("timeout"), repairTimeoutMs);
+            });
+            const repairPrompt = promptWithFallback(session, WORKFLOW_STEP_VERDICT_REPAIR_PROMPT(optionalGroupId));
+            const repairOutcome = await Promise.race([
+              repairPrompt.then(() => "completed" as const),
+              repairTimeout,
+            ]);
+            if (repairOutcome === "completed") {
+              repairedVerdict = parseWorkflowStepVerdictRepair(output.slice(repairStart), { optionalGroupId });
+              if (repairedVerdict) {
+                const repairedNotes = repairedVerdict === "CLOSE_NO_OP"
+                  ? undefined
+                  : parseWorkflowStepOutput(
+                    `${originalReviewOutput}\n${JSON.stringify({ verdict: repairedVerdict })}`,
+                    { optionalGroupId },
+                  );
+                parsed = repairedVerdict === "CLOSE_NO_OP"
+                  ? { output: "", verdict: repairedVerdict, notes: "" }
+                  : repairedNotes!;
+                verdictRepairResult = "repaired";
+              } else {
+                verdictRepairResult = "empty";
+              }
+            } else {
+              verdictRepairResult = "timed-out";
+            }
+          } catch {
+            verdictRepairResult = "failed-soft";
+          } finally {
+            if (repairTimer) clearTimeout(repairTimer);
+            try {
+              await deps.store.logEntry(
+                task.id,
+                `[pre-merge] Workflow step '${workflowStep.name}' requested a missing verdict`,
+                verdictRepairResult,
+              );
+            } catch {
+              // FNXC:ReviewVerdictAuthority 2026-09-03-05:40: Best-effort verdict-repair telemetry cannot fail the review step.
+            }
+            const context = deps.getRunContextFor(task.id);
+            if (context && verdictRepairResult !== "unavailable") await emitBoundedRunAudit(deps.store, {
+              taskId: task.id,
+              agentId: context.agentId,
+              runId: context.runId,
+              domain: "database",
+              mutationType: "task:review-verdict-repaired",
+              target: task.id,
+              metadata: {
+                taskId: task.id,
+                workflowStepId: sameGateStepId,
+                outcome: verdictRepairResult,
+                ...(repairedVerdict ? { verdict: repairedVerdict } : {}),
+              },
+            });
+          }
+        }
 
         /*
         FNXC:ReviewVerdictNotes 2026-08-28-21:23:

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
+import { DEFAULT_CODE_REVIEW_MAX_REVISIONS } from "../workflows/builtin-code-review-group.js";
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import {
   resolveEffectiveSettings,
@@ -77,9 +78,9 @@ function makeStore(opts: {
 }
 
 describe("resolveOptionalReviewRevisionBudget", () => {
-  it("treats unset built-in Plan Review and Code Review settings as unbounded", () => {
+  it("keeps Plan Review unbounded and gives unset Code Review the bounded default", () => {
     expect(resolveOptionalReviewRevisionBudget({ optionalGroupId: "plan-review", workflowSettings: {} })).toBe("unbounded");
-    expect(resolveOptionalReviewRevisionBudget({ optionalGroupId: "code-review", workflowSettings: {} })).toBe("unbounded");
+    expect(resolveOptionalReviewRevisionBudget({ optionalGroupId: "code-review", workflowSettings: {} })).toBe(DEFAULT_CODE_REVIEW_MAX_REVISIONS);
   });
 
   it("uses explicit workflow values before node config, including zero", () => {

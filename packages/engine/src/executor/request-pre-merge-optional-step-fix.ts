@@ -11,8 +11,8 @@
  * `awaiting-approval` rather than cycling until a human notices. Every other optional group still
  * cycles freely when unbounded.
  *
- * FNXC:WorkflowRevisionBudget 2026-06-30-20:48:
- * Live Plan Review/spec and Code Review remediation must honor explicit workflow setting values before node `maxRevisions`, and must treat unset values as unbounded for those two built-in review paths. Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
+ * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
+ * Live Plan Review/spec and Code Review remediation honor explicit workflow values before node `maxRevisions`. An otherwise-unset Code Review uses the finite built-in default, Plan Review remains unbounded behind its separate replan cap, and Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
  *
  * FNXC:WorkflowRevisionBudget 2026-06-30-22:04:
  * Plan Review and Code Review caps are independent policy budgets, so attempts are counted by workflow step key instead of the legacy aggregate `postReviewFixCount`. The aggregate still increments for existing dashboard summaries, but it must not let a Plan Review replan consume a Code Review remediation slot.

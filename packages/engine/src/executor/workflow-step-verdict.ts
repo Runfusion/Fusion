@@ -32,6 +32,21 @@ export function workflowStepMissingVerdictNotice(reason: WorkflowStepMalformedRe
   return `The review did not complete because ${reasonText[reason]}; no approval was recorded.`;
 }
 
+export const WORKFLOW_STEP_VERDICT_REPAIR_PROMPT = (optionalGroupId?: string): string => {
+  const allowed = optionalGroupId === PLAN_REVIEW_GROUP_ID
+    ? "APPROVE|APPROVE_WITH_NOTES|REVISE|CLOSE_NO_OP"
+    : "APPROVE|APPROVE_WITH_NOTES|REVISE";
+  return `Your previous answer did not contain a parseable verdict. Do not re-review the work and do not use tools. Reply with exactly one JSON object of the form {"verdict":"${allowed}"} and no other text. The verdict token must be one of the values shown exactly; a response with no verdict object is a failed review.`;
+};
+
+/** Read one verdict-only repair reply without inferring lifecycle authority from prose. */
+export function parseWorkflowStepVerdictRepair(
+  rawOutput: string,
+  options: { optionalGroupId?: string } = {},
+): WorkflowStepVerdict | null {
+  return parseWorkflowStepVerdict(rawOutput, options)?.verdict ?? null;
+}
+
 export const WORKFLOW_STEP_NOTES_REPAIR_PROMPT = (verdict: WorkflowStepVerdict): string => `Your previous answer carried verdict ${verdict} with an empty notes field. Do not re-review the work and do not change the verdict. Reply with exactly one JSON object of the form {"notes":"..."} containing one to three sentences that name what you checked and why the verdict was reached. Use no tools.`;
 
 export type WorkflowStepVerdictNoNotesReason = "empty" | "timed-out" | "failed-soft" | "unavailable" | "reused-empty";

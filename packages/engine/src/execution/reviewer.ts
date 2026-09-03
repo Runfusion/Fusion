@@ -264,7 +264,7 @@ export async function reviewStep(
   if (options.allowInlineFixes === true) {
     /*
      * FNXC:WorkflowReviewers 2026-07-01-12:39:
-     * Triage Plan Review uses this reviewer path instead of graph `executeWorkflowStep`. When workflow setting `reviewerInlineFixes` is enabled, the reviewer must be allowed to repair PROMPT.md/spec findings in this same session and return the final verdict after the fix.
+     * Triage Plan Review uses this reviewer path instead of graph `executeWorkflowStep`. When inline reviewer repairs are explicitly enabled, the reviewer may repair PROMPT.md/spec findings in this same session and return the final verdict after the fix.
      */
     request = appendSameSessionFixPolicy(request, reviewType, canWritePromptInline);
   }

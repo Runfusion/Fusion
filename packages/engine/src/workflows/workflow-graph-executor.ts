@@ -63,9 +63,7 @@ function parseWorkflowStepNotRunReason(value: unknown): WorkflowStepNotRunReason
     : undefined;
 }
 
-type WorkflowNodeSettings = Pick<Settings, "experimentalFeatures"> & {
-  reviewerInlineFixes?: boolean;
-};
+type WorkflowNodeSettings = Pick<Settings, "experimentalFeatures">;
 
 /** A classified Plan Review provider outage terminates the graph without replan traversal. */
 export const PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE = "plan-review-provider-failure-hold";
@@ -1206,12 +1204,19 @@ export class WorkflowGraphExecutor {
           merge, retry, and status-switch behavior non-blocking. Plan Review is excluded because its
           fail-closed satisfaction gate would turn this record into an automatic hold with no exit.
           */
+          /*
+          FNXC:ReviewVerdictAuthority 2026-09-03-05:40:
+          A verdict-required result with no verdict must be terminally failed before advisory mapping.
+          `advisory_failure` is invisible to both the merge blocker's failed-status branch and the
+          privileged latest-failed-review selector, which otherwise leaves a merge block with no
+          recovery owner or audited bypass. A fixed not-run reason remains terminally skipped.
+          */
           let stepStatus: WorkflowStepResult["status"];
           if (groupResult.outcome === "failure") stepStatus = "failed";
-          else if (groupResult.value === "advisory_failure") stepStatus = "advisory_failure";
-          else if (verdict === "REVISE") stepStatus = "advisory_failure";
           else if (notRunReason) stepStatus = "skipped";
           else if (verdictRequired && !verdict) stepStatus = "failed";
+          else if (groupResult.value === "advisory_failure") stepStatus = "advisory_failure";
+          else if (verdict === "REVISE") stepStatus = "advisory_failure";
           else stepStatus = "passed";
           let stepOutput = typeof exitContextPatch?.output === "string" ? exitContextPatch.output : undefined;
           let stepNotes = typeof exitContextPatch?.notes === "string" ? exitContextPatch.notes : undefined;
@@ -2098,7 +2103,7 @@ export class WorkflowGraphExecutor {
       progressRecord = null;
       let releasePrincipal: (() => void) | undefined;
       try {
-        await this.prepareNodeExecution(node, task, context, settings);
+        await this.prepareNodeExecution(node, task, context);
         const preflight = await this.deps.beforeNodeExecution?.(node, task, context);
         releasePrincipal = typeof context["workflow:release-principal"] === "function"
           ? context["workflow:release-principal"] as () => void
@@ -2422,9 +2427,8 @@ export class WorkflowGraphExecutor {
     node: WorkflowIrNode,
     task: TaskDetail,
     context: Record<string, unknown>,
-    settings: WorkflowNodeSettings | undefined,
   ): Promise<void> {
-    const requirement = this.classifyNodePreparation(node, context, settings);
+    const requirement = this.classifyNodePreparation(node, context);
     if (!requirement.requiresWorktree) return;
     await this.deps.prepareNodeExecution?.(node, task, requirement);
   }
@@ -2432,28 +2436,17 @@ export class WorkflowGraphExecutor {
   private classifyNodePreparation(
     node: WorkflowIrNode,
     context: Record<string, unknown>,
-    settings: WorkflowNodeSettings | undefined,
   ): WorkflowNodePreparationRequirement {
     const optionalGroupId = typeof context[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
       ? context[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
       : undefined;
-    /*
-     * FNXC:WorkflowExecution 2026-07-15-00:00:
-     * Graph preparation receives the optional-group context and effective inline-fix
-     * setting so it applies the same classifier as runtime. Only an explicit false
-     * disables inline fixes, preserving the default-enabled review worktree contract
-     * that prevents issue #2075's pre-review no-worktree failure.
-     */
     /*
     FNXC:WorktreeBaseRefresh 2026-08-01-16:04:
     A graph `code` node is the implementation boundary even when its sandbox runner does not
     otherwise advertise a worktree need. Force preparation so an existing planning checkout is
     refreshed before code executes; review and planning retain their normal classifier behavior.
     */
-    const requiresWorktree = workflowNodeRequiresWorktree(node, {
-      optionalGroupId,
-      reviewerInlineFixes: settings?.reviewerInlineFixes,
-    }) || node.kind === "code";
+    const requiresWorktree = workflowNodeRequiresWorktree(node, { optionalGroupId }) || node.kind === "code";
     return {
       requiresWorktree,
       reason: node.kind === "code" ? "implementation-code-node" : requiresWorktree ? "write-capable-node" : undefined,
