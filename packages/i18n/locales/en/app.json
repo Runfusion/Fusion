@@ -9799,7 +9799,11 @@
     "openTask": "Open task",
     "close": "Close artifact preview",
     "loading": "Loading image artifact…",
-    "retry": "Retry"
+    "retry": "Retry",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "resetZoom": "Reset zoom",
+    "zoomLevel": "{{percent}}% zoom"
   },
   "toolCallDetails": {
     "line": "line",

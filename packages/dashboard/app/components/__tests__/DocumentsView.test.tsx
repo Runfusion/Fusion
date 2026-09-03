@@ -704,6 +704,14 @@ describe("DocumentsView", () => {
     expect(imageEntry).toHaveAttribute("aria-current", "true");
     expect(screen.getByRole("img", { name: "Task screenshot" })).toHaveAttribute("src", "blob:secure-preview");
 
+    fireEvent.click(screen.getByRole("button", { name: "Expand image artifact Task screenshot" }));
+    const imageDialog = screen.getByRole("dialog", { name: "Artifact media preview" });
+    const expandedImage = within(imageDialog).getByRole("img", { name: "Task screenshot" });
+    expect(within(imageDialog).getByTestId("artifact-image-viewer-zoom-level")).toHaveTextContent("100%");
+    fireEvent.click(within(imageDialog).getByTestId("artifact-image-viewer-zoom-in"));
+    expect(expandedImage.style.transform).toContain("scale(1.25)");
+    fireEvent.click(within(imageDialog).getByRole("button", { name: "Close artifact preview" }));
+
     fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
     expect(screen.getByText("Alpha document content")).toBeInTheDocument();
     expect(imageEntry).not.toHaveAttribute("aria-current");

@@ -1180,7 +1180,11 @@ export default interface Resources {
       "close": "Close artifact preview",
       "loading": "Loading image artifact…",
       "openTask": "Open task",
-      "retry": "Retry"
+      "resetZoom": "Reset zoom",
+      "retry": "Retry",
+      "zoomIn": "Zoom in",
+      "zoomLevel": "{{percent}}% zoom",
+      "zoomOut": "Zoom out"
     },
     "auth": {
       "clearAndRetry": "Clear token and retry",

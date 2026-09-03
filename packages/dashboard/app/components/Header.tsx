@@ -624,21 +624,6 @@ export function Header({
 
       <div className="header-actions">
         {shellConnectionControl}
-        {/*
-        FNXC:MobileTaskNavigation 2026-08-20-05:47:
-        Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
-        */}
-        {isMobile && mobileNavEnabled && projectId && onNewTask && (
-          <button
-            className="btn-icon"
-            onClick={onNewTask}
-            title={t("newTaskModal.title", "New Task")}
-            aria-label={t("newTaskModal.title", "New Task")}
-            data-testid="mobile-header-new-task"
-          >
-            <Plus />
-          </button>
-        )}
 
         {/* Mobile Search Trigger - only on mobile, show trigger button in header */}
         {onSearchChange && isMobile && (hideFullNav || view === "board" || view === "list") && !shouldShowMobileSearch && (
@@ -1235,6 +1220,25 @@ export function Header({
               <span>{t("header.settings", "Settings")}</span>
             </button>
           </div>
+        )}
+
+        {/*
+        FNXC:MobileTaskNavigation 2026-08-20-05:47:
+        Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
+
+        FNXC:MobileTaskNavigation 2026-09-03-04:56:
+        The header create-task control must remain the last child of the action cluster so it renders at the far right. Header actions deliberately have no order or row-reverse override, making DOM order the position contract.
+        */}
+        {isMobile && mobileNavEnabled && projectId && onNewTask && (
+          <button
+            className="btn-icon"
+            onClick={onNewTask}
+            title={t("newTaskModal.title", "New Task")}
+            aria-label={t("newTaskModal.title", "New Task")}
+            data-testid="mobile-header-new-task"
+          >
+            <Plus />
+          </button>
         )}
       </div>
     </header>
