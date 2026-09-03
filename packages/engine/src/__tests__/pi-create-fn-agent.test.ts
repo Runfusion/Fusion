@@ -3474,6 +3474,28 @@ describe("createFnAgent", () => {
 
       expect(result?.auth.headers).toEqual({});
     });
+
+    it("adds OAuth identity alongside task routing headers", async () => {
+      modelRuntimeGetAuthMock.mockResolvedValueOnce({ auth: { apiKey: "sk-ant-oat-test", headers: {} } });
+      const runtime = await createAndCaptureRuntime({ taskId: "FN-9245" });
+
+      const result = await runtime.getAuth(anyModel);
+
+      expect(result?.auth.headers).toEqual({
+        "X-Session-Id": "FN-9245",
+        "X-Session-Affinity": "FN-9245",
+        "user-agent": "claude-cli/2.1.251",
+      });
+    });
+
+    it("adds OAuth identity without a task or pi session id", async () => {
+      modelRuntimeGetAuthMock.mockResolvedValueOnce({ auth: { apiKey: "sk-ant-oat-test", headers: {} } });
+      const runtime = await createAndCaptureRuntime();
+
+      const result = await runtime.getAuth(anyModel);
+
+      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.251" });
+    });
   });
 
   describe("skill selection", () => {
