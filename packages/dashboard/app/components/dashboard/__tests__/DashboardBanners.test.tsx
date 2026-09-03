@@ -27,7 +27,11 @@ vi.mock("../../OAuthReloginBanner", () => ({ OAuthReloginBanner: () => null }));
 vi.mock("../../CliBinaryInstallBanner", () => ({ CliBinaryInstallBanner: () => null }));
 vi.mock("../../OnboardingResumeCard", () => ({ OnboardingResumeCard: () => null }));
 vi.mock("../../PostOnboardingRecommendations", () => ({ PostOnboardingRecommendations: () => null }));
-vi.mock("../../UpdateAvailableBanner", () => ({ UpdateAvailableBanner: () => null }));
+vi.mock("../../UpdateAvailableBanner", () => ({
+  UpdateAvailableBanner: ({ latestVersion }: { latestVersion: string }) => (
+    <section data-testid="update-available-banner">Update available: {latestVersion}</section>
+  ),
+}));
 vi.mock("../../MergeAdvanceNotice", () => ({ default: () => null }));
 vi.mock("../../TaskIdIntegrityBanner", () => ({ TaskIdIntegrityBanner: () => null }));
 vi.mock("../../DbCorruptionBanner", () => ({
@@ -75,6 +79,36 @@ describe("isMigrationStatusBannerActive", () => {
     expect(isMigrationStatusBannerActive({ status: "degraded", migration: { active: false, durableStatus: "running" } } as any)).toBe(true);
     expect(isMigrationStatusBannerActive({ status: "ok", migration: { active: false } } as any)).toBe(false);
     expect(isMigrationStatusBannerActive(undefined)).toBe(false);
+  });
+});
+
+describe("DashboardBanners update banner visibility", () => {
+  it("renders the single update banner gate only when its version is not dismissed", () => {
+    const { rerender } = render(
+      <DashboardBanners
+        {...buildProps({
+          updateAvailable: true,
+          latestVersion: "0.7.0",
+          currentVersion: "0.6.0",
+          updateBannerDismissed: false,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("update-available-banner")).toHaveTextContent("0.7.0");
+
+    rerender(
+      <DashboardBanners
+        {...buildProps({
+          updateAvailable: true,
+          latestVersion: "0.7.0",
+          currentVersion: "0.6.0",
+          updateBannerDismissed: true,
+        })}
+      />,
+    );
+
+    expect(screen.queryByTestId("update-available-banner")).not.toBeInTheDocument();
   });
 });
 
