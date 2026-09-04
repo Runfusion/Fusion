@@ -158,4 +158,38 @@ pgDescribe("updateTask prompt return (PostgreSQL backend mode)", () => {
     const evidence = await store.getLatestCurrentPlanEvidence(task.id);
     expect(evidence?.plan.sections.mission.canonical).toContain("durable prompt after evidence failure");
   });
+
+  it.sequential("retries declaredSymbols persist after PROMPT.md write so a later read matches", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-07:51:
+    Drive shipped updateTask: if the follow-up declaredSymbols row write fails after PROMPT.md
+    is durable, retry until the row matches the new prompt so getTask cannot observe split revisions.
+    */
+    const task = await store.createTask({ description: "prompt symbols persist retry" });
+    const first = prompt("first symbols revision", ["pkg/old.ts#A"]);
+    const next = prompt("durable prompt after symbols persist failure", ["pkg/new.ts#Foo"]);
+    await store.updateTask(task.id, { prompt: first });
+    expect((await store.getTask(task.id)).declaredSymbols).toEqual(["pkg/old.ts#a"]);
+
+    const original = store.atomicWriteTaskJsonWithAudit.bind(store);
+    let failedOnce = false;
+    const spy = vi.spyOn(store, "atomicWriteTaskJsonWithAudit").mockImplementation(async (...args) => {
+      const written = args[1] as { declaredSymbols?: string[] };
+      if (!failedOnce && JSON.stringify(written.declaredSymbols ?? []) === JSON.stringify(["pkg/new.ts#foo"])) {
+        failedOnce = true;
+        throw new Error("simulated declaredSymbols persist failure");
+      }
+      return original(...args);
+    });
+    try {
+      const updated = await store.updateTask(task.id, { prompt: next });
+      expect(updated?.prompt).toBe(next);
+      expect(updated?.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+      expect((await store.getTask(task.id)).declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+      expect(await readFile(join(store.taskDir(task.id), "PROMPT.md"), "utf8")).toBe(next);
+      expect(failedOnce).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

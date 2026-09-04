@@ -204,4 +204,35 @@ describe("updateTask returns the persisted prompt", () => {
     expect(persistedSymbols[0]).toEqual(["pkg/old.ts#a"]);
     expect(persistedSymbols.some((symbols) => JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"]))).toBe(true);
   });
+
+  it("retries declaredSymbols persist after PROMPT.md write so file and symbols stay aligned", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-07:51:
+    A follow-up row write that fails after PROMPT.md is durable must not reject updateTask while
+    the file has the new prompt and the row keeps previous declaredSymbols. Retry the symbols
+    persist so a later read observes metadata that matches the durable file.
+    */
+    const { store, row, taskDir } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec", ["pkg/old.ts#a"]));
+    const content = prompt("symbols persist retry", ["pkg/new.ts#Foo"]);
+    const persistedSymbols: Array<string[] | undefined> = [];
+    let failedOnce = false;
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      const symbols = [...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])];
+      persistedSymbols.push(symbols);
+      if (!failedOnce && JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])) {
+        failedOnce = true;
+        throw new Error("simulated declaredSymbols persist failure");
+      }
+    });
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+    expect(updated.prompt).toBe(content);
+    expect(updated.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(row.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(content);
+    expect(failedOnce).toBe(true);
+    expect(persistedSymbols.filter((symbols) => JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])).length).toBeGreaterThanOrEqual(2);
+  });
 });
