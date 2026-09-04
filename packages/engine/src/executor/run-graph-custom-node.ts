@@ -324,11 +324,11 @@ export function preserveOutcomeFindingsFromReviewOutput(outcome: WorkflowStepOut
 }
 
 /*
-FNXC:Identity 2026-09-04-08:21:
-Worktree acquire must attribute to the same column-override / routed principal the node will
-execute as. `cfg.agentId` is only own-settings fallback. `resolveEffectiveAgent` is pure and
-`columnBinding` is already in hand; graph principal is already on `graphContext`. Column-agent
-session adoption (persona/model) stays after checkout mint — this helper returns the id only.
+FNXC:Identity 2026-09-04-08:38:
+Session identity is `workflow:principal-agent-id` when FN-8764 routing selected one (including
+when an override column agent lacked the node's required role). Column-agent is the worktree
+fallback only when that context is absent. `resolveEffectiveAgent` still owns model/persona
+overlay after checkout. `cfg.agentId` remains own-settings fallback.
 */
 export function resolveGraphCustomNodeWorktreePrincipal(input: {
   cfg: Record<string, unknown>;
@@ -359,7 +359,9 @@ export function resolveGraphCustomNodeWorktreePrincipal(input: {
     ownModelId: ownModelComplete ? modelId : undefined,
   });
   return {
-    principalAgentId: effective.source === "column-agent" ? effective.agentId : (graphPrincipal ?? ownAgentId),
+    principalAgentId: graphPrincipal
+      ?? (effective.source === "column-agent" ? effective.agentId : undefined)
+      ?? ownAgentId,
     effective,
   };
 }
