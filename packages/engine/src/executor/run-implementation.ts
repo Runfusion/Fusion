@@ -167,6 +167,7 @@ import {
 } from "./configured-command.js";
 import { buildExecutionPrompt } from "./execution-prompt.js";
 import { resolveReboundColumnFor, resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { recoverAbortedStepSessionInPlace } from "./recover-aborted-step-session.js";
 import { detectPendingReviewBlock } from "./pending-review-block.js";
 import { detectPseudoPause } from "./pseudo-pause.js";
 import { isInvalidAssistantContinuationErrorMessage } from "./requeue-loop.js";
@@ -1415,6 +1416,8 @@ export async function runImplementation(
         stepExecutorRef.current = stepExecutor;
         deps.setActiveStepExecutor(task.id, stepExecutor, worktreePath, createSeenSteeringIds(detail));
 
+        let pendingInPlaceResume = false;
+
         const stepWork = async () => {
           const results = await stepExecutor.executeAll();
 
@@ -1434,9 +1437,16 @@ export async function runImplementation(
             }
             if (await deps.parkApprovalSuspension(task.id, "step sessions")) return;
             deps.clearPausedAborted(task.id);
-            await deps.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, deps.getRunContextFor(task.id));
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
+            /*
+            FNXC:LifecycleContainment 2026-09-04-03:04:
+            F5 rejects engine WIP-to-hold recovery, while optionless moves previously bypassed the
+            postcondition check. Repair the interrupted step session in place instead of moving it.
+            */
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "graceful-pause-abort",
+            )) === "resumed-in-place";
             return;
           }
           if (deps.stuckAborted.has(task.id)) {
@@ -1685,11 +1695,13 @@ export async function runImplementation(
           } else {
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
-            await deps.store.updateTask(task.id, { status: null, error: null });
-            await deps.store.logEntry(task.id, `Step-session failed — requeued for execution resume: ${errorSummary}`, undefined, deps.getRunContextFor(task.id));
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true, moveSource: "engine", lifecycleReason: "self-healing-session-recovery", recoveryRehome: true });
-            executorLog.log(`✗ ${task.id} step-session failed → todo resume: ${errorSummary}`);
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "step-failure",
+              errorSummary,
+            )) === "resumed-in-place";
+            executorLog.log(`✗ ${task.id} step-session failed; repaired in place for same-node resume: ${errorSummary}`);
             deps.options.onError?.(task, new Error(errorSummary));
           }
         };
@@ -1728,9 +1740,11 @@ export async function runImplementation(
             }
             if (await deps.parkApprovalSuspension(task.id, "step session")) return;
             deps.clearPausedAborted(task.id);
-            await deps.store.logEntry(task.id, "Execution paused during step-session", undefined, deps.getRunContextFor(task.id));
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "pause-abort",
+            )) === "resumed-in-place";
           } else if (deps.stuckAborted.has(task.id)) {
             stuckRequeue = deps.stuckAborted.get(task.id) ?? true;
             deps.stuckAborted.delete(task.id);
@@ -1822,11 +1836,13 @@ export async function runImplementation(
               return;
             }
             executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
-            await deps.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
-            await deps.store.updateTask(task.id, { status: null, error: null });
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true, moveSource: "engine", lifecycleReason: "self-healing-session-recovery", recoveryRehome: true });
-            executorLog.log(`✗ ${task.id} step-session execution failed → todo resume`);
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "session-failure",
+              errorMessage,
+            )) === "resumed-in-place";
+            executorLog.log(`✗ ${task.id} step-session execution failed; repaired in place for same-node resume`);
             deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           }
         } finally {
@@ -1847,15 +1863,27 @@ export async function runImplementation(
           FNXC:StuckSessionRecovery 2026-08-28-07:48:
           A dead step session is disposed, then the same task is re-dispatched without changing its
           column, workflow node, current step, worktree, branch, or completed-step progress.
+
+          FNXC:LifecycleContainment 2026-09-04-03:27:
+          Global and engine pauses defer all WIP re-dispatch to the unpause owner, including when
+          stuck-session recovery wins over an aborted-session recovery in this finally block.
           */
           if (stuckRequeue === true) {
             const latestTask = await deps.store.getTask(task.id);
-            if (!latestTask.paused && !latestTask.userPaused) {
+            const settings = await deps.store.getSettings();
+            if (!latestTask.paused && !latestTask.userPaused && !settings.globalPause && !settings.enginePaused) {
               await deps.store.updateTask(task.id, { status: null, error: null });
               await deps.store.logEntry(task.id, "Stuck step session disposed — resuming the same node and step in place");
               await deps.reexecuteTaskInPlace(task.id);
             }
             stuckRequeue = null;
+          } else if (pendingInPlaceResume) {
+            const latestTask = await deps.store.getTask(task.id);
+            const settings = await deps.store.getSettings();
+            if (!latestTask.paused && !latestTask.userPaused && !settings.globalPause && !settings.enginePaused) {
+              await deps.reexecuteTaskInPlace(task.id);
+            }
+            pendingInPlaceResume = false;
           }
         }
         // Step-session path handled completely — return before outer catch/finally
