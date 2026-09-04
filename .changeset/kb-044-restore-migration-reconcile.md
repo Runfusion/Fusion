@@ -4,4 +4,4 @@
 
 summary: Replay missing PostgreSQL migrations after restoring an older dump pair.
 category: fix
-dev: After FN-9255 bookkeeping dumps restore, legacy two-member stems still rewind public.fusion_schema_migrations from the earliest missing CREATE-TABLE sentinel and replay; a thrown reconcile uses the same dump-group rollback. Remote reconciliation connections use ssl verify-full.
+dev: After FN-9255 bookkeeping dumps restore, legacy stems rewind public.fusion_schema_migrations from the earliest missing table or ALTER column and replay inside one transaction; a thrown reconcile uses dump-group rollback. Remote reconciliation connections use ssl verify-full.

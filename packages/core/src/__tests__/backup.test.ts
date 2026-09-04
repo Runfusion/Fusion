@@ -17,6 +17,7 @@ import {
 import {
   CONFIGURATION_REVISIONS_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
+  TASK_REQUIRE_PLAN_APPROVAL_VERSION,
 } from "../postgres/schema-applier.js";
 import {
   clearActiveEmbeddedRuntimeUrl,
@@ -39,30 +40,66 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function createRestoreCatalog(presentRelations: readonly string[] = []): RestoreMigrationCatalog & {
+function columnKey(relation: string, column: string): string {
+  return `${relation}.${column}`;
+}
+
+function createRestoreCatalog(
+  presentRelations: readonly string[] = [],
+  presentColumns: ReadonlyArray<{ relation: string; column: string }> = [],
+): RestoreMigrationCatalog & {
   insertLifecycleSeq(projectId: string): Promise<void>;
   insertConfigurationRevision(): Promise<void>;
+  hasApplied(version: string): boolean;
+  failReplayWith?: Error;
 } {
   const relations = new Set(presentRelations);
+  const columns = new Set(presentColumns.map((entry) => columnKey(entry.relation, entry.column)));
   const applied = new Set(RESTORED_SCHEMA_RELATION_SENTINELS.map((sentinel) => sentinel.version));
-  return {
+  const catalog: RestoreMigrationCatalog & {
+    insertLifecycleSeq(projectId: string): Promise<void>;
+    insertConfigurationRevision(): Promise<void>;
+    hasApplied(version: string): boolean;
+    failReplayWith?: Error;
+  } = {
     async relationExists(qualifiedName) {
       return relations.has(qualifiedName);
     },
-    async unstampNumericVersionsFrom(version) {
-      const floor = Number.parseInt(version, 10);
-      for (const appliedVersion of [...applied]) {
-        if (/^[0-9]+$/.test(appliedVersion) && Number.parseInt(appliedVersion, 10) >= floor) {
-          applied.delete(appliedVersion);
+    async columnExists(qualifiedRelation, column) {
+      return columns.has(columnKey(qualifiedRelation, column));
+    },
+    async applyRewindAndReplay(floor) {
+      const snapshotApplied = new Set(applied);
+      const snapshotRelations = new Set(relations);
+      const snapshotColumns = new Set(columns);
+      try {
+        if (floor) {
+          const parsedFloor = Number.parseInt(floor, 10);
+          for (const appliedVersion of [...applied]) {
+            if (/^[0-9]+$/.test(appliedVersion) && Number.parseInt(appliedVersion, 10) >= parsedFloor) {
+              applied.delete(appliedVersion);
+            }
+          }
         }
+        if (catalog.failReplayWith) throw catalog.failReplayWith;
+        for (const sentinel of RESTORED_SCHEMA_RELATION_SENTINELS) {
+          if (applied.has(sentinel.version)) continue;
+          for (const relation of sentinel.relations ?? []) relations.add(relation);
+          for (const column of sentinel.columns ?? []) columns.add(columnKey(column.relation, column.column));
+          applied.add(sentinel.version);
+        }
+      } catch (error) {
+        applied.clear();
+        for (const version of snapshotApplied) applied.add(version);
+        relations.clear();
+        for (const relation of snapshotRelations) relations.add(relation);
+        columns.clear();
+        for (const column of snapshotColumns) columns.add(column);
+        throw error;
       }
     },
-    async replayPendingMigrations() {
-      for (const sentinel of RESTORED_SCHEMA_RELATION_SENTINELS) {
-        if (applied.has(sentinel.version)) continue;
-        for (const relation of sentinel.relations) relations.add(relation);
-        applied.add(sentinel.version);
-      }
+    hasApplied(version) {
+      return applied.has(version);
     },
     async insertLifecycleSeq(projectId: string) {
       if (!relations.has("project.task_lifecycle_event_seq")) {
@@ -76,6 +113,19 @@ function createRestoreCatalog(presentRelations: readonly string[] = []): Restore
       }
     },
   };
+  return catalog;
+}
+
+function sentinelRelationsBelow(version: string): string[] {
+  return RESTORED_SCHEMA_RELATION_SENTINELS
+    .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(version, 10))
+    .flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+}
+
+function sentinelColumnsBelow(version: string): Array<{ relation: string; column: string }> {
+  return RESTORED_SCHEMA_RELATION_SENTINELS
+    .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(version, 10))
+    .flatMap((sentinel) => [...(sentinel.columns ?? [])]);
 }
 
 async function createRestoreFixture(root: string, backupOptions: BackupOptions = {}) {
@@ -370,11 +420,7 @@ describe("PostgreSQL paired restore orchestration", () => {
   it("replays 0040 relations after restoring a dump that lacks them while the ledger claims current", async () => {
     const root = await mkdtemp(join(tmpdir(), "fusion-restore-0040-rewind-"));
     try {
-      const catalog = createRestoreCatalog(
-        RESTORED_SCHEMA_RELATION_SENTINELS
-          .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(TASK_LIFECYCLE_OUTBOX_VERSION, 10))
-          .flatMap((sentinel) => [...sentinel.relations]),
-      );
+      const catalog = createRestoreCatalog(sentinelRelationsBelow(TASK_LIFECYCLE_OUTBOX_VERSION));
       const fixture = await createRestoreFixture(root, {
         reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
       });
@@ -400,11 +446,7 @@ describe("PostgreSQL paired restore orchestration", () => {
   it("rewinds past a missing pre-0040 relation so later inserts succeed", async () => {
     const root = await mkdtemp(join(tmpdir(), "fusion-restore-pre-0040-rewind-"));
     try {
-      const catalog = createRestoreCatalog(
-        RESTORED_SCHEMA_RELATION_SENTINELS
-          .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(CONFIGURATION_REVISIONS_VERSION, 10))
-          .flatMap((sentinel) => [...sentinel.relations]),
-      );
+      const catalog = createRestoreCatalog(sentinelRelationsBelow(CONFIGURATION_REVISIONS_VERSION));
       const fixture = await createRestoreFixture(root, {
         reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
       });
@@ -424,6 +466,40 @@ describe("PostgreSQL paired restore orchestration", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("rewinds a missing later ALTER column while parent tables remain", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-column-rewind-"));
+    try {
+      const catalog = createRestoreCatalog(
+        RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]),
+        sentinelColumnsBelow(TASK_REQUIRE_PLAN_APPROVAL_VERSION),
+      );
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0070-project");
+      await writeFile(fixture.centralPath, "central-source");
+
+      expect(await catalog.columnExists("project.tasks", "require_plan_approval")).toBe(false);
+      await fixture.manager.restoreBackup(fixture.projectFilename, {
+        createPreRestoreBackup: false,
+      });
+      expect(await catalog.columnExists("project.tasks", "require_plan_approval")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps migration ledger versions when baseline replay fails after unstamp", async () => {
+    const catalog = createRestoreCatalog(
+      RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]),
+    );
+    catalog.failReplayWith = new Error("baseline exploded");
+    expect(catalog.hasApplied(TASK_REQUIRE_PLAN_APPROVAL_VERSION)).toBe(true);
+    await expect(reconcileRestoredSchemaMigrations(catalog)).rejects.toThrow(/baseline exploded/);
+    expect(catalog.hasApplied(TASK_REQUIRE_PLAN_APPROVAL_VERSION)).toBe(true);
+    expect(catalog.hasApplied(TASK_LIFECYCLE_OUTBOX_VERSION)).toBe(true);
   });
 
   it("rolls project/archive back when migration reconciliation fails after project restore", async () => {
