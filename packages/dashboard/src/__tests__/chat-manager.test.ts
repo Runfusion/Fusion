@@ -2982,6 +2982,173 @@ describe("ChatManager.sendMessage", () => {
     }));
   });
 
+  it("stamps cancelled fallback output with the fallback model, not the failed primary", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      title: "Fallback Chat",
+      modelProvider: "openai-codex",
+      modelId: "gpt-5.3-codex",
+    });
+    let rejectPrompt: ((reason?: unknown) => void) | undefined;
+    mockChatStore.addMessage.mockImplementation(async (_sessionId: string, input: any) => ({
+      id: input.role === "assistant" ? "assistant-interrupted-1" : "user-1",
+      sessionId: "chat-001",
+      role: input.role,
+      content: input.content,
+      thinkingOutput: input.thinkingOutput ?? null,
+      metadata: input.metadata ?? null,
+      createdAt: "2026-09-04T05:12:00.000Z",
+    }));
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(() => {
+          options.onFallbackModelUsed?.({
+            primaryModel: "openai-codex/gpt-5.3-codex",
+            fallbackModel: "zai/glm-5.1",
+            triggerPoint: "prompt-time",
+          });
+          options.onText("Fallback streamed prefix");
+          return new Promise<void>((_resolve, reject) => {
+            rejectPrompt = reject;
+          });
+        }),
+        dispose: vi.fn().mockImplementation(() => rejectPrompt?.(new Error("Disposed"))),
+        state: { messages: [] },
+      },
+    }));
+
+    const chatManager = createChatManagerWithSettings({
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.3-codex",
+      fallbackProvider: "zai",
+      fallbackModelId: "glm-5.1",
+    });
+    const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const cancellation = await chatManager.cancelGeneration("chat-001");
+    await sendPromise;
+
+    expect(cancellation).toEqual(expect.objectContaining({ success: true, interrupted: true }));
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]?.[1]).toEqual(expect.objectContaining({
+      content: "Fallback streamed prefix",
+      metadata: expect.objectContaining({
+        interrupted: true,
+        modelProvider: "zai",
+        modelId: "glm-5.1",
+      }),
+    }));
+    expect(assistantCalls[0]?.[1].metadata.modelProvider).not.toBe("openai-codex");
+  });
+
+  it("stamps failed fallback output with the fallback model, not the failed primary", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      title: "Fallback Chat",
+      modelProvider: "openai-codex",
+      modelId: "gpt-5.3-codex",
+    });
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          await options.onFallbackModelUsed?.({
+            primaryModel: "openai-codex/gpt-5.3-codex",
+            fallbackModel: "zai/glm-5.1",
+            triggerPoint: "prompt-time",
+          });
+          options.onText?.("Fallback streamed prefix");
+          throw new Error("Fallback also failed");
+        }),
+        dispose: vi.fn(),
+        state: { messages: [] },
+      },
+    }));
+
+    const chatManager = createChatManagerWithSettings({
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.3-codex",
+      fallbackProvider: "zai",
+      fallbackModelId: "glm-5.1",
+    });
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    const partialCall = mockChatStore.addMessage.mock.calls.find(
+      (call) => call[1].role === "assistant" && call[1].metadata?.interrupted === true,
+    );
+    expect(partialCall?.[1]).toEqual(expect.objectContaining({
+      content: "Fallback streamed prefix",
+      metadata: expect.objectContaining({
+        interrupted: true,
+        modelProvider: "zai",
+        modelId: "glm-5.1",
+      }),
+    }));
+    expect(partialCall?.[1].metadata.modelProvider).not.toBe("openai-codex");
+  });
+
+  it("omits model attribution when a cancelled turn mixed primary and fallback output", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      title: "Fallback Chat",
+      modelProvider: "openai-codex",
+      modelId: "gpt-5.3-codex",
+    });
+    let rejectPrompt: ((reason?: unknown) => void) | undefined;
+    mockChatStore.addMessage.mockImplementation(async (_sessionId: string, input: any) => ({
+      id: input.role === "assistant" ? "assistant-interrupted-1" : "user-1",
+      sessionId: "chat-001",
+      role: input.role,
+      content: input.content,
+      metadata: input.metadata ?? null,
+      createdAt: "2026-09-04T05:12:00.000Z",
+    }));
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(() => {
+          options.onText("Primary prefix");
+          options.onFallbackModelUsed?.({
+            primaryModel: "openai-codex/gpt-5.3-codex",
+            fallbackModel: "zai/glm-5.1",
+            triggerPoint: "prompt-time",
+          });
+          options.onText(" fallback suffix");
+          return new Promise<void>((_resolve, reject) => {
+            rejectPrompt = reject;
+          });
+        }),
+        dispose: vi.fn().mockImplementation(() => rejectPrompt?.(new Error("Disposed"))),
+        state: { messages: [] },
+      },
+    }));
+
+    const chatManager = createChatManagerWithSettings({
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.3-codex",
+      fallbackProvider: "zai",
+      fallbackModelId: "glm-5.1",
+    });
+    const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await chatManager.cancelGeneration("chat-001");
+    await sendPromise;
+
+    const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1].role === "assistant");
+    expect(assistantCall?.[1].content).toBe("Primary prefix fallback suffix");
+    expect(assistantCall?.[1].metadata).toEqual(expect.objectContaining({
+      interrupted: true,
+      fallback: expect.objectContaining({ fallbackModel: "zai/glm-5.1" }),
+    }));
+    expect(assistantCall?.[1].metadata.modelProvider).toBeUndefined();
+    expect(assistantCall?.[1].metadata.modelId).toBeUndefined();
+  });
+
   it("persists actionable Sonnet 5 provider detail when no fallback is configured", async () => {
     const sonnet5NotFoundError =
       'Error: 404 {"type":"error","error":{"type":"not_found_error","message":"Not found"},"request_id":"req_011CcawcZ3Ra9CennJXM8oWC"}';

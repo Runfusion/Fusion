@@ -473,6 +473,45 @@ function aiProvenanceMetadata(provider: string | null | undefined, modelId: stri
     : { modelProvider: normalizedProvider };
 }
 
+function parseModelRef(value: string | null | undefined): { provider: string | null; modelId: string | null } {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex > 0 && slashIndex < trimmed.length - 1) {
+    return { provider: trimmed.slice(0, slashIndex), modelId: trimmed.slice(slashIndex + 1) };
+  }
+  return { provider: null, modelId: trimmed || null };
+}
+
+/*
+FNXC:AITransparency 2026-09-04-05:12:
+Prompt-time fallback can stream after the primary already failed. Persist the model that produced
+the visible prefix: the fallback when it generated the partial, the original selection when no
+fallback ran, and nothing when output mixed both or provenance is unknown. Never stamp the failed
+primary onto fallback-generated cancel/fail rows — reopen would attribute that output to the wrong model.
+*/
+function producedOutputProvenance(input: {
+  session?: unknown;
+  fallback?: { fallbackModel?: string } | null;
+  primaryProvider?: string | null;
+  primaryModelId?: string | null;
+  mixed?: boolean;
+}): { provider: string | null; modelId: string | null } {
+  if (input.mixed) return { provider: null, modelId: null };
+  const fromFallback = parseModelRef(input.fallback?.fallbackModel);
+  if (fromFallback.provider) return fromFallback;
+  const fromSession = modelSnapshotForTokenUsage(input.session, input.fallback ?? undefined);
+  if (fromSession.provider) return fromSession;
+  const primaryProvider = typeof input.primaryProvider === "string" ? input.primaryProvider.trim() : "";
+  if (!primaryProvider) return { provider: null, modelId: null };
+  const primaryModelId = typeof input.primaryModelId === "string" ? input.primaryModelId.trim() : "";
+  return { provider: primaryProvider, modelId: primaryModelId || null };
+}
+
+function producedAiProvenanceMetadata(input: Parameters<typeof producedOutputProvenance>[0]): Record<string, unknown> {
+  const { provider, modelId } = producedOutputProvenance(input);
+  return aiProvenanceMetadata(provider, modelId);
+}
+
 type ChatCustomTool = ReturnType<typeof createWorkflowAuthoringTools>[number];
 type ChatToolExecute = (...args: unknown[]) => Promise<unknown>;
 
@@ -2764,6 +2803,7 @@ export class ChatManager {
     let fallbackInfo:
       | { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }
       | undefined;
+    let streamedBeforeFallback = false;
     let failureContextProvider: string | undefined;
     let failureContextModelId: string | undefined;
 
@@ -3218,6 +3258,7 @@ export class ChatManager {
           fallbackModel: string;
           triggerPoint: "session-creation" | "prompt-time";
         }) => {
+          streamedBeforeFallback = Boolean(accumulatedText || accumulatedThinking || toolCallsAccum.length > 0);
           fallbackInfo = payload;
           this.handleFallbackModelUsed(sessionId, generationId, payload);
         },
@@ -3414,7 +3455,13 @@ export class ChatManager {
       if (usageSnapshot.contextUsage) {
         assistantMetadata.contextUsage = usageSnapshot.contextUsage;
       }
-      const model = modelSnapshotForTokenUsage(agentResult.session, fallbackInfo);
+      const model = producedOutputProvenance({
+        session: agentResult.session,
+        fallback: fallbackInfo,
+        primaryProvider: failureContextProvider,
+        primaryModelId: failureContextModelId,
+        mixed: streamedBeforeFallback,
+      });
       Object.assign(assistantMetadata, aiProvenanceMetadata(model.provider, model.modelId));
       const assistantMessage = await this.chatStore.addMessage(sessionId, {
         role: "assistant",
@@ -3490,7 +3537,13 @@ export class ChatManager {
                 interrupted: true,
                 ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
                 ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
-                ...aiProvenanceMetadata(failureContextProvider, failureContextModelId),
+                ...producedAiProvenanceMetadata({
+                  session: agentResult?.session,
+                  fallback: fallbackInfo,
+                  primaryProvider: failureContextProvider,
+                  primaryModelId: failureContextModelId,
+                  mixed: streamedBeforeFallback,
+                }),
               },
             });
           } catch (persistErr) {
@@ -3553,7 +3606,13 @@ export class ChatManager {
               interrupted: true,
               ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
               ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
-              ...aiProvenanceMetadata(failureContextProvider, failureContextModelId),
+              ...producedAiProvenanceMetadata({
+                session: agentResult?.session,
+                fallback: fallbackInfo,
+                primaryProvider: failureContextProvider,
+                primaryModelId: failureContextModelId,
+                mixed: streamedBeforeFallback,
+              }),
             },
           });
         } catch (persistErr) {
@@ -3564,7 +3623,13 @@ export class ChatManager {
       try {
         await persistFailureMessage(this.chatStore, sessionId, failureInfo, {
           ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
-          ...aiProvenanceMetadata(failureContextProvider, failureContextModelId),
+          ...producedAiProvenanceMetadata({
+            session: agentResult?.session,
+            fallback: fallbackInfo,
+            primaryProvider: failureContextProvider,
+            primaryModelId: failureContextModelId,
+            mixed: streamedBeforeFallback,
+          }),
         });
       } catch (persistErr) {
         diagnostics.error(`Failed to persist failure message for session ${sessionId}:`, persistErr);
