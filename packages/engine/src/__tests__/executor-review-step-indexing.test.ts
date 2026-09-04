@@ -134,9 +134,9 @@ async function captureWorkflowStepSystemPrompt(taskDetail: Record<string, unknow
               type: "message_update",
               assistantMessageEvent: {
                 type: "text_delta",
-                partial: '{"verdict":"APPROVE","notes":""}',
+                partial: '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}',
                 contentIndex: 0,
-                delta: '{"verdict":"APPROVE","notes":""}',
+                delta: '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}',
               },
             });
           }

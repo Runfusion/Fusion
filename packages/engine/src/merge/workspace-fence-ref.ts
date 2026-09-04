@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 export class WorkspaceFenceRefError extends Error {
   constructor(
     message: string,
-    readonly kind: "cas-rejected" | "transport",
+    readonly kind: "cas-rejected" | "target-diverged" | "transport",
   ) {
     super(message);
     this.name = "WorkspaceFenceRefError";
@@ -148,8 +148,7 @@ export async function ensureTenancyFenceRef(input: {
   }
 }
 
-/** A single target+fence atomic CAS is the resource-level guard for shared git writes. */
-export async function pushWithWorkspaceFence(input: {
+export interface WorkspaceFencePushInput {
   cwd: string;
   remote: string;
   sourceSha: string;
@@ -159,7 +158,10 @@ export async function pushWithWorkspaceFence(input: {
   fenceRefSha: string;
   /** Extra resource pins required by a caller's enclosing tenancy. */
   additionalFenceRefs?: Array<{ fenceRefName: string; fenceRefSha: string }>;
-}): Promise<void> {
+}
+
+/** A single target+fence atomic CAS is the resource-level guard for shared git writes. */
+export async function pushWithWorkspaceFence(input: WorkspaceFencePushInput): Promise<void> {
   const targetExpected = input.expectedTargetSha ?? "";
   const fenceRefs = [
     { fenceRefName: input.fenceRefName, fenceRefSha: input.fenceRefSha },
@@ -183,4 +185,57 @@ export async function pushWithWorkspaceFence(input: {
       kind,
     );
   }
+}
+
+/**
+ * FNXC:WorkspaceIntegration 2026-08-30-09:14:
+ * FN-263 permits one target-CAS re-observation only when the remote tip is already contained by
+ * the approved squash. The retry remains a fresh compare-and-swap and retains every tenancy fence
+ * pin, so a concurrent advance or superseded lease is rejected rather than overwritten.
+ */
+export async function publishWorkspaceIntegrationRef(
+  input: WorkspaceFencePushInput,
+): Promise<{ republishedFromObservedTip: boolean; observedTargetSha?: string }> {
+  let initialError: WorkspaceFenceRefError | undefined;
+  try {
+    await pushWithWorkspaceFence(input);
+    return { republishedFromObservedTip: false };
+  } catch (error) {
+    if (!(error instanceof WorkspaceFenceRefError) || error.kind !== "cas-rejected") throw error;
+    initialError = error;
+  }
+
+  let observedTargetSha: string | undefined;
+  try {
+    observedTargetSha = await remoteRefSha(input.remote, input.targetRef, input.cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new WorkspaceFenceRefError(
+      `Unable to inspect workspace integration ref ${input.targetRef}: ${message}`,
+      "transport",
+    );
+  }
+
+  // A rejection with an unchanged target came from a fence pin. Never use target re-observation
+  // to rescue a tenancy that another owner has superseded.
+  if (observedTargetSha === input.expectedTargetSha) throw initialError;
+
+  if (!observedTargetSha) {
+    await pushWithWorkspaceFence({ ...input, expectedTargetSha: "" });
+    return { republishedFromObservedTip: true };
+  }
+
+  const isObservedTipContained = await git(
+    ["merge-base", "--is-ancestor", observedTargetSha, input.sourceSha],
+    input.cwd,
+  ).then(() => true, () => false);
+  if (!isObservedTipContained) {
+    throw new WorkspaceFenceRefError(
+      `Workspace integration ref ${input.targetRef} on remote '${input.remote}' has diverged from the local integration history (remote is at ${observedTargetSha.slice(0, 12)})`,
+      "target-diverged",
+    );
+  }
+
+  await pushWithWorkspaceFence({ ...input, expectedTargetSha: observedTargetSha });
+  return { republishedFromObservedTip: true, observedTargetSha };
 }

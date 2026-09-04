@@ -13,8 +13,8 @@ workflow-lifecycle, #2643 in workflow-merged-board, and again in workflow-planni
 and it presents as a scheduler bug rather than a fixture bug. `createTaskWithReservedId`
 leaves a bootstrap seed ("# <id>\n\n<description>"), and `isUnplannedForExecution`
 (hold-release.ts) refuses to move an unplanned card out of any intake- or hold-trait
-column. The sweep therefore reports `held: [{ reason: "move-rejected-or-no-slot" }]` and
-releases nothing — which is the GATE WORKING.
+column. The sweep therefore reports `held: [{ reason: "awaiting-planning:seed-prompt" }]`
+and releases nothing — which is the GATE WORKING.
 
 The contract is stated outright in
 `docs/solutions/architecture-patterns/workflow-node-column-placement-and-graph-entry-contract.md`:
@@ -76,7 +76,7 @@ export function seedPlannedSpec(
     throw new Error(
       `seedPlannedSpec(${taskId}): the spec written by this fixture is still classified as an `
       + `unplanned bootstrap seed by isUnplannedSeedPrompt, so isUnplannedForExecution will hold `
-      + `the card and the release sweep will report "move-rejected-or-no-slot" while releasing `
+      + `the card and the release sweep will report "awaiting-planning:seed-prompt" while releasing `
       + `nothing. This is a FIXTURE defect, not a scheduler defect — update the prompt shape in `
       + `_planned-spec-fixture.ts to match the current seed-detection heuristic.`,
     );

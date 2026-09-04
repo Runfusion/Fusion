@@ -19,7 +19,7 @@ authoritative. Only an UNPROVEN tree — compensation failed, so a half-rebased 
 still refuse, because handing an agent that checkout would corrupt real work.
 */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -46,7 +46,9 @@ function reusedWorktree() {
   git(root, ["commit", "-m", "C0"]);
   const c0 = git(root, ["rev-parse", "HEAD"]);
 
-  const worktree = join(root, "linked");
+  const worktreesDir = join(root, ".fusion", "worktrees");
+  mkdirSync(worktreesDir, { recursive: true });
+  const worktree = join(worktreesDir, "fn-1");
   git(root, ["worktree", "add", "-b", "fusion/fn-1", worktree, c0]);
 
   // Integration advances under the task.

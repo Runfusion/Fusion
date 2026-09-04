@@ -86,6 +86,7 @@ pgDescribe("in-review entry audit (handoff invariant)", () => {
     await store.moveTask(id, "in-progress", {
       moveSource: "engine",
       workflowMoveSource: "workflow-graph",
+      lifecycleReason: "code-review-revise-remediation",
       bypassGuards: true,
       preserveProgress: true,
     });
@@ -121,13 +122,18 @@ pgDescribe("in-review entry audit (handoff invariant)", () => {
     expect(await violationsFor(id)).toHaveLength(1);
   });
 
-  it("still audits a violation for a foreign workflowMoveSource", async () => {
+  it.each([
+    "self-healing-advanced-triage",
+    "scheduler-hold-release",
+    "auto-merge-finalization",
+    "merger-complete-task",
+  ])("still audits a violation for non-graph workflowMoveSource %s", async (workflowMoveSource) => {
     const store = h.store();
-    const id = await seedInProgress("foreign workflow move source");
+    const id = await seedInProgress(`foreign workflow move source ${workflowMoveSource}`);
 
     await store.moveTask(id, "in-review", {
       moveSource: "engine",
-      workflowMoveSource: "self-healing-advanced-triage",
+      workflowMoveSource,
       bypassGuards: true,
     });
 

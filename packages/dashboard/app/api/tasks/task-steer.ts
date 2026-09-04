@@ -14,10 +14,15 @@ export function addSteeringComment(id: string, text: string, projectId?: string)
   });
 }
 
-export function requestSpecRevision(id: string, feedback: string, projectId?: string): Promise<Task> {
+export function requestSpecRevision(
+  id: string,
+  feedback: string,
+  projectId?: string,
+  options?: { preservePlan?: boolean },
+): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/spec/revise`, projectId), {
     method: "POST",
-    body: JSON.stringify({ feedback }),
+    body: JSON.stringify({ feedback, ...(options?.preservePlan === true ? { preservePlan: true } : {}) }),
   });
 }
 

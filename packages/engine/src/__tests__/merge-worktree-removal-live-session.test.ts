@@ -19,11 +19,16 @@ describe("FN-180 merge worktree removal with a live session", () => {
     registry.unregisterPath(path);
   });
 
-  it("does not leave a raw force removal route in AI merge cleanup", async () => {
-    const source = await (await import("node:fs/promises")).readFile(
-      new URL("../merge/merger-ai.ts", import.meta.url), "utf8",
-    );
-    expect(source).toContain("RemovalReason.MergerCleanup");
-    expect(source).not.toMatch(/git\s+worktree\s+remove\s+--force/);
+  it("routes AI merge cleanup through the proof-gated shared helper without raw force removal", async () => {
+    const fs = await import("node:fs/promises");
+    const [mergerSource, cleanupSource] = await Promise.all([
+      fs.readFile(new URL("../merge/merger-ai.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../merge/post-landing-worktree-cleanup.ts", import.meta.url), "utf8"),
+    ]);
+
+    expect(mergerSource).toContain("cleanupLandedTaskWorktree");
+    expect(cleanupSource).toContain("RemovalReason.CompletionLandedCleanup");
+    expect(mergerSource).not.toMatch(/git\s+worktree\s+remove\s+--force/);
+    expect(cleanupSource).not.toMatch(/git\s+worktree\s+remove\s+--force/);
   });
 });

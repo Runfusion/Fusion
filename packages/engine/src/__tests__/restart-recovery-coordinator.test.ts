@@ -181,7 +181,10 @@ describe("RestartRecoveryCoordinator", () => {
     await coordinator.recoverInterruptedRuns();
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({
+      moveSource: "engine",
+      lifecycleReason: "self-healing-session-recovery",
+    }));
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
   });
 
@@ -241,8 +244,8 @@ hid a second one behind the first:
      before the read;
   2. the redundant `.filter` — DELETED rather than converted; re-asserting the column the query just
      selected on adds nothing, and a second copy of a rule is how a read and its filter drift;
-  3. the move DESTINATION — already resolved via `resolveReboundTargetForTask`; only its comment was
-     stale, still describing the pre-fix state, and is corrected in place.
+  3. the move DESTINATION — FN-207 now derives it from the live source through the contained-
+     backward helper, so WIP returns to hold and review can never jump to Planning.
 
 REVERT PROOF, measured: restore `listTasks({ column: "in-progress" })` and the renamed case requeues
 nothing.

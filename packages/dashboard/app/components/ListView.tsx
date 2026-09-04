@@ -7,15 +7,18 @@ import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRi
 import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn, sortTasksForDisplayColumn, type Task, type TaskDetail, type Column, type ColumnId, type TaskCreateInput, type MergeResult, type GithubIssueAction, type PrInfo, type ThinkingLevel } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
-import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
-import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
+import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
+import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
+import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
+import { TaskResetDialog } from "./TaskResetDialog";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
-import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
+import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
+import { resolveRetryStageCopy } from "../utils/taskRetryCopy";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { applyLocalTaskPatch, mergeTaskSnapshot } from "../hooks/useTasks";
@@ -41,6 +44,7 @@ import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, ty
 import type { DetailTaskOpenOptions, DetailTaskTab } from "../hooks/useModalManager";
 import { isTaskReverted } from "../utils/taskRevert";
 import { getTaskTitleDisplay } from "../utils/taskTitleDisplay";
+import { runDuplicateTaskAction } from "../utils/duplicateTaskAction";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -259,8 +263,9 @@ function clampSidebarWidth(width: number, containerWidth: number): number {
 
 interface ListViewProps {
   tasks: Task[];
-  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onReviseTask?: (task: Task) => void;
   onDeleteTask: (id: string, options?: {
     removeDependencyReferences?: boolean;
@@ -273,8 +278,8 @@ interface ListViewProps {
   /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask; never mutates the source task's column. */
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   /** App-owned ingestion seam for successful split-detail refinements. */
   onRefinementCreated?: (task: Task) => void;
   onOpenDetail: (task: Task | TaskDetail, options?: DetailTaskOpenOptions) => void;
@@ -324,6 +329,12 @@ interface ListViewProps {
   onCreateWorkflow?: () => void;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  A kept-alive host leaves ListView mounted while hidden. Inactive preserves local filters and
+  selection, but must release the shared workflow-header slot until this is the visible view.
+  */
+  active?: boolean;
 }
 
 
@@ -381,6 +392,7 @@ export function ListView({
   tasks,
   onMoveTask,
   onRetryTask,
+  onOpenChatWithPrefill,
   onDeleteTask,
   onReviseTask,
   onPauseTask,
@@ -416,6 +428,7 @@ export function ListView({
   onOpenWorkflowEditor,
   onCreateWorkflow,
   workflowControlsInHeader = false,
+  active = true,
 }: ListViewProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
@@ -424,6 +437,7 @@ export function ListView({
   const [selectedColumn, setSelectedColumn] = useState<ColumnId | null>(null);
   const [contextMenuState, setContextMenuState] = useState<ListContextMenuState>(null);
   const [prCreateState, setPrCreateState] = useState<ListPrCreateState>(null);
+  const [resetDialogTask, setResetDialogTask] = useState<Task | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
@@ -465,15 +479,15 @@ export function ListView({
       ? canUseListSplitLayout(listContainerWidth)
       : viewportMode === "desktop");
   const useSinglePaneList = !canRenderSplitLayout;
-  const { confirm, confirmWithChoice } = useConfirm();
+  const { confirm, confirmWithChoice, confirmWithSelect } = useConfirm();
 
   useEffect(() => {
-    if (!workflowControlsInHeader || typeof document === "undefined") {
+    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
       setHeaderWorkflowSlot(null);
       return;
     }
     setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [workflowControlsInHeader, viewportMode]);
+  }, [active, workflowControlsInHeader, viewportMode]);
 
   // Column visibility state - initialize from localStorage or reduced default columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => readVisibleColumns(projectId));
@@ -965,6 +979,9 @@ export function ListView({
      workflow's `intake` trait. Same one-line fix as the sites below. */
   const isIntakeColumnForTask = useCallback((task: Task): boolean => {
     return isIntakeColumnRole(getTaskColumnFlags(task), task.column);
+  }, [getTaskColumnFlags]);
+  const isPlanningLaneForTask = useCallback((task: Task): boolean => {
+    return isPreImplementationColumnRole(getTaskColumnFlags(task), task.column);
   }, [getTaskColumnFlags]);
 
   /*
@@ -2076,14 +2093,12 @@ export function ListView({
   }, [addToast, onTasksUpdated, t]);
 
   const buildListContextMenuActions = useCallback((task: Task): TaskMenuItemDescriptor[] => {
-    const canRetryTask = isTaskManuallyRetryable(task, lastFetchTimeMs);
     const isTaskPaused = Boolean(task.paused || task.userPaused);
     const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMerge ?? false });
     const model = buildTaskActionMenuModel({
       task,
       t,
       currentColumnFlags: getTaskColumnFlags(task),
-      canRetryTask,
       hasDuplicateHandler: Boolean(onDuplicateTask),
       hasRetryHandler: Boolean(onRetryTask),
       hasResetHandler: Boolean(onResetTask),
@@ -2097,55 +2112,35 @@ export function ListView({
         onPlanningMode(seed, getTaskPlanningWorkflowId(task));
       } : undefined,
       onDuplicate: onDuplicateTask ? async () => {
-        const shouldDuplicate = await confirm({
-          title: t("taskDetail.duplicate.title", "Duplicate Task"),
-          message: t("taskDetail.duplicate.message", "Duplicate {{id}}? This will create a new task in Triage with the same description and prompt.", { id: task.id }),
+        await runDuplicateTaskAction({
+          taskId: task.id,
+          t,
+          addToast,
+          confirmWithSelect,
+          confirm,
+          duplicateTask: onDuplicateTask,
+          loadBoardWorkflows: () => boardWorkflows,
         });
-        if (!shouldDuplicate) return;
-        try {
-          const newTask = await onDuplicateTask(task.id);
-          addToast(t("taskDetail.duplicate.success", "Duplicated {{id}} → {{newId}}", { id: task.id, newId: newTask.id }), "success");
-        } catch (err) {
-          addToast(getErrorMessage(err), "error");
-        }
       } : undefined,
       onOpenRefine: () => onOpenDetail(task, { origin: useSinglePaneList ? "list-mobile" : undefined, initialAction: "refine" }),
-      onRespecify: async () => {
-        const shouldRebuild = await confirm({
-          title: t("taskDetail.plan.rebuildTitle", "Rebuild Plan"),
-          message: t("taskDetail.plan.rebuildMessage", "Rebuild the plan for this task? The task will move to planning for replanning."),
-        });
-        if (!shouldRebuild) return;
-        try {
-          await rebuildTaskSpec(task.id, projectId);
-          addToast(t("taskDetail.plan.replanning", "Replanning {{id}}…", { id: task.id }), "info");
-        } catch (err) {
-          addToast(getErrorMessage(err), "error");
-        }
-      },
       onRetry: onRetryTask ? async () => {
+        const copy = resolveRetryStageCopy(t, getTaskColumnFlags(task), task.column);
+        const confirmed = await confirm({
+          title: copy.confirmTitle,
+          message: copy.confirmMessage,
+          confirmLabel: copy.confirmLabel,
+          cancelLabel: t("common.cancel", "Cancel"),
+          danger: true,
+        });
+        if (!confirmed) return;
         try {
           await onRetryTask(task.id);
+          addToast(copy.successMessage, "success");
         } catch (err) {
           addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
         }
       } : undefined,
-      onReset: onResetTask ? async () => {
-        const shouldReset = await confirm({
-          title: t("taskDetail.reset.btn", "Reset"),
-          message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
-          confirmLabel: t("taskDetail.reset.btn", "Reset"),
-          cancelLabel: t("common.cancel", "Cancel"),
-          danger: true,
-        });
-        if (!shouldReset) return;
-        try {
-          await onResetTask(task.id);
-          addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
-        } catch (err) {
-          addToast(getErrorMessage(err), "error");
-        }
-      } : undefined,
+      onReset: onResetTask ? () => setResetDialogTask(task) : undefined,
       onTogglePause: (isTaskPaused ? onUnpauseTask : onPauseTask) ? async () => {
         try {
           if (isTaskPaused) {
@@ -2211,7 +2206,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, getTaskColumnFlags, confirm, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onReviseTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onReviseTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -2552,8 +2547,13 @@ export function ListView({
 
     FNXC:WorkflowControls 2026-06-20-15:43:
     ListView now has edit parity through WorkflowSwitcher row actions and no longer renders a standalone create icon, preventing empty button shells across desktop and mobile header placements.
+
+    FNXC:MainViewKeepAlive 2026-08-31-14:54:
+    A cached header slot survives the render where a retained List becomes inactive, before its
+    active-gate effect clears state. Restrict the portal at render time so that commit leaves the
+    shared slot empty and keeps the hidden toolbar inline.
     */
-    return workflowControlsInHeader && headerWorkflowSlot
+    return active && workflowControlsInHeader && headerWorkflowSlot
       ? createPortal(workflowControl, headerWorkflowSlot)
       : workflowControl;
   };
@@ -2817,6 +2817,15 @@ export function ListView({
           />
         </div>,
         document.body,
+      )}
+      {resetDialogTask && onResetTask && (
+        <TaskResetDialog
+          taskId={resetDialogTask.id}
+          initialDescription={resetDialogTask.description}
+          onReset={onResetTask}
+          addToast={addToast}
+          onClose={() => setResetDialogTask(null)}
+        />
       )}
       {prCreateState && (
         <PrCreateModal
@@ -3127,6 +3136,9 @@ export function ListView({
                                 <div className="list-card-title">{getTaskTitleDisplay(task).text}</div>
                               </div>
 
+                              <ExternalBlockNotice task={task} variant="list" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
+                              <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} />
+
                               {(hasDependencies || hasProgress) && (
                                 <div className="list-card-row list-card-meta">
                                   {hasDependencies && (
@@ -3365,6 +3377,8 @@ export function ListView({
                                 )}
                                 {visibleColumns.has("status") && (
                                   <td className="list-cell">
+                                    <ExternalBlockNotice task={task} variant="list" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
+                                    <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} />
                                     {isPaused && task.pausedByAgentId ? (
                                       <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
                                     ) : showStatusBadge ? (
@@ -3528,6 +3542,7 @@ export function ListView({
                       onDeleteTask={onDeleteTask}
                       onMergeTask={onMergeTask}
                       onRetryTask={onRetryTask}
+                      onOpenChatWithPrefill={onOpenChatWithPrefill}
                       onPauseTask={onPauseTask}
                       onUnpauseTask={onUnpauseTask}
                       onResetTask={onResetTask}

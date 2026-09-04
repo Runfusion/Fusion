@@ -135,4 +135,13 @@ export const globalModelsSearchEntries: SettingsSearchEntry[] = [
     helpFallback: "Default: disabled.",
     keywords: ["strict routing", "provider support"],
   },
+  {
+    sectionId: "global-models",
+    key: "fastCheapGlobalModelId",
+    labelKey: "settings.globalModels.fastAndCheapModel",
+    labelFallback: "Fast & Cheap Model",
+    helpKey: "settings.globalModels.fastAndCheapModelHelp",
+    helpFallback: "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task.",
+    keywords: ["fast", "cheap", "fast mode"],
+  },
 ];

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 import { ParseStepsNodeRunner } from "../workflow-node-runners/parse-steps-runner.js";
 
@@ -15,6 +15,67 @@ describe("review-gated parse-step preservation", () => {
     });
     await expect(runner.run(node({ artifact: "PROMPT.md", parser: "step-headings", preserveRemediationSteps: true }), { task: task(), context: {} }))
       .resolves.toMatchObject({ outcome: "success", value: "preserved-remediation-steps" });
+  });
+
+  it("keeps live remediation steps ahead of Fast synthetic projection", async () => {
+    const readArtifact = vi.fn(async () => "### Step 1: stale");
+    const writeSteps = vi.fn(async () => undefined);
+    const fastTask = { ...task(), executionMode: "fast" } as TaskDetail;
+    const runner = new ParseStepsNodeRunner({
+      readArtifact,
+      writeSteps,
+      getLiveTask: async () => ({
+        ...fastTask,
+        steps: [{ name: "Fix: guard", status: "pending", remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", detail: "guard" } }],
+      }),
+    });
+
+    await expect(runner.run(node({ artifact: "PROMPT.md", parser: "step-headings" }), { task: fastTask, context: {} }))
+      .resolves.toMatchObject({ outcome: "success", value: "preserved-remediation-steps" });
+    expect(readArtifact).not.toHaveBeenCalled();
+    expect(writeSteps).not.toHaveBeenCalled();
+  });
+
+  it("keeps an already-expanded foreach ahead of Fast synthetic projection", async () => {
+    const readArtifact = vi.fn(async () => "### Step 1: stale");
+    const writeSteps = vi.fn(async () => undefined);
+    const fastTask = { ...task([{ name: "Pinned", status: "in-progress" }]), executionMode: "fast" } as TaskDetail;
+    const runner = new ParseStepsNodeRunner({
+      readArtifact,
+      writeSteps,
+      hasExpandedForeach: async () => true,
+    });
+
+    await expect(runner.run(node({ artifact: "PROMPT.md", parser: "step-headings" }), { task: fastTask, context: {} }))
+      .resolves.toMatchObject({ outcome: "success", value: "already-expanded" });
+    expect(readArtifact).not.toHaveBeenCalled();
+    expect(writeSteps).not.toHaveBeenCalled();
+  });
+
+  it("preserves a completed remediation occurrence and its pending verification successor", async () => {
+    const writes: TaskStep[][] = [];
+    const audits: string[] = [];
+    const liveSteps: TaskStep[] = [
+      {
+        name: "Fix: guard",
+        status: "done",
+        remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", detail: "guard" },
+      },
+      { name: "Testing & Verification", status: "pending" },
+    ];
+    const runner = new ParseStepsNodeRunner({
+      readArtifact: async () => "### Step 1: stale authored step",
+      writeSteps: async (_task, steps) => { writes.push(steps); },
+      getLiveTask: async () => task(liveSteps),
+      audit: (reason) => audits.push(reason),
+    });
+
+    await expect(runner.run(
+      node({ artifact: "PROMPT.md", parser: "step-headings", preserveRemediationSteps: true }),
+      { task: task(), context: {} },
+    )).resolves.toMatchObject({ outcome: "success", value: "preserved-remediation-steps" });
+    expect(writes).toEqual([]);
+    expect(audits).toContain("preserved-remediation-steps");
   });
 
   it("audits but never filters implementation names containing gate words", async () => {

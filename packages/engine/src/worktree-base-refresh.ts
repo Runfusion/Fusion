@@ -46,7 +46,19 @@ export interface RefreshReusedWorktreeBaseInput {
   /** Audit is intentionally structural so acquisition can use its run-scoped auditor. */
   audit?: { git?: (event: GitAuditInput) => Promise<void> };
   logger?: { warn: (message: string) => void };
+  /*
+  FNXC:WorkspaceFileOverlap 2026-08-30-19:14:
+  Workspace baselines belong to `task.workspaceWorktrees[repo].baseCommitSha`, never the singular
+  task baseline. This optional port lets the shared compensated refresh primitive target one repository
+  and persist only its durable entry while preserving byte-identical singular behavior when absent.
+  */
+  baseline?: {
+    baseRef?: string;
+    durableBaseSha?: string;
+    persist?: (baseSha: string) => Promise<void>;
+  };
 }
+
 
 function quote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -108,9 +120,17 @@ conflict resolution — the merge lane owns conflict arbitration and deliberatel
 (see merger.ts). Dispatch-time rebase had no conflict resolution at all, so it could only ever fail.
 */
 export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBaseInput): Promise<WorktreeBaseRefreshResult> {
-  const { task, rootDir, worktreePath, store, settings, audit, logger } = input;
+  const { task, rootDir, worktreePath, store, settings, audit, logger, baseline } = input;
+  const durableBaseSha = baseline ? baseline.durableBaseSha ?? null : task.baseCommitSha ?? null;
+  const persistBaseSha = async (baseSha: string): Promise<void> => {
+    if (baseline?.persist) {
+      await baseline.persist(baseSha);
+      return;
+    }
+    await store.updateTask(task.id, { baseCommitSha: baseSha });
+  };
   if (settings.worktrunk?.enabled) {
-    return { kind: "worktrunk-refresh-unsupported", executionSafe: true, skipped: true, durableBaseSha: task.baseCommitSha ?? null };
+    return { kind: "worktrunk-refresh-unsupported", executionSafe: true, skipped: true, durableBaseSha };
   }
 
   let integrationBranch: string;
@@ -118,7 +138,7 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
   let originalHead: string;
   let dirty: string;
   try {
-    integrationBranch = await resolveIntegrationBranch(rootDir, settings, { logger: logger ?? console });
+    integrationBranch = baseline?.baseRef ?? await resolveIntegrationBranch(rootDir, settings, { logger: logger ?? console });
     [baseSha, originalHead, dirty] = await Promise.all([
       git(rootDir, `rev-parse --verify ${quote(`${integrationBranch}^{commit}`)}`),
       git(worktreePath, "rev-parse HEAD"),
@@ -130,9 +150,9 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
     Nothing was mutated, so the checkout is untouched and safe to run on its existing base. A genuinely broken
     worktree still fails at session start and routes to the unusable-worktree recovery, which owns that repair.
     */
-    return { kind: "base-unresolvable", executionSafe: true, skipped: true, durableBaseSha: task.baseCommitSha ?? null, detail: error instanceof Error ? error.message : String(error) };
+    return { kind: "base-unresolvable", executionSafe: true, skipped: true, durableBaseSha, detail: error instanceof Error ? error.message : String(error) };
   }
-  const common = { integrationBranch, baseSha, originalHead, durableBaseSha: task.baseCommitSha ?? null };
+  const common = { integrationBranch, baseSha, originalHead, durableBaseSha };
 
   /*
   FNXC:WorktreeBaseRefresh 2026-08-09-23:49:
@@ -140,12 +160,12 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
   every dirty checkout up front, so a worktree already sitting on the current base — where the refresh is a
   no-op and uncommitted work is irrelevant — was still blocked from executing.
   */
-  const baselineMatches = task.baseCommitSha === baseSha;
+  const baselineMatches = durableBaseSha === baseSha;
   const headCurrent = await isAncestor(worktreePath, baseSha, originalHead);
   if (headCurrent) {
     if (baselineMatches) return { kind: "up-to-date", executionSafe: true, observedHead: originalHead, ...common };
     try {
-      await store.updateTask(task.id, { baseCommitSha: baseSha });
+      await persistBaseSha(baseSha);
       await audit?.git?.({ type: "worktree:base-refresh-reconciled", target: worktreePath, metadata: { taskId: task.id, outcome: "reconciled" } });
       return { kind: "up-to-date", executionSafe: true, observedHead: originalHead, ...common };
     } catch (error) {
@@ -214,7 +234,7 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
 
   const observedHead = await git(worktreePath, "rev-parse HEAD").catch(() => undefined);
   try {
-    await store.updateTask(task.id, { baseCommitSha: baseSha });
+    await persistBaseSha(baseSha);
     await audit?.git?.({ type: "worktree:base-refreshed", target: worktreePath, metadata: { taskId: task.id, outcome: kind } });
     return { kind, executionSafe: true, observedHead, ...common };
   } catch (error) {

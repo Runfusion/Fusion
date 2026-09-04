@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentLogEntry, TaskStore } from "@fusion/core";
 import {
+  AGENT_LOG_READ_DETAIL_PREVIEW_MAX,
   createChatTaskLogsReadTool,
   createTaskLogsReadTool,
   normalizeAgentLogPaging,
@@ -70,11 +71,38 @@ describe("fn_task_logs_read", () => {
     expect(result.content[0].text).toContain("smaller limit, offset, or type filter");
   });
 
-  it("requires task_id in chat and reads the named task", async () => {
-    const { store, getAgentLogs } = storeWith([entry("chat", "status")]);
+  it("bounds each previewed detail row with an elision marker", async () => {
+    const detail = "x".repeat(AGENT_LOG_READ_DETAIL_PREVIEW_MAX + 300);
+    const { store } = storeWith([entry("tool output", "tool_result", detail)]);
+    const result = await run(createTaskLogsReadTool(store, TASK_ID), { detail: "preview" });
+    const text = result.content[0].text;
+    const preview = text.split("Detail:\n")[1] ?? "";
+
+    expect(preview.length).toBeLessThanOrEqual(AGENT_LOG_READ_DETAIL_PREVIEW_MAX);
+    expect(preview).toMatch(/Detail preview truncated: \d+ characters omitted/);
+    expect(preview).toContain('Use detail: "full"');
+  });
+
+  it("lifts the per-row preview in full mode while retaining the whole-response budget", async () => {
+    const detail = "x".repeat(20_000);
+    const { store } = storeWith([entry("tool output", "tool_result", detail)]);
+    const result = await run(createTaskLogsReadTool(store, TASK_ID), { detail: "full" });
+    const text = result.content[0].text;
+
+    expect(text).toContain("Agent log: 1/1 entries");
+    expect(text).not.toContain("Detail preview truncated:");
+    expect(text.length).toBeLessThanOrEqual(12_000);
+    expect(text).toContain("smaller limit, offset, or type filter");
+  });
+
+  it("requires task_id in chat and shares the bounded payload builder", async () => {
+    const detail = "x".repeat(AGENT_LOG_READ_DETAIL_PREVIEW_MAX + 300);
+    const { store, getAgentLogs } = storeWith([entry("chat", "tool_result", detail)]);
     const tool = createChatTaskLogsReadTool(store);
-    await run(tool, { task_id: "FN-other" });
+    const result = await run(tool, { task_id: "FN-other", detail: "preview" });
+
     expect(getAgentLogs).toHaveBeenCalledWith("FN-other", expect.any(Object));
     expect((tool.parameters as { required?: string[] }).required).toContain("task_id");
+    expect(result.content[0].text).toContain("Detail preview truncated:");
   });
 });

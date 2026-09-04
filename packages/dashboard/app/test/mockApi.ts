@@ -32,6 +32,7 @@ export const dashboardApiMocks: Record<string, AnyFn> = {
   fetchTaskEffectiveSettings: vi.fn().mockRejectedValue(new Error("fetchTaskEffectiveSettings: use fetchSettings mock")),
   updateSettings: vi.fn(async () => ({})),
   fetchGlobalSettings: vi.fn(async () => ({})),
+  updateGlobalSettings: vi.fn(async () => ({})),
   fetchAuthStatus: vi.fn(async () => ({ providers: [] })),
   fetchModels: vi.fn(async () => ({ models: [], favoriteProviders: [], favoriteModels: [] })),
   fetchTaskDetail: vi.fn(),
@@ -73,6 +74,7 @@ export function resetDashboardApiMockState(): void {
   dashboardApiMocks.fetchTaskEffectiveSettings.mockRejectedValue(new Error("fetchTaskEffectiveSettings: use fetchSettings mock"));
   dashboardApiMocks.updateSettings.mockResolvedValue({});
   dashboardApiMocks.fetchGlobalSettings.mockResolvedValue({});
+  dashboardApiMocks.updateGlobalSettings.mockResolvedValue({});
   dashboardApiMocks.fetchAuthStatus.mockResolvedValue({ providers: [] });
   dashboardApiMocks.fetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
   dashboardApiMocks.fetchUnreadCount.mockResolvedValue({ unreadCount: 0 });

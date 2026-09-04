@@ -99,7 +99,7 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     },
     {
       file: "packages/engine/src/self-healing.ts",
-      expr: "if (dirs.length <= cap) return;",
+      expr: "if (dirs.length <= cap) {",
       reason:
         "enforceWorktreeCap's early exit. `cap` is the alias of `(settings.maxWorktrees ?? 4) * 2` — "
         + "on-disk hygiene, not admission (see the entry below). Invisible to a line-based scan.",
@@ -158,37 +158,6 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
       reason:
         "Direct workflow-continuation capacity defer: same resolveActiveTaskCapacityLimit alias as "
         + "the project-engine merge defer; OFF mode resolves to maxConcurrent only.",
-    },
-    {
-      /*
-      FNXC:WorktreeCapacity 2026-08-15-22:05:
-      The discriminator moved from scheduler.ts into the shared concurrency helper
-      (formatAdmissionCapacityQueuedReason) during the admission-reason unification; same audited
-      logic, new home.
-      */
-      file: "packages/engine/src/concurrency/concurrency.ts",
-      expr: "return resolveEffectiveConcurrency(params).effectiveLimit;",
-      reason:
-        "The shared engine admission entry delegates to the canonical core resolver, preserving structural absence in OFF mode.",
-    },
-    {
-      file: "packages/engine/src/triage.ts",
-      expr: "Math.max(0, maxWorktrees - claimed)",
-      reason:
-        "Planning admission worktreeRoom from resolveWorktreeCapacityLimit; only evaluated when the "
-        + "resolved limit is non-null.",
-    },
-    {
-      file: "packages/engine/src/triage.ts",
-      expr: "Math.min(projectRoom, worktreeRoom)",
-      reason:
-        "Planning maxToStart combines agent and worktree rooms; worktreeRoom is Infinity when limit is null.",
-    },
-    {
-      file: "packages/engine/src/triage.ts",
-      expr: "worktreeRoom <= 0 && projectRoom > 0",
-      reason:
-        "Throttle reason discriminator for plan:admission-throttled — names which gate bound, not a second limit.",
     },
   ];
 
@@ -345,24 +314,38 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     expect(projectRoutes).not.toMatch(/maxConcurrent\s*:\s*\d/);
   });
 
-  it("admission has exactly the known worktree-limit readers", async () => {
-    /*
-    FNXC:WorktreeCapacity 2026-08-03-02:01:
-    Scheduler execute admission and triage planning admission both resolve the same limit. A third
-    call site is a product change and must be audited here.
-    */
+  it("separates the agent-limit reader from the worktree-holder reader", async () => {
     const { execFileSync } = await import("node:child_process");
     const { resolve } = await import("node:path");
     const root = resolve(__dirname, "../../../..");
-    // Admissions now delegate to the core effective-concurrency resolver rather than
-    // constructing partial worktree setting objects at each lane.
-    const hits = execFileSync(
+    const agentHits = execFileSync(
       "git",
-      ["grep", "-n", "resolveActiveTaskCapacityLimit(settings)", "--", "packages/engine/src"],
+      ["grep", "-n", "resolveAgentCapacityLimit", "--", "packages/engine/src"],
       { cwd: root, encoding: "utf-8" },
-    ).split("\n").filter((l) => l && !l.includes("__tests__"));
+    ).split("\n").filter((line) => line && !line.includes("__tests__"));
+    const holderHits = execFileSync(
+      "git",
+      ["grep", "-n", "persistedWorktreeHolderTaskIdsFromStore", "--", "packages/engine/src"],
+      { cwd: root, encoding: "utf-8" },
+    ).split("\n").filter((line) => line && !line.includes("__tests__"));
 
-    expect(hits.some((h) => h.includes("packages/engine/src/triage.ts"))).toBe(true);
+    expect(agentHits.some((line) => line.includes("packages/engine/src/concurrency/concurrency.ts"))).toBe(true);
+    expect(new Set(holderHits.map((line) => line.split(":")[0]))).toEqual(new Set([
+      "packages/engine/src/concurrency/concurrency.ts",
+      "packages/engine/src/scheduler.ts",
+    ]));
+    expect(holderHits.some((line) => line.includes("scheduler.ts") && line.includes("activeWorktreeTaskIds"))).toBe(true);
+    let legacyHits = "";
+    try {
+      legacyHits = execFileSync(
+        "git",
+        ["grep", "-n", "resolveActiveTaskCapacityLimit", "--", "packages/engine/src"],
+        { cwd: root, encoding: "utf-8" },
+      );
+    } catch (error) {
+      if ((error as { status?: number }).status !== 1) throw error;
+    }
+    expect(legacyHits.trim()).toBe("");
   });
 });
 

@@ -33,7 +33,7 @@ describe.skipIf(!hasGit)("reliability interactions: defensive removal preserves 
     git(root, 'git config user.email "test@example.com"');
     git(root, 'git config user.name "Test User"');
     await writeFile(join(root, "README.md"), "# repo\n", "utf-8");
-    await writeFile(join(root, ".gitignore"), "dist/\n", "utf-8");
+    await writeFile(join(root, ".gitignore"), "dist/\nnode_modules/\n.env\n", "utf-8");
     git(root, "git add README.md .gitignore");
     git(root, 'git commit -m "init"');
     await mkdir(join(root, ".worktrees"), { recursive: true });
@@ -70,23 +70,30 @@ describe.skipIf(!hasGit)("reliability interactions: defensive removal preserves 
     expect(await pathExists(worktreePath)).toBe(true);
   });
 
-  it("pool-prune preserves user content under an ignored generated-looking path", async () => {
+  it("pool-prune removes ignored content under a regenerable directory", async () => {
     const root = await setupRepo();
     const worktreePath = await createWorktree(root, "ignored-prune");
     await mkdir(join(worktreePath, "dist"), { recursive: true });
-    await writeFile(join(worktreePath, "dist", "manual.txt"), "precious\n", "utf-8");
+    await writeFile(join(worktreePath, "dist", "manual.txt"), "regenerable\n", "utf-8");
 
+    /*
+    FNXC:WorktreeCleanup 2026-09-01-06:09:
+    FN-9233 deliberately removes the prior preservation contract for files beneath allowlisted
+    build directories; their ignored contents are treated as project-regenerable output.
+    */
     await expect(
       removeWorktree({ rootDir: root, worktreePath, settings: {}, reason: RemovalReason.PoolPrune }),
-    ).rejects.toThrow(/preserving/);
+    ).resolves.toMatchObject({ removed: true });
 
-    expect(await readFile(join(worktreePath, "dist", "manual.txt"), "utf-8")).toBe("precious\n");
+    expect(await pathExists(worktreePath)).toBe(false);
   });
 
   it.each([
     RemovalReason.MergerCleanup,
     RemovalReason.MergerPostMerge,
+    RemovalReason.PoolPrune,
     RemovalReason.SelfHealingBranchConflict,
+    RemovalReason.SelfHealingIdleSweep,
     RemovalReason.SelfHealingReclaim,
     RemovalReason.SelfHealingStaleActiveBranch,
     RemovalReason.StepSessionCleanup,
@@ -98,6 +105,120 @@ describe.skipIf(!hasGit)("reliability interactions: defensive removal preserves 
     await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason })).rejects.toThrow(/preserving/);
 
     expect(await readFile(join(worktreePath, "wip.txt"), "utf-8")).toBe("uncommitted\n");
+  });
+
+  it.each([
+    RemovalReason.MergerCleanup,
+    RemovalReason.MergerPostMerge,
+    RemovalReason.PoolPrune,
+    RemovalReason.SelfHealingBranchConflict,
+    RemovalReason.SelfHealingIdleSweep,
+    RemovalReason.SelfHealingReclaim,
+    RemovalReason.SelfHealingStaleActiveBranch,
+    RemovalReason.StepSessionCleanup,
+  ])("%s removes a built checkout with only regenerable ignored output", async (reason) => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, `regenerable-${reason}`);
+    await mkdir(join(worktreePath, "node_modules", "pkg"), { recursive: true });
+    await mkdir(join(worktreePath, "dist"), { recursive: true });
+    await writeFile(join(worktreePath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    await writeFile(join(worktreePath, "dist", "bundle.js"), "generated\n", "utf-8");
+
+    await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason })).resolves.toMatchObject({ removed: true });
+
+    expect(await pathExists(worktreePath)).toBe(false);
+  });
+
+  it.each([
+    RemovalReason.MergerCleanup,
+    RemovalReason.MergerPostMerge,
+    RemovalReason.PoolPrune,
+    RemovalReason.SelfHealingBranchConflict,
+    RemovalReason.SelfHealingIdleSweep,
+    RemovalReason.SelfHealingReclaim,
+    RemovalReason.SelfHealingStaleActiveBranch,
+    RemovalReason.StepSessionCleanup,
+  ])("%s preserves ignored-only content without proof because it contains .env", async (reason) => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, `ignored-${reason}`);
+    await mkdir(join(worktreePath, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(worktreePath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    await writeFile(join(worktreePath, ".env"), "TOKEN=ignored\n", "utf-8");
+
+    await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason })).rejects.toThrow(/preserving/);
+
+    expect(await readFile(join(worktreePath, ".env"), "utf-8")).toBe("TOKEN=ignored\n");
+  });
+
+  it("removes non-regenerable ignored content after a durable landing proof", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "post-landing-ignored");
+    await mkdir(join(worktreePath, "node_modules", "pkg"), { recursive: true });
+    await mkdir(join(worktreePath, "dist"), { recursive: true });
+    await writeFile(join(worktreePath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    await writeFile(join(worktreePath, "dist", "bundle.js"), "generated\n", "utf-8");
+    await writeFile(join(worktreePath, ".env"), "TOKEN=ignored\n", "utf-8");
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.CompletionLandedCleanup,
+      postLandingProof: { landedSha: "abc123", source: "real-git-test" },
+    })).resolves.toMatchObject({ removed: true });
+
+    expect(await pathExists(worktreePath)).toBe(false);
+  });
+
+  it("removes a nested monorepo build directory reported by ignored matching", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "nested-regenerable");
+    await mkdir(join(worktreePath, "packages", "core", "dist"), { recursive: true });
+    await writeFile(join(worktreePath, "packages", "core", "dist", "x.js"), "generated\n", "utf-8");
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.PoolPrune,
+    })).resolves.toMatchObject({ removed: true });
+
+    expect(await pathExists(worktreePath)).toBe(false);
+  });
+
+  it.each([
+    ["untracked deliverable", async (worktreePath: string) => writeFile(join(worktreePath, "wip.txt"), "keep\n", "utf-8")],
+    ["modified tracked deliverable", async (worktreePath: string) => writeFile(join(worktreePath, "README.md"), "changed\n", "utf-8")],
+  ])("preserves %s even after a durable landing proof", async (_label, addDeliverable) => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "post-landing-deliverable");
+    await addDeliverable(worktreePath);
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.CompletionLandedCleanup,
+      postLandingProof: { source: "real-git-test" },
+    })).rejects.toThrow(/preserving/);
+
+    expect(await pathExists(worktreePath)).toBe(true);
+  });
+
+  it("preserves an unverifiable checkout even after a durable landing proof", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "post-landing-corrupt");
+    await rm(join(root, ".git", "worktrees", "post-landing-corrupt"), { recursive: true, force: true });
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.CompletionLandedCleanup,
+      postLandingProof: { source: "real-git-test" },
+    })).rejects.toThrow(/status probe failed/);
+
+    expect(await pathExists(join(worktreePath, "README.md"))).toBe(true);
   });
 
   it("a failing status probe preserves the checkout instead of enabling deletion", async () => {

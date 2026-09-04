@@ -34,6 +34,7 @@ describe("pipeline terminal-state model", () => {
   });
 
   it("keeps allowed terminals closed and classifies an otherwise unknown state as parked", () => {
+    expect(classifyTerminalState(observed({ status: "blocked", noProgress: false }))).toBe("blocked");
     expect(classifyTerminalState(observed({ done: true, mergeConfirmed: true }))).toBe("merged-done");
     expect(classifyTerminalState(observed({ intake: true }))).toBe("inert-intake");
     expect(classifyTerminalState(observed({ manualHold: true }))).toBe("manual-hold");
@@ -64,6 +65,15 @@ describe("pipeline terminal-state model", () => {
       branchReachableFromIntegration: true,
       liveSessionPaths: [],
     });
+  });
+
+  it("stops immediately on a deliberate external block without dispatching or reporting W5", async () => {
+    const drive = vi.fn(async () => undefined);
+    await expect(driveToQuiescence(async () => observed({ status: "blocked" }), drive, {
+      maxIterations: 3,
+      signature: (current) => `${current.column}:${current.status}`,
+    })).resolves.toEqual({ terminal: "blocked", iterations: 1, wedge: undefined });
+    expect(drive).not.toHaveBeenCalled();
   });
 
   it("bounds a stalled drive as W5 instead of polling", async () => {

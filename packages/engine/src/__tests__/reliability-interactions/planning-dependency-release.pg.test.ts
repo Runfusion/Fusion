@@ -276,7 +276,7 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
     }
   });
 
-  it("dedupes refusal evidence by episode across sweep and promote, then force-promotes", async () => {
+  it("dedupes refusal evidence by episode across sweep and promote while the card stays held", async () => {
     await seedDependency("FN-8768-DD");
     const task = await seedPlannedTask("FN-8768-D", {
       status: "needs-replan",
@@ -298,17 +298,13 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
 
     // A new dependency changes the durable episode and permits one new refusal.
     await h.store().updateTaskDependencies(task.id, { operation: "add", dependency: "FN-8768-DD" });
-    await promoteHeldTask(h.store(), task.id);
+    await expect(promoteHeldTask(h.store(), task.id)).resolves.toMatchObject({
+      released: false,
+      rejection: "unplanned-for-execution",
+    });
     h.store().taskCache.delete(task.id);
     live = await h.store().getTask(task.id);
     expect(live.log?.filter((entry) => entry.action.includes("Execution dispatch refused"))).toHaveLength(2);
-
-    await expect(promoteHeldTask(h.store(), task.id, {}, { force: true })).resolves.toMatchObject({
-      released: true,
-      toColumn: "in-progress",
-      forcedUnplanned: true,
-    });
-    h.store().taskCache.delete(task.id);
-    expect((await h.store().getTask(task.id)).column).toBe("in-progress");
+    expect(live).toMatchObject({ column: "todo", status: "needs-replan" });
   });
 });

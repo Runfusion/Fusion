@@ -170,6 +170,10 @@ afterEach(() => {
   delete process.env.FUSION_SYSTEM_PNPM_BIN;
   delete process.env.FUSION_SYSTEM_PNPM_ARGS;
   delete process.env.FAKE_PNPM_INSTALL_FAIL;
+  delete process.env.FUSION_SYSTEM_GIT_BIN;
+  delete process.env.FUSION_SYSTEM_GIT_ARGS;
+  delete process.env.FAKE_GIT_DIRTY;
+  delete process.env.FAKE_GIT_PULL_FAIL;
 });
 
 afterAll(() => {
@@ -534,6 +538,87 @@ describe("POST /system/engine/restart", () => {
     expect(pauseProject).toHaveBeenCalledTimes(3);
   });
 
+  /*
+  FNXC:SystemPanel 2026-08-31-07:08:
+  Original symptom (reproduced twice in production): after "Stop engine"/"Restart engine" the project
+  was left durably `status: "paused"` in Postgres, `ensureEngine` refused it ("Project <id> is
+  paused"), and the UI restart control could not bring it back — it only considered projects that
+  already had a running engine, so the one project that needed restarting was the one it skipped.
+  Recreating the container did not help; the bad state was in the database.
+
+  Invariant asserted below across every way a project becomes paused, not just the reported click:
+  an operator "Stop engine" pause, and this route's OWN compensating pause after a failed resume.
+  */
+  it("resumes a paused project that has no running engine", async () => {
+    const pauseProject = vi.fn(async () => {});
+    const resumeProject = vi.fn(async () => {});
+    const engineManager = {
+      // "Stop engine" left p1 paused with no engine attached.
+      getEngine: () => undefined,
+      pauseProject,
+      resumeProject,
+    };
+    const centralCore = { listProjects: vi.fn(async () => [{ id: "p1", status: "paused" }]) };
+    const { app } = createApp({ options: { engineManager, centralCore } });
+
+    const res = await postJson(app, "/api/system/engine/restart");
+
+    expect(res.status).toBe(200);
+    expect(res.body.restarted).toEqual(["p1"]);
+    expect(res.body.failed).toEqual([]);
+    expect(resumeProject).toHaveBeenCalledWith("p1");
+    // Nothing to tear down — pausing an already-paused, engine-less project is not attempted.
+    expect(pauseProject).not.toHaveBeenCalled();
+  });
+
+  it("recovers a project left paused by its own compensating pause on a later restart", async () => {
+    let paused = false;
+    const pauseProject = vi.fn(async () => {
+      paused = true;
+    });
+    let failResume = true;
+    const resumeProject = vi.fn(async () => {
+      if (failResume) throw new Error("resume failed");
+      paused = false;
+    });
+    const engineManager = {
+      getEngine: () => (paused ? undefined : {}),
+      pauseProject,
+      resumeProject,
+    };
+    const centralCore = {
+      listProjects: vi.fn(async () => [{ id: "p1", status: paused ? "paused" : "active" }]),
+    };
+    const { app } = createApp({ options: { engineManager, centralCore } });
+
+    // First restart fails and compensating-pauses p1 — the state the operator was stuck in.
+    const first = await postJson(app, "/api/system/engine/restart");
+    expect(first.body.failed).toEqual([{ projectId: "p1", error: "resume failed" }]);
+    expect(paused).toBe(true);
+
+    // A second click of the same control must be able to get back out of it.
+    failResume = false;
+    const second = await postJson(app, "/api/system/engine/restart");
+    expect(second.status).toBe(200);
+    expect(second.body.restarted).toEqual(["p1"]);
+    expect(paused).toBe(false);
+  });
+
+  it("leaves projects that are neither running nor paused untouched", async () => {
+    const pauseProject = vi.fn(async () => {});
+    const resumeProject = vi.fn(async () => {});
+    const engineManager = { getEngine: () => undefined, pauseProject, resumeProject };
+    const centralCore = { listProjects: vi.fn(async () => [{ id: "p1", status: "active" }]) };
+    const { app } = createApp({ options: { engineManager, centralCore } });
+
+    const res = await postJson(app, "/api/system/engine/restart");
+
+    expect(res.status).toBe(200);
+    expect(res.body.restarted).toEqual([]);
+    expect(resumeProject).not.toHaveBeenCalled();
+    expect(pauseProject).not.toHaveBeenCalled();
+  });
+
   it("still succeeds when the compensating pause of a failed project also throws", async () => {
     const resumeProject = vi.fn(async () => {
       throw new Error("resume failed");
@@ -784,5 +869,228 @@ describe("SSE streams", () => {
       host: "127.0.0.1",
     });
     expect(same.status).toBe(409);
+  });
+});
+
+/*
+FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+Contract tests for POST /system/source/update — the one action a remote contributor with only
+dashboard access uses to ship code. The load-bearing invariant is the refusal set: a dirty tree, a
+non-fast-forwardable branch, a failed install, and a failed build must ALL leave the running instance
+untouched and un-restarted, because restarting into a broken build strands a container with no
+dashboard left to repair it from. Success must pull, build, and only then request the restart.
+*/
+
+/** Build a fake git checkout whose `git` is a node script driven by env flags. */
+function createFakeGitCheckout(): string {
+  const root = createFakeSourceCheckout("console.log('SOURCE_UPDATE_BUILD_RAN');\n", "console.log('SOURCE_UPDATE_BUILD_RAN');\n");
+  mkdirSync(join(root, ".git"), { recursive: true });
+  const fakeGit = join(root, "scripts", "fake-git.mjs");
+  writeFileSync(
+    fakeGit,
+    [
+      "const args = process.argv.slice(2);",
+      "if (args[0] === 'status') {",
+      "  if (process.env.FAKE_GIT_DIRTY === '1') console.log(' M packages/core/src/index.ts');",
+      "  process.exit(0);",
+      "}",
+      "if (args[0] === 'pull') {",
+      "  if (process.env.FAKE_GIT_PULL_FAIL === '1') {",
+      "    console.error('fatal: Not possible to fast-forward, aborting.');",
+      "    process.exit(128);",
+      "  }",
+      "  console.log('Fast-forward to abc1234');",
+      "  process.exit(0);",
+      "}",
+      "process.exit(0);",
+      "",
+    ].join("\n"),
+  );
+  process.env.FUSION_SYSTEM_GIT_BIN = process.execPath;
+  process.env.FUSION_SYSTEM_GIT_ARGS = JSON.stringify([fakeGit]);
+  configureFakePnpmInstall(root);
+  return root;
+}
+
+function sourceUpdateApp(root: string | undefined, requestRestart = vi.fn(() => true)) {
+  const { app } = createApp({
+    options: { systemControl: { supervised: true, requestRestart, sourceWorkspaceRoot: root } },
+  });
+  return { app, requestRestart };
+}
+
+async function waitForFinishedJob(app: App): Promise<{ status: string; error?: string; lines: Array<{ text: string }>; restartScheduled?: boolean }> {
+  await vi.waitFor(async () => {
+    const current = await getJson(app, "/api/system/rebuild/current");
+    expect(current.body.job?.status === "succeeded" || current.body.job?.status === "failed").toBe(true);
+  }, { timeout: 20_000, interval: 100 });
+  const current = await getJson(app, "/api/system/rebuild/current");
+  return current.body.job;
+}
+
+describe("POST /system/source/update", () => {
+  it("409s when the process is not running from a source checkout", async () => {
+    const { app } = sourceUpdateApp(undefined);
+    const res = await postJson(app, "/api/system/source/update");
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/source checkout/i);
+  });
+
+  it("409s when the workspace root is not a git checkout", async () => {
+    // The container's image-baked /app is exactly this shape: a workspace root with no .git.
+    const root = createFakeSourceCheckout("console.log('x');\n");
+    const { app } = sourceUpdateApp(root);
+    const res = await postJson(app, "/api/system/source/update");
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/git checkout/i);
+  });
+
+  it("pulls, builds, and only then requests the restart", async () => {
+    const root = createFakeGitCheckout();
+    const { app, requestRestart } = sourceUpdateApp(root);
+
+    const started = await postJson(app, "/api/system/source/update", { restart: true });
+    expect(started.status).toBe(202);
+    expect(started.body.kind).toBe("source-update");
+    expect(started.body.status).toBe("running");
+
+    const job = await waitForFinishedJob(app);
+    expect(job.status).toBe("succeeded");
+    const texts = job.lines.map((line) => line.text);
+    expect(texts).toContain("Fast-forward to abc1234");
+    expect(texts).toContain("FAKE_PNPM_INSTALL_OK");
+    expect(texts).toContain("SOURCE_UPDATE_BUILD_RAN");
+    expect(job.restartScheduled).toBe(true);
+    expect(requestRestart).toHaveBeenCalledWith("source-update");
+
+    // Ordering matters: the restart must be requested AFTER the build produced output.
+    const buildLine = texts.indexOf("SOURCE_UPDATE_BUILD_RAN");
+    const restartLine = texts.findIndex((text) => /Restarting server into the updated build/.test(text));
+    expect(buildLine).toBeGreaterThanOrEqual(0);
+    expect(restartLine).toBeGreaterThan(buildLine);
+  });
+
+  it("refuses a dirty working tree without pulling or restarting", async () => {
+    const root = createFakeGitCheckout();
+    process.env.FAKE_GIT_DIRTY = "1";
+    const { app, requestRestart } = sourceUpdateApp(root);
+
+    expect((await postJson(app, "/api/system/source/update")).status).toBe(202);
+    const job = await waitForFinishedJob(app);
+
+    expect(job.status).toBe("failed");
+    expect(job.error).toMatch(/uncommitted changes/i);
+    const texts = job.lines.map((line) => line.text);
+    expect(texts).not.toContain("Fast-forward to abc1234");
+    expect(texts).not.toContain("SOURCE_UPDATE_BUILD_RAN");
+    expect(requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-fast-forwardable pull without building or restarting", async () => {
+    const root = createFakeGitCheckout();
+    process.env.FAKE_GIT_PULL_FAIL = "1";
+    const { app, requestRestart } = sourceUpdateApp(root);
+
+    expect((await postJson(app, "/api/system/source/update")).status).toBe(202);
+    const job = await waitForFinishedJob(app);
+
+    expect(job.status).toBe("failed");
+    expect(job.error).toMatch(/diverged/i);
+    expect(job.lines.map((line) => line.text)).not.toContain("SOURCE_UPDATE_BUILD_RAN");
+    expect(requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("never restarts when the build fails, and leaves the running instance untouched", async () => {
+    const root = createFakeGitCheckout();
+    // Overwrite the build script with a failing one AFTER the checkout exists.
+    writeFileSync(join(root, "scripts", "build-workspace.mjs"), "console.error('compile error');\nprocess.exit(2);\n");
+    const { app, requestRestart } = sourceUpdateApp(root);
+
+    expect((await postJson(app, "/api/system/source/update")).status).toBe(202);
+    const job = await waitForFinishedJob(app);
+
+    expect(job.status).toBe("failed");
+    expect(requestRestart).not.toHaveBeenCalled();
+    expect(job.restartScheduled).toBeFalsy();
+    expect(job.lines.map((line) => line.text)).toContain(
+      "Build failed — the running instance was left untouched and was NOT restarted.",
+    );
+  });
+
+  it("fails without restarting when the dependency install fails", async () => {
+    const root = createFakeGitCheckout();
+    process.env.FAKE_PNPM_INSTALL_FAIL = "1";
+    const { app, requestRestart } = sourceUpdateApp(root);
+
+    expect((await postJson(app, "/api/system/source/update")).status).toBe(202);
+    const job = await waitForFinishedJob(app);
+
+    expect(job.status).toBe("failed");
+    expect(job.lines.map((line) => line.text)).not.toContain("SOURCE_UPDATE_BUILD_RAN");
+    expect(requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("409s a concurrent invocation so two contributors cannot interleave builds on one checkout", async () => {
+    const root = createFakeGitCheckout();
+    const { app } = sourceUpdateApp(root);
+
+    const first = await postJson(app, "/api/system/source/update");
+    expect(first.status).toBe(202);
+    const second = await postJson(app, "/api/system/source/update");
+    expect(second.status).toBe(409);
+    expect(second.body.error).toMatch(/already running/i);
+
+    await waitForFinishedJob(app);
+  });
+
+  it("409s while an unrelated rebuild job holds the shared slot", async () => {
+    const root = createFakeGitCheckout();
+    const { app } = sourceUpdateApp(root);
+
+    expect((await postJson(app, "/api/system/rebuild", { scope: "app", restart: false })).status).toBe(202);
+    const blocked = await postJson(app, "/api/system/source/update");
+    expect(blocked.status).toBe(409);
+
+    await waitForFinishedJob(app);
+  });
+
+  it("rejects a cross-origin request before doing any git work", async () => {
+    const root = createFakeGitCheckout();
+    const { app } = sourceUpdateApp(root);
+    const cross = await performRequest(app, "POST", "/api/system/source/update", JSON.stringify({}), {
+      "content-type": "application/json",
+      origin: "https://evil.example",
+      host: "127.0.0.1",
+    });
+    expect(cross.status).toBe(403);
+    const current = await getJson(app, "/api/system/rebuild/current");
+    expect(current.body.job).toBeNull();
+  });
+});
+
+describe("GET /system/info sourceUpdateSupported", () => {
+  it("is false for a workspace root that is not a git checkout (the container's baked /app)", async () => {
+    const root = createFakeSourceCheckout("console.log('x');\n");
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart: vi.fn(() => true), sourceWorkspaceRoot: root } },
+    });
+    const res = await getJson(app, "/api/system/info");
+    expect(res.body.rebuildSupported).toBe(true);
+    expect(res.body.sourceUpdateSupported).toBe(false);
+  });
+
+  it("is true for a git checkout", async () => {
+    const root = createFakeGitCheckout();
+    const { app } = createApp({
+      options: { systemControl: { supervised: true, requestRestart: vi.fn(() => true), sourceWorkspaceRoot: root } },
+    });
+    const res = await getJson(app, "/api/system/info");
+    expect(res.body.sourceUpdateSupported).toBe(true);
+  });
+
+  it("is false with no source workspace at all", async () => {
+    const { app } = createApp();
+    const res = await getJson(app, "/api/system/info");
+    expect(res.body.sourceUpdateSupported).toBe(false);
   });
 });

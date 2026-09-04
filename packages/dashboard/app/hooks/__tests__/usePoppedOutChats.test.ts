@@ -11,6 +11,7 @@ describe("usePoppedOutChats", () => {
   it("refreshes an existing entry in place and raises its focus nonce", () => {
     const { result } = renderHook(() => usePoppedOutChats());
     act(() => result.current.popOut("project-a", session("a")));
+    expect(result.current.entries[0].minimized).toBe(false);
     act(() => result.current.popOut("project-a", session("b")));
     const firstNonce = result.current.entries[0].focusNonce;
 
@@ -22,19 +23,71 @@ describe("usePoppedOutChats", () => {
     expect(result.current.entries[1].focusNonce).toBe(1);
   });
 
-  it("keeps counters independent across sessions and projects, then closes precisely", () => {
+  it("minimizes and restores every project while preserving entry state", () => {
+    const { result } = renderHook(() => usePoppedOutChats());
+    act(() => result.current.popOut("project-a", session("a")));
+    act(() => result.current.popOut("project-a", session("b")));
+    act(() => result.current.popOut("project-b", session("c")));
+    act(() => result.current.popOut("project-a", session("a", "raised")));
+    const before = result.current.entries.map(({ projectId, session: currentSession, focusNonce, cascadeSlot }) => ({
+      projectId,
+      sessionId: currentSession.id,
+      focusNonce,
+      cascadeSlot,
+    }));
+
+    act(() => result.current.minimizeAll());
+    expect(result.current.entries.every((entry) => entry.minimized)).toBe(true);
+    expect(result.current.entries.map(({ projectId, session: currentSession, focusNonce, cascadeSlot }) => ({
+      projectId,
+      sessionId: currentSession.id,
+      focusNonce,
+      cascadeSlot,
+    }))).toEqual(before);
+
+    act(() => result.current.restoreAll());
+    expect(result.current.entries.every((entry) => !entry.minimized)).toBe(true);
+    expect(result.current.entries.map(({ projectId, session: currentSession, focusNonce, cascadeSlot }) => ({
+      projectId,
+      sessionId: currentSession.id,
+      focusNonce,
+      cascadeSlot,
+    }))).toEqual(before);
+  });
+
+  it("reveals only a re-raised minimized entry and preserves its slot", () => {
+    const { result } = renderHook(() => usePoppedOutChats());
+    act(() => result.current.popOut("project-a", session("a")));
+    act(() => result.current.popOut("project-a", session("b")));
+    act(() => result.current.minimizeAll());
+    const firstBefore = result.current.entries[0];
+
+    act(() => result.current.popOut("project-a", session("a", "refreshed")));
+
+    expect(result.current.entries[0]).toMatchObject({
+      session: { id: "a", title: "refreshed" },
+      focusNonce: firstBefore.focusNonce + 1,
+      cascadeSlot: firstBefore.cascadeSlot,
+      minimized: false,
+    });
+    expect(result.current.entries[1]).toMatchObject({ session: { id: "b" }, minimized: true });
+  });
+
+  it("closes a minimized entry precisely and releases its cascade slot", () => {
     const { result } = renderHook(() => usePoppedOutChats());
     act(() => result.current.popOut("project-a", session("same")));
     act(() => result.current.popOut("project-a", session("other")));
     act(() => result.current.popOut("project-b", session("same")));
-    act(() => result.current.popOut("project-a", session("same", "raised")));
+    act(() => result.current.minimizeAll());
 
-    expect(result.current.entries.map((entry) => [entry.projectId, entry.session.id, entry.focusNonce, entry.cascadeSlot]))
-      .toEqual([["project-a", "same", 2, 0], ["project-a", "other", 1, 1], ["project-b", "same", 1, 0]]);
     act(() => result.current.close("project-a", "other"));
+    expect(result.current.entries.map((entry) => [entry.projectId, entry.session.id, entry.minimized]))
+      .toEqual([["project-a", "same", true], ["project-b", "same", true]]);
     act(() => result.current.popOut("project-a", session("replacement")));
-    expect(result.current.entries.find((entry) => entry.session.id === "replacement")?.cascadeSlot).toBe(1);
-    expect(result.current.entries.map((entry) => entry.session.id)).toEqual(["same", "same", "replacement"]);
+    expect(result.current.entries.find((entry) => entry.session.id === "replacement")).toMatchObject({
+      cascadeSlot: 1,
+      minimized: false,
+    });
     act(() => result.current.closeAll());
     expect(result.current.entries).toEqual([]);
   });

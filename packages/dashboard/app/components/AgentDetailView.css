@@ -1259,7 +1259,7 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
   gap: var(--space-sm);
   margin: 0;
   padding: var(--space-sm);
-  border: var(--border-width) solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
 }
 

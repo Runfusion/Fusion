@@ -53,6 +53,34 @@ describe("resolveWorkspaceIntegrationTarget", () => {
       .resolves.toEqual({ kind: "remote", remote: "origin" });
   });
 
+  it("returns local without any remote probe when publication is disabled", async () => {
+    const sole = repo();
+    git(sole, "remote", "add", "origin", "https://example.test/origin.git");
+    await expect(resolveWorkspaceIntegrationTarget({ repository: "sole", cwd: sole, integrationBranch: "main", publishToRemote: false }))
+      .resolves.toEqual({ kind: "local" });
+
+    const branchDefault = repo();
+    git(branchDefault, "remote", "add", "publish", "https://example.test/publish.git");
+    git(branchDefault, "config", "branch.main.remote", "publish");
+    await expect(resolveWorkspaceIntegrationTarget({ repository: "branch-default", cwd: branchDefault, integrationBranch: "main", publishToRemote: false }))
+      .resolves.toEqual({ kind: "local" });
+
+    const missingConfigured = repo();
+    await expect(resolveWorkspaceIntegrationTarget({
+      repository: "missing-configured",
+      cwd: missingConfigured,
+      integrationBranch: "main",
+      worktreeRebaseRemote: "upstream",
+      publishToRemote: false,
+    })).resolves.toEqual({ kind: "local" });
+
+    const ambiguous = repo();
+    git(ambiguous, "remote", "add", "alpha", "https://example.test/alpha.git");
+    git(ambiguous, "remote", "add", "beta", "https://example.test/beta.git");
+    await expect(resolveWorkspaceIntegrationTarget({ repository: "ambiguous", cwd: ambiguous, integrationBranch: "main", publishToRemote: false }))
+      .resolves.toEqual({ kind: "local" });
+  });
+
   it("fails before writes for missing configured or ambiguous remotes", async () => {
     const missing = repo();
     await expect(resolveWorkspaceIntegrationTarget({ repository: "repo-a", cwd: missing, integrationBranch: "main", worktreeRebaseRemote: "upstream" }))

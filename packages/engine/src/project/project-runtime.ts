@@ -133,7 +133,7 @@ export interface ProjectRuntimeEvents {
 export interface ProjectRuntime extends EventEmitter<ProjectRuntimeEvents> {
   /**
    * Start the runtime and initialize all subsystems.
-   * This includes initializing the TaskStore, Scheduler, Executor, and WorktreePool.
+   * This includes initializing the TaskStore, Scheduler, and Executor.
    */
   start(): Promise<void>;
 

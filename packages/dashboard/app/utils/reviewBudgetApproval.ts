@@ -11,14 +11,12 @@ export function isReviewBudgetExhaustedApproval(task: Task): boolean {
 }
 
 /**
- * FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
- * Approval controls normally belong to intake, but an exhausted Plan Review remains in the
- * graph node's review column. Keep that persisted-reason exception shared by card and detail
- * surfaces so a split-column workflow never renders a hold without its operator controls.
+ * FNXC:PlanApproval 2026-08-28-11:29:
+ * Every shipped coding workflow runs planning, Plan Review, and replan in its hold column. The graph moves the card to that node column before the manual gate parks `awaiting-approval`, so approval controls belong to the full planning lane (intake or hold), while exhausted Plan Review retains its persisted-reason exception.
  */
-export function isTaskAwaitingPlanApproval(task: Task, isIntakeColumn: boolean): boolean {
+export function isTaskAwaitingPlanApproval(task: Task, isPlanningLane: boolean): boolean {
   return task.status === "awaiting-approval"
-    && (isIntakeColumn || task.awaitingApprovalReason === "plan-review-replan-cap");
+    && (isPlanningLane || task.awaitingApprovalReason === "plan-review-replan-cap");
 }
 
 /*

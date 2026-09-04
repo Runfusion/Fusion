@@ -1,26 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { resolveActiveTaskCapacityLimit, formatAdmissionCapacityQueuedReason } from "../concurrency/concurrency.js";
+import { resolveAgentCapacityLimit, formatAdmissionCapacityQueuedReason } from "../concurrency/concurrency.js";
 import { formatConcurrencyLimitReason } from "../scheduler.js";
 
 describe("effective concurrency operator surfaces", () => {
-  it("uses one ceiling for unset, configured, and worktree-bound admission", () => {
-    expect(resolveActiveTaskCapacityLimit({})).toBe(2);
-    expect(resolveActiveTaskCapacityLimit({ maxConcurrent: 6, maxWorktrees: 9 })).toBe(6);
-    expect(resolveActiveTaskCapacityLimit({ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: true })).toBe(4);
-    expect(resolveActiveTaskCapacityLimit({ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: false })).toBe(8);
+  it("keeps the agent ceiling independent from the worktree setting", () => {
+    expect(resolveAgentCapacityLimit({})).toBe(2);
+    expect(resolveAgentCapacityLimit({ maxConcurrent: 6 })).toBe(6);
+    expect(resolveAgentCapacityLimit({ maxConcurrent: 8 })).toBe(8);
   });
 
-  it("names the effective ceiling and binding setting in the shared admission reason", () => {
+  it("reports the explicitly exhausted admission gate", () => {
     expect(formatAdmissionCapacityQueuedReason({
-      maxConcurrent: 8,
-      maxWorktrees: 4,
-      worktreeLimitEnabled: true,
+      gate: "maxWorktrees",
+      limit: 4,
       claimed: 4,
       holderTaskIds: ["FN-1"],
-    })).toContain("effectiveLimit=4; bindingKnob=maxWorktrees");
+    })).toBe("queued — maxWorktrees capacity exhausted: used=4/4; gate=maxWorktrees; holders=FN-1");
   });
 
-  it("names the effective ceiling and binding setting in scheduler diagnostics", () => {
+  it("reports scheduler gates independently without a binding-knob ceiling", () => {
     const reason = formatConcurrencyLimitReason({
       available: 0,
       bindingGates: ["maxWorktrees"],
@@ -29,6 +27,8 @@ describe("effective concurrency operator surfaces", () => {
       semaphoreGate: undefined,
       holders: { maxConcurrent: ["FN-1"], maxWorktrees: ["FN-1"], semaphore: undefined },
     });
-    expect(reason).toContain("effectiveLimit=4 (bindingKnob=maxWorktrees)");
+    expect(reason).toContain("maxConcurrent used=4/8");
+    expect(reason).toContain("maxWorktrees used=4/4");
+    expect(reason).not.toContain("bindingKnob");
   });
 });

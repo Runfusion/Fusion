@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { bunTargetToPlatformArch, nodePtyRequiredNativeAssetName } from "../runtime/pty-native-assets.js";
 
 const cliRoot = join(import.meta.dirname!, "..", "..");
 const distDir = join(cliRoot, "dist");
@@ -122,6 +124,37 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: --all builds all platfo
     expect(existsSync(join(clientDir, "index.html"))).toBe(true);
   });
 
+  it("stages the selected platform module and native payload for every cross target", () => {
+    for (const target of SUPPORTED_TARGETS) {
+      const targetInfo = bunTargetToPlatformArch(target)!;
+      const runtimeDir = join(distDir, "runtime", `${targetInfo.platform}-${targetInfo.arch}`);
+      const packageName = `node-pty-${targetInfo.platform}-${targetInfo.arch}`;
+      expect(existsSync(join(runtimeDir, "node-pty-platform", "lib", "index.js"))).toBe(true);
+      // Bun compiles the aliased import to an empty module, so every target must
+      // retain the disk-loaded umbrella and its selected dependency together.
+      expect(existsSync(join(runtimeDir, "node-pty-umbrella", "index.js"))).toBe(true);
+      expect(existsSync(join(runtimeDir, "node-pty-umbrella", "node_modules", "@lydell", packageName, "lib", "index.js"))).toBe(true);
+      const requiredAsset = nodePtyRequiredNativeAssetName(targetInfo.platform);
+      expect(requiredAsset).not.toBeNull();
+      expect(existsSync(join(runtimeDir, requiredAsset!))).toBe(true);
+    }
+  });
+
+  it("loads the host staged umbrella with its real spawn export", async () => {
+    const target = nativeTarget();
+    if (!target) return;
+    const targetInfo = bunTargetToPlatformArch(target)!;
+    const entry = join(
+      distDir,
+      "runtime",
+      `${targetInfo.platform}-${targetInfo.arch}`,
+      "node-pty-umbrella",
+      "index.js",
+    );
+    const module = await import(pathToFileURL(entry).href);
+    expect(typeof module.spawn).toBe("function");
+  });
+
   it("stages runtime native assets for current platform", () => {
     // After --all build, runtime directory should have current platform's assets
     const platform = process.platform === "darwin" ? "darwin" : 
@@ -142,10 +175,12 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: --all builds all platfo
       });
     }
 
-    // pty.node is required for all platforms
-    expect(existsSync(join(runtimeDir, "pty.node"))).toBe(true);
-    // spawn-helper is only for Unix platforms
-    if (process.platform !== "win32") {
+    const requiredNativeAsset = nodePtyRequiredNativeAssetName(platform);
+    expect(requiredNativeAsset).not.toBeNull();
+    expect(existsSync(join(runtimeDir, requiredNativeAsset!))).toBe(true);
+    // Package payloads are copied as a directory: Darwin provides spawn-helper,
+    // Linux does not, and Windows provides ConPTY companions.
+    if (process.platform === "darwin") {
       expect(existsSync(join(runtimeDir, "spawn-helper"))).toBe(true);
     }
   });

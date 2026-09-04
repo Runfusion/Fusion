@@ -1184,6 +1184,80 @@ describe("TaskDetailModal", () => {
       expect(await screen.findByText("QA Check", {}, { timeout: 15_000 })).toBeTruthy();
     });
 
+    it("loads workflow reports when Summary opens first", async () => {
+      const { fetchWorkflowResults } = await import("../../api");
+      const mockFetch = vi.mocked(fetchWorkflowResults);
+      mockFetch.mockResolvedValueOnce([
+        { workflowStepId: "plan-review-step", workflowStepName: "Plan Review", reviewKind: "plan", status: "passed", verdict: "APPROVE", output: "Plan approved" },
+        { workflowStepId: "code-review-step", workflowStepName: "Code Review", reviewKind: "code", status: "failed", verdict: "REVISE", output: "Revise implementation" },
+      ] as any);
+
+      render(
+        <TaskDetailModal initialTab="definition" task={makeTask()} onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined));
+      expect(await screen.findByTestId("task-history-count-plan")).toHaveTextContent("1");
+      expect(screen.getByTestId("task-history-count-review")).toHaveTextContent("1");
+    });
+
+    it("keeps a successful empty Summary response authoritative over cached task results", async () => {
+      const { fetchWorkflowResults } = await import("../../api");
+      const mockFetch = vi.mocked(fetchWorkflowResults);
+      let resolveFetch!: (results: any[]) => void;
+      const response = new Promise<any[]>((resolve) => {
+        resolveFetch = resolve;
+      });
+      mockFetch.mockReturnValueOnce(response);
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ workflowStepResults: [{ workflowStepId: "stale-plan-review", workflowStepName: "Stale Plan Review", reviewKind: "plan", status: "passed", verdict: "APPROVE", output: "Cached stale approval" }] as any })}
+          onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined));
+
+      await act(async () => {
+        resolveFetch([]);
+        await response;
+      });
+
+      expect(screen.getByTestId("task-history-count-plan")).toHaveTextContent("0");
+      expect(screen.queryByText("Cached stale approval")).not.toBeInTheDocument();
+    });
+
+    it("uses task workflow results while the Summary fetch is unavailable", async () => {
+      const { fetchWorkflowResults } = await import("../../api");
+      vi.mocked(fetchWorkflowResults).mockRejectedValueOnce(new Error("offline"));
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ workflowStepResults: [{ workflowStepId: "plan-review-step", workflowStepName: "Plan Review", reviewKind: "plan", status: "passed", verdict: "APPROVE", output: "Approved" }] as any })}
+          onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+      await waitFor(() => expect(screen.getByTestId("task-history-count-plan")).toHaveTextContent("1"));
+    });
+
+    it("reuses fetched results when switching Workflow to Summary", async () => {
+      const { fetchWorkflowResults } = await import("../../api");
+      const mockFetch = vi.mocked(fetchWorkflowResults);
+      mockFetch.mockResolvedValueOnce([{ workflowStepId: "plan-review-step", workflowStepName: "Plan Review", reviewKind: "plan", status: "passed", verdict: "APPROVE", output: "Approved" }] as any);
+      render(
+        <TaskDetailModal initialTab="definition" task={makeTask()} onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Workflow" }));
+      expect(await screen.findByText("Plan Review")).toBeInTheDocument();
+      const fetchCountBeforeSwitch = mockFetch.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+      expect(screen.getByTestId("task-history-count-plan")).toHaveTextContent("1");
+      expect(mockFetch).toHaveBeenCalledTimes(fetchCountBeforeSwitch);
+    });
+
     it("shows loading state when workflow results are being fetched", async () => {
       const { fetchWorkflowResults } = await import("../../api");
       const mockFetch = vi.mocked(fetchWorkflowResults);

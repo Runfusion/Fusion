@@ -25,20 +25,32 @@ export interface ConfirmOptions {
     description?: string;
     defaultChecked?: boolean;
   };
+  select?: {
+    label: string;
+    options: Array<{ value: string; label: string }>;
+    defaultValue?: string;
+  };
 }
 
 export type ConfirmChoice = "primary" | "tertiary" | "cancel";
+export interface ConfirmResult {
+  choice: ConfirmChoice;
+  checkboxValue: boolean;
+  selectValue?: string;
+}
 
 interface PendingConfirm {
   options: ConfirmOptions;
   checkboxValue: boolean;
-  resolve: (value: { choice: ConfirmChoice; checkboxValue: boolean }) => void;
+  selectValue?: string;
+  resolve: (value: ConfirmResult) => void;
 }
 
 interface ConfirmContextValue {
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   confirmWithChoice: (options: ConfirmOptions) => Promise<ConfirmChoice>;
-  confirmWithCheckbox: (options: ConfirmOptions) => Promise<{ choice: ConfirmChoice; checkboxValue: boolean }>;
+  confirmWithCheckbox: (options: ConfirmOptions) => Promise<ConfirmResult>;
+  confirmWithSelect: (options: ConfirmOptions) => Promise<ConfirmResult>;
 }
 
 const ConfirmContext = createContext<ConfirmContextValue | null>(null);
@@ -67,25 +79,35 @@ export function ConfirmDialogProvider({
     /*
     FNXC:ConfirmDialogs 2026-07-16-05:30:
     Operators who globally skip critical-action confirmations must receive the same primary/default result as clicking the dialog's primary button. Never invent a different outcome or enqueue a hidden dialog; checkbox prompts retain their configured default value.
+
+    FNXC:ConfirmDialogs 2026-08-28-04:16:
+    A select whose default is the safe status-quo choice intentionally follows the checkbox contract.
+    Operators who disabled confirmations keep today's action behavior, including the configured select
+    default, instead of receiving a newly mandatory prompt.
     */
+    const selectValue = options.select?.defaultValue ?? options.select?.options[0]?.value;
     if (skipConfirmationsRef.current && !options.alwaysAsk) {
       return Promise.resolve({
         choice: "primary" as const,
         checkboxValue: options.checkbox?.defaultChecked ?? false,
+        selectValue: options.select?.defaultValue,
       });
     }
 
-    return new Promise<{ choice: ConfirmChoice; checkboxValue: boolean }>((resolve) => {
+    return new Promise<ConfirmResult>((resolve) => {
       updateQueue((current) => [
         ...current,
         {
           options,
           checkboxValue: options.checkbox?.defaultChecked ?? false,
+          selectValue,
           resolve,
         },
       ]);
     });
   }, [updateQueue]);
+
+  const confirmWithSelect = confirmWithCheckbox;
 
   const confirmWithChoice = useCallback(async (options: ConfirmOptions) => {
     const { choice } = await confirmWithCheckbox(options);
@@ -103,15 +125,15 @@ export function ConfirmDialogProvider({
       return;
     }
 
-    current.resolve({ choice: value, checkboxValue: current.checkboxValue });
+    current.resolve({ choice: value, checkboxValue: current.checkboxValue, selectValue: current.selectValue });
     updateQueue((items) => items.slice(1));
   }, [updateQueue]);
 
   const active = queue[0] ?? null;
 
   const contextValue = useMemo<ConfirmContextValue>(
-    () => ({ confirm, confirmWithChoice, confirmWithCheckbox }),
-    [confirm, confirmWithCheckbox, confirmWithChoice]
+    () => ({ confirm, confirmWithChoice, confirmWithCheckbox, confirmWithSelect }),
+    [confirm, confirmWithCheckbox, confirmWithChoice, confirmWithSelect]
   );
 
   return React.createElement(
@@ -127,6 +149,16 @@ export function ConfirmDialogProvider({
       checkboxLabel: active?.options.checkbox?.label,
       checkboxDescription: active?.options.checkbox?.description,
       checkboxChecked: active?.checkboxValue ?? false,
+      selectValue: active?.selectValue,
+      onSelectChange: (next) => {
+        updateQueue((current) => {
+          if (current.length === 0) {
+            return current;
+          }
+          const [head, ...tail] = current;
+          return [{ ...head, selectValue: next }, ...tail];
+        });
+      },
       onCheckboxChange: (next) => {
         updateQueue((current) => {
           if (current.length === 0) {
@@ -152,6 +184,12 @@ export function useConfirm(): ConfirmContextValue {
     confirmWithCheckbox: async (options: ConfirmOptions) => ({
       choice: "cancel",
       checkboxValue: options.checkbox?.defaultChecked ?? false,
+      selectValue: options.select?.defaultValue,
+    }),
+    confirmWithSelect: async (options: ConfirmOptions) => ({
+      choice: "cancel",
+      checkboxValue: options.checkbox?.defaultChecked ?? false,
+      selectValue: options.select?.defaultValue,
     }),
   };
 }

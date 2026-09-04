@@ -18,6 +18,8 @@ export interface WorktreeDependencySyncLogger {
   log?: (message: string) => void;
 }
 
+export type DependencySyncDecisionCode = "ran" | "healed" | "skipped-marker-match" | "no-command";
+
 export interface WorktreeDependencySyncResult {
   installCommand: string | null;
   configured: boolean;
@@ -36,7 +38,7 @@ export interface WorktreeDependencySyncResult {
 
 export interface InstallWorktreeDependenciesOptions {
   cwd: string;
-  settings?: Settings | null;
+  settings?: Pick<Settings, "worktreeInitCommand"> | null;
   taskId: string;
   signal?: AbortSignal;
   log?: (message: string) => Promise<void> | void;
@@ -48,12 +50,30 @@ export function hasInstallState(rootDir: string): boolean {
   return existsSync(join(rootDir, "node_modules")) || existsSync(join(rootDir, ".pnp.cjs"));
 }
 
+/**
+ * Render the shared dependency-readiness decision vocabulary used by task worktree acquisition
+ * and AI-merge clean rooms. The line is intentionally fixed-format so operators can compare the
+ * two environments without interpreting lane-specific prose.
+ */
+export function describeDependencySyncDecision(result: WorktreeDependencySyncResult): string {
+  const code: DependencySyncDecisionCode = result.installCommand === null
+    ? "no-command"
+    : result.healed
+      ? "healed"
+      : result.skipped
+        ? "skipped-marker-match"
+        : "ran";
+  const source = result.configured ? "configured" : "inferred";
+  const command = result.healedCommand ?? result.installCommand ?? "none";
+  return `${code}; source=${source}; command=${command}; duration=${result.durationMs}ms`;
+}
+
 export function getConfiguredWorktreeInitCommand(settings?: Pick<Settings, "worktreeInitCommand"> | null): string | null {
   const trimmed = settings?.worktreeInitCommand?.trim();
   return trimmed ? trimmed : null;
 }
 
-export function getDependencySyncCommand(rootDir: string, settings?: Settings | null): string | null {
+export function getDependencySyncCommand(rootDir: string, settings?: Pick<Settings, "worktreeInitCommand"> | null): string | null {
   const configuredCommand = getConfiguredWorktreeInitCommand(settings);
   if (configuredCommand) return configuredCommand;
   if (existsSync(join(rootDir, "pnpm-lock.yaml"))) return "pnpm install --frozen-lockfile";

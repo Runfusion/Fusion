@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { applySupersededFindingIds, archiveArbitratedWorkflowStepFailure, archiveTerminalWorkflowStepFailures, closeUnrebuttedDisputedFindings, isArchivedRemediationCarrier, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult } from "../workflows/workflow-step-results.js";
+import { isWorkflowStepNotRun as isWorkflowStepNotRunFromGateBarrel } from "../index.gate.js";
+import { isWorkflowStepNotRun as isWorkflowStepNotRunFromMainBarrel } from "../index.js";
+import { applySupersededFindingIds, archiveArbitratedWorkflowStepFailure, archiveTerminalWorkflowStepFailures, classifyRemediationAttemptClaim, closeUnrebuttedDisputedFindings, isArchivedRemediationCarrier, isWorkflowStepNotRun, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult, WORKFLOW_STEP_NOT_RUN_REASONS } from "../workflows/workflow-step-results.js";
 import type { WorkflowStepResult } from "../types.js";
 
 function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepResult {
@@ -10,6 +12,36 @@ function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepRe
     ...overrides,
   };
 }
+
+describe("remediation attempt claim classification", () => {
+  it("classifies claim ownership, durable refusal, staleness, and moved input by step id", () => {
+    const base = makeResult({ reviewInputFingerprint: "input", verdict: "REVISE" });
+    const input = { workflowStepId: "code-review", signature: "episode", liveSignature: "episode", now: 2_000_000 };
+    expect(classifyRemediationAttemptClaim([base], input)).toMatchObject({ kind: "claimable" });
+    expect(classifyRemediationAttemptClaim([{ ...base, remediationAttemptSignature: "episode", remediationAttemptOwner: "other", remediationAttemptClaimedAt: new Date(1_999_999).toISOString() }], input)).toEqual({ kind: "held", owner: "other" });
+    expect(classifyRemediationAttemptClaim([{ ...base, remediationAttemptSignature: "episode", remediationAttemptOwner: "other", remediationAttemptClaimedAt: new Date(0).toISOString() }], input)).toEqual({ kind: "reclaimable" });
+    expect(classifyRemediationAttemptClaim([{ ...base, remediationAttemptSignature: "episode", remediationAttemptOwner: "mine" }], { ...input, owner: "mine" })).toMatchObject({ kind: "owned" });
+    expect(classifyRemediationAttemptClaim([{ ...base, remediationAttemptSignature: "episode", remediationAttemptOwner: "other", remediationRefusedReason: "appender-declined" }], input)).toEqual({ kind: "refused", reason: "appender-declined" });
+    expect(classifyRemediationAttemptClaim([base], { ...input, liveSignature: "new-episode" })).toEqual({ kind: "signature-moved" });
+    expect(classifyRemediationAttemptClaim([base], { ...input, workflowStepId: "other" })).toEqual({ kind: "absent" });
+  });
+});
+
+describe("workflow step not-run classification", () => {
+  const notRun = makeResult({ status: "skipped", notRunReason: "not-configured" });
+
+  it("recognizes only skipped rows carrying a fixed not-run reason through both core barrels", () => {
+    expect(WORKFLOW_STEP_NOT_RUN_REASONS).toContain("repository-context-unresolved");
+    for (const predicate of [isWorkflowStepNotRun, isWorkflowStepNotRunFromMainBarrel, isWorkflowStepNotRunFromGateBarrel]) {
+      expect(predicate(notRun)).toBe(true);
+      expect(predicate(makeResult({ status: "skipped", notRunReason: "repository-context-unresolved" }))).toBe(true);
+      expect(predicate(makeResult({ status: "skipped", bypassedBy: "operator" }))).toBe(false);
+      expect(predicate(makeResult({ status: "skipped", remediationArchivedAt: "2026-08-28T00:00:00.000Z" }))).toBe(false);
+      expect(predicate(makeResult({ status: "passed", notRunReason: "not-configured" }))).toBe(false);
+      expect(predicate(makeResult({ status: "skipped" }))).toBe(false);
+    }
+  });
+});
 
 describe("normalizeWorkflowReviewFindings", () => {
   it("normalizes bounded populated findings with stable collision-free ids", () => {

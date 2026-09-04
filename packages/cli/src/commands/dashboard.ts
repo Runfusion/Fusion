@@ -2191,8 +2191,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const engineManager: ProjectEngineManager = new ProjectEngineManager(centralCoreForEngine, {
       cliPackageVersion,
       getMergeStrategy,
-      processPullRequestMerge: (s, wd, taskId, pool, signal) =>
-        processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
+      processPullRequestMerge: (s, wd, taskId, signal) =>
+        processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, signal),
       createGroupPr: createGroupPrCallback(githubClient),
       syncGroupPr: syncGroupPrCallback(githubClient),
       /*
@@ -2388,7 +2388,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       if (hybridExecutor) {
         await hybridExecutor.shutdown();
       }
-      await engineManager.stopAll();
+      /*
+      FNXC:RemoteAccess 2026-09-01-02:54:
+      shutdown() runs disposeAsync() BEFORE its own engineManager.stopAll(), so this is the call that
+      actually reaches the tunnels first — the restart intent has to be threaded here too, or the
+      handover never happens and the operator's public URL dies on every Restart anyway.
+      */
+      await engineManager.stopAll({ supervisedRestart: shutdownExitCode === FUSION_RESTART_EXIT_CODE });
       await closeCentralCoreBestEffort(centralCoreForEngine, "dispose cleanup");
     });
 
@@ -2555,7 +2561,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       // Stop all project engines uniformly
-      await timeShutdownStep("engineManager.stopAll", () => engineManager.stopAll());
+      /*
+      FNXC:RemoteAccess 2026-09-01-02:54:
+      Tell the engine manager WHY we are exiting. `shutdownExitCode` is FUSION_RESTART_EXIT_CODE only
+      when requestSelfRestart set it, so it is the honest local signal for "a supervisor will relaunch
+      us" — unlike the inherited FUSION_RESTART_SUPERVISED env var. Remote tunnels are handed over
+      instead of killed on that path; a real container stop still tears them down.
+      */
+      await timeShutdownStep("engineManager.stopAll", () =>
+        engineManager.stopAll({ supervisedRestart: shutdownExitCode === FUSION_RESTART_EXIT_CODE }),
+      );
 
       // Stop peer exchange service
       if (peerExchangeService) {

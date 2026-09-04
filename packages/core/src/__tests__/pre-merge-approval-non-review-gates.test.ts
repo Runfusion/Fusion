@@ -87,4 +87,16 @@ describe("pre-merge approvals for non-review gates", () => {
 
     expect(approvals[0]?.state).toBe("not-approved");
   });
+
+  it("keeps a non-code gate content-independent for an empty singular diff", () => {
+    const approvals = evaluatePreMergeApprovals(
+      taskWith([gate("verification")]),
+      {
+        requiredPreMergeStepIds: new Set(["verification"]),
+        mergeContent: { kind: "singular", diff: { state: "empty" } },
+      },
+    );
+
+    expect(approvals[0]).toEqual({ workflowStepId: "verification", state: "approved" });
+  });
 });

@@ -22,7 +22,10 @@ FN-6690 fix: Command Center CSS was authored against a numeric token scale (--sp
 
 /*
 FNXC:CommandCenter 2026-06-17-00:00:
-The Command Center must remain scrollable on mobile inside the overflow-hidden .project-content flex parent. Keep the header and tablist pinned while .cc-tabpanel owns vertical scrolling and safe-area bottom clearance.
+The Command Center must remain scrollable on mobile inside the overflow-hidden .project-content flex parent. Keep the header, including its section dropdown, pinned while .cc-tabpanel owns vertical scrolling and safe-area bottom clearance.
+
+FNXC:CommandCenter 2026-09-01-06:07:
+The section dropdown replaces the wrapping tab strip, preserving the compact pinned header while the panel remains the sole scroll owner.
 */
 .cc-header {
   display: flex;
@@ -54,11 +57,13 @@ Dashboard follows the global header rule: surface background, canonical height/p
     height: var(--view-header-min-height);
   }
 
-  .cc-header > .cc-date-range {
+  .cc-header > .cc-date-range,
+  .cc-header > .cc-section-nav {
     max-height: var(--view-header-content-row);
   }
 
-  .cc-header > .cc-date-range .cc-date-range-trigger {
+  .cc-header > .cc-date-range .cc-date-range-trigger,
+  .cc-header > .cc-section-nav .cc-section-nav-trigger {
     min-height: 0;
     max-height: var(--view-header-content-row);
     white-space: nowrap;
@@ -78,37 +83,6 @@ Dashboard follows the global header rule: surface background, canonical height/p
 .cc-title svg {
   flex-shrink: 0;
   color: var(--todo);
-}
-
-/* ---- Tabs ---- */
-.cc-tablist {
-  display: flex;
-  flex-shrink: 0;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  padding: var(--space-md) var(--space-xl) 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.cc-tab {
-  appearance: none;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  padding: var(--space-sm) var(--space-md);
-  cursor: pointer;
-  font-size: 0.8125rem;
-  transition: color var(--transition-fast), border-color var(--transition-fast);
-}
-
-.cc-tab:hover {
-  color: var(--text);
-}
-
-.cc-tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
 }
 
 .cc-tabpanel {
@@ -135,6 +109,10 @@ The System tab combines a controls fragment with a stats .cc-area. Keep the tabp
 }
 
 @media (max-width: 768px) {
+  .cc-header {
+    flex-wrap: wrap;
+  }
+
   .cc-tabpanel {
     padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0) + var(--standalone-bottom-gap));
   }

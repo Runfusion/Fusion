@@ -100,8 +100,8 @@ export async function sendTaskBackForFix(
     findings,
   );
 
-  // 4. Re-open only the last step for a single in-place fix pass. Earlier
-  // done steps stay done so the executor doesn't redo finished work.
+  // 4. Append one replay occurrence for the workflow-selected trailing step.
+  // Completed occurrences remain immutable history, and existing pending work prevents duplicate growth.
   const updatedTask = await deps.store.getTask(taskId);
   if (stepReopenPolicy === "reopen-trailing") {
     await deps.reopenLastStepForRevision(taskId, updatedTask);

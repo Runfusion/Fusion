@@ -14,6 +14,7 @@ import { createInterface } from "node:readline/promises";
 import { promptOutputStream, result as outputResult } from "./output.js";
 import {
   resolveEffectiveConcurrency,
+  resolveWorktreeCapacityLimit,
   CentralCore,
   createTaskStoreForBackend,
   hasProjectIdentity,
@@ -933,12 +934,14 @@ export async function startProjectRuntime(projectId: string): Promise<import("@f
   Registry settings are only a fallback when the scoped store cannot be opened, preventing a stale
   central snapshot from overriding a persisted project concurrency setting at startup.
   */
-  let capacity = resolveEffectiveConcurrency(project.settings);
+  let capacitySettings = project.settings as Record<string, unknown> | undefined;
+  let capacity = resolveEffectiveConcurrency(capacitySettings);
   if (existsSync(project.path)) {
     try {
       const boot = await createTaskStoreForBackend({ rootDir: project.path, projectId: project.id });
       try {
-        capacity = resolveEffectiveConcurrency(await boot.taskStore.getSettingsFast());
+        capacitySettings = await boot.taskStore.getSettingsFast();
+        capacity = resolveEffectiveConcurrency(capacitySettings);
       } finally {
         await boot.shutdown();
       }
@@ -953,7 +956,7 @@ export async function startProjectRuntime(projectId: string): Promise<import("@f
     workingDirectory: project.path,
     isolationMode: project.isolationMode,
     maxConcurrent: capacity.maxConcurrent,
-    maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
+    maxWorktrees: resolveWorktreeCapacityLimit({ ...(capacitySettings ?? {}), worktreeLimitEnabled: true })!,
   });
 
   return runtime;

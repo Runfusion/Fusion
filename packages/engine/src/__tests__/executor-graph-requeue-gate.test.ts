@@ -77,7 +77,7 @@ describe("executor graph execute self-requeue gate", () => {
     );
   });
 
-  it("moves in-review graph failures with incomplete steps back to todo for resume", async () => {
+  it("keeps in-review graph failures in review without a REVISE handoff", async () => {
     resetExecutorMocks();
     const store = createMockStore();
     const live = task({
@@ -98,8 +98,8 @@ describe("executor graph execute self-requeue gate", () => {
      * FNXC:WorkflowLifecycle 2026-06-29-11:12:
      * FN-7228/FN-7229 proved that restart-time graph failures can surface after a
      * stale handoff put the card in `in-review` with unfinished steps. Review is
-     * not an error bucket; bounce that shape back to `todo` preserving step
-     * progress so the engine can resume the correct unfinished step.
+     * not an error bucket; return that shape to the declared WIP lane preserving
+     * step progress so the engine can resume the correct unfinished step.
      */
     await (executor as any).handleGraphFailure(live, {
       disposition: "failed",
@@ -108,20 +108,12 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:parse:value": "parse-error" },
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: null, error: null }),
-      undefined,
-    );
-    expect(store.moveTask).toHaveBeenCalledWith(
-      live.id,
-      "todo",
-      expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }),
-    );
+    expect(live.column).toBe("in-review");
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.handoffToReview).not.toHaveBeenCalled();
   });
 
-  it("moves premature merge failures with incomplete in-progress steps back to todo", async () => {
+  it("keeps premature merge failures in the implementation lane", async () => {
     resetExecutorMocks();
     const store = createMockStore();
     const live = task({
@@ -153,11 +145,7 @@ describe("executor graph execute self-requeue gate", () => {
       expect.objectContaining({ status: null, error: null }),
       undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith(
-      live.id,
-      "todo",
-      expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }),
-    );
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).not.toHaveBeenCalledWith(
       live.id,
       expect.objectContaining({ status: "failed" }),
@@ -222,19 +210,21 @@ describe("executor graph execute self-requeue gate", () => {
       status: "failed",
       error: "Workflow graph terminated with failure at node 'code-review-remediation'",
       steps: [{ name: "Implement", status: "done" }],
-      postReviewFixCount: 99,
+      postReviewFixCount: 2,
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
         phase: "pre-merge",
         status: "failed",
         output: "Fix the reviewer finding before merge.",
+        verdict: "REVISE",
+        reviewKind: "code",
         startedAt: now,
         completedAt: now,
       }],
-      log: Array.from({ length: 99 }, (_, index) => ({
+      log: Array.from({ length: 2 }, (_, index) => ({
         timestamp: now,
-        action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${index + 1}/unbounded)`,
+        action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${index + 1}/3)`,
         outcome: "Step: Code Review\nWorkflow revision key: code-review",
       })),
     });
@@ -249,11 +239,10 @@ describe("executor graph execute self-requeue gate", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     /*
-     * FNXC:WorkflowRemediation 2026-07-03-20:10:
-     * FN-7476-class parked rows have no live session left, but the durable failed
-     * Code Review result is enough evidence to reuse the remediation handoff.
-     * Built-in Code Review remains unbounded by default, so high prior attempt
-     * counts must not force manual retry unless a numeric cap was configured.
+     * FNXC:WorkflowRemediation 2026-09-03-05:40:
+     * FN-7476-class parked rows have no live session left, but the durable failed Code Review
+     * result is enough to enter the remediation recovery owner. This fixture retains one bounded
+     * attempt; separate convergence coverage owns the exhausted-budget outcome.
      */
     await (executor as any).handleGraphFailure(live, {
       disposition: "failed",
@@ -262,12 +251,7 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:code-review-remediation:value": "remediation-not-scheduled" },
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(live.id, { postReviewFixCount: 100 }, undefined);
-    expect(store.addTaskComment).toHaveBeenCalledWith(
-      live.id,
-      expect.stringContaining("Auto-revived from in-review: pre-merge workflow step \"Code Review\" had failed"),
-      "agent",
-    );
+    expect(store.updateTask).toHaveBeenCalledWith(live.id, { postReviewFixCount: 3 }, undefined);
     expect(store.logEntry).toHaveBeenCalledWith(
       live.id,
       expect.stringContaining("Auto-recovered retryable remediation node 'code-review-remediation'"),
@@ -369,7 +353,7 @@ describe("executor graph execute self-requeue gate", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
-  it("still resumes an incomplete review card after a refused remediation", async () => {
+  it("does not resume an incomplete review card without named REVISE remediation", async () => {
     resetExecutorMocks();
     const store = createMockStore();
     const live = task({
@@ -384,13 +368,9 @@ describe("executor graph execute self-requeue gate", () => {
       live,
       "code-review-remediation",
       "remediation-not-scheduled",
-    )).resolves.toBe(true);
+    )).resolves.toBe(false);
 
-    expect(store.moveTask).toHaveBeenCalledWith(
-      live.id,
-      "todo",
-      expect.objectContaining({ preserveProgress: true, recoveryRehome: true }),
-    );
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("still parks a remediation-node graph failure as failed when no durable failed gate result exists", async () => {
@@ -418,14 +398,11 @@ describe("executor graph execute self-requeue gate", () => {
       context: {},
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({
-        status: "failed",
-        error: expect.stringContaining("Workflow graph terminated with failure at node 'code-review-remediation'"),
-      }),
-      undefined,
-    );
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
+    await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("Workflow graph terminated with failure at node 'code-review-remediation'"),
+    }));
   });
 
   it("does not hand generic graph failures to review", async () => {
@@ -449,14 +426,11 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:parse:value": "parse-error" },
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({
-        status: "failed",
-        error: expect.stringContaining("Workflow graph terminated with failure at node 'parse'"),
-      }),
-      undefined,
-    );
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
+    await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("Workflow graph terminated with failure at node 'parse'"),
+    }));
     expect(store.handoffToReview).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith(live.id, "in-review", expect.anything());
   });

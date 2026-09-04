@@ -54,6 +54,13 @@ describe("settings defaults invariants", () => {
     expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, "autoReloadOnVersionChange")).toBe(false);
   });
 
+  it("keeps global chat snippets schema-present but unset to avoid a shared mutable array", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.chatSnippets).toBeUndefined();
+    expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, "chatSnippets")).toBe(true);
+    expect(GLOBAL_SETTINGS_KEYS).toContain("chatSnippets");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("chatSnippets");
+  });
+
   it("defaults dashboard keyboard shortcuts globally", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
       quickChat: "Space",
@@ -182,18 +189,6 @@ describe("settings defaults invariants", () => {
 
   it("keeps GitHub native PR auto-merge opt-in", () => {
     expect(DEFAULT_PROJECT_SETTINGS.githubNativeAutoMerge).toBe(false);
-  });
-
-  describe("recycleWorktrees default", () => {
-    it("keeps recycleWorktrees explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.recycleWorktrees).toBe(false);
-      expect("recycleWorktrees" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-    });
-
-    it("keeps recycleWorktrees project-scoped only", () => {
-      // recycleWorktrees intentionally has no DEFAULT_GLOBAL_SETTINGS counterpart.
-      expect("recycleWorktrees" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-    });
   });
 
   describe("showWorktreeGrouping default", () => {

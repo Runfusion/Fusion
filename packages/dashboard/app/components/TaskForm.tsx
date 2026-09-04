@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
@@ -16,6 +16,7 @@ import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
+import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {
   if (status === "online") return t("taskForm.nodeStatusOnline", "Online");
@@ -332,6 +333,7 @@ export function TaskForm({
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [showWorkflowDropdown, setShowWorkflowDropdown] = useState(false);
   const executionModeRef = useRef(executionMode);
+  const preFastOptionalStepIdsRef = useRef<string[] | null>(null);
   useEffect(() => {
     executionModeRef.current = executionMode;
   }, [executionMode]);
@@ -352,6 +354,10 @@ export function TaskForm({
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [optionalSteps, setOptionalSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [optionalStepsLoading, setOptionalStepsLoading] = useState(false);
+  const defaultOnOptionalStepIds = useMemo(
+    () => optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId),
+    [optionalSteps],
+  );
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [baseBranchOptions, setBaseBranchOptions] = useState<string[]>([]);
   const [baseBranchCustomMode, setBaseBranchCustomMode] = useState(false);
@@ -431,12 +437,14 @@ export function TaskForm({
     const isCreateOptionalStepPicker = Boolean(onWorkflowIdChange);
     const isEditOptionalStepPicker = mode === "edit" && Boolean(optionalStepsWorkflowId);
     if (!isCreateOptionalStepPicker && !isEditOptionalStepPicker) return;
+    preFastOptionalStepIdsRef.current = null;
     let cancelled = false;
     setOptionalSteps([]);
     if (!resolvedOptionalWorkflowId) {
       // Clear any in-flight loading state (a prior fetch may have been cancelled
       // mid-flight when switching to "No workflow"), so the loading row never sticks.
       setOptionalStepsLoading(false);
+      preFastOptionalStepIdsRef.current = null;
       if (isCreateOptionalStepPicker) {
         onEnabledWorkflowStepsChange?.([], { optionalStepsAvailable: false, source: "initialization" });
       }
@@ -455,12 +463,14 @@ export function TaskForm({
           const seededSteps = executionModeRef.current === "fast"
             ? []
             : steps.filter((s) => s.defaultOn).map((s) => s.templateId);
+          preFastOptionalStepIdsRef.current = null;
           onEnabledWorkflowStepsChange?.(seededSteps, { optionalStepsAvailable: steps.length > 0, source: "initialization" });
         }
       })
       .catch(() => {
         if (cancelled) return;
         setOptionalSteps([]);
+        preFastOptionalStepIdsRef.current = null;
         if (isCreateOptionalStepPicker) {
           onEnabledWorkflowStepsChange?.([], { optionalStepsAvailable: false, source: "initialization" });
         }
@@ -480,13 +490,32 @@ export function TaskForm({
   /*
   FNXC:FastOptionalSteps 2026-06-30-09:08:
   Full-dialog Fast controls share one transition contract: entering fast mode clears currently enabled optional workflow steps exactly once, while the inline dropdown remains active so manual reselection is persisted as explicit create intent.
+
+  FNXC:FastOptionalSteps 2026-08-29-12:08:
+  FN-260 makes the create-form Fast transition reversible. Restore the captured pre-Fast selection with `source: "user"` when returning to Standard, while edit mode remains execution-mode-only because it never clears optional steps.
   */
   const handleExecutionModeChange = useCallback((nextMode: TaskExecutionModeSelection) => {
     onExecutionModeChange?.(nextMode);
-    if (nextMode === "fast" && onWorkflowIdChange) {
-      onEnabledWorkflowStepsChange?.([], { optionalStepsAvailable: optionalSteps.length > 0, source: "user" });
+    if (!onWorkflowIdChange) return;
+
+    const changeMeta = { optionalStepsAvailable: optionalSteps.length > 0, source: "user" } as const;
+    if (nextMode === "fast") {
+      preFastOptionalStepIdsRef.current = enabledWorkflowSteps ?? [];
+      onEnabledWorkflowStepsChange?.([], changeMeta);
+      return;
     }
-  }, [onEnabledWorkflowStepsChange, onExecutionModeChange, onWorkflowIdChange, optionalSteps.length]);
+
+    if (executionMode !== "fast") return;
+    onEnabledWorkflowStepsChange?.(
+      restoreOptionalStepsOnFastExit(
+        preFastOptionalStepIdsRef.current,
+        enabledWorkflowSteps ?? [],
+        defaultOnOptionalStepIds,
+      ),
+      changeMeta,
+    );
+    preFastOptionalStepIdsRef.current = null;
+  }, [defaultOnOptionalStepIds, enabledWorkflowSteps, executionMode, onEnabledWorkflowStepsChange, onExecutionModeChange, onWorkflowIdChange, optionalSteps.length]);
 
   const toggleOptionalStep = useCallback(
     (templateId: string) => {
@@ -1114,11 +1143,15 @@ export function TaskForm({
               : t("taskForm.attach", "Attach")}
           </button>
 
+          {/*
+          FNXC:NewTaskDialogAffordances 2026-09-01-05:04:
+          Icon-only inline quick-action controls must keep a compact square footprint and never stretch to fill a wrapped flex line on phones.
+          */}
           {/* FNXC:NewTask 2026-06-23-00:10: Fast — toggles executionMode standard⇄fast; btn-primary when active, matching QuickEntryBox's fast toggle. */}
           {onExecutionModeChange && executionMode !== undefined && (
             <button
               type="button"
-              className={`btn btn-sm ${executionMode === "fast" ? "btn-primary" : ""}`}
+              className={`btn btn-sm task-form-inline-icon-btn ${executionMode === "fast" ? "btn-primary" : ""}`}
               onClick={() => handleExecutionModeChange(executionMode === "fast" ? "standard" : "fast")}
               aria-pressed={executionMode === "fast"}
               aria-label={inlineFastButtonLabel}
@@ -1216,7 +1249,7 @@ export function TaskForm({
           {onPriorityChange && (
             <button
               type="button"
-              className="btn btn-sm"
+              className="btn btn-sm task-form-inline-icon-btn"
               onClick={() => {
                 const idx = TASK_PRIORITIES.indexOf(inlinePriority);
                 const next = TASK_PRIORITIES[(idx + 1) % TASK_PRIORITIES.length];

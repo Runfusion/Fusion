@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { OverseerAdvisorRuntime, type OverseerAdvisorAgent } from "../overseer/overseer-advisor-runtime.js";
+import { OVERSEER_SESSION_DELTA_MAX_CHARS } from "../overseer/overseer-session-delta.js";
 
 function createFakeAgent(opts?: {
   failTimes?: number;
@@ -104,6 +105,32 @@ describe("OverseerAdvisorRuntime", () => {
 
     runtime.onLogDelta([{ type: "text", text: "streak two", agent: "executor" }]);
     await vi.waitFor(() => expect(notifyFailure).toHaveBeenCalledTimes(2));
+  });
+
+  it("bounds oversized tool rows through both delta and snapshot entry points", async () => {
+    const deltaAgent = createFakeAgent();
+    const deltaRuntime = new OverseerAdvisorRuntime({
+      agent: deltaAgent,
+      host: { enqueueAdvice: vi.fn() },
+      sleep: async () => {},
+    });
+    const oversizedTool = { type: "tool", text: "fn_run_verification", detail: "x".repeat(4_096), agent: "executor" };
+
+    deltaRuntime.onLogDelta([oversizedTool]);
+    await vi.waitFor(() => expect(deltaAgent.prompts).toHaveLength(1));
+    expect(deltaAgent.prompts[0]!.length).toBeLessThanOrEqual(OVERSEER_SESSION_DELTA_MAX_CHARS);
+    expect(deltaAgent.prompts[0]).toContain("characters omitted");
+
+    const snapshotAgent = createFakeAgent();
+    const snapshotRuntime = new OverseerAdvisorRuntime({
+      agent: snapshotAgent,
+      host: { enqueueAdvice: vi.fn() },
+      sleep: async () => {},
+    });
+    snapshotRuntime.onLogSnapshot([oversizedTool]);
+    await vi.waitFor(() => expect(snapshotAgent.prompts).toHaveLength(1));
+    expect(snapshotAgent.prompts[0]!.length).toBeLessThanOrEqual(OVERSEER_SESSION_DELTA_MAX_CHARS);
+    expect(snapshotAgent.prompts[0]).toContain("characters omitted");
   });
 
   it("reset invalidates in-flight work via epoch", async () => {

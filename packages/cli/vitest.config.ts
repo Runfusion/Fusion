@@ -47,7 +47,7 @@ const quarantinedCliTests: string[] = [
   recorded pre-existing CLI test failures observed during verify:workspace. Root causes varied:
   - extension-fn-secret-get.test.ts: store.getAsyncLayer mock drift (async-satellite dual-path).
   - chat.test.ts: MessageStore.getInbox returns non-array under Node 26 node:sqlite (SQLite-path).
-  - skill-sync.test.ts: undocumented engine tools (fn_acquire_repo_worktree, fn_artifact_*).
+  - skill-sync.test.ts: undocumented engine tools (legacy workspace acquisition and fn_artifact_*).
   - version.test.ts: changeset script assertion drift (project now uses scripts/release.mjs).
   - dashboard.test.ts: mesh lifecycle mock assertion drift.
   - bundled-plugin-freshness.test.ts: bundled plugin build freshness drift.
@@ -130,7 +130,7 @@ export default defineConfig({
     alias: [
       /*
       FNXC:CliTests 2026-08-11-04:50:
-      pnpm resolves pi-coding-agent 0.84.1 into peer-hashed instances because dashboard pins zod
+      pnpm resolves pi-coding-agent 0.84.4 into peer-hashed instances because dashboard pins zod
       ^3.25.76 while CLI/engine use zod 4.x and different ws versions. vi.mock is resolved-path
       scoped, so unify its exact package root here or CLI mocks silently miss dashboard/engine and
       run the real pi runtime plus vendored pi-claude-cli. Keep this anchored root alias after any

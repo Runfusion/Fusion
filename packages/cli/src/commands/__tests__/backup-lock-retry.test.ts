@@ -174,6 +174,51 @@ describe("fn backup * — lock retry, leak/close, and not-found teardown (FN-773
     errorSpy.mockRestore();
   });
 
+  it("runBackupRestore: successful paired restore closes a cached store", async () => {
+    const store = makeStore();
+    const { mod, closeProjectStore, createBackupManager } = await loadWithMockedStore(store);
+    (createBackupManager as ReturnType<typeof vi.fn>).mockReturnValue({
+      restoreBackup: vi.fn().mockResolvedValue({
+        restored: ["project", "central"],
+        preRestoreBackup: {
+          timestamp: "pre-restore-20260831-120001",
+          project: { filename: "fusion-pre-restore-pg-20260831-120001.dump" },
+          central: { filename: "fusion-central-pre-restore-pg-20260831-120001.dump" },
+        },
+      }),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await mod.runBackupRestore("fusion-pg-20260831-120000.dump");
+
+    expect(closeProjectStore).toHaveBeenCalledTimes(1);
+    logSpy.mockRestore();
+  });
+
+  it("runBackupRestore: central failure closes the uncached CWD-fallback store before non-zero exit", async () => {
+    const store = makeStore();
+    const { mod, closeProjectStore, createBackupManager } = await loadWithMockedStore(store, { cached: false });
+    (createBackupManager as ReturnType<typeof vi.fn>).mockReturnValue({
+      restoreBackup: vi.fn().mockRejectedValue(
+        new Error("central restore failed; project/archive rollback also failed"),
+      ),
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(mod.runBackupRestore("fusion-pg-20260831-120000.dump"))
+      .rejects.toThrow(/process\.exit\(1\)/);
+
+    expect(closeProjectStore).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("rollback also failed");
+    exitSpy.mockRestore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it("runBackupCreate: closes the store before process.exit on both success and failure", async () => {
     const store = makeStore();
     const { mod, closeProjectStore } = await loadWithMockedStore(store);

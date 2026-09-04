@@ -1,5 +1,54 @@
 # @fusion-plugin-examples/compound-engineering
 
+## 0.1.37-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.78.0-beta.1
+- @fusion/plugin-sdk@0.78.0-beta.1
+
+## 0.1.37-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.78.0-beta.0
+- @fusion/plugin-sdk@0.78.0-beta.0
+
+## 0.1.36
+
+### Patch Changes
+
+- @fusion/core@0.77.0
+- @fusion/plugin-sdk@0.77.0
+
+## 0.1.36-beta.14
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.14
+- @fusion/plugin-sdk@0.77.0-beta.14
+
+## 0.1.36-beta.13
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.13
+- @fusion/plugin-sdk@0.77.0-beta.13
+
+## 0.1.36-beta.12
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.12
+- @fusion/plugin-sdk@0.77.0-beta.12
+
+## 0.1.36-beta.11
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.11
+- @fusion/plugin-sdk@0.77.0-beta.11
+
 ## 0.1.36-beta.10
 
 ### Patch Changes

@@ -16,7 +16,7 @@ import type { Settings } from "@fusion/core";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "../self-healing.js";
-import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree/worktree-paths.js";
+import { resolveAiMergeRootPath, resolveAiMergeSearchRoots } from "../worktree/worktree-paths.js";
 import { isBenignAbsentRemovalError, removeDirectoryWithRetry } from "../worktree/worktree-removal-retry.js";
 
 const execFileAsync = promisify(execFile);
@@ -56,14 +56,10 @@ function ensureAiMergeRootIgnored(projectRootDir: string, settings?: Settings): 
   if (!existsSync(excludePath)) return;
   try {
     const current = readFileSync(excludePath, "utf-8");
-    const legacyAiMergeRoot = resolveLegacyAiMergeRootPath(projectRootDir);
-    const legacyRelativeAiMergeRoot = relative(projectRootDir, legacyAiMergeRoot);
-    const entries = [`${legacyRelativeAiMergeRoot.replaceAll("\\", "/")}/`];
-    const aiMergeRoot = resolveAiMergeRootPath(projectRootDir, settings);
-    const relativeAiMergeRoot = relative(projectRootDir, aiMergeRoot);
-    if (relativeAiMergeRoot && !relativeAiMergeRoot.startsWith("..") && !isAbsolute(relativeAiMergeRoot)) {
-      entries.push(`${relativeAiMergeRoot.replaceAll("\\", "/")}/`);
-    }
+    const entries = resolveAiMergeSearchRoots(projectRootDir, settings)
+      .map((root) => relative(projectRootDir, root))
+      .filter((root) => root && !root.startsWith("..") && !isAbsolute(root))
+      .map((root) => `${root.replaceAll("\\", "/")}/`);
 
     const missing = entries.filter((entry) => !current.split(/\r?\n/).includes(entry));
     if (missing.length > 0) {
@@ -83,7 +79,7 @@ export function resolveAiMergeRoot(projectRootDir: string, settings?: Settings):
 }
 
 function getAiMergeTempSearchRoots(projectRootDir: string, settings?: Settings): string[] {
-  const roots = [resolveAiMergeRoot(projectRootDir, settings), resolveLegacyAiMergeRootPath(projectRootDir), tmpdir()];
+  const roots = [resolveAiMergeRoot(projectRootDir, settings), ...resolveAiMergeSearchRoots(projectRootDir, settings), tmpdir()];
   const testWorkerRoot = process.env.FUSION_TEST_WORKER_ROOT;
   if (testWorkerRoot) {
     try {

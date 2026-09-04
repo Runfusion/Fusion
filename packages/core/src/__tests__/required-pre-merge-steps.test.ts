@@ -23,6 +23,14 @@ describe("resolveRequiredPreMergeStepIds", () => {
     )).toEqual(new Set(["browser-verification"]));
   });
 
+  it("removes Fast pre-merge requirements even when old selections still enable every group", () => {
+    expect(resolveRequiredPreMergeStepIds(
+      BUILTIN_CODING_WORKFLOW_IR,
+      ["plan-review", "code-review", "browser-verification"],
+      { executionMode: "fast" },
+    )).toEqual(new Set());
+  });
+
   it("keeps result-only semantics when the store cannot name a workflow", async () => {
     const gate = await resolvePreMergeGateForTask({
       getWorkflowDefinition: vi.fn(),

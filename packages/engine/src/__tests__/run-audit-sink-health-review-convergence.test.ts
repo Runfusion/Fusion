@@ -13,11 +13,11 @@ import { RUN_AUDIT_EMIT_TIMEOUT_MS } from "../util/emit-bounded-run-audit.js";
 FNXC:ReviewConvergence 2026-08-22-16:17:
 FN-149 and FN-9175 require review-convergence telemetry to stay best effort. A hostile audit sink
 must never alter the ladder, arbitration release or fenced-stale decline, dispute result, or the
-human-last dossier; late rejection must remain observed rather than become an unhandled rejection.
+operator-authored Plan Review cap; late rejection must remain observed rather than become an unhandled rejection.
 */
 function failedTask() {
   return {
-    id: "FN-149-audit", column: "in-review", dependencies: [], steps: [], currentStep: 0, log: [],
+    id: "FN-149-audit", column: "in-review", dependencies: [], worktree: "/tmp/review-convergence-audit", steps: [{ name: "Fix review finding", status: "pending", remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", detail: "Fix review finding" } }], currentStep: 0, log: [],
     createdAt: "2026-08-22T00:00:00.000Z", updatedAt: "2026-08-22T00:00:00.000Z",
     reviewConvergenceStage: 2, reviewConvergenceEscalationCount: 2,
     workflowStepResults: [{
@@ -88,8 +88,9 @@ describe("FN-149 review convergence audit sink health", () => {
       getRunContextFor: () => ({ agentId: "reviewer", runId: "run-149" }),
     } as any, row.id, {
       kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 3,
-    })).resolves.toBe("human-escalated");
-    expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
+    })).resolves.toBe("released");
+    expect(row).not.toHaveProperty("awaitingApprovalReason");
+    expect(row).not.toHaveProperty("status");
     expect(logEntry).toHaveBeenCalledOnce();
   });
 
@@ -123,7 +124,7 @@ describe("FN-149 review convergence audit sink health", () => {
         kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 3,
       });
       await vi.advanceTimersByTimeAsync(2_001);
-      await expect(outcome).resolves.toBe("human-escalated");
+      await expect(outcome).resolves.toBe("released");
       expect(logEntry).toHaveBeenCalledOnce();
       if (mode === "late-resolve") resolveSink?.();
       else rejectSink?.(new Error("late audit failure"));
@@ -150,6 +151,17 @@ describe("FN-149 review convergence audit sink health", () => {
       kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 2,
     }))).resolves.toBe("escalated");
     expect(sendTaskBackForFix).toHaveBeenCalledOnce();
+    expect(row).toMatchObject({ reviewConvergenceStage: 1, modelProvider: "mock", modelId: "strong" });
+    if (sink.recordRunAuditEvent) {
+      const event = sink.recordRunAuditEvent.mock.calls.map((call) => call[0])
+        .find((candidate) => candidate.mutationType === "task:review-convergence-escalation");
+      expect(event?.metadata).toMatchObject({
+        stage: 1,
+        mode: "alternate-model",
+        hasModelTarget: true,
+        escalationSource: "dedicated",
+      });
+    }
   });
 
   it.each(["absent", "throws", "rejects", "pending", "late-resolve", "late-reject"] as const)("keeps a fenced arbitration release observable with a %s sink", async (mode) => {
@@ -224,7 +236,7 @@ describe("FN-149 review convergence audit sink health", () => {
     expect(row.workflowStepResults[0].findings?.[0]).toMatchObject({ disputeRationale: "The transaction already protects this.", disputedAt: expect.any(String) });
   });
 
-  it("bounds a never-settling sink without losing the stage-three park", async () => {
+  it("releases Code Review at stage three without consulting a never-settling sink", async () => {
     vi.useFakeTimers();
     const row = failedTask();
     const logEntry = vi.fn(async () => {});
@@ -245,7 +257,8 @@ describe("FN-149 review convergence audit sink health", () => {
       kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 3,
     });
     await vi.advanceTimersByTimeAsync(2_001);
-    await expect(outcome).resolves.toBe("human-escalated");
+    await expect(outcome).resolves.toBe("released");
     expect(logEntry).toHaveBeenCalledOnce();
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
   });
 });

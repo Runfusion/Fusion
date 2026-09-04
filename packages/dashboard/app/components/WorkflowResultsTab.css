@@ -417,7 +417,8 @@
   color: var(--text);
 }
 
-.workflow-result-badge--skipped {
+.workflow-result-badge--skipped,
+.workflow-result-badge--not-run {
   background-color: var(--text-dim);
   color: var(--text-muted);
 }
@@ -756,7 +757,14 @@
 }
 
 .workflow-live-log-detail {
+  display: inline-block;
+  max-inline-size: 100%;
+  max-block-size: calc(var(--font-size-sm) * var(--line-height-normal) * 6);
+  overflow: hidden;
+  vertical-align: top;
   color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 

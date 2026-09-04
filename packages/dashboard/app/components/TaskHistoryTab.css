@@ -1,0 +1,154 @@
+/*
+FNXC:SpacingTokens 2026-09-01-05:06:
+The spacing vocabulary intentionally has no --space-2xs token, so compact history elements use the
+established half-step calculation instead of silently dropping their padding and margin declarations.
+*/
+.task-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-history-stage {
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.task-history-stage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text);
+}
+
+.task-history-stage-title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.task-history-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--space-lg);
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.task-history-panel {
+  padding: 0 var(--space-md) var(--space-md);
+}
+
+.task-history-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-history-entry {
+  padding: var(--space-md);
+  border: thin solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.task-history-entry-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.task-history-entry h5 {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.task-history-entry-timing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: calc(var(--space-xs) / 2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.task-history-entry-timing time,
+.task-history-entry-duration {
+  color: inherit;
+  font-size: inherit;
+}
+
+.task-history-meta {
+  display: grid;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0 0;
+}
+
+.task-history-meta > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-sm);
+}
+
+.task-history-meta dt {
+  color: var(--text-muted);
+}
+
+.task-history-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-history-body {
+  margin-top: var(--space-sm);
+  overflow-wrap: anywhere;
+}
+
+.task-history-body > :first-child,
+.task-history-empty,
+.task-history-loading {
+  margin-top: 0;
+}
+
+.task-history-body > :last-child,
+.task-history-empty,
+.task-history-loading {
+  margin-bottom: 0;
+}
+
+.task-history-empty,
+.task-history-loading {
+  color: var(--text-muted);
+}
+
+@media (max-width: 48rem) {
+  .task-history-stage-heading {
+    flex-wrap: nowrap;
+    padding: var(--space-sm);
+  }
+
+  .task-history-panel {
+    padding: 0 var(--space-sm) var(--space-sm);
+  }
+
+  .task-history-entry-header,
+  .task-history-meta > div {
+    grid-template-columns: 1fr;
+  }
+
+  .task-history-entry-header,
+  .task-history-entry-timing {
+    align-items: flex-start;
+  }
+}

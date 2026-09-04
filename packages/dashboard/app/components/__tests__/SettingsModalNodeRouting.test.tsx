@@ -128,8 +128,6 @@ const baseSettings = {
   mergeStrategy: "direct",
   pushAfterMerge: false,
   pushRemote: "origin",
-  recycleWorktrees: false,
-  worktreeNaming: "random",
   includeTaskIdInCommit: true,
 };
 

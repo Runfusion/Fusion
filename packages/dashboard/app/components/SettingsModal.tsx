@@ -1030,7 +1030,6 @@ export function SettingsModal({
     mergeIntegrationWorktree: "reuse-task-worktree",
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
-    recycleWorktrees: false,
     showWorktreeGrouping: false,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
@@ -1039,7 +1038,6 @@ export function SettingsModal({
     taskDetailChatFirst: false,
     chatMessageLayout: "bubbles",
     executorAllowSiblingBranchRename: false,
-    worktreeNaming: "random",
     worktreeCopyFiles: [],
     worktreesDir: "",
     worktrunk: {
@@ -2546,17 +2544,11 @@ export function SettingsModal({
   }, []);
 
   useEffect(() => {
-    const copilotDeviceCode = deviceCodes["github-copilot"];
-    if (!copilotDeviceCode?.userCode) {
-      return;
+    for (const [stateKey, deviceCode] of Object.entries(deviceCodes)) {
+      if (!deviceCode.userCode || lastAutoCopiedDeviceCodesRef.current[stateKey] === deviceCode.userCode) continue;
+      lastAutoCopiedDeviceCodesRef.current[stateKey] = deviceCode.userCode;
+      void copyTextToClipboard(deviceCode.userCode);
     }
-
-    if (lastAutoCopiedDeviceCodesRef.current["github-copilot"] === copilotDeviceCode.userCode) {
-      return;
-    }
-
-    lastAutoCopiedDeviceCodesRef.current["github-copilot"] = copilotDeviceCode.userCode;
-    void copyTextToClipboard(copilotDeviceCode.userCode);
   }, [deviceCodes]);
 
   /*
@@ -2602,18 +2594,19 @@ export function SettingsModal({
         : label === undefined
           ? await loginProvider(providerId, instanceId)
           : await loginProvider(providerId, instanceId, label);
-      if (instructions?.trim() && !(providerId === "github-copilot" && deviceCode)) {
+      if (instructions?.trim() && !deviceCode) {
         setLoginInstructions((prev) => ({ ...prev, [stateKey]: instructions }));
       }
       if (manualCode) {
         setManualCodeConfigs((prev) => ({ ...prev, [stateKey]: manualCode }));
       }
-      if (deviceCode && providerId === "github-copilot") {
+      if (deviceCode) {
         setDeviceCodes((prev) => ({ ...prev, [stateKey]: deviceCode }));
       }
-      setLoginAuthUrls((prev) => ({ ...prev, [stateKey]: appendTokenQuery(deviceCode?.verificationUri ?? url) }));
-      if (providerId !== "github-copilot" || !deviceCode) {
-        openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
+      const authUrl = appendTokenQuery(deviceCode ? deviceCode.verificationUri : url);
+      setLoginAuthUrls((prev) => ({ ...prev, [stateKey]: authUrl }));
+      if (!deviceCode) {
+        openExternalUrl(authUrl);
       }
 
       // Poll for auth completion every 2 seconds
@@ -3134,6 +3127,22 @@ export function SettingsModal({
       projectModelKey: "executionModelId",
       helperText: "AI model used for task implementation (executor agent).",
       fallbackOrder: "Project override → Global execution lane → Global default lane → Automatic resolution",
+    },
+    /*
+    FNXC:FastModeModel 2026-08-29-02:43:
+    Fast & Cheap work has a dedicated no-plan/no-review execution route. Keep its pair and credential companion separate from the normal executor lane in both settings scopes so inexpensive routing is explicitly opt-in.
+    */
+    {
+      laneId: "fast-cheap",
+      label: t("settings.globalModels.fastAndCheapModel", "Fast & Cheap Model"),
+      globalProviderKey: "fastCheapGlobalProvider",
+      globalModelKey: "fastCheapGlobalModelId",
+      globalThinkingKey: "fastCheapGlobalThinkingLevel",
+      projectProviderKey: "fastCheapProvider",
+      projectModelKey: "fastCheapModelId",
+      projectThinkingKey: "fastCheapThinkingLevel",
+      helperText: t("settings.globalModels.fastAndCheapModelHelp", "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task."),
+      fallbackOrder: "Project override → Global Fast & Cheap lane → Execution lane → Project default lane → Global default lane → Automatic resolution",
     },
     {
       laneId: "planning",

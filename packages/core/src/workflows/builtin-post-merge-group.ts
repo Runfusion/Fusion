@@ -34,6 +34,7 @@ const POST_MERGE_VERIFICATION_PROMPT = `You are a post-merge verification review
 - APPROVE: post-merge verification is acceptable.
 - APPROVE_WITH_NOTES: completion may proceed with non-blocking notes.
 - REVISE: completion should be blocked; include the concrete post-merge issue and the needed follow-up.
+- \`notes\` MUST contain one to three non-empty sentences naming what was checked and why the verdict was reached. An empty \`notes\` string is a protocol violation.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 

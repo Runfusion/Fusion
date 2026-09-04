@@ -71,6 +71,7 @@ vi.mock("@fusion/engine", () => ({
   traitListParams: {},
   normalizeAgentLogPaging: vi.fn(() => ({ limit: 100, offset: 0 })),
   renderAgentLogEntries: vi.fn(() => ""),
+  buildTaskAgentLogReadText: vi.fn(() => ""),
   workflowListParams: {},
   workflowGetParams: {},
   workflowValidateParams: {}, // FNXC:Round10 FN-7911 added this export to @fusion/engine barrel

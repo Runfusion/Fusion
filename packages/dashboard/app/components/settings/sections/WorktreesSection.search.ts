@@ -49,16 +49,6 @@ export const worktreesSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "worktrees",
-    key: "recycleWorktrees",
-    labelKey: "settings.worktrees.recycleWorktrees",
-    labelFallback: " Recycle worktrees ",
-    helpKey: "settings.worktrees.offByDefaultOptInWhenEnabledCompleted",
-    helpFallback:
-      "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup",
-    keywords: ["reuse", "warm pool"],
-  },
-  {
-    sectionId: "worktrees",
     key: "showWorktreeGrouping",
     labelKey: "settings.worktrees.showWorktreeGrouping",
     labelFallback: " Show worktree grouping on the board ",
@@ -66,19 +56,6 @@ export const worktreesSearchEntries: SettingsSearchEntry[] = [
     helpFallback:
       "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.",
     keywords: ["group by", "swimlane"],
-  },
-  {
-    sectionId: "worktrees",
-    key: "worktreeNaming",
-    labelKey: "settings.worktrees.worktreeNamingStyle",
-    labelFallback: "Worktree Naming Style",
-    /*
-    FNXC:SettingsSearch 2026-07-15-17:35:
-    Indexed against the enabled help string. The disabled variant ("not applicable when recycling") is a transient state of one checkbox, not a second setting, so indexing it would make search results read as though recycling were on.
-    */
-    helpKey: "settings.worktrees.howToNameFreshWorktreeDirectories",
-    helpFallback: "How to name fresh worktree directories. Only applies when recycling is off. Default: random.",
-    keywords: ["folder name", "directory name", "branch naming"],
   },
   {
     sectionId: "worktrees",

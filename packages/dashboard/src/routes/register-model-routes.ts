@@ -192,9 +192,15 @@ Expose instance availability beside the catalog rather than copying every model 
 FNXC:ModelThinkingCapabilities 2026-08-18-23:38:
 Pi's model registry is the source of truth for model-bound thinking controls. The pinned SDK helper implements the documented reasoning=false and thinkingLevelMap tristate rules; the structural fallback keeps this route compatible with registry facades and older SDKs without inferring capabilities from provider or model names.
 */
-function deriveSupportedThinkingLevels(model: ModelRegistryModelLike): ThinkingLevel[] | undefined {
+function deriveSupportedThinkingLevels(model: ModelRegistryModelLike): ThinkingLevel[] {
   if (!model.reasoning) return ["off"];
-  if (!model.thinkingLevelMap || typeof model.thinkingLevelMap !== "object") return undefined;
+  /*
+  FNXC:ModelCatalog 2026-09-02-22:06:
+  Pi 0.84.4 catalogs Muse Spark on vercel-ai-gateway without a thinking-level map. Preserve
+  the model row and expose an empty capability list so picker consumers never have to infer
+  support from an omitted field or provider-specific fallback.
+  */
+  if (!model.thinkingLevelMap || typeof model.thinkingLevelMap !== "object") return [];
 
   try {
     const supported = getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]);
@@ -389,7 +395,14 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
          */
         mergeSupplementalOpenAiCodexModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalOpenAiCodexModels>[0], (message) => runtimeLogger.child("models").warn(message));
       }
-      let models = options.modelRegistry.getAvailable().map((m) => {
+      let models: Array<{
+        provider: string;
+        id: string;
+        name: string;
+        reasoning: boolean;
+        contextWindow: number;
+        supportedThinkingLevels?: ThinkingLevel[];
+      }> = options.modelRegistry.getAvailable().map((m) => {
         const supportedThinkingLevels = deriveSupportedThinkingLevels(m);
         return {
           provider: m.provider,
@@ -397,7 +410,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
           name: m.name,
           reasoning: m.reasoning,
           contextWindow: m.contextWindow,
-          ...(supportedThinkingLevels ? { supportedThinkingLevels } : {}),
+          supportedThinkingLevels,
         };
       });
 

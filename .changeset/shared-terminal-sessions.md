@@ -1,7 +1,0 @@
----
-"@runfusion/fusion": minor
----
-
-summary: Terminal sessions are now shared across browsers, with close-here vs end-session and a Reopen control.
-category: feature
-dev: PTYs already lived in a server-side registry that accepts multiple attached viewers, but the tab list is per-browser localStorage and a browser with no stored tabs skipped the session listing entirely (FN-7686's cold-open optimization) and spawned its own PTY — so a second browser never saw existing terminals. A zero-tab client now adopts the server's sessions (oldest first, identical ordering everywhere); clients with stored tabs still only validate, so closed tabs are not resurrected. FN-7686's guarantee weakens from "never waits" to "waits at most ADOPT_LIST_TIMEOUT_MS (1.5s), then behaves as before", because auto-create fires on a 0ms timer and a background list could never win that race. `closeTab` takes `{ killSession }` and both the desktop and mobile close controls route through a three-way confirm (`alwaysAsk`, so skip-confirmations cannot silently pick). New `detachedSessions`/`refreshDetachedSessions`/`reopenSession` back a footer control that reattaches to running sessions. Also fixes a multi-viewer data bug: the WebSocket attach called `getScrollbackAndClearPending()`, discarding queued output and deleting a slice of every already-attached viewer's live stream; it now calls the new `flushPendingOutput()` then `getScrollback()`.

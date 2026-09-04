@@ -28,6 +28,12 @@ WORKSPACE_VOLUME="${FUSION_WORKSPACE_VOLUME:-fusion-workspace}"
 STATE_VOLUME="${FUSION_STATE_VOLUME:-}"
 RESTART_POLICY="${FUSION_RESTART_POLICY:-unless-stopped}"
 TAILSCALE="${FUSION_TAILSCALE:-0}"
+# FNXC:DockerRun 2026-09-01-01:38: --from-source makes the container serve the git checkout on the
+# /home/node volume instead of the image-baked /app, which is what enables Command Center's
+# "Update from source" control (it refuses to act on a checkout the running process was not
+# launched from). Off by default: the image build is the reproducible artifact, and a source
+# checkout can be stale or mid-edit.
+FROM_SOURCE="${FUSION_FROM_SOURCE:-0}"
 
 build=0
 recreate=0
@@ -42,6 +48,8 @@ Options:
   --build              Rebuild the image from the repo before starting
   --tailscale          Start tailscaled in the container (userspace mode)
   --no-tailscale       Force the daemon off, overriding an env file
+  --from-source        Serve the /home/node/fusion checkout instead of the baked image
+  --no-from-source     Force image-baked mode, overriding an env file
   --recreate           Replace an existing container of the same name
   --env-file <path>    Source shell variable assignments before running
   --dry-run            Print the docker command without running it
@@ -58,6 +66,7 @@ Configuration (env vars, or set them in --env-file):
   FUSION_DASHBOARD_TOKEN     dashboard auth token   (optional)
   FUSION_RESTART_POLICY      docker restart policy  (default unless-stopped)
   FUSION_TAILSCALE           1 to start tailscaled  (default 0)
+  FUSION_FROM_SOURCE         1 to serve the source checkout (default 0)
 USAGE
 }
 
@@ -66,6 +75,8 @@ while [ $# -gt 0 ]; do
     --build) build=1 ;;
     --tailscale) TAILSCALE=1 ;;
     --no-tailscale) TAILSCALE=0 ;;
+    --from-source) FROM_SOURCE=1 ;;
+    --no-from-source) FROM_SOURCE=0 ;;
     --recreate) recreate=1 ;;
     --dry-run) dry_run=1 ;;
     --env-file) env_file="${2:-}"; [ -n "$env_file" ] || { echo "--env-file needs a path" >&2; exit 2; }; shift ;;
@@ -142,6 +153,10 @@ args+=("$IMAGE")
 # come before the Fusion CLI arguments, not after.
 if [ "$TAILSCALE" = "1" ]; then
   args+=(--tailscale)
+fi
+
+if [ "$FROM_SOURCE" = "1" ]; then
+  args+=(--from-source)
 fi
 
 args+=(dashboard --host 0.0.0.0 --port "$CONTAINER_PORT")

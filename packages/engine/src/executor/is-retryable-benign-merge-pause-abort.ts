@@ -33,6 +33,7 @@ export async function isRetryableBenignMergePauseAbort(
   result: WorkflowGraphTaskRunResult,
   abortProvenance: PausedAbortProvenance | undefined,
   pausedAborted: boolean,
+  userCanceled: boolean,
   resumeLanesMemo?: { lanes?: ResumeLanes },
 ): Promise<boolean> {
     /*
@@ -40,6 +41,13 @@ export async function isRetryableBenignMergePauseAbort(
     FN-6735 treats a generic engine pause/resume abort at the merge seam as transient only when the row is still a clean in-review auto-merge candidate: no user/global pause, no pre-existing failure, no merge-confirmed partial landing, no terminal conflict/contamination value, within mergeRetries budget, and still eligible for auto-merge or shared-branch local integration. Anything outside those guards keeps the existing terminal operator-action park.
     */
     if (!pausedAborted) return false;
+    /*
+    FNXC:WorkflowLifecycle 2026-08-29-02:20:
+    FN-249 keeps engine pause-abort recovery intact while making an explicit operator cancellation
+    terminal for this graph run. A hard-cancel label alone is not sufficient because engine aborts
+    can share generic provenance; the caller's userCanceled signal is the authoritative intent fence.
+    */
+    if (userCanceled) return false;
     if (abortProvenance === "global-pause" || live.userPaused === true) return false;
     if (abortProvenance === "completion-finalize") return false;
     /*

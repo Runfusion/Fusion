@@ -17,6 +17,7 @@ import type { ExecutorState } from "../api";
 import { EngineControlMenu, type EngineControlMenuHandle } from "./EngineControlMenu";
 import { TerminalLauncher } from "./TerminalLauncher";
 import { useViewportMode } from "../hooks/useViewportMode";
+import type { ChatVisibilityToggleAction } from "../hooks/useChatVisibilityToggle";
 
 /*
 FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
@@ -89,8 +90,10 @@ interface ExecutorStatusBarProps {
   onRunScript?: (name: string, command: string) => void;
   /** Quick Chat launcher placement from Settings. */
   quickChatButtonMode?: "floating" | "footer" | "off";
-  /** Opens the full Chat modal from the footer launcher. */
-  onOpenQuickChat?: () => void;
+  /** Toggles the visibility of the complete floating chat set. */
+  onToggleQuickChat?: () => void;
+  /** The action that the next Quick Chat launcher activation will perform. */
+  quickChatToggleAction?: ChatVisibilityToggleAction;
 }
 
 /**
@@ -145,7 +148,7 @@ function getStateDisplay(state: ExecutorState, t: TFunction<"app">): { label: st
  * - Executor state badge (idle/running/paused/stopped)
  * - Last activity timestamp
  */
-export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppliedColumnFlagsByTaskId, staleHighFanoutBlockerAgeThresholdMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onOpenQuickChat }: ExecutorStatusBarProps) {
+export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppliedColumnFlagsByTaskId, staleHighFanoutBlockerAgeThresholdMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onToggleQuickChat, quickChatToggleAction }: ExecutorStatusBarProps) {
   const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
@@ -159,8 +162,16 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   /*
    * FNXC:ChatLauncher 2026-06-22-15:18:
    * Settings can route Quick Chat to a footer launcher beside Terminal, keep the draggable floating FAB, or hide the launcher entirely. Footer launch stays desktop/tablet-only like Terminal while mobile opens from the floating path as a full-screen modal.
+   *
+   * FNXC:ChatLauncher 2026-09-02-05:24:
+   * The footer launcher shares the whole-chat-set visibility toggle and announces whether its next action opens, minimizes, or restores chats.
    */
-  const showQuickChatFooterLauncher = !isMobile && quickChatButtonMode === "footer" && Boolean(onOpenQuickChat);
+  const showQuickChatFooterLauncher = !isMobile && quickChatButtonMode === "footer" && Boolean(onToggleQuickChat);
+  const quickChatToggleLabel = quickChatToggleAction === "minimize-all"
+    ? t("chat.minimizeAllChats", "Minimize all chats")
+    : quickChatToggleAction === "restore-all"
+      ? t("chat.restoreAllChats", "Restore all chats")
+      : t("chat.openQuickChat", "Open Quick Chat");
   const { stats, loading, error } = useExecutorStats(tasks, projectId, columnFlagsByTaskId);
   const [isProjectPathVisible, setIsProjectPathVisible] = useState(false);
   const [openStatTooltip, setOpenStatTooltip] = useState<OpenStatTooltip | null>(null);
@@ -252,10 +263,18 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   // hook count between renders (Rules of Hooks).
   if (hideWhenKeyboardOpen) return null;
 
+  /*
+  FNXC:ExecutorStatusBar 2026-09-01-05:36:
+  Keyboard-collapse and mobile modifiers must reach every render branch. An error,
+  loading, or connecting footer otherwise retains the nav-height reservation and
+  floats above the keyboard.
+  */
+  const baseClassName = `executor-status-bar${isMobile ? " executor-status-bar--mobile" : ""}${keyboardOpen ? " executor-status-bar--keyboard-open" : ""}`;
+
   if (error) {
     if (isLikelyTabSuspensionError(error)) {
       return (
-        <div className="executor-status-bar executor-status-bar--connecting" role="status" aria-label={t("executor.status", "Executor status")}>
+        <div className={`${baseClassName} executor-status-bar--connecting`} role="status" aria-label={t("executor.status", "Executor status")}>
           <span className="executor-status-bar__connecting">
             <span className="executor-status-bar__indicator executor-status-bar__indicator--connecting executor-status-bar__indicator--active" aria-hidden="true" />
             {t("executor.connecting", "Connecting…")}
@@ -265,7 +284,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
     }
 
     return (
-      <div className="executor-status-bar executor-status-bar--error" role="status" aria-label={t("executor.status", "Executor status")}>
+      <div className={`${baseClassName} executor-status-bar--error`} role="status" aria-label={t("executor.status", "Executor status")}>
         <span className="executor-status-bar__error">
           <AlertTriangle size={14} />
           {error}
@@ -280,7 +299,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
    */
   if (loading && stats.runningTaskCount === 0 && !hasRenderedPopulatedStatsRef.current) {
     return (
-      <div className="executor-status-bar executor-status-bar--loading" role="status" aria-label={t("executor.status", "Executor status")}>
+      <div className={`${baseClassName} executor-status-bar--loading`} role="status" aria-label={t("executor.status", "Executor status")}>
         <LoadingSpinner className="executor-status-bar__loading-text" label={t("executor.loading", "Loading...")} />
       </div>
     );
@@ -288,7 +307,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
 
   return (
     <div
-      className={`executor-status-bar${isMobile ? " executor-status-bar--mobile" : ""}${stats.executorState === "running" ? " executor-status-bar--running" : ""}${keyboardOpen ? " executor-status-bar--keyboard-open" : ""}`}
+      className={`${baseClassName}${stats.executorState === "running" ? " executor-status-bar--running" : ""}`}
       role="status"
       aria-label={t("executor.status", "Executor status")}
     >
@@ -432,8 +451,9 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
             <button
               type="button"
               className="executor-status-bar__footer-launcher"
-              onClick={onOpenQuickChat}
-              aria-label={t("chat.openQuickChat", "Open Quick Chat")}
+              onClick={onToggleQuickChat}
+              aria-label={quickChatToggleLabel}
+              data-chat-toggle-action={quickChatToggleAction}
               data-testid="executor-quick-chat-launcher"
             >
               <MessageSquare size={12} aria-hidden="true" />

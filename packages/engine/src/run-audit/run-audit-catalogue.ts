@@ -59,10 +59,9 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   did not, and the lock-step guard is the only thing that reports that direction of drift.
   */
 
-  "task:no-progress-no-task-done-requeue",
-  "task:no-progress-no-task-done-requeue-exhausted",
   "task:reclaim-phantom-executor-binding",
   "task:reconcile-orphaned-pending-step-results",
+  "task:reconcile-unproven-review-approval",
   "task:reconcile-stale-duplicate-decision",
   "task:reconcile-stale-agent-assignment",
   "task:reconcile-engine-downtime-active-timing",
@@ -139,15 +138,13 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Self-healing rebounds a task whose paused scope decayed past its floor, unblocking followers.",
   "task:auto-archive-failure-budget-exhausted":
     "Self-healing abandons a repeatedly failing stale-task archive and surfaces it for operator action.",
-  "task:no-progress-no-task-done-requeue":
-    "A zero-progress no-task-done failure consumes one bounded self-healing retry and records its backoff.",
-  "task:no-progress-no-task-done-requeue-exhausted":
-    "The bounded no-progress requeue budget parks a task once, without gating the park on the emission.",
 
   "task:reclaim-phantom-executor-binding":
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
   "task:reconcile-orphaned-pending-step-results":
     "Self-healing rewrites orphaned 'pending' workflow-step results (no live session) to 'failed'.",
+  "task:reconcile-unproven-review-approval":
+    "Self-healing rewrites singular content-review approvals without input proof to recoverable failed results.",
   "task:reconcile-stale-duplicate-decision":
     "Self-healing clears a recurring duplicate-decision pause with no canonical target.",
   "task:reconcile-stale-agent-assignment":

@@ -2,7 +2,6 @@ import { useTranslation } from "react-i18next";
 import type { GitRemoteDetailed } from "../../../api";
 import type { useWorktrunkInstallStatus } from "../../../hooks/useWorktrunkInstallStatus";
 import { SettingsToggleRow } from "../SettingsToggleRow";
-import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
@@ -42,28 +41,16 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
     return (<>
       <h4 className="settings-section-heading">{t("settings.worktrees.worktrees", "Worktrees")}</h4>
       {/*
-      FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review — coderabbit + greptile):
-      RENAMED from "Run tasks in worktrees", which was a lie.
-
-      This setting is CAPACITY SEMANTICS ONLY: it decides whether Max Worktrees
-      gates dispatch. It does NOT change where work executes — both scheduler
-      dispatch paths still allocate a worktree per task with it off, and planning
-      still runs in the task's own worktree. Two reviewers independently read the
-      old label as "turn off worktree execution", which is exactly the wrong
-      inference and worse than having no switch: an operator would flip it,
-      still get worktrees, and conclude the product is broken.
-
-      The label now names the limit rather than the mechanism, and the help says
-      outright that tasks run in a worktree either way. The setting KEY was renamed
-      with it (`worktreesEnabled` -> `worktreeLimitEnabled`) — a key persisted in
-      every settings blob misleads every future reader of the schema, not just the
-      operator reading the UI once.
+      FNXC:CapacityModel 2026-09-01-14:49:
+      This setting controls only execution-checkout capacity. Write-capable execution still uses
+      private worktrees when the limit is off, while checkout-free planning runs read-only on main
+      and never consumes this host-resource budget.
       */}
       <SettingsToggleRow
         descriptor={{
           key: "worktreeLimitEnabled",
           label: t("settings.worktrees.worktreeLimitEnabled", "Limit concurrent worktrees"),
-          help: t("settings.worktrees.worktreeLimitEnabledHelp", "When on, Max Worktrees caps how many tasks may hold a worktree at once. When off, Max Concurrent Tasks is the only limit. Tasks always run in their own git worktree either way — this does not change where work executes. Default: on."),
+          help: t("settings.worktrees.worktreeLimitEnabledHelp", "When on, Max Worktrees caps tasks holding or entering an execution checkout. Planning does not consume this limit. When off, Max Concurrent Tasks remains the AI-load limit. Default: on."),
           scope: "project",
         }}
         value={form.worktreeLimitEnabled !== false}
@@ -74,7 +61,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         descriptor={{
           key: "maxWorktrees",
           label: t("settings.worktrees.maxWorktrees", "Max Worktrees"),
-          help: t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits total git worktrees including in-review tasks. Ignored while \u201cLimit concurrent worktrees\u201d is off. Default: 4."),
+          help: t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits live tasks holding or entering an execution checkout, including in-review tasks with retained work. Does not limit planning. Ignored while \u201cLimit concurrent worktrees\u201d is off. Default: 4."),
           scope: "project",
           min: 1,
           max: 20,
@@ -93,35 +80,6 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         }}
         value={form.worktreeInitCommand ?? null}
         onChange={(v) => setForm((f) => ({ ...f, worktreeInitCommand: v ?? "" }))}
-      />
-      {/*
-      FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-      Recycling and Task-ID naming are MUTUALLY EXCLUSIVE (the settings API/store reject the combination):
-      "task-id" naming pins each task to its own worktree directory, which is incompatible with the cross-task
-      recycle pool. The exclusivity is enforced bidirectionally in the UI so a NEW conflict is unreachable —
-      this toggle is disabled while naming is "task-id" AND recycling is not already on, and the naming select
-      below is disabled while recycling is on. Together they prevent a save that the backend would 400.
-
-      FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
-      Legacy-conflict escape hatch: when a stored config already carries BOTH (recycle on + "task-id"), do NOT
-      lock both controls — that would strand the operator (unchanged save preserves a state the runtime treats
-      as recycling). The runtime backstop makes recycling win in that conflict, so mirror it here: keep this
-      toggle ENABLED and CHECKED (its true value, un-coerced) so the operator can turn recycling off, which
-      then re-enables the naming select below. The toggle only greys out for the forward-prevention case
-      ("task-id" naming while recycling is already off).
-      */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "recycleWorktrees",
-          label: t("settings.worktrees.recycleWorktrees", " Recycle worktrees "),
-          help: form.worktreeNaming === "task-id" && form.recycleWorktrees !== true
-            ? t("settings.worktrees.recycleNotApplicableWithTaskIdNaming", "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.")
-            : t("settings.worktrees.offByDefaultOptInWhenEnabledCompleted", "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming."),
-          scope: "project",
-          disabled: form.worktreeNaming === "task-id" && form.recycleWorktrees !== true,
-        }}
-        value={form.recycleWorktrees === true}
-        onChange={(v) => setForm((f) => ({ ...f, recycleWorktrees: v === true }))}
       />
       <SettingsToggleRow
         descriptor={{
@@ -187,31 +145,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="executorAllowSiblingBranchRename">{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. Default: disabled. ")}</SettingsHelpTip>
         </div>
       </div>
-      {/*
-      FNXC:Worktrees 2026-07-15-17:35:
-      Recycling and naming are coupled: pooled worktrees keep the names they were created with, so the naming select is disabled while `recycleWorktrees` is on and its help swaps to explain why rather than letting the operator pick a style that would be silently ignored.
-
-      FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-      "Task ID" additionally enables task-pinned worktrees (each task owns one derivable directory for its whole lifecycle), which is why it is mutually exclusive with recycling \u2014 the recycle toggle above is disabled while this is "task-id". The select stays disabled while recycling is on so the operator cannot cross into the conflicting state from this side either.
-      */}
-      <SettingsSelectRow
-        descriptor={{
-          key: "worktreeNaming",
-          label: t("settings.worktrees.worktreeNamingStyle", "Worktree Naming Style"),
-          help: form.recycleWorktrees
-            ? t("settings.worktrees.namingStyleNotApplicableWhenRecycling", "Naming style is not applicable when recycling worktrees \u2014 pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.")
-            : t("settings.worktrees.howToNameFreshWorktreeDirectories", "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random."),
-          scope: "project",
-          disabled: form.recycleWorktrees,
-          options: [
-            { value: "random", label: t("settings.worktrees.randomNamesEGSwiftFalcon", "Random names (e.g., swift-falcon)") },
-            { value: "task-id", label: t("settings.worktrees.taskIDEGFN042", "Task ID (e.g., FN-042)") },
-            { value: "task-title", label: t("settings.worktrees.taskTitleEGFixLoginBug", "Task title (e.g., fix-login-bug)") },
-          ],
-        }}
-        value={form.worktreeNaming || "random"}
-        onChange={(v) => setForm((f) => ({ ...f, worktreeNaming: v as "random" | "task-id" | "task-title" }))}
-      />
+      {/* FNXC:Worktrees 2026-08-29-08:57: FN-258 standardizes task-ID worktree directories, so naming and recycling are no longer operator-configurable. */}
       <div className="form-group">
         {/* FNXC:SettingsHelp 2026-07-15-21:40: The help swaps to the worktrunk-disabled explanation, so the tip is what tells an operator why the input is greyed out; it stays on the same "?" as every other row rather than becoming a second inline idiom. */}
         <div className="settings-field-label-row">
@@ -219,11 +153,11 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="worktreesDir">
             {form.worktrunk?.enabled === true
               ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
-              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Absolute paths are allowed. Workspace projects group configured roots by workspace and repository. Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
+              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Absolute paths are allowed. Workspace projects group configured roots by workspace and repository. Defaults to ")}<code>&lt;projectRoot&gt;/.fusion/worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
           </SettingsHelpTip>
         </div>
         <div className="settings-overlap-ignore-path-controls">
-          <input id="worktreesDir" type="text" placeholder={t("settings.worktrees.defaultsToWorktreesLeaveEmptyUnlessOverriding", "Defaults to .worktrees \u2014 leave empty unless overriding")} value={form.worktreesDir || ""} disabled={form.worktrunk?.enabled === true} onChange={(e) => setForm((f) => ({ ...f, worktreesDir: e.target.value }))}/>
+          <input id="worktreesDir" type="text" placeholder={t("settings.worktrees.defaultsToWorktreesLeaveEmptyUnlessOverriding", "Defaults to .fusion/worktrees \u2014 leave empty unless overriding")} value={form.worktreesDir || ""} disabled={form.worktrunk?.enabled === true} onChange={(e) => setForm((f) => ({ ...f, worktreesDir: e.target.value }))}/>
           <button type="button" className="btn btn-sm" onClick={onOpenWorktreesDirPicker} aria-label={t("settings.worktrees.browseWorktreesDirectory", "Browse worktrees directory")} disabled={form.worktrunk?.enabled === true}>{t("settings.worktrees.browse", " Browse ")}</button>
         </div>
       </div>

@@ -25,6 +25,15 @@ import type { TaskStore, TaskDetail } from "@fusion/core";
 import { createApiRoutes } from "../routes.js";
 import { request as performRequest } from "../test-request.js";
 
+vi.mock("@fusion/engine", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/engine")>("@fusion/engine");
+  return {
+    ...actual,
+    planTaskResetBranchCleanup: vi.fn().mockResolvedValue({ deleted: [], retained: [], blocked: [] }),
+    deleteTaskResetBranches: vi.fn().mockResolvedValue({ deleted: [], retained: [], blocked: [] }),
+  };
+});
+
 /** The post-#2515 default lineage: ONE pre-implementation column, id `todo`. */
 const MERGED_CODING_IR = {
   version: "v2",
@@ -36,6 +45,23 @@ const MERGED_CODING_IR = {
   ],
   nodes: [{ id: "start", kind: "start", column: "todo" }, { id: "end", kind: "end", column: "done" }],
   edges: [{ from: "start", to: "end" }],
+};
+
+const SPLIT_CODING_IR = {
+  version: "v2",
+  name: "split-coding",
+  columns: [
+    { id: "ideas", name: "Ideas", traits: [{ trait: "intake", config: { autoTriage: false } }] },
+    { id: "todo", name: "Planning", traits: [{ trait: "hold" }] },
+    { id: "in-progress", name: "In progress", traits: [{ trait: "wip" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+  nodes: [
+    { id: "start", kind: "start", column: "ideas" },
+    { id: "planning", kind: "prompt", column: "todo", config: { seam: "planning" } },
+    { id: "end", kind: "end", column: "done" },
+  ],
+  edges: [{ from: "start", to: "planning" }, { from: "planning", to: "end" }],
 };
 
 /** A card parked awaiting approval on the merged planning column. */
@@ -75,9 +101,14 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     resetTerminalFailureAutoRecoveryBudget: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn().mockResolvedValue(PLANNING_TASK),
     updateTask: vi.fn().mockResolvedValue(PLANNING_TASK),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Task) => Partial<Task> | null | undefined | Promise<Partial<Task> | null | undefined>) => {
+      const current = await (overrides.getTask ?? vi.fn().mockResolvedValue(PLANNING_TASK))(_id);
+      const patch = await updater(structuredClone(current));
+      return patch ? { ...current, ...patch } : current;
+    }),
     withPlanningLifecycleLock: vi.fn(async (_id, fn) => await fn()),
     moveTask: vi.fn().mockResolvedValue(PLANNING_TASK),
-    resetTaskPublication: vi.fn(async (id: string, intake: string) => ({ ...PLANNING_TASK, id, column: intake, status: "needs-replan" })),
+    resetTaskPublication: vi.fn(async (id: string, intake: string) => ({ ...PLANNING_TASK, id, column: intake, status: undefined })),
     logEntry: vi.fn().mockResolvedValue(undefined),
     // Resolve the merged workflow so the routes see its real intake column.
     getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "builtin:stepwise-coding" }),
@@ -86,6 +117,10 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     on: vi.fn(),
     off: vi.fn(),
     getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
+    listWorkflowWorkItemsForTask: vi.fn().mockResolvedValue([]),
+    cancelActiveWorkflowWorkItemsForTask: vi.fn().mockResolvedValue(undefined),
+    replaceActiveTaskWorkflowContinuation: vi.fn().mockResolvedValue(undefined),
+    pauseTask: vi.fn().mockResolvedValue(PLANNING_TASK),
     ...overrides,
   } as unknown as TaskStore;
 }
@@ -111,6 +146,17 @@ describe("plan approval on the merged planning column (post-#2515)", () => {
 
   it("does NOT reject reject-plan for a card in the merged intake column", async () => {
     const res = await performRequest(createApp(createMockStore()), "POST", "/api/tasks/FN-200/reject-plan");
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts approval in a distinct hold column instead of only the intake column", async () => {
+    const store = createMockStore({
+      getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "wf-split" }),
+      getWorkflowDefinition: vi.fn().mockResolvedValue({ id: "wf-split", name: "Split", ir: SPLIT_CODING_IR }),
+    });
+
+    const res = await performRequest(createApp(store), "POST", "/api/tasks/FN-200/approve-plan");
+
     expect(res.status).toBe(200);
   });
 
@@ -145,10 +191,10 @@ describe("plan approval on the merged planning column (post-#2515)", () => {
 });
 
 /*
-FNXC:TaskReset 2026-08-19-06:45:
-Reset resolves the workflow's intake column, not its rebound/hold column. Route-level drift correction is gone; the atomic publisher owns the complete durable reset.
+FNXC:TaskReset 2026-08-28-20:50:
+Reset applies the manual-intake carve-out used by automatic replanning: manual capture lanes restart in the workflow hold lane, while auto-triage intake workflows retain their intake destination. The atomic publisher still owns the complete durable reset after the route resolves that target.
 */
-describe("reset publishes the resolved workflow intake", () => {
+describe("reset publishes the resolved workflow planning target", () => {
   const REBOUND_IR = {
     version: "v2",
     name: "custom",
@@ -162,7 +208,7 @@ describe("reset publishes the resolved workflow intake", () => {
     edges: [{ from: "start", to: "end" }],
   };
 
-  it("returns a custom workflow to intake rather than its distinct hold column", async () => {
+  it("keeps an auto-triage custom workflow on intake rather than its distinct hold column", async () => {
     const resetTask = {
       ...PLANNING_TASK,
       id: "FN-300",

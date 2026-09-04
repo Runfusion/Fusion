@@ -4,7 +4,7 @@
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TaskDetail, TaskStep, WorkflowIr } from "@fusion/core";
-import { getStepParserRegistry, __resetStepParserRegistryForTests } from "@fusion/core";
+import { FAST_LANE_STEP_NAME, getStepParserRegistry, __resetStepParserRegistryForTests } from "@fusion/core";
 
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import { createNoopLegacySeams, type ParseStepsHandlerDeps } from "../workflows/workflow-node-handlers.js";
@@ -113,6 +113,19 @@ describe("parse-steps node handler (U12, KTD-12)", () => {
       { name: "x", status: "pending" },
       { name: "y", status: "pending", dependsOn: [] },
     ]);
+  });
+
+  it("retargets a Fast parse to one synthetic implementation step without reading its bootstrap prompt", async () => {
+    const readArtifact = vi.fn(async () => undefined);
+    const { deps, written } = makeDeps({ readArtifact });
+    const ir = parseIr("does-not-exist");
+    ir.nodes.find((node) => node.id === "parse")!.config!.requireStepsUnlessNoCommits = true;
+
+    const result = await runParse(ir, deps, { executionMode: "fast", prompt: "# FN-PARSE\n\nMake it red" });
+
+    expect(result.outcome).toBe("success");
+    expect(written).toEqual([[{ name: FAST_LANE_STEP_NAME, status: "pending" }]]);
+    expect(readArtifact).not.toHaveBeenCalled();
   });
 
   it("unknown parser → parse-error (audited), no write", async () => {

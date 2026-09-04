@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.77.0-beta.10",
+  "version": "0.78.0-beta.1",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -119,7 +119,6 @@
       "@embedded-postgres/linux-ppc64",
       "@embedded-postgres/linux-x64",
       "@embedded-postgres/windows-x64",
-      "@homebridge/node-pty-prebuilt-multiarch",
       "electron",
       "esbuild",
       "koffi",

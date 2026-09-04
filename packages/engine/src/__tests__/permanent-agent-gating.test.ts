@@ -56,7 +56,7 @@ const FN_7111_GOVERNED_TOOLS = [
   ["fn_task_promote", "task_agent_mutation"],
   ["fn_task_refine", "task_agent_mutation"],
   ["fn_run_verification", "command_execution"],
-  ["fn_acquire_repo_worktree", "command_execution"],
+  ["fn_install_worktree_dependencies", "command_execution"],
   ["fn_research_cancel", "network_api"],
 ] as const;
 

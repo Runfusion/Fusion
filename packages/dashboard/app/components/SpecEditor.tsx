@@ -3,6 +3,13 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
+
+/*
+FNXC:TaskMessageLength 2026-08-29-08:02:
+The Ask AI to Revise composer shares the route's task-message ceiling so its retained maxLength and
+counter give operators the same admission contract as steering and direct chat.
+*/
 
 interface SpecEditorProps {
   content: string;
@@ -175,11 +182,11 @@ export function SpecEditor({
             placeholder={t("specEditor.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")}
             disabled={isRequesting}
             rows={4}
-            maxLength={2000}
+            maxLength={MAX_TASK_MESSAGE_LENGTH}
           />
           <div className="spec-editor-revision-actions">
             <span className="spec-editor-char-count">
-              {feedback.length}/2000
+              {feedback.length}/{MAX_TASK_MESSAGE_LENGTH}
             </span>
             <button
               className="btn btn-primary btn-sm"

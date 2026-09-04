@@ -57,7 +57,7 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   hasLiveSessionSurface(taskId: string): boolean {
     return impl.hasLiveSessionSurfaceImpl(bags.buildHasLiveSessionSurfaceDeps(this, (id) => activeSessionRegistry.pathsForTask(id)), taskId);
   }
-  clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
+  clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean; externallyBlocked?: boolean } = {}): boolean {
     return impl.clearPhantomExecutorBindingImpl(bags.buildClearPhantomExecutorBindingDeps(this), taskId, options);
   }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
@@ -136,6 +136,8 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected async requestPreMergeOptionalStepFix(...args: FacadeRestArgs<typeof impl.requestPreMergeOptionalStepFixImpl>): ReturnType<typeof impl.requestPreMergeOptionalStepFixImpl> { return impl.requestPreMergeOptionalStepFixImpl(bags.buildRequestPreMergeOptionalStepFixDeps(this), ...args); }
   protected async recoverMissingRequiredArtifacts(...args: FacadeRestArgs<typeof impl.recoverMissingRequiredArtifactsImpl>): ReturnType<typeof impl.recoverMissingRequiredArtifactsImpl> { return impl.recoverMissingRequiredArtifactsImpl(bags.buildRecoverMissingRequiredArtifactsDeps(this), ...args); }
   async recoverFailedPreMergeWorkflowStep(task: import("@fusion/core").Task): Promise<boolean> { return impl.recoverFailedPreMergeWorkflowStepImpl(bags.buildRecoverFailedPreMergeWorkflowStepDeps(this), task); }
+  /* FNXC:LifecycleContainment 2026-08-30-13:36: claim-scoped entry point so self-healing's admission claim fences the recovery it authorized. */
+  async recoverFailedPreMergeWorkflowStepDetailed(...args: FacadeRestArgs<typeof impl.recoverFailedPreMergeWorkflowStepDetailedImpl>): ReturnType<typeof impl.recoverFailedPreMergeWorkflowStepDetailedImpl> { return impl.recoverFailedPreMergeWorkflowStepDetailedImpl(bags.buildRecoverFailedPreMergeWorkflowStepDeps(this), ...args); }
   protected async shouldDeferForHeartbeat(agentId: string): ReturnType<typeof impl.shouldDeferForHeartbeatImpl> { return impl.shouldDeferForHeartbeatImpl({ agentStore: this.options.agentStore }, agentId); }
   protected async getAuthoritativeAssignedAgent(...args: FacadeRestArgs<typeof impl.getAuthoritativeAssignedAgentImpl>): ReturnType<typeof impl.getAuthoritativeAssignedAgentImpl> { return impl.getAuthoritativeAssignedAgentImpl(bags.buildGetAuthoritativeAssignedAgentDeps(this), ...args); }
   protected async getAssignedAgentRuntimeConfig(...args: FacadeRestArgs<typeof impl.getAssignedAgentRuntimeConfigImpl>): ReturnType<typeof impl.getAssignedAgentRuntimeConfigImpl> { return impl.getAssignedAgentRuntimeConfigImpl(bags.buildGetAssignedAgentRuntimeConfigDeps(this), ...args); }

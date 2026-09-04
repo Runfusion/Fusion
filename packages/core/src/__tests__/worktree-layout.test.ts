@@ -4,6 +4,9 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertWorkspaceRepoRelPath,
+  isStrictDescendantPath,
+  resolveLegacyWorktreesDirLayout,
+  resolveWorktreesDirCandidates,
   resolveWorktreesDirLayout,
   resolveWorkspaceRepoWorktreePath,
   resolveWorkspaceTaskWorktreeDir,
@@ -17,9 +20,11 @@ describe("workspace worktree layout", () => {
   const workspace = "/tmp/PRD-1234-my-slug";
   const context = { workspaceRootDir: workspace, repoRelPath: "api" };
 
-  it("keeps the unset layout byte-identical", () => {
-    expect(resolveWorktreesDirLayout("/tmp/repo", undefined)).toBe("/tmp/repo/.worktrees");
-    expect(resolveWorktreesDirLayout(join(workspace, "api"), undefined, context)).toBe(join(workspace, "api", ".worktrees"));
+  it("defaults singular and workspace repositories under .fusion/worktrees", () => {
+    const repoRoot = "/tmp/repo";
+    expect(resolveWorktreesDirLayout(repoRoot, undefined)).toBe("/tmp/repo/.fusion/worktrees");
+    expect(resolveWorktreesDirLayout(join(workspace, "api"), undefined, context)).toBe(join(workspace, "api", ".fusion", "worktrees"));
+    expect(resolveWorkspaceTaskWorktreeDir(repoRoot, undefined, "FN-1")).toBe(join(repoRoot, ".fusion", "worktrees", "fn-1"));
   });
 
   it("resolves configured roots once at the workspace and groups repositories", () => {
@@ -43,6 +48,21 @@ describe("workspace worktree layout", () => {
     expect(workspaceRepoSegment("group/api")).toMatch(/^group-api-[a-f0-9]{8}$/);
     expect(workspaceRepoSegment("group/api")).not.toBe(workspaceRepoSegment("group-api"));
     expect(workspaceRepoSegment("group\\api")).toBe(workspaceRepoSegment("group/api"));
+  });
+
+  it("returns configured or primary-plus-legacy root candidates", () => {
+    expect(resolveWorktreesDirCandidates("/tmp/repo", { worktreesDir: "trees" } as any)).toEqual(["/tmp/repo/trees"]);
+    expect(resolveWorktreesDirCandidates("/tmp/repo", undefined)).toEqual([
+      "/tmp/repo/.fusion/worktrees",
+      resolveLegacyWorktreesDirLayout("/tmp/repo"),
+    ]);
+  });
+
+  it("accepts only strict descendant paths", () => {
+    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees/fn-1")).toBe(true);
+    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees")).toBe(false);
+    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees-sibling/fn-1")).toBe(false);
+    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees/../outside")).toBe(false);
   });
 
   it("resolves one task directory with repository-relative children", () => {

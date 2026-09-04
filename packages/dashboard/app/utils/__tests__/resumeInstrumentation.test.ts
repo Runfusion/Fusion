@@ -2,25 +2,13 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RESUME_TRIGGERS } from "../../../src/shared/resume-triggers";
 import {
   clearResumeEvents,
   getResumeEvents,
   recordResumeEvent,
   setResumeInstrumentationEnabled,
-  type ResumeTrigger,
 } from "../resumeInstrumentation";
-
-const triggers: ResumeTrigger[] = [
-  "visibility",
-  "pageshow",
-  "sse-error",
-  "sse-reconnect",
-  "sse-open",
-  "remount",
-  "route-active",
-  "route-inactive",
-  "project-context-change",
-];
 
 describe("resumeInstrumentation", () => {
   beforeEach(() => {
@@ -35,11 +23,27 @@ describe("resumeInstrumentation", () => {
   });
 
   it("records all trigger values", () => {
-    for (const trigger of triggers) {
+    for (const trigger of RESUME_TRIGGERS) {
       recordResumeEvent({ view: "test", trigger, replayAttempted: false });
     }
 
-    expect(getResumeEvents().map((event) => event.trigger)).toEqual(triggers);
+    expect(getResumeEvents().map((event) => event.trigger)).toEqual(RESUME_TRIGGERS);
+  });
+
+  it("posts a recorded focus event to resume diagnostics", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    recordResumeEvent({ view: "useTasks", trigger: "focus", replayAttempted: false });
+    await vi.runAllTimersAsync();
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/diagnostics/resume-events",
+      expect.objectContaining({
+        body: expect.stringContaining('"trigger":"focus"'),
+        method: "POST",
+      }),
+    );
   });
 
   it("computes gapMs with fake timers", () => {

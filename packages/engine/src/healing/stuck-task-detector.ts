@@ -93,8 +93,8 @@ interface TrackedTask {
    */
   recoveryInProgress: boolean;
   /**
-   * The canonical task ID used for all external callbacks (beforeRequeue,
-   * onStuck, onLoopDetected).  In step-session mode the map key is a compound
+   * The canonical task ID used for all external callbacks (onStuck and
+   * onLoopDetected). In step-session mode the map key is a compound
    * string like "FN-1452-step-1"; this field always holds the bare task ID
    * ("FN-1452") so callbacks can look up the right task record.
    */
@@ -115,8 +115,6 @@ export interface StuckTaskEvent {
   activitySinceProgress: number;
   /** Number of ignored fn_task_update rebuffs since the last progress event. */
   ignoredStepUpdateCount: number;
-  /** Whether the task should be re-queued (budget not exhausted). */
-  shouldRequeue: boolean;
 }
 
 /** Minimum activity-since-progress count to classify as a loop.
@@ -214,10 +212,6 @@ export interface StuckTaskDetectorOptions {
    *  The task will be moved to "todo" for retry by the detector.
    *  Receives a structured payload with detection reason and metrics. */
   onStuck?: (event: StuckTaskEvent) => void;
-  /** Called before re-queuing a killed task. Return false to prevent re-queue
-   *  (caller is responsible for marking the task as terminally failed).
-   *  Used by SelfHealingManager to enforce stuck kill budgets. */
-  beforeRequeue?: (taskId: string, reason: "inactivity" | "loop" | "no-progress-churn", event: StuckTaskEvent) => Promise<boolean>;
   /** Pre-kill callback invoked ONLY when reason is "loop".
    *  Called BEFORE session.dispose() / moveTask("todo") so the caller can
    *  attempt in-process recovery (e.g. compact-and-resume) without killing
@@ -247,11 +241,9 @@ export class StuckTaskDetector {
   private interval: ReturnType<typeof setInterval> | null = null;
   private pollIntervalMs: number;
   private onStuck?: (event: StuckTaskEvent) => void;
-  private beforeRequeue?: (taskId: string, reason: "inactivity" | "loop" | "no-progress-churn", event: StuckTaskEvent) => Promise<boolean>;
   private onLoopDetected?: (event: StuckTaskEvent) => Promise<boolean>;
   private isCliSessionWaitingOnInput?: (taskId: string) => boolean;
   private paused = false;
-  private exhaustedTasks = new Set<string>();
 
   constructor(
     private store: TaskStore,
@@ -259,7 +251,6 @@ export class StuckTaskDetector {
   ) {
     this.pollIntervalMs = options.pollIntervalMs ?? 30_000;
     this.onStuck = options.onStuck;
-    this.beforeRequeue = options.beforeRequeue;
     this.onLoopDetected = options.onLoopDetected;
     this.isCliSessionWaitingOnInput = options.isCliSessionWaitingOnInput;
   }
@@ -319,42 +310,11 @@ export class StuckTaskDetector {
    *   In step-session mode this is a compound string like "FN-1452-step-1".
    * @param session      The disposable agent session.
    * @param canonicalTaskId  The bare task ID ("FN-1452") used for all external
-   *   callbacks (beforeRequeue, onStuck, onLoopDetected).  When omitted the
+   *   callbacks (onStuck, onLoopDetected). When omitted the
    *   trackingKey is used as-is (single-session mode where they are identical).
    */
   trackTask(trackingKey: string, session: DisposableSession, canonicalTaskId?: string): void {
     const canonicalId = canonicalTaskId ?? trackingKey;
-    if (this.exhaustedTasks.has(canonicalId)) {
-      void this.store.getTask(canonicalId)
-        .then((task) => {
-          const isExhausted = task.status === "failed"
-            && (
-              task.error?.startsWith("STUCK_LOOP_EXHAUSTED:")
-              || task.error?.startsWith("STUCK_NO_PROGRESS_CHURN:")
-            );
-          if (isExhausted) {
-            stuckLog.log(`Skipping tracking for ${trackingKey} (canonical=${canonicalId}) — task is in terminal stuck state`);
-            return;
-          }
-          this.exhaustedTasks.delete(canonicalId);
-          this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
-          /*
-          FNXC:EngineDiagnostics 2026-08-01-18:11:
-          Track/untrack bookkeeping fires on every session start and flooded the TUI during
-          replan storms. Keep on debug (FUSION_DEBUG=stuck-detector); real stuck detections
-          and terminal-skip/error paths stay on log/warn/error.
-          */
-          stuckLog.debug(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
-        })
-        .catch((err) => {
-          stuckLog.error(`Failed to validate exhausted status for ${canonicalId}; proceeding to track:`, err);
-          this.exhaustedTasks.delete(canonicalId);
-          this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
-          stuckLog.debug(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
-        });
-      return;
-    }
-
     this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
     /*
     FNXC:EngineDiagnostics 2026-08-01-18:11:
@@ -657,15 +617,14 @@ export class StuckTaskDetector {
    * Terminate a stuck task's agent session and trigger recovery.
    * - Disposes the agent session
    * - Logs the stuck event to the task log
-   * - Moves the task back to "todo" (preserving step progress)
-   * - Invokes the onStuck callback
+   * - Invokes the onStuck callback so execution re-dispatches in the same lane, node, and step
    */
   async killAndRetry(taskId: string, timeoutMs: number): Promise<void> {
     const entry = this.tracked.get(taskId);
     if (!entry) return;
 
     // In step-session mode the map key is a compound string like "FN-1452-step-1".
-    // All external callbacks (beforeRequeue, onStuck, onLoopDetected) must use
+    // All external callbacks (onStuck and onLoopDetected) must use
     // the canonical task ID so they can look up the right task record and signal
     // the right executor entry.
     const canonicalId = entry.canonicalTaskId;
@@ -716,28 +675,7 @@ export class StuckTaskDetector {
       inactivityMs,
       activitySinceProgress,
       ignoredStepUpdateCount,
-      shouldRequeue: true,
     };
-
-    // Check stuck kill budget BEFORE disposing the session so the result
-    // is available to the executor's cleanup path via the event payload.
-    let shouldRequeue = true;
-    if (this.beforeRequeue) {
-      try {
-        shouldRequeue = await this.beforeRequeue(canonicalId, reason, event);
-        if (!shouldRequeue) {
-          stuckLog.log(
-            reason === "no-progress-churn"
-              ? `${canonicalId} hit no-progress churn terminalization — not re-queuing`
-              : `${canonicalId} exceeded stuck kill budget — not re-queuing`,
-          );
-        }
-      } catch (err) {
-        stuckLog.error(`beforeRequeue check failed for ${canonicalId}:`, err);
-        // Fall through with shouldRequeue=true — safer than dropping the task
-      }
-    }
-    event.shouldRequeue = shouldRequeue;
 
     // ── Pre-kill loop interception ──────────────────────────────────
     // When reason is "loop" and an onLoopDetected callback is registered,
@@ -775,15 +713,6 @@ export class StuckTaskDetector {
     // Notify listeners before disposing the session so executor cleanup can
     // mark the abort as intentional before the disposed session unwinds.
     this.onStuck?.(event);
-
-    if (!shouldRequeue) {
-      this.exhaustedTasks.add(canonicalId);
-      stuckLog.log(
-        reason === "no-progress-churn"
-          ? `${canonicalId} untracked due to STUCK_NO_PROGRESS_CHURN terminal state (no automatic retries)`
-          : `${canonicalId} untracked due to STUCK_LOOP_EXHAUSTED terminal state (no automatic retries)`,
-      );
-    }
 
     // Dispose the agent session after listeners have marked the abort.
     try {

@@ -9,6 +9,12 @@ vi.mock("../../api", () => ({ createTaskFromRecommendation: vi.fn(), fetchTaskDe
 const metadata: MessageMetadata = { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: ["recommendation-1"] };
 const detail = { id: "FN-9100", recommendations: [{ id: "recommendation-1", title: "Follow up", description: "Finish the optional work.", category: "feature" }] };
 
+function expectMailboxCardWithoutBoardClass(): void {
+  const card = screen.getByTestId("mailbox-task-recommendations").querySelector("article");
+  expect(card).toHaveClass("mailbox-task-recommendations__item");
+  expect(card).not.toHaveClass("card");
+}
+
 describe("MailboxTaskRecommendations", () => {
   beforeEach(() => vi.resetAllMocks());
 
@@ -25,6 +31,7 @@ describe("MailboxTaskRecommendations", () => {
     render(<MailboxTaskRecommendations metadata={metadata} />);
     await waitFor(() => expect(screen.getByTestId("mailbox-task-recommendations-unavailable")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
   });
 
   it("creates once and replaces the action with the linked task", async () => {
@@ -33,6 +40,7 @@ describe("MailboxTaskRecommendations", () => {
     vi.mocked(createTaskFromRecommendation).mockResolvedValue({ task: { id: "FN-9101" }, parent: detail } as never);
     render(<MailboxTaskRecommendations metadata={metadata} projectId="project-1" onOpenTask={onOpenTask} />);
     await screen.findByRole("button", { name: "Create task" });
+    expectMailboxCardWithoutBoardClass();
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "View task FN-9101" })).toBeInTheDocument());
     expect(createTaskFromRecommendation).toHaveBeenCalledWith("FN-9100", "recommendation-1", "project-1");
@@ -45,6 +53,7 @@ describe("MailboxTaskRecommendations", () => {
     render(<MailboxTaskRecommendations metadata={metadata} />);
     expect(await screen.findByRole("button", { name: "View task FN-9101" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+    expectMailboxCardWithoutBoardClass();
   });
 
   it("guards rapid duplicate clicks", async () => {
@@ -55,6 +64,7 @@ describe("MailboxTaskRecommendations", () => {
     await screen.findByRole("button", { name: "Create task" });
     const button = screen.getByRole("button", { name: "Create task" });
     fireEvent.click(button);
+    expectMailboxCardWithoutBoardClass();
     fireEvent.click(button);
     expect(createTaskFromRecommendation).toHaveBeenCalledTimes(1);
     resolveCreate({ task: { id: "FN-9101" }, parent: detail } as never);
@@ -68,5 +78,6 @@ describe("MailboxTaskRecommendations", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
     expect(await screen.findByRole("button", { name: "Retry creating task" })).toBeInTheDocument();
     expect(screen.getByText("Could not create task. Try again.")).toBeInTheDocument();
+    expectMailboxCardWithoutBoardClass();
   });
 });

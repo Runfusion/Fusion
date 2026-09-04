@@ -12,6 +12,13 @@ import * as schema from "./postgres/schema/index.js";
 import { type FSWatcher } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput, TaskStep } from "./types.js";
+import {
+  fileScopeLeaseBlocksCandidate,
+  normalizeOverlapScopeForTask,
+  taskHoldsUnmergedCheckout,
+  type FileScopeLeaseKind,
+} from "./tasks/file-scope-lease.js";
+import { compareTasksByPriorityThenAgeAndId } from "./tasks/task-priority.js";
 
 /*
 FNXC:SpecLock 2026-08-09-21:01:
@@ -125,7 +132,7 @@ import { getTaskCommitAssociationsByLineageIdImpl, replaceLegacyTaskCommitAssoci
 import { findRecentTasksBySourceParentTaskIdImpl } from "./task-store/branch-and-pr-entities.js";
 import { addTaskCommentImpl, applyBuiltInPromptOverridesAsyncImpl, applyBuiltInPromptOverridesSyncImpl, areAllDependenciesDoneImpl, artifactStoredNameImpl, assertWorkflowIrTraitsValidImpl, clearActivityLogImpl, clearTaskWorkflowSelectionImpl, deleteTaskByIdImpl, getDefaultWorkflowIdImpl, resolveOriginWorkflowOverrideIdImpl, type TaskOriginWorkflowKind, getInsightStoreImpl, getMergeQueuedTaskIdsImpl, getMergeRequestRecordImpl, getMergeRequestRecordAsyncImpl, getMergeRequestRecordsAsyncImpl, getResearchStoreImpl, getTaskIdFromDirImpl, getTodoStoreImpl, getWorkflowWorkItemByIdentityImpl, hasActiveTaskImpl, invalidateConfigCacheAfterMigrationImpl, isTaskIdConflictErrorImpl, listLegacyAutoMergeStampCandidatesImpl, readTaskRowFromDbImpl, recordBranchGroupMemberLandedImpl, refreshDatabaseHealthAsyncImpl, refreshDatabaseHealthImpl, resolveTaskCustomFieldDefsSyncImpl, resolveWorkflowBypassGuardsImpl, serializeConfigForDiskImpl, setPluginWorkflowStepTemplatesImpl, shouldSkipWorkflowMovePoliciesImpl, suppressWatcherImpl, upsertTaskWithFtsRecoveryImpl } from "./task-store/task-store-helpers.js";
 import { getTaskSelectClauseImpl2, createTaskPersistSerializationContextImpl, getTaskPersistValuesImpl, getTaskPatchDescriptorsImpl, normalizeTaskFromDiskImpl, writeTaskJsonFileImpl, rowToPrEntityImpl, generatePrEntityIdImpl, readTaskForMoveImpl, rowToMergeQueueEntryImpl, rowToMergeRequestRecordImpl, rowToCompletionHandoffMarkerImpl, rowToWorkflowWorkItemImpl, rowToRunAuditEventImpl } from "./task-store/task-row-mappers.js";
-import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _maybeAutoArchiveSameAgentDuplicateBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, linkTaskRecommendationImpl, normalizeWorkspaceTaskWorktreeMetadataImpl, mergeWorkspaceWorktreeEntryImpl, updateTaskRepositoryScopeImpl, updateWorkspaceReviewStateImpl, resolveTaskWedgeNotificationEpisodeImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, cleanupArchivedTasksImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
+import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _maybeAutoArchiveSameAgentDuplicateBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, updateWorkflowStepResultsFencedImpl, updateWorkflowStepResultsWithLogFencedImpl, linkTaskRecommendationImpl, normalizeWorkspaceTaskWorktreeMetadataImpl, mergeWorkspaceWorktreeEntryImpl, updateTaskRepositoryScopeImpl, updateWorkspaceReviewStateImpl, publishWorkspaceCodeReviewEvidenceImpl, resolveTaskWedgeNotificationEpisodeImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, cleanupArchivedTasksImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
 import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWithAuditImpl, type PlanningDependencyInvalidation, duplicateTaskImpl, listStrandedRefinementsImpl, tryClaimCheckoutImpl, evaluateWorkflowMovePoliciesImpl, recordRunAuditEventImpl, getRunAuditEventsImpl, dequeueMergeQueueOnColumnExitImpl, updateIssueInfoImpl, listWorkflowStepsImpl, getWorkflowStepImpl, createWorkflowDefinitionImpl, countActiveInCapacitySlotSyncImpl, countActiveInCapacitySlotAsyncImpl, generateSpecifiedPromptImpl, recordActivityImpl, getEvalStoreImpl } from "./task-store/project-store-ops.js";
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl, type RehomeOccupantResult } from "./task-store/branch-group-ops.js";
@@ -158,8 +165,20 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
-import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait, resolveLifecycleColumns, resolveReviewColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
+import { isReviewColumnRole, isWipColumnRole } from "./column-roles.js";
 import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
+import {
+  appendPatchnodeEntry,
+  appendPatchnodeEntryInTransaction,
+  findLatestPatchnodeCompletionInTransaction,
+  markPatchnodeEntryRevertedInTransaction,
+  queryPatchnodeEntries,
+  reconcilePatchnodeFromLiveTasks,
+  type PatchnodeReconcileResult,
+} from "./task-store/async/async-patchnode.js";
+import { buildPatchnodeEntryId, buildPatchnodeEntryInput } from "./board/patchnode.js";
+import type { PatchnodeEntry, PatchnodeQuery } from "./types/task/patchnode.js";
 import { resolveWorkflowIrForTask } from "./workflows/workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
@@ -200,7 +219,28 @@ export interface TaskStoreEvents {
   mid-teardown). A listener must therefore keep its existing fallback; absent `lanes` is "unknown",
   never "legacy".
   */
-  "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler"; lanes?: TaskMoveLanes }];
+  "task:moved": [data: {
+    task: Task;
+    from: ColumnId;
+    to: ColumnId;
+    source: "user" | "engine" | "scheduler";
+    lanes?: TaskMoveLanes;
+    /** Raw source option; absent remains an unattributed legacy move. */
+    requestedSource?: "user" | "engine" | "scheduler";
+    /** Registered cause for an explicit engine/scheduler backward move. */
+    lifecycleReason?: string;
+    /*
+    FNXC:LifecycleContainment 2026-08-28-04:47:
+    FN-207 requires EVERY automatic move to name its cause. `lifecycleReason` only exists for
+    explicit engine/scheduler BACKWARD moves, so routine forward graph transitions reached the
+    operator log with no cause at all and rendered as "unattributed automatic move" — the exact
+    illegible wander the task was filed against. The mover's own provenance is already on
+    `MoveTaskOptions.workflowMoveSource`; forwarding it here lets the log fall back to it instead
+    of claiming the move was unattributed. Optional: emit paths that cannot supply provenance keep
+    the unattributed rendering rather than inventing one.
+    */
+    workflowMoveSource?: string;
+  }];
   /*
   FNXC:WorkflowEvents 2026-08-01-06:11:
   `task:updated` listeners are synchronous and may receive cache-warmed resolved lanes as an optional
@@ -301,6 +341,8 @@ export interface MoveTaskOptions {
   preservePause?: boolean;
   allocateWorktree?: (reservedNames: Set<string>) => string | null;
   moveSource?: "user" | "engine" | "scheduler";
+  /** Registered reason from ENGINE_BACKWARD_MOVE_REASONS for a backward engine move. */
+  lifecycleReason?: string;
   workflowMoveActor?: WorkflowMovePolicyInput["actor"];
   workflowMoveSource?: string;
   workflowMoveMetadata?: Record<string, unknown>;
@@ -392,30 +434,90 @@ function filterRepairOverlapIgnoredPaths(paths: string[], ignorePaths: string[])
   return paths.filter((path) => !ignorePaths.some((ignorePath) => repairIgnoredOverlapPath(path, ignorePath)));
 }
 
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
-Does this candidate still hold an active file-scope lease? Hoisted to module scope because the
-overlap repair asks it in TWO places (the blocker pre-check and the reroute search) and they must not
-drift — one of the two answering differently is how the repair reroutes to a blocker the other half
-already dismissed.
-
-Pause/failed state is checked by each caller, which owns that half of the question; this decides only
-the LANE half.
-
-`lanes === undefined` means the candidate's workflow could not be read: keep today's literals.
-A resolved workflow with no wip/review lane answers false for that half rather than substituting one.
-*/
-export function holdsRepairFileScopeLease(
-  candidate: Pick<Task, "column" | "worktree">,
-  lanes: { wip: string | undefined; review: string | undefined } | undefined,
-): boolean {
-  /* DELIBERATE-LITERAL — the unresolvable-workflow default documented above, reviewed 2026-07-31-01:10. */
-  if (!lanes) {
-    return candidate.column === "in-progress" || (candidate.column === "in-review" && Boolean(candidate.worktree));
-  }
-  if (lanes.wip !== undefined && candidate.column === lanes.wip) return true;
-  return lanes.review !== undefined && candidate.column === lanes.review && Boolean(candidate.worktree);
+export interface RepairFileScopeLeaseLanes {
+  /** A single legacy lane or every selected-workflow lane carrying the WIP role. */
+  wip: string | ReadonlySet<string> | undefined;
+  /** A single legacy lane or every selected-workflow lane carrying a review role. */
+  review: string | ReadonlySet<string> | undefined;
+  terminal?: ReadonlySet<string>;
 }
+
+type RepairTaskLifecycleLanes = {
+  lifecycle: LifecycleColumns | undefined;
+  lease: RepairFileScopeLeaseLanes | undefined;
+};
+
+function repairLeaseLaneIncludes(
+  lanes: string | ReadonlySet<string> | undefined,
+  column: string,
+): boolean {
+  return typeof lanes === "string" ? lanes === column : lanes?.has(column) === true;
+}
+
+/*
+FNXC:OverlapScheduling 2026-08-29-06:04:
+Operator overlap repair must use the same lease lifetime as scheduler admission: terminal or deleted
+cards release immediately; WIP stays active before checkout acquisition; review stays active only
+while a singular or per-repository checkout exists; other retained checkouts are dormant and resolve contention
+by priority, age, then task id. The explicit archive/delete/checkout-clear escape hatch remains the only way to
+release unfinished work early.
+
+FNXC:OverlapScheduling 2026-09-01-14:49:
+Checkout-free planning has no repair lease, so a stale blocker pointing at another planner is cleared.
+A hold-lane card with a retained execution checkout remains a dormant holder; checkout evidence, not
+planning-column membership, is the shared scheduler/repair contract.
+
+FNXC:OverlapScheduling 2026-08-29-06:34:
+An unresolvable workflow retains the shared legacy role answer through core column-role helpers. Do
+not reintroduce local lifecycle literals here: that would make a compatibility fallback a new
+unclassified lifecycle guard and let this repair path drift from the common role policy.
+
+FNXC:OverlapScheduling 2026-08-29-07:04:
+`LifecycleColumns` intentionally chooses one destination per role and cannot classify membership.
+Overlap repair therefore receives complete role sets from the blocker's own selected workflow: a
+second WIP or review lane retains unfinished work, while every complete or archived lane releases it.
+*/
+export function classifyRepairFileScopeLease(
+  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt">,
+  lanes: RepairFileScopeLeaseLanes | undefined,
+): FileScopeLeaseKind {
+  if (candidate.deletedAt) return "none";
+  if (!lanes) {
+    if (isWipColumnRole(undefined, candidate.column)) return "active";
+    return isReviewColumnRole(undefined, candidate.column) && taskHoldsUnmergedCheckout(candidate) ? "active" : "none";
+  }
+  if (lanes.terminal?.has(candidate.column)) return "none";
+  if (repairLeaseLaneIncludes(lanes.wip, candidate.column)) return "active";
+  if (repairLeaseLaneIncludes(lanes.review, candidate.column)) {
+    return taskHoldsUnmergedCheckout(candidate) ? "active" : "none";
+  }
+  return taskHoldsUnmergedCheckout(candidate) ? "dormant" : "none";
+}
+
+/** Compatibility wrapper retained for callers that only need a boolean lease answer. */
+export function holdsRepairFileScopeLease(
+  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt">,
+  lanes: RepairFileScopeLeaseLanes | undefined,
+): boolean {
+  return classifyRepairFileScopeLease(candidate, lanes) !== "none";
+}
+
+function repairLeaseLanesForWorkflow(
+  ir: WorkflowIr,
+  lifecycle: LifecycleColumns | undefined = resolveLifecycleColumns(ir),
+): RepairFileScopeLeaseLanes | undefined {
+  if (!lifecycle) return undefined;
+  return {
+    wip: new Set(columnsWithFlag(ir, "countsTowardWip")),
+    review: new Set(resolveReviewColumns(ir)),
+    terminal: new Set([
+      ...columnsWithFlag(ir, "complete"),
+      ...columnsWithFlag(ir, "archived"),
+    ]),
+  };
+}
+
+export const PATCHNODE_RECONCILE_TTL_MS = 15 * 60_000;
 
 export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public static readonly ACTIVE_TASKS_WHERE = '"deletedAt" IS NULL';
@@ -525,10 +627,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public taskIdIntegrityReport: TaskIdIntegrityReport = { status: "ok", checkedAt: new Date().toISOString(), anomalies: [] };
   public lastTaskIdIntegrityLogSignature: string | null = null;
   public workflowStepsCache: import("./types.js").WorkflowStep[] | null = null;
-  public workflowDefinitionsCache: WorkflowDefinition[] | null = null;
   public _pluginWorkflowStepTemplates: Array<{ pluginId: string; template: WorkflowStepTemplate }> = [];
   public globalSettingsStore: GlobalSettingsStore;
   public donePauseBackfillDone = false;
+  private patchnodeReconcileMemo: { promise: Promise<PatchnodeReconcileResult>; startedAt: number } | null = null;
   public startupSlimListMemo = new Map<string, { expiresAt: number; promise: Promise<Task[]> }>();
   public static readonly STARTUP_SLIM_LIST_MEMO_TTL_MS = 2_500;
 
@@ -1049,8 +1151,85 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async atomicCreateTaskJson(dir: string, task: Task, operation: string): Promise<void> {
     return atomicCreateTaskJsonImpl(this, dir, task, operation);
   }
-  public async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
-    return atomicWriteTaskJsonImpl2(this, dir, task);
+  public async atomicWriteTaskJson(
+    dir: string,
+    task: Task,
+    options?: { withinTransaction?: (tx: DbTransaction) => Promise<void> },
+  ): Promise<void> {
+    return atomicWriteTaskJsonImpl2(this, dir, task, options);
+  }
+
+  async recordPatchnodeCompletion(task: Task, occurredAt: string): Promise<PatchnodeEntry | null> {
+    if (!this.asyncLayer) throw new Error("Patchnode requires an async data layer");
+    return appendPatchnodeEntry(this.asyncLayer, buildPatchnodeEntryInput(task, "completed", occurredAt));
+  }
+
+  /*
+  FNXC:PatchnodeRevertReconciliation 2026-08-28-22:17:
+  `pairWithDeliveryAtOrBefore` records a cancellation against the delivery that was in effect at `occurredAt` instead of the latest one. The revert route sets it when git reports the task is ALREADY reverted at HEAD: that retry cancelled nothing new, so pairing it with the newest delivery would mark a later re-delivery reverted and silently remove shipped work from the day it shipped on. A genuine new revert keeps latest-delivery pairing.
+  */
+  async recordPatchnodeRevert(
+    taskId: string,
+    input: { occurredAt: string; revertCommitSha?: string; pairWithDeliveryAtOrBefore?: boolean },
+  ): Promise<PatchnodeEntry | null> {
+    if (!this.asyncLayer?.projectId) throw new Error("Patchnode requires a project-scoped async data layer");
+    const layer = this.asyncLayer;
+    const task = await this.getTask(taskId);
+    return layer.transactionImmediate(async (tx) => {
+      const completion = await findLatestPatchnodeCompletionInTransaction(
+        tx,
+        layer.projectId!,
+        taskId,
+        input.pairWithDeliveryAtOrBefore ? { noLaterThan: input.occurredAt } : {},
+      );
+      const occurrenceKey = completion?.occurrenceKey ?? "none";
+      const base = buildPatchnodeEntryInput(task, "reverted", input.occurredAt);
+      const reverted = await appendPatchnodeEntryInTransaction(tx, layer.projectId!, {
+        ...base,
+        entryId: buildPatchnodeEntryId("reverted", taskId, occurrenceKey),
+        occurrenceKey,
+        revertsEntryId: completion?.entryId ?? null,
+        revertedCommitSha: input.revertCommitSha ?? null,
+      });
+      if (completion) {
+        await markPatchnodeEntryRevertedInTransaction(tx, layer.projectId!, completion.entryId, {
+          revertedAt: input.occurredAt,
+          revertedCommitSha: input.revertCommitSha,
+        });
+      }
+      return reverted;
+    });
+  }
+
+  async reconcilePatchnodeLedger(options: { force?: boolean } = {}): Promise<PatchnodeReconcileResult> {
+    if (!this.asyncLayer) throw new Error("Patchnode requires an async data layer");
+    const now = Date.now();
+    if (!options.force && this.patchnodeReconcileMemo && now - this.patchnodeReconcileMemo.startedAt < PATCHNODE_RECONCILE_TTL_MS) {
+      return this.patchnodeReconcileMemo.promise;
+    }
+    const promise = (async () => {
+      const completeColumns = await resolveProjectColumnsForRoles(this, ["complete"]);
+      return reconcilePatchnodeFromLiveTasks(this.asyncLayer!, completeColumns ?? new Set<string>());
+    })();
+    this.patchnodeReconcileMemo = { promise, startedAt: now };
+    try {
+      return await promise;
+    } catch (error) {
+      if (this.patchnodeReconcileMemo?.promise === promise) this.patchnodeReconcileMemo = null;
+      throw error;
+    }
+  }
+
+  async listPatchnodeEntries(query: PatchnodeQuery = {}): Promise<{ entries: PatchnodeEntry[]; totalEntries: number; hasMore: boolean }> {
+    if (!this.asyncLayer) throw new Error("Patchnode requires an async data layer");
+    try {
+      await this.reconcilePatchnodeLedger();
+    } catch (error) {
+      storeLog.warn("Patchnode reconciliation failed before feed read", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return queryPatchnodeEntries(this.asyncLayer, query);
   }
   public async atomicWriteTaskJsonWithAudit( dir: string, task: Task, auditInput?: RunAuditEventInput, planningInvalidation?: PlanningDependencyInvalidation, specPlanPrompt?: string, ): Promise<void> {
     return atomicWriteTaskJsonWithAuditImpl(this, dir, task, auditInput, planningInvalidation, specPlanPrompt);
@@ -1234,8 +1413,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async invokeTaskCreatedHook(task: Task): Promise<void> {
     return invokeTaskCreatedHookImpl(this, task);
   }
-  async duplicateTask(id: string): Promise<Task> {
-    return duplicateTaskImpl(this, id);
+  async duplicateTask(id: string, options?: { workflowId?: string | null }): Promise<Task> {
+    return duplicateTaskImpl(this, id, options);
   }
   async refineTask(id: string, feedback: string): Promise<Task> {
     return refineTaskImpl(this, id, feedback);
@@ -1727,8 +1906,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /** Publish the post-cleanup fresh-planning reset as one project-scoped transaction. */
-  async resetTaskPublication(id: string, intakeColumn: ColumnId): Promise<Task> {
-    return resetTaskPublicationImpl(this, id, intakeColumn);
+  async resetTaskPublication( id: string, intakeColumn: ColumnId, options?: { description?: string }, ): Promise<Task> {
+    return resetTaskPublicationImpl(this, id, intakeColumn, options);
   }
   async moveTaskIf(
     id: string,
@@ -1786,7 +1965,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; repositoryScope?: import("./types.js").Task["repositoryScope"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; externalBlock?: import("./types.js").Task["externalBlock"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:SpecLock 2026-08-09-20:34:
@@ -2058,6 +2237,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async appendRemediationSteps(taskId: string, steps: readonly TaskStep[], options?: AppendRemediationStepsOptions): Promise<AppendRemediationStepsResult> {
     return appendRemediationStepsImpl(this, taskId, steps, options);
   }
+  async updateWorkflowStepResultsFenced(
+    id: string,
+    compute: import("./task-store/task-mutation-ops.js").WorkflowStepResultsFencedCompute,
+  ): Promise<import("./task-store/task-mutation-ops.js").WorkflowStepResultsFencedUpdateResult> {
+    return updateWorkflowStepResultsFencedImpl(this, id, compute);
+  }
+  /**
+   * FNXC:LifecycleContainment 2026-08-30-13:36:
+   * FN-267: writes a step-result patch AND one task-log entry inside the SAME advisory-locked
+   * transaction, so a refusal marker and the entry explaining it to an operator cannot be
+   * separated by a cross-process supersession. Deliberately distinct from
+   * updateWorkflowStepResultsFenced so the workflow graph's durable step-result path is unchanged.
+   */
+  async updateWorkflowStepResultsWithLogFenced(
+    id: string,
+    compute: (current: Task) => { workflowStepResults: Task["workflowStepResults"]; logEntry: TaskLogEntry } | null,
+  ): Promise<import("./task-store/task-mutation-ops.js").WorkflowStepResultsFencedUpdateResult> {
+    return updateWorkflowStepResultsWithLogFencedImpl(this, id, compute);
+  }
   /** Dismisses one active AI merge finding with an operator-provided audit reason. */
   async dismissAiMergeReviewFinding(taskId: string, findingId: string, reason: string, actor = "operator"): Promise<Task> {
     const trimmed = reason.trim();
@@ -2115,23 +2313,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   ): Promise<Task> {
     return updateTaskRepositoryScopeImpl(this, id, repositoryScope);
   }
-  /**
-   * FNXC:RepositoryScope 2026-08-21-01:53:
-   * Operator and executor changes are deltas so their repository history is merged from the
-   * planning-locked durable row rather than replacing a stale dashboard or tool snapshot.
-   */
-  async mutateTaskRepositoryScope(
-    id: string,
-    mutation: import("./task-store/task-mutation-ops.js").TaskRepositoryScopeMutation,
-  ): Promise<Task> {
-    return updateTaskRepositoryScopeImpl(this, id, mutation);
-  }
   async updateWorkspaceReviewState(
     id: string,
     expectedScopeRevision: number,
     reviewRemediation: import("./types.js").TaskRepositoryScope["reviewRemediation"] | null,
   ): Promise<{ task: Task; updated: boolean }> {
     return updateWorkspaceReviewStateImpl(this, id, expectedScopeRevision, reviewRemediation);
+  }
+  async publishWorkspaceCodeReviewEvidence(
+    id: string,
+    input: import("./task-store/task-mutation-ops.js").PublishWorkspaceCodeReviewEvidenceInput,
+  ): Promise<import("./task-store/task-mutation-ops.js").PublishWorkspaceCodeReviewEvidenceResult> {
+    return publishWorkspaceCodeReviewEvidenceImpl(this, id, input);
   }
   async resolveTaskWedgeNotificationEpisode(id: string, episodeId: string): Promise<{ task: Task; resolved: boolean }> {
     return resolveTaskWedgeNotificationEpisodeImpl(this, id, episodeId);
@@ -2289,7 +2482,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         ? undefined
         : await resolveWorkflowIrForTask(this, task.id);
       const absentStepId = reviewIrForBypass
-        ? [...resolveRequiredPreMergeStepIds(reviewIrForBypass, task.enabledWorkflowSteps)]
+        ? [...resolveRequiredPreMergeStepIds(reviewIrForBypass, task.enabledWorkflowSteps, task)]
           .find((workflowStepId) => !results.some((result) => result.workflowStepId === workflowStepId))
         : undefined;
       if (!failedTarget && !absentStepId) {
@@ -2519,7 +2712,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return EventEmitter.prototype.emit.call(this, event as string, ...args);
   }
 
-  async updateStep( id: string, stepIndex: number, status: import("./types.js").StepStatus, options?: { source?: "graph" }, ): Promise<Task> {
+  async updateStep( id: string, stepIndex: number, status: import("./types.js").StepStatus, options?: { source?: "graph"; summary?: string; operatorOverride?: boolean }, ): Promise<Task> {
     return updateStepImpl(this, id, stepIndex, status, options);
   }
   // FNXC:StepLifecycle 2026-07-22-10:30: Execution callers need the locked start verdict; updateStep retains its legacy Task-only contract.
@@ -2869,14 +3062,28 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     same three literals appear at each step. A repair that declines everything looks identical in the
     logs to a board with nothing to repair.
 
-    `repairIrCache` is caller-owned per the contract on `resolveTaskLifecycleColumns`: this pass
-    resolves lanes for the task, its blocker, and every reroute candidate, so a board spanning three
-    workflows must read three IRs — not one per card.
+    `repairIrCache` is caller-owned per the task workflow resolver contract: this pass resolves
+    lanes for the task, its blocker, and every reroute candidate, so a board spanning three workflows
+    must read three IRs — not one per card.
     */
     const repairIrCache = new Map<string, WorkflowIr>();
-    const repairLanesFor = async (taskId: string) =>
-      (await resolveTaskLifecycleColumns(this, taskId, repairIrCache).catch(() => undefined));
-    const taskLanes = await repairLanesFor(task.id);
+    const repairLanesByTaskId = new Map<string, Promise<RepairTaskLifecycleLanes>>();
+    const repairLanesFor = (taskId: string): Promise<RepairTaskLifecycleLanes> => {
+      const cached = repairLanesByTaskId.get(taskId);
+      if (cached) return cached;
+      const resolving = (async (): Promise<RepairTaskLifecycleLanes> => {
+        try {
+          const ir = await resolveWorkflowIrForTask(this, taskId, repairIrCache);
+          const lifecycle = resolveLifecycleColumns(ir);
+          return { lifecycle, lease: repairLeaseLanesForWorkflow(ir, lifecycle) };
+        } catch {
+          return { lifecycle: undefined, lease: undefined };
+        }
+      })();
+      repairLanesByTaskId.set(taskId, resolving);
+      return resolving;
+    };
+    const taskLanes = (await repairLanesFor(task.id)).lifecycle;
     /*
     The hold lane is resolved, NOT defaulted per field: `taskLanes === undefined` means the workflow
     could not be read (keep the literal), while a resolved workflow with no hold lane is an ANSWER —
@@ -2908,7 +3115,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const getScope = async (taskId: string): Promise<string[]> => {
       const cached = scopeCache.get(taskId);
       if (cached !== undefined) return cached;
-      const scope = filterRepairOverlapIgnoredPaths(await this.parseFileScopeFromPrompt(taskId), ignorePaths);
+      const filteredScope = filterRepairOverlapIgnoredPaths(await this.parseFileScopeFromPrompt(taskId), ignorePaths);
+      const scope = taskById.has(taskId)
+        ? normalizeOverlapScopeForTask(taskById.get(taskId)!, filteredScope)
+        : filteredScope;
       scopeCache.set(taskId, scope);
       return scope;
     };
@@ -2916,23 +3126,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const taskScope = await getScope(task.id);
     if (blocker) {
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
-      The blocker's OWN lanes decide whether it still holds a file-scope lease — it may live on a
-      different board from the task it blocks.
-
-      NOTE for whoever unifies this: `holdsRepairFileScopeLease` below and
-      `shouldHoldActiveFileScopeLease` in `engine/scheduler.ts` are a THIRD and FOURTH copy of this
-      same predicate. They must keep agreeing or the repair reroutes to a blocker the scheduler
-      ignores. Not unified here because the scheduler's copy lives in `@fusion/engine`, which core
-      cannot import, and moving it is a cross-batch refactor rather than a conversion.
+      FNXC:OverlapScheduling 2026-08-29-06:04:
+      The blocker's own resolved lanes decide whether it still owns overlapping files. Classification
+      is shared with the scheduler-facing helper, so a failed or paused review card with a retained
+      worktree cannot be cleared through the operator repair path before its work lands.
       */
       const blockerLanes = await repairLanesFor(blocker.id);
-      const blockerHoldsActiveLease = !blocker.paused
-        && !blocker.userPaused
-        && blocker.status !== "failed"
-        && holdsRepairFileScopeLease(blocker, blockerLanes);
+      const blockerLeaseKind = classifyRepairFileScopeLease(blocker, blockerLanes.lease);
+      const blockerHoldsLease = fileScopeLeaseBlocksCandidate(blocker, task, {
+        kind: blockerLeaseKind,
+        waivedForTaskIds: [],
+      });
       const blockerScope = await getScope(blocker.id);
-      if (blockerHoldsActiveLease && repairScopesOverlap(taskScope, blockerScope)) {
+      if (blockerHoldsLease && repairScopesOverlap(taskScope, blockerScope)) {
         return {
           taskId: id,
           dryRun,
@@ -2955,7 +3161,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     */
     const dependencyLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
     for (const depId of task.dependencies ?? []) {
-      dependencyLanesByTaskId.set(depId, await repairLanesFor(depId));
+      dependencyLanesByTaskId.set(depId, (await repairLanesFor(depId)).lifecycle);
     }
     const isUnresolvedDependency = (depId: string): boolean => {
       const dep = taskById.get(depId);
@@ -3082,33 +3288,41 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     getScope: (taskId: string) => Promise<string[]>,
     previousOverlapBlockedBy: string,
     /* The CALLER's resolver, so this search shares the repair's single IR cache rather than opening a
-       second one — and so both halves of the repair resolve a given card's lanes identically. */
-    resolveLanes: (taskId: string) => Promise<LifecycleColumns | undefined>,
+       second one — and so both halves of the repair resolve a given card's lane membership identically. */
+    resolveLanes: (taskId: string) => Promise<RepairTaskLifecycleLanes>,
   ): Promise<string | null> {
     /*
-    FNXC:OverlapRepair 2026-06-25-05:49:
-    Stale-overlap repair must reroute only to tasks that the scheduler would still treat as active file-scope lease holders. Operator-paused or failed active rows are parked work, not live blockers, so the repair should clear stale state instead of creating a fresh blocker edge to them.
-    */
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
-    Resolve each candidate's lanes before the sync filter, sharing the caller's IR cache. Resolution
-    is restricted to candidates that survive the id filter so an unrelated backlog costs nothing.
+    FNXC:OverlapScheduling 2026-08-29-06:04:
+    Reroute only to a holder that the shared lifetime classification says blocks this task. Paused and
+    failed rows with retained worktrees still own unfinished files; dormant holders use the same
+    priority → age → id ordering as scheduler admission before repair records a fresh blocker edge.
     */
     const candidatePool = tasks.filter(
       (candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy,
     );
     const candidateLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
+    const candidateLeaseKinds = new Map<string, FileScopeLeaseKind>();
     for (const candidate of candidatePool) {
-      candidateLanesByTaskId.set(candidate.id, await resolveLanes(candidate.id));
+      const lanes = await resolveLanes(candidate.id);
+      candidateLanesByTaskId.set(candidate.id, lanes.lifecycle);
+      candidateLeaseKinds.set(candidate.id, classifyRepairFileScopeLease(candidate, lanes.lease));
     }
     const activeCandidates = candidatePool
-      .filter((candidate) => {
-        if (candidate.paused || candidate.userPaused || candidate.status === "failed") return false;
-        return holdsRepairFileScopeLease(candidate, candidateLanesByTaskId.get(candidate.id));
-      })
+      .filter((candidate) => candidateLeaseKinds.get(candidate.id) === "active")
+      .filter((candidate) => fileScopeLeaseBlocksCandidate(candidate, task, {
+        kind: "active",
+        waivedForTaskIds: [],
+      }))
       .sort((a, b) => a.id.localeCompare(b.id));
+    const dormantCandidates = candidatePool
+      .filter((candidate) => candidateLeaseKinds.get(candidate.id) === "dormant")
+      .filter((candidate) => fileScopeLeaseBlocksCandidate(candidate, task, {
+        kind: "dormant",
+        waivedForTaskIds: [],
+      }))
+      .sort(compareTasksByPriorityThenAgeAndId);
 
-    for (const candidate of activeCandidates) {
+    for (const candidate of [...activeCandidates, ...dormantCandidates]) {
       const candidateScope = await getScope(candidate.id);
       if (repairScopesOverlap(taskScope, candidateScope)) return candidate.id;
     }
@@ -3310,7 +3524,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public flushAgentLogBuffer(): void {
     flushAgentLogBufferImpl(this);
   }
-  async appendAgentLogBatch( entries: Array<{ taskId: string; text: string; type: AgentLogEntry["type"]; detail?: string; agent?: AgentLogEntry["agent"]; }>, ): Promise<void> {
+  async appendAgentLogBatch( entries: Array<{ taskId: string; text: string; type: AgentLogEntry["type"]; detail?: string; agent?: AgentLogEntry["agent"]; durationMs?: number; timeToFirstTokenMs?: number }>, ): Promise<void> {
     return appendAgentLogBatchImpl(this, entries);
   }
 

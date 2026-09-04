@@ -36,6 +36,10 @@ vi.mock("../executor/worktree-git-refs.js", async (importOriginal) => ({
   ...(await importOriginal() as object),
   captureBaseCommitSha: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../worktree/review-diff-fingerprint.js")>(),
+  resolveContentReviewInputProof: vi.fn(async () => ({ kind: "fingerprint", fingerprint: "ce-review-proof" })),
+}));
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
@@ -105,7 +109,7 @@ type CapturedSession = {
  * that emits the given output line, then resolves. Returns the capture holder.
  */
 function captureSession(
-  output = '{"verdict":"APPROVE","notes":""}',
+  output = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}',
   questionTool?: { name: string; args: Record<string, unknown> },
 ): { last?: CapturedSession; all: CapturedSession[] } {
   const holder: { last?: CapturedSession; all: CapturedSession[] } = { all: [] };
@@ -575,7 +579,7 @@ describe("CE workflow-step executor integration", () => {
       expect(result.context["node:code-review:outcome"]).not.toBe("no-worktree-for-write-node");
     });
 
-    it("keeps disabled inline fixes and Plan Review read-only during graph preparation", async () => {
+    it("prepares a Code Review checkout while keeping Plan Review checkout-free", async () => {
       const requirements: any[] = [];
       const graph = new WorkflowGraphExecutor({
         prepareNodeExecution: (_node, _task, requirement) => { requirements.push(requirement); },
@@ -599,9 +603,8 @@ describe("CE workflow-step executor integration", () => {
       };
       await graph.run(baseStepTask({ enabledWorkflowSteps: ["code-review", "plan-review"] }) as any, {
         experimentalFeatures: {},
-        reviewerInlineFixes: false,
       }, ir);
-      expect(requirements).toEqual([]);
+      expect(requirements).toEqual([{ requiresWorktree: true, reason: "write-capable-node" }]);
     });
 
     it("finalizes a merge-confirmed workflow graph task that is stranded before done", async () => {
@@ -635,7 +638,7 @@ describe("CE workflow-step executor integration", () => {
       expect(live.mergeDetails?.mergeConfirmed).toBe(true);
     });
 
-    it("lets stale no-op merge proof fall through when implementation steps are incomplete", async () => {
+    it("finalizes durable no-op merge proof without replaying pre-merge implementation", async () => {
       const store = createMockStore();
       const live = baseStepTask({
         column: "in-progress",
@@ -651,19 +654,14 @@ describe("CE workflow-step executor integration", () => {
       const { executor } = makeExecutor(store);
 
       /*
-       * FNXC:WorkflowMerge 2026-06-29-23:12:
-       * A no-op merge confirmation without a landed commit is not implementation proof. When reopened work still has incomplete legacy steps, execute() must continue to stale-merge cleanup/reverification instead of consuming the run in merge-confirmed finalization.
+       * FNXC:ConfirmedMergeFinalization 2026-09-03-05:40:
+       * Durable merge confirmation is the terminal authority. FN-180 reconciliation skips stale
+       * pre-merge checklist entries rather than replaying implementation after the merge boundary.
        */
       const handled = await (executor as any).finalizeMergeConfirmedWorkflowGraphTask("FN-CE-1", "test");
 
-      expect(handled).toBe(false);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "done", expect.anything());
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-CE-1",
-        expect.stringContaining("merge-confirmed finalization blocked"),
-        undefined,
-        undefined,
-      );
+      expect(handled).toBe(true);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-CE-1", "done", expect.anything());
     });
 
     it("blocks the merge requester when graph traversal reaches merge before implementation steps finish", async () => {
@@ -1136,7 +1134,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       expect(cap.last?.systemPrompt).toContain("modified-file list is the starting point");
       expect(cap.last?.systemPrompt).toContain("necessary callers, selectors, shared helpers, consumers, and tests");
       expect(cap.last?.systemPrompt).not.toContain("Review ONLY the files listed above");
-      expect(cap.last?.systemPrompt).toContain("restart the mandatory review procedure");
+      expect(cap.last?.systemPrompt).not.toContain("## Same-Session Fix Policy");
     });
 
     it("does not restore the historical task description when PROMPT.md is unavailable", async () => {

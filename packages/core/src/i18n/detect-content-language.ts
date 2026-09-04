@@ -34,9 +34,15 @@ const LATIN_STOPWORDS: Record<"en" | "fr" | "es" | "cs" | "pt-BR", readonly stri
     "not", "but", "you", "all", "can", "has", "was", "were", "been", "their",
     "which", "when", "what", "into", "about", "would", "there", "should",
   ],
+  /*
+  FNXC:TitleSummaryInputLanguage 2026-09-01-21:25:
+  FN-9241 found that English and technical chat prose can contain `plus`, `par`, and `est`.
+  Omit these collision-prone French tokens so a short English message cannot steer title generation
+  toward French; stronger medium confidence keeps the import translation high-confidence behavior unchanged.
+  */
   fr: [
-    "les", "des", "une", "est", "dans", "pour", "que", "qui", "sur", "avec",
-    "pas", "plus", "par", "sont", "cette", "aussi", "comme", "mais", "nous",
+    "les", "des", "une", "dans", "pour", "que", "qui", "sur", "avec",
+    "pas", "sont", "cette", "aussi", "comme", "mais", "nous",
     "vous", "être", "fait", "tout", "leur", "entre", "sans", "après",
   ],
   es: [
@@ -126,8 +132,9 @@ function scoreLatinLocale(text: string): { locale: Locale | "unknown"; confidenc
   }
 
   const ratio = secondScore === 0 ? Infinity : bestScore / secondScore;
+  // Keep the high tier unchanged: same-family import translation offers deliberately require it.
   const confidence: DetectedContentLanguage["confidence"] =
-    bestScore >= 4 && ratio >= 1.6 ? "high" : bestScore >= 2 && ratio >= 1.25 ? "medium" : "low";
+    bestScore >= 4 && ratio >= 1.6 ? "high" : bestScore >= 3 && ratio >= 1.5 ? "medium" : "low";
 
   return { locale: best[0] === "cs" ? "unknown" : best[0], confidence };
 }

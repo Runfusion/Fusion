@@ -752,6 +752,11 @@ export async function getChatSessionForUpdate(
  * Update a chat session's mutable fields (title, status, modelProvider,
  * modelId) and bump updatedAt. Returns the updated session, or undefined if
  * not found. Mirrors sync ChatStore.updateSession.
+ *
+ * FNXC:Chat-ModelSwitch 2026-09-01-04:23:
+ * FN-7908's mid-conversation retarget was dropped during the FN-7952 PostgreSQL
+ * cutover. Persist agentId so both model-to-agent and agent-to-model
+ * (__fn_agent__ sentinel) switches update the session target together.
  */
 export async function updateChatSession(
   handle: QueryHandle,
@@ -761,6 +766,7 @@ export async function updateChatSession(
     status?: ChatSessionStatus;
     modelProvider?: string | null;
     modelId?: string | null;
+    agentId?: string;
     thinkingLevel?: string | null;
     memoryFocus?: string | null;
     pinnedAt?: string | null;
@@ -775,6 +781,7 @@ export async function updateChatSession(
   if (input.status !== undefined) setValues.status = input.status;
   if (input.modelProvider !== undefined) setValues.modelProvider = input.modelProvider;
   if (input.modelId !== undefined) setValues.modelId = input.modelId;
+  if (input.agentId !== undefined) setValues.agentId = input.agentId;
   if (input.thinkingLevel !== undefined) setValues.thinkingLevel = input.thinkingLevel;
   if (input.memoryFocus !== undefined) setValues.memoryFocus = input.memoryFocus;
   if (input.pinnedAt !== undefined) setValues.pinnedAt = input.pinnedAt;

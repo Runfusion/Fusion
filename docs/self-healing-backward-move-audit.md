@@ -30,13 +30,11 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 | reconcileDoneTaskIntegrity | 3870 | done task integrity mismatch | n/a | integrity check | metadata/status hygiene | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverMergeableReviewTasks | 3996 | mergeable in-review task | merge blocker checks | merge readiness | queue/merge status writes | INTERNAL-RETRY | keep | n/a | n/a |
 | recoverReviewTasksWithFailedPreMergeSteps | 4112 | failed pre-merge workflow step | maxFix budget | failed step + budget | revive via executor | INTERNAL-RETRY | keep | n/a | n/a |
-| recoverStaleIncompleteReviewTasks | 4205 | in-review with incomplete steps stale | `settings.taskStuckTimeoutMs` | age + incomplete steps | move to todo preserveProgress | BACKWARD | tighten | triple proof + existing stale/incomplete predicates | gate move; emit `task:stale-incomplete-review-no-action` |
 | surfaceInReviewStalls | 4281 | in-review stall reasons | `settings.taskStuckTimeoutMs`, `inReviewStallDeadlockThreshold` | stall signal + repetition | log; deadlock branch pauses/failed | BACKWARD branch | already-tightened (threshold + FN-5147) | keep existing | no change |
 | surfaceDependencyBlockedTodos | 4390 | blocked todo report | reporter internals | blocked dependency snapshot | report/log | ANNOTATION-ONLY | keep | n/a | n/a |
 | surfaceInReviewStalled | 4416 | quiet in-review backlog signal | `settings.inReviewStalledThresholdMs` | quiet-window signal | log only | ANNOTATION-ONLY | keep | n/a | n/a |
 | surfaceStalePausedReviews | 4478 | stale paused in-review | `settings.stalePausedReviewThresholdMs` | age signal | log only | ANNOTATION-ONLY | keep | n/a | n/a |
 | surfaceStalePausedTodos | 4529 | stale paused todo | `settings.stalePausedTodoThresholdMs` | age signal | log only | ANNOTATION-ONLY | keep | n/a | n/a |
-| recoverGhostReviewTasks | 4583 | idle in-review ghost | `settings.taskStuckTimeoutMs` | idle + status filters | move to todo preserveProgress | BACKWARD | tighten | triple proof + existing ghost predicates | gate move; emit `task:ghost-review-no-action` |
 | recoverInterruptedMergingTasks | 4650 | stale transient merging status | `updatedAt` age ≥ `settings.taskStuckTimeoutMs` | stale status + landed-commit detection | done finalize or status clear/requeue | FORWARD/INTERNAL-RETRY | keep | FN-8924 retained the age gate: merger-agent logs are not an orphan-proof task-scoped clock | n/a |
 | recoverDoneTaskMergeMetadata | 4777 | done merge metadata drift | n/a | landed evidence + metadata gap | metadata update | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverMergedReviewTasks | 4937 | in-review already merged | landed commit proof | landed proof | move to done | FORWARD | keep | n/a | n/a |
@@ -48,13 +46,11 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 | recoverBranchMisboundInReviewTasks | 5581 | in-review failed merge lineage misbound but landed | retries threshold | classifyOwnedLandedEvidence proof | move to done | FORWARD | keep | n/a | n/a |
 | recoverForeignOnlyContaminatedInReviewTasks | 5692 | foreign-only contamination | retries/config gates | contamination attribution proof | reanchor/requeue or annotate | INTERNAL-RETRY | keep | n/a | n/a |
 | recoverMisclassifiedFailures | 5789 | in-review failed but no merge blocker and all steps done | n/a | completed steps + no blocker | clear status/error | RECONCILE-ONLY | keep | n/a | n/a |
-| recoverInProgressLimbo | 5877 | in-progress no branch + missing/none worktree + pending steps | `ORPHANED_EXECUTION_RECOVERY_GRACE_MS` | dead/no-progress proof set | move to todo preserveProgress | BACKWARD | already-tightened (FN-5219) | keep | no change |
 | recoverOrphanedExecutions | 5991 | stale in-progress no active execution | `ORPHANED_EXECUTION_RECOVERY_GRACE_MS` / `ORPHANED_WITH_WORKTREE_GRACE_MS` | stale orphan candidate only | annotation event only | ANNOTATION-ONLY | already-tightened (FN-5337) | keep | no change |
 | recoverAgentsRunningOnInactiveTasks | 6089 | agent runtime drift | agent heartbeat ages | agent-store runtime checks | end/restart agents | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverDriftedAgentTaskLinks | 6126 | agent assigned to terminal/missing task | n/a | task-link mismatch | clear assignment | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverOrphanedAgents | 6180 | dead parent/direct-report linkage | n/a | org topology checks | pause/delete/reparent decisions | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverStaleHeartbeatRuns | 6372 | stale heartbeat run records | run age thresholds | pid/age mismatch | terminate run records | RECONCILE-ONLY | keep | n/a | n/a |
-| recoverNoProgressNoTaskDoneFailures | 6451 | in-progress failed no-task-done no progress | `nextRecoveryAt` exponential backoff; maximum three attempts | no-step-progress + no git work + not executing + due budget | clear metadata + move to todo, then terminally park exhausted failures | BACKWARD | tightened (FN-9186) | triple proof + no-progress checks + persisted `taskDoneRetryCount` + due backoff | gate move; emit `task:no-progress-no-task-done-no-action`, bounded requeue audit, or one exhaustion audit |
 | recoverMissingWorktreeReviewFailures | 6516 | in-review failed OR merge-active (`merging`/`merging-pr`/`merging-fix`) session-start missing/unusable worktree | classifier-based | error classifier proof only | autoRecover requeue to todo | BACKWARD | tightened | triple proof + classifier proof + `allowsAutoMergeProcessing` + workspace-task exclusion | gate requeue; emit `task:missing-worktree-review-no-action` or `task:reconcile-missing-worktree-merge-active-no-action`; successful merge-active recovery clears `worktree`/`branch`/`sessionFile`, resets the worktree-session retry budget, increments `recoveryRetryCount` as the bounded stale-metadata clear counter, emits `task:reconcile-missing-worktree-merge-active`, and requeues to todo preserving progress |
 | recoverPartialProgressNoTaskDoneFailures | 6586 | in-review failed no-task-done with partial progress | bounded by `MAX_TASK_DONE_RETRIES` | no-task-done + partial progress + retry budget | clear error + move to todo preserveProgress | BACKWARD | tighten | triple proof + retry-budget predicates | gate move; emit `task:partial-progress-no-task-done-no-action` |
 | recoverApprovedTriageTasks | 6706 | triage planning specified stale | `APPROVED_TRIAGE_RECOVERY_GRACE_MS` | planning idle + valid PROMPT.md | recoverApprovedTriageTask callback | FORWARD | keep | n/a | n/a |
@@ -68,14 +64,9 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 - The process-global active-merge-start clock is not an alternative: `measureActiveMergeSilenceMs()` falls back to `getActiveMergeStartedAtMs()` only for the owner path, where `isActiveMergeWedged()` first proves task identity. It has no task parameter and can belong to another merge. No durable cross-process merge-ownership claim or lease exists; the remaining pending/task-active/session/lock signals are in-process only, leaving the same cross-process blind spot that the retained age gate already has.
 - Consequently, the owner arm and all mutation-time recovery behavior remain unchanged. The proposed two-phase re-proof and routing-input divergence design is not adopted without a sound admission clock; changing sibling stale-status, deadlock, or dashboard Retry definitions would create unsupported divergent semantics. The regression test pins this contract: a fresh-`updatedAt`, unowned merge-active task is not recovered even if an older merger log would satisfy the rejected quiet-window proposal.
 
-### recoverStaleIncompleteReviewTasks
-- Current evidence is age + incomplete steps only; this can race live executor/session churn.
-- Tighten chosen: preserve recovery semantics but require dead-session + unusable-worktree + stale activity proof.
-- Composes with FN-5147 first (autoMerge false short-circuit), then FN-5335 proof gate.
+### FN-217 removal
 
-### recoverGhostReviewTasks
-- Current evidence is idle age + status exclusion; no hard proof task is dead.
-- Tighten chosen to avoid speculative in-review→todo regressions.
+Ghost-review, stale-incomplete-review, in-progress-limbo, generic terminal-failure, and zero-progress no-task-done sweeps were removed. Their evidence can no longer authorize backward movement or human terminalization; WIP liveness is owned by in-place stuck-session resume.
 
 ### reclaimPrConflictForTask / reclaimSelfOwnedBranchConflicts
 - These can push in-review backward to todo on conflict reclaim paths.
@@ -88,10 +79,6 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 ### recoverStuckMergeDeadlocks (no-landed branch)
 - Existing no-landed path pauses immediately after failed landed-proof.
 - Tighten chosen: pause/fail mutation requires triple proof; otherwise annotate and leave terminal state untouched.
-
-### recoverNoProgressNoTaskDoneFailures
-- Current predicate checks progress/git cleanliness but not session/worktree/liveness triple-proof.
-- Tighten to prevent reopening actively recovering tasks and to compose with FN-4935 recent liveness events.
 
 ### recoverMissingWorktreeReviewFailures
 - Existing classifier proof is necessary but not sufficient for backward movement.
@@ -107,7 +94,7 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 
 ## Stages explicitly left alone
 - Forward-only: `recoverCompletedTasks`, `recoverStrandedCompletedTodoTasks`, `recoverMergedReviewTasks`, `recoverAlreadyMergedReviewTasks`, `recoverBranchMisboundInReviewTasks`, `recoverOrphanOnlyScopeViolations`.
-- Already-tightened proof owners: `recoverInProgressLimbo` (FN-5219), `recoverCompletionHandoffLimbo` (FN-4999), `recoverOrphanedExecutions` (FN-5337 `task:orphan-detected-no-action`).
+- Already-tightened proof owners: `recoverCompletionHandoffLimbo` (FN-4999) and `recoverOrphanedExecutions` (FN-5337 `task:orphan-detected-no-action`).
 - RECONCILE/annotation-only stages remain unchanged.
 
 ## Step 1 self-check coverage

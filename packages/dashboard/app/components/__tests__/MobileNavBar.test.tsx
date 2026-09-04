@@ -671,6 +671,7 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-skills")).toHaveTextContent("Skills & Snippets");
     fireEvent.click(screen.getByTestId("mobile-more-item-skills"));
     expect(props.onChangeView).toHaveBeenCalledWith("skills");
   });

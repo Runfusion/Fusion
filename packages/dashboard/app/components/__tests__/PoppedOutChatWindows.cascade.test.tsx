@@ -19,6 +19,7 @@ const entry = (id: string, cascadeSlot: number, projectId = "project-a") => ({
   },
   focusNonce: 1,
   cascadeSlot,
+  minimized: false,
 });
 
 describe("PoppedOutChatWindows cascade", () => {

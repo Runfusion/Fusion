@@ -357,8 +357,8 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
   feature→task invariant. Claim paths now hold the task row lock (lockLiveTaskForClaim) BEFORE
   the conflict check. This test simulates the first claimant's transaction on a separate
   connection: it locks the task row with SELECT ... FOR UPDATE and writes the first claimant's
-  linkage while holding the lock. The store's concurrent link (second claimant) must (a) remain
-  blocked on the row lock while the first transaction is open (~250ms pending probe) and
+  linkage while holding the lock. The store's concurrent link (second claimant) must (a) appear
+  in PostgreSQL's blocking graph while the first transaction is open and
   (b) after the first transaction commits, reject with the conflicting-feature error instead of
   overwriting the first claimant's linkage.
   */
@@ -372,12 +372,8 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const task = await h.store().createTask({ description: "contested task" });
     const db = h.adminDb();
 
-    // Second claimant's link — fired while the first claimant holds the row lock.
     let settled = false;
-    const contestedLink = m.linkFeatureToTask(featureTwo.id, task.id).then(
-      (value) => { settled = true; return value; },
-      (error) => { settled = true; throw error; },
-    );
+    let contestedLink: ReturnType<AsyncMissionStore["linkFeatureToTask"]> | undefined;
 
     // First claimant's transaction: lock the task row, write its linkage, hold it open.
     await db.transaction(async (tx) => {
@@ -392,9 +388,30 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         .set({ missionId: mission.id, sliceId: slice.id, updatedAt: new Date().toISOString() })
         .where(eq(schema.project.tasks.id, task.id));
 
-      // While the first claimant is uncommitted, the second claimant must still be blocked
-      // on the task row lock, not settled (success or failure).
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      const holderRows = await tx.execute(sql`SELECT pg_backend_pid() AS pid`) as unknown as Array<{ pid: number }>;
+      const holderPid = holderRows[0]?.pid;
+      expect(holderPid).toBeTypeOf("number");
+
+      // Start the second claimant only after the first claimant owns the row lock. Poll
+      // PostgreSQL's blocking graph rather than sleeping and inferring lock state from time.
+      contestedLink = m.linkFeatureToTask(featureTwo.id, task.id).then(
+        (value) => { settled = true; return value; },
+        (error) => { settled = true; throw error; },
+      );
+      const blockProbeDeadline = Date.now() + 5_000;
+      let blockedByFirstClaimant = false;
+      while (!blockedByFirstClaimant && Date.now() < blockProbeDeadline) {
+        const blockedRows = await tx.execute(sql`
+          SELECT EXISTS (
+            SELECT 1
+            FROM pg_stat_activity activity
+            WHERE ${holderPid} = ANY(pg_blocking_pids(activity.pid))
+          ) AS blocked
+        `) as unknown as Array<{ blocked: boolean }>;
+        blockedByFirstClaimant = blockedRows[0]?.blocked === true;
+        if (!blockedByFirstClaimant) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blockedByFirstClaimant).toBe(true);
       expect(settled).toBe(false);
     });
 

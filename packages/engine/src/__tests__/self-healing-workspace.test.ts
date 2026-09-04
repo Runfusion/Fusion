@@ -1082,6 +1082,19 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     expect(existsSync(wtB)).toBe(true); // active → skipped
   });
 
+  it("removes the emptied modern workspace task directory after all entries settle", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const taskDir = path.join(fx.rootDir, ".fusion", "worktrees", TASK_ID.toLowerCase());
+    const worktreePath = path.join(taskDir, "repo-a");
+    mkdirSync(taskDir, { recursive: true });
+    fx.git("repo-a", `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
+    const task = workspaceTask({ "repo-a": { worktreePath, branch: BRANCH } }, { column: "done" });
+
+    expect(await makeManager(createStore([task]), fx.rootDir).reconcileOrphanedWorkspaceWorktrees()).toBe(1);
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(existsSync(taskDir)).toBe(false);
+  });
+
   it("keeps a complete-lane workspace task's worktree while its executor is live", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const worktreePath = path.join(fx.repoPath("repo-a"), ".wt-complete-live");

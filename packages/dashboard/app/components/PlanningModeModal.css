@@ -248,6 +248,10 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
   overscroll-behavior: contain;
 }
 
+.planning-history-scroll .planning-session-prompt {
+  margin-bottom: var(--space-lg);
+}
+
 .planning-history-scroll .conversation-history {
   max-height: none;
   margin: 0;
@@ -2336,6 +2340,11 @@ mobile and desktop offer the same View task / Return to sessions choices.
   .planning-history-header,
   .planning-history-scroll {
     padding: var(--space-lg);
+  }
+
+  .planning-history-scroll .planning-session-prompt {
+    width: 100%;
+    max-width: 100%;
   }
 
   /*

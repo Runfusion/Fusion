@@ -98,13 +98,13 @@ describe("mobile board magnetic column snap wiring (FN-8235)", () => {
   remain are the selected and aggregate workflow-column renders, and the point of this guard is that
   BOTH share the one scroll-snap hook, which still holds.
   */
-  it("shares mobile snap and explicitly disabled mouse-pan wiring across the selected and aggregate live boards", () => {
+  it("shares mobile snap and always-enabled mouse-pan wiring across the selected and aggregate live boards", () => {
     const boardSource = readAppFile("components/Board.tsx");
 
     expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
     expect(boardSource).toContain('import { useBoardMousePan } from "../hooks/useBoardMousePan";');
     expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
-    expect(boardSource).toContain('useBoardMousePan(boardElement, viewportMode !== "mobile")');
+    expect(boardSource).toContain("useBoardMousePan(boardElement, true)");
     expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(2);
     expect(boardSource.match(/\{\.\.\.boardMousePanBindings\}/g)).toHaveLength(2);
     expect(boardSource.match(/className=\{boardClassName\}/g)).toHaveLength(2);

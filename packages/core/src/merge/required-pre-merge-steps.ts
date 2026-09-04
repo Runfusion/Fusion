@@ -1,4 +1,5 @@
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
+import { resolveFastLaneRoute, type FastLaneTask } from "../workflows/workflow-fast-lane.js";
 import type { WorkflowIrResolverStore } from "../workflows/workflow-ir-resolver.js";
 import { resolveWorkflowIrForTaskWithProvenance } from "../workflows/workflow-ir-resolver.js";
 import { resolveReviewColumns } from "../workflows/workflow-lifecycle-traits.js";
@@ -19,7 +20,16 @@ semantics so they can discover and repair resultless cards.
 export function resolveRequiredPreMergeStepIds(
   ir: WorkflowIr,
   enabledWorkflowSteps: readonly string[] | undefined,
+  task?: FastLaneTask,
 ): ReadonlySet<string> {
+  /*
+  FNXC:FastLane 2026-08-29-03:15:
+  Fast mode records skipped pre-merge group evidence, but the merge door must also understand the
+  route itself. Otherwise a stale enabledWorkflowSteps list can demand a gate that Fast deliberately
+  never dispatches. Unsupported Fast workflow shapes return an inactive route and retain standard
+  merge requirements.
+  */
+  if (task && resolveFastLaneRoute(ir, task).active) return new Set();
   return new Set(
     resolveWorkflowOptionalSteps(ir)
       .filter((step) => step.phase === "pre-merge")
@@ -60,6 +70,7 @@ export async function resolvePreMergeGateForTask(
   store: WorkflowIrResolverStore,
   taskId: string,
   enabledWorkflowSteps: readonly string[] | undefined,
+  task?: FastLaneTask,
 ): Promise<ResolvedPreMergeGate> {
   const resolverStore = store as WorkflowIrResolverStore & {
     getTaskWorkflowSelection?: (id: string) => unknown;
@@ -95,7 +106,7 @@ export async function resolvePreMergeGateForTask(
     reviewColumns: new Set(resolveReviewColumns(resolved.ir)),
     requiredPreMergeStepIds: resolution === "not-workflow-aware"
       ? new Set<string>()
-      : resolveRequiredPreMergeStepIds(resolved.ir, enabledWorkflowSteps),
+      : resolveRequiredPreMergeStepIds(resolved.ir, enabledWorkflowSteps, task),
     provenance: resolution === "read-failed" ? "default" : resolved.source,
     selectionAbsent,
     resolution,

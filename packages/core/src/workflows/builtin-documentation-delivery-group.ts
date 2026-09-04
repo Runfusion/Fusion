@@ -3,6 +3,13 @@ import type { WorkflowIrNode } from "./workflow-ir-types.js";
 export const DOCUMENTATION_DELIVERY_GROUP_ID = "documentation-delivery";
 
 /*
+FNXC:DocumentationMilestone 2026-08-29-12:19:
+The dashboard Summary projection mirrors this inner step identity as a browser-safe literal and guards
+it against workflow drift, so declare it here instead of leaving an untracked template string.
+*/
+export const DOCUMENTATION_DELIVERY_STEP_NODE_ID = "documentation-delivery-step";
+
+/*
 FNXC:DocumentationMilestone 2026-08-25-10:20:
 This milestone reports on accepted work; it does NOT write the repository and does NOT judge.
 
@@ -87,7 +94,7 @@ export function documentationDeliveryOptionalGroupNode(column: string): Workflow
       reportingOnly: true,
       template: {
         nodes: [{
-          id: "documentation-delivery-step",
+          id: DOCUMENTATION_DELIVERY_STEP_NODE_ID,
           kind: "prompt",
           config: {
             name: "Documentation",

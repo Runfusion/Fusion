@@ -93,4 +93,45 @@ describe("instance-aware Fusion auth storage", () => {
     expect(JSON.parse(readFileSync(authPath(), "utf8")).__fusionDefaultInstances).toEqual({});
     await expect(store.setDefaultInstance({ providerId: "p", instanceId: "missing" })).rejects.toThrow();
   });
+
+  it("serializes instance-login lifecycles across storage instances sharing an auth file", async () => {
+    const first = createFusionAuthStorage();
+    await first.setInstance({ providerId: "oauth", instanceId: "acct-a" }, credential("A"));
+    await first.setDefaultInstance({ providerId: "oauth", instanceId: "acct-a" });
+    const second = createFusionAuthStorage();
+    const releaseFirst = Promise.withResolvers<void>();
+    const firstEntered = Promise.withResolvers<void>();
+    let secondSnapshot: string | undefined;
+
+    const firstLogin = first.withProviderInstanceLoginLock!("oauth", async () => {
+      first.reload();
+      const before = first.get("oauth");
+      await first.set("oauth", credential("B"));
+      firstEntered.resolve();
+      await releaseFirst.promise;
+      await first.setInstance({ providerId: "oauth", instanceId: "acct-b" }, credential("B"));
+      await first.setInstance({ providerId: "oauth", instanceId: "acct-a" }, before!);
+    });
+    await firstEntered.promise;
+
+    const secondLogin = second.withProviderInstanceLoginLock!("oauth", async () => {
+      second.reload();
+      secondSnapshot = second.get("oauth")?.key;
+      const before = second.get("oauth");
+      await second.set("oauth", credential("C"));
+      await second.setInstance({ providerId: "oauth", instanceId: "acct-c" }, credential("C"));
+      await second.setInstance({ providerId: "oauth", instanceId: "acct-a" }, before!);
+    });
+
+    await Promise.resolve();
+    expect(secondSnapshot).toBeUndefined();
+    releaseFirst.resolve();
+    await Promise.all([firstLogin, secondLogin]);
+
+    expect(secondSnapshot).toBe("A");
+    const verifier = createFusionAuthStorage();
+    expect(verifier.getInstance({ providerId: "oauth", instanceId: "acct-a" })).toEqual(credential("A"));
+    expect(verifier.getInstance({ providerId: "oauth", instanceId: "acct-b" })).toEqual(credential("B"));
+    expect(verifier.getInstance({ providerId: "oauth", instanceId: "acct-c" })).toEqual(credential("C"));
+  });
 });
