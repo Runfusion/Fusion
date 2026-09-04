@@ -40,7 +40,7 @@ import {disposeArchivedWorkspaceWorktrees, disposeArchivedWorktree, prepareArchi
 import {resolveArchiveLivenessWipLanes, TaskIsLiveError} from "../tasks/task-archive-liveness.js";
 import {writePromptFileAtomic} from "./prompt-file.js";
 
-export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
+export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string, auditContext?: TaskDeleteAuditContext): Promise<ArchivedTaskEntry> {
     const settings = await store.getSettingsFast();
     const agentLogMode = settings.archiveAgentLogMode ?? "compact";
     const [prompt, agentLogFields] = await Promise.all([
@@ -103,7 +103,19 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       reviewState: task.reviewState,
       prompt,
       ...agentLogFields,
-      log: [{ timestamp: archivedAt, action: "Task archived" }],
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-04-11:50:
+      The single entry said only "Task archived" — no actor, no origin column, no caller class — so an
+      engine auto-archive sweep and an operator's manual archive produced byte-identical log lines and
+      the cold snapshot could not answer who or why. Reuses the TaskDeleteAttribution vocabulary; that
+      module's trust model applies unchanged (attribution, NOT authentication). Legacy snapshots keep
+      the plain action string, and log consumers render entries as free-form action strings, so both
+      shapes remain valid.
+      */
+      log: [{
+        timestamp: archivedAt,
+        action: `Task archived from ${task.column} by ${auditContext?.callerKind ?? "api-unattributed"} (${auditContext?.agentId ?? "system"})`,
+      }],
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       columnMovedAt: task.columnMovedAt,
@@ -475,11 +487,12 @@ async function archivedLanesForTask(store: TaskStore, taskId: string): Promise<R
   return lanes;
 }
 
-export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off" },): Promise<Task> {
+export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off"; auditContext?: TaskDeleteAuditContext },): Promise<Task> {
     const layer = store.asyncLayer!;
     const cleanup = typeof optionsOrCleanup === "boolean" ? optionsOrCleanup : optionsOrCleanup.cleanup !== false;
     const removeLineageRefs = typeof optionsOrCleanup === "object" && optionsOrCleanup.removeLineageReferences === true;
     const liveExecutionGuard = typeof optionsOrCleanup === "object" ? optionsOrCleanup.liveExecutionGuard ?? "off" : "off";
+    const auditContext = typeof optionsOrCleanup === "object" ? optionsOrCleanup.auditContext : undefined;
 
     // Read the task (forensic: include deleted for idempotency check).
     const task = await store.getTask(id);
@@ -499,7 +512,7 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     const archivedAt = new Date().toISOString();
 
     // Build the archive entry for cold storage.
-    const entry = await store.taskToArchiveEntry(task, archivedAt);
+    const entry = await store.taskToArchiveEntry(task, archivedAt, auditContext);
 
     /*
     FNXC:SelfHealing 2026-08-21-15:11:

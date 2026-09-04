@@ -1586,7 +1586,10 @@ export async function runTaskArchive(id: string, projectName?: string, options: 
         if (verdict.live) await refuseLiveArchive(verdict);
       }
       try {
-        const task = await context.store.archiveTask(id, {liveExecutionGuard: options.force ? "off" : "refuse"});
+        const task = await context.store.archiveTask(id, {
+          liveExecutionGuard: options.force ? "off" : "refuse",
+          auditContext: { agentId: "cli", runId: `cli-archive-${id}-${Date.now()}`, callerKind: "operator-cli" },
+        });
         console.log();
         console.log(`  ✓ Archived ${task.id} → ${columnLabel(task.column)}`);
         console.log();
