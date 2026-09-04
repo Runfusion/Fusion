@@ -1158,12 +1158,19 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.modifiedFiles = updates.modifiedFiles;
       }
       /* FNXC:SymbolLock 2026-07-20-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
+      let persistPromptDerivedSymbols = false;
+      const priorDeclaredSymbols = task.declaredSymbols;
       if (hasOwnDeclaredSymbols(updates)) {
         const normalized = normalizeDeclaredSymbols(Array.isArray(updates.declaredSymbols) ? updates.declaredSymbols : []);
         task.declaredSymbols = normalized.length ? normalized : undefined;
       } else if (updates.prompt !== undefined) {
-        const normalized = normalizeDeclaredSymbols(extractDeclaredSymbolsFromPrompt(updates.prompt));
-        task.declaredSymbols = normalized.length ? normalized : undefined;
+        /*
+        FNXC:PromptReadBack 2026-09-04-05:45:
+        Do not hydrate declaredSymbols from the incoming prompt until PROMPT.md reaches disk.
+        The row transaction would otherwise persist symbols from an unwritten revision when the
+        subsequent file write fails, and symbol resolution would observe the failed spec.
+        */
+        persistPromptDerivedSymbols = true;
       }
       if (updates.missionId === null) {
         task.missionId = undefined;
@@ -1239,24 +1246,40 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       if (updates.prompt !== undefined) {
         await writePromptFileAtomic(promptPath, updates.prompt);
         /*
-        FNXC:PromptReadBack 2026-09-04-05:12:
+        FNXC:PromptReadBack 2026-09-04-05:45:
         The PG tasks row has no prompt column, so the row re-read never hydrates task.prompt.
         Assign the content only after PROMPT.md reaches disk so a failed write cannot expose
         an unwritten revision through the in-memory task, watcher cache, or fallback hydration.
         The prompt-write tool's read-back check still verifies against this returned value.
         */
         task.prompt = updates.prompt;
+        if (persistPromptDerivedSymbols) {
+          const normalized = normalizeDeclaredSymbols(extractDeclaredSymbolsFromPrompt(updates.prompt));
+          task.declaredSymbols = normalized.length ? normalized : undefined;
+        }
+      }
+
+      if (persistPromptDerivedSymbols && updates.prompt !== undefined) {
+        const prior = JSON.stringify(priorDeclaredSymbols ?? []);
+        const next = JSON.stringify(task.declaredSymbols ?? []);
+        if (prior !== next) {
+          await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, undefined);
+        }
       }
 
       if (store.isBackendMode() && updates.prompt !== undefined) {
         /*
-        FNXC:SpecLock 2026-09-04-05:12:
-        Append current-plan evidence only after PROMPT.md reaches disk, while the caller's
-        planning lifecycle lock is still held. The row transaction must not receive specPlanPrompt
-        for this write: that earlier commit is what let spec-lock/drift observe an unwritten
-        revision when the file persist failed.
+        FNXC:SpecLock 2026-09-04-05:45:
+        Append current-plan evidence after PROMPT.md reaches disk. A PlanEvidenceAppendError or
+        hostile evidence query must not reject the durable prompt update: updateTaskImpl already
+        reconciles from PROMPT.md after the task lock is released. Swallowing here keeps the file
+        and row in one success boundary and lets that repair path run.
         */
-        await store.captureCurrentPlanEvidenceWhilePlanningLocked(task.id, updates.prompt, Date.now(), task);
+        try {
+          await store.captureCurrentPlanEvidenceWhilePlanningLocked(task.id, updates.prompt, Date.now(), task);
+        } catch (error) {
+          storeLog.warn(`[spec-lock] deferred current-plan evidence capture for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       /*
