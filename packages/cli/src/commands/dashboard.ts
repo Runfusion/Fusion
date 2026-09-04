@@ -1,3 +1,4 @@
+import { cliOperatorMutationContext } from "../identity/cli-operator-mutation-context.js";
 import type { AddressInfo } from "node:net";
 import { join, resolve as pathResolve } from "node:path";
 import { execFile as execFileCb, spawn, type ChildProcess } from "node:child_process";
@@ -3293,7 +3294,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             const created = await projectStore.createTask({
               title: input.title,
               description: input.description ?? input.title,
-            });
+            }, undefined, cliOperatorMutationContext());
             return {
               id: created.id,
               title: created.title,

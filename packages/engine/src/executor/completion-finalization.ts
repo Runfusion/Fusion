@@ -1,23 +1,22 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { evaluateSkipBypassTaint } from "@fusion/core";
+import { COMPLETED_BLOCKED_PAUSE_REASON } from "../self-healing.js";
+import { executorLog } from "../logger.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { isTaskWorkComplete } from "./task-predicates.js";
+import {
+  resolveReboundColumnFor,
+  resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:25:
  * parkCompletedBlockedTask + completion finalization decision peeled from TaskExecutor (U4).
  * FN-7926 completed-blocked park + FN-8141 finalize decision path.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { evaluateSkipBypassTaint } from "@fusion/core";
-import { COMPLETED_BLOCKED_PAUSE_REASON } from "../self-healing.js";
-import { executorLog } from "../logger.js";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
-import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
-import { isTaskWorkComplete } from "./task-predicates.js";
-import {
-  resolveReboundColumnFor,
-  resolveTerminalColumnsFor,
-} from "./lifecycle-columns.js";
 
 export type CompletionFinalizationDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   getTaskCompletionBlocker: (task: Task) => Promise<string | undefined>;
 };

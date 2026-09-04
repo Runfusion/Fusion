@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT, createLogger, type RunMutationContext } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-server");
 import express, { type Router } from "express";
@@ -77,7 +77,7 @@ import { ChatManager, TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "./chat.js";
 import { CliChatSessionRunner } from "./cli-chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
-import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
+import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken, createUnconfiguredAuthRefusalMiddleware } from "./auth-middleware.js";
 import { buildRemoteSessionCookie, createRemoteSessionStore, resolveRemoteSessionTtlMs } from "./remote-session.js";
 import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
@@ -781,11 +781,23 @@ below, which passed `"todo"`. It then made the type system ENFORCE the bug: a re
 is a `string`, so the correct value could not be passed without this edit. A type that only admits the
 legacy id is a lint against fixing it.
 */
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — STRUCTURAL SEAM, closed):
+This is a structural re-declaration of the store's mutating methods, not `Pick<TaskStore, ...>`, so
+U18's canonical/deprecated overload pair on the real store never reached it — and the real store is
+handed in through `as unknown as`, so nothing would have complained. Left as it was, this listener
+would have kept making unattributed `updateTask`/`moveTask`/`logEntry` writes after every call site
+in the package was converted, and the census could not see it: a sweep reporting done over a hole.
+
+Each method now restates the CANONICAL arity (required trailing `RunMutationContext`), which is also
+what keeps a real `TaskStore` structurally assignable here. Do not relax one of these back to the old
+arity to quiet a caller — fix the caller.
+*/
 interface CliRelaunchTaskStoreLike {
   getTask(taskId: string): Promise<Task | null>;
-  updateTask(taskId: string, patch: Record<string, unknown>): Promise<unknown>;
-  moveTask(taskId: string, column: string, options?: Record<string, unknown>): Promise<unknown>;
-  logEntry(taskId: string, message: string, details?: string): Promise<unknown>;
+  updateTask(taskId: string, patch: Record<string, unknown>, runContext: RunMutationContext): Promise<unknown>;
+  moveTask(taskId: string, column: string, options: Record<string, unknown> | undefined, runContext: RunMutationContext): Promise<unknown>;
+  logEntry(taskId: string, message: string, details: string | undefined, runContext: RunMutationContext): Promise<unknown>;
 }
 
 export function wireCliRelaunchListener(options: {
@@ -819,16 +831,25 @@ export function wireCliRelaunchListener(options: {
         return;
       }
 
+      /*
+      FNXC:Identity 2026-08-09-03:04 (U18): this listener fires off a CLI session death, not off a
+      request or a session — there is no acting actor to derive from, and the only ids in scope name
+      the task being relaunched and the session that died. Attributing to either would produce a row
+      claiming a task relaunched itself. U13 owns the system actor for engine-side recovery lanes.
+      */
+      const relaunchContext = UNATTRIBUTED_MUTATION_CONTEXT;
       await taskStore.logEntry(
         info.taskId,
         `CLI session relaunch requested from ${info.sessionId} — clearing resume linkage and re-enqueueing for a fresh executor run`,
+        undefined,
+        relaunchContext,
       );
-      await taskStore.updateTask(info.taskId, { paused: false, status: null, error: null });
+      await taskStore.updateTask(info.taskId, { paused: false, status: null, error: null }, relaunchContext);
       await taskStore.moveTask(info.taskId, await resolveReboundTargetForTask(taskStore as never, info.taskId), {
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, relaunchContext);
     })().catch((err: unknown) => {
       options.runtimeLogger?.warn?.("CLI session relaunch listener failed", {
         sessionId: info.sessionId,
@@ -1096,6 +1117,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // that then captures ?token= from the URL and injects a Bearer header on every
   // /api/* call. WebSocket upgrades are gated separately in setupTerminalWebSocket /
   // setupBadgeWebSocket.
+  /*
+  FNXC:DaemonAuth 2026-08-09-03:04:
+  Three-way mount, not two. Previously a missing token silently skipped the middleware, which made "is this API protected?" a property of the launch command rather than a deliberate setting — the desktop host tripped exactly that and served the shell-capable terminal API to the LAN.
+  Now: explicit `--no-auth` serves open (and says so), a token mounts the real gate, and neither one refuses `/api/*`. Absence of a token never implies open access.
+  */
   const daemonToken = options?.noAuth
     ? undefined
     : options?.daemon?.token ?? process.env.FUSION_DAEMON_TOKEN;
@@ -1106,8 +1132,25 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   direction, whereas persisting it would write a credential to disk for no benefit.
   */
   const remoteSessions = createRemoteSessionStore();
-  if (daemonToken) {
+  /*
+  FNXC:Identity 2026-08-23-06:40:
+  Three branches, not two. main's version assumed a token is always present; this branch added the
+  explicit `--no-auth` opt-in and, crucially, the FAIL-CLOSED else: with no token and no opt-in the
+  server REFUSES to serve /api/* rather than serving it unauthenticated. Taking main's shape would
+  have silently deleted that refusal, so the remote-session validator is folded into the token branch
+  instead.
+  */
+  if (options?.noAuth) {
+    console.warn(
+      "[fusion] --no-auth: serving /api/* WITHOUT authentication. Identity and transport auth are both disabled.",
+    );
+  } else if (daemonToken) {
     app.use(createAuthMiddleware(daemonToken, { validateRemoteSession: (id) => remoteSessions.validate(id) }));
+  } else {
+    console.error(
+      "[fusion] No daemon token configured and --no-auth not set: refusing to serve /api/*. Provide a token or pass --no-auth.",
+    );
+    app.use(createUnconfiguredAuthRefusalMiddleware());
   }
 
   // Initialize terminal service with project root
@@ -2686,11 +2729,13 @@ export function setupTerminalWebSocket(
       return;
     }
 
-    // When daemon auth is active, refuse WebSocket upgrades that don't
-    // carry a valid bearer token. The token can come from the Authorization
-    // header (rare for browser WebSocket clients) or the `fn_token` query
-    // param (what our own client uses).
-    if (wsDaemonToken && !options?.noAuth && !authenticateUpgradeRequest(wsDaemonToken, req)) {
+    /*
+    FNXC:DaemonAuth 2026-08-09-03:04:
+    Unless `--no-auth` is explicit, an upgrade requires BOTH a configured token and a valid credential. The former guard read `wsDaemonToken && !noAuth && !authed`, so a server with no token configured accepted every upgrade — and this is the shell-capable terminal socket, the highest-value target on the surface.
+    */
+    // The token can come from the Authorization header (rare for browser
+    // WebSocket clients) or the `fn_token` query param (what our own client uses).
+    if (!options?.noAuth && (!wsDaemonToken || !authenticateUpgradeRequest(wsDaemonToken, req))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -3022,7 +3067,9 @@ export function setupBadgeWebSocket(
       return;
     }
 
-    if (badgeWsDaemonToken && !options?.noAuth && !authenticateUpgradeRequest(badgeWsDaemonToken, req)) {
+    // FNXC:DaemonAuth 2026-08-09-03:04: Same inversion as the terminal socket above — a
+    // missing token must refuse the upgrade, not accept it.
+    if (!options?.noAuth && (!badgeWsDaemonToken || !authenticateUpgradeRequest(badgeWsDaemonToken, req))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;

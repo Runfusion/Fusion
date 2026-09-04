@@ -13968,7 +13968,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                router did — a literal here describes a renamed-board recovery as the wrong kind. */
             freshColumns.review.has(fresh.column)
               ? "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression"
-              : "Auto-recovered: pause-abort park cleared — requeued for normal scheduling", UNATTRIBUTED_MUTATION_CONTEXT);
+              : "Auto-recovered: pause-abort park cleared — requeued for normal scheduling",
+            undefined,
+            UNATTRIBUTED_MUTATION_CONTEXT);
           /*
           FNXC:RunAudit 2026-08-20-04:15:
           FN-9175 routes this post-mutation telemetry through the bounded shared seam. A failed
@@ -15840,7 +15842,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
           if (resolution === "delete") {
-            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine" } }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine", actor: UNATTRIBUTED_MUTATION_CONTEXT.actor } }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else if (resolution === "prompt") {
             await flagTriageDuplicate(this.store, task.id, canonicalTask.id);
             await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null }, UNATTRIBUTED_MUTATION_CONTEXT);

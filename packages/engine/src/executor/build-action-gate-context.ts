@@ -1,3 +1,15 @@
+import type { Agent, AgentStore, MessageStore, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  AWAITING_APPROVAL_PAUSE_REASON,
+  ApprovalRequestStore,
+  isEphemeralAgent,
+  resolveEffectiveAgentPermissionPolicy,
+  resolveWorkflowIrForTask } from "@fusion/core";
+import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
+import { emitApprovalMail } from "../agents/approval-mail.js";
+import { isCurrentReviewerNodeOverride } from "../agents/workflow-agent-router.js";
+import { executorLog } from "../logger.js";
+import type { ActiveWorkflowAuthority } from "./workflow-principal-before-node.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:55:
  * buildActionGateContext peeled from TaskExecutor (U4).
@@ -30,24 +42,10 @@
  * FNXC:ApprovalRedemption 2026-07-26-14:35:
  * ownership guard — an agent must not be able to burn another agent's approval by id.
  */
-import type { Agent, AgentStore, MessageStore, TaskStore } from "@fusion/core";
-import {
-  AWAITING_APPROVAL_PAUSE_REASON,
-  ApprovalRequestStore,
-  isEphemeralAgent,
-  resolveEffectiveAgentPermissionPolicy,
-  resolveWorkflowIrForTask,
-} from "@fusion/core";
-import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
-import { emitApprovalMail } from "../agents/approval-mail.js";
-import { isCurrentReviewerNodeOverride } from "../agents/workflow-agent-router.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import type { ActiveWorkflowAuthority } from "./workflow-principal-before-node.js";
 
 export type BuildActionGateContextDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   approvalSuspended: Set<string>;
   awaitAbortInFlightTaskWork: (taskId: string, reason: string) => Promise<void>;

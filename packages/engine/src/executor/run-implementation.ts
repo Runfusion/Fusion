@@ -65,6 +65,7 @@ import {
   isLegacyWorkspaceWorktreeLayout,
   resolveWorkspaceTaskWorktreeDir,
   resolveSandboxBackend as resolveConfiguredSandboxBackend,
+  UNATTRIBUTED_MUTATION_CONTEXT,
 } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -201,7 +202,7 @@ import { compactSessionContext, describeModel, formatModelMarkerDetails, promptW
 import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolution.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
@@ -256,7 +257,7 @@ export type RunImplementationDeps = {
   outerConcurrencyClaims: Set<string>;
   BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number;
   MAX_AUTO_RECOVERY_ATTEMPTS: number;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   addActiveWorktree: AnyFn;
   appendReviewRemediationSteps: AnyFn;
   attemptExecutorVerificationFix: AnyFn;
@@ -528,10 +529,12 @@ export async function runImplementation(
     // Construct run context for mutation correlation
     // Use a synthetic correlation ID: task ID + timestamp + random suffix
     const syntheticRunId = generateSyntheticRunId("exec", task.id);
-    deps.currentRunContexts.set(task.id, {
+    deps.currentRunContexts.set(task.id, toRunMutationContext({
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
-    });
+      taskId: task.id,
+      phase: "execute",
+    }));
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
     try { await deps.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* monitoring never blocks execution */ }
@@ -776,7 +779,7 @@ export async function runImplementation(
           logger: executorLog,
           secretsStore: deps.options.secretsStore,
           audit,
-          runContext: deps.getRunContextFor(task.id),
+          runContext: runContextForTotal((id) => deps.getRunContextFor(id), task.id, task.assignedAgentId),
           runConfiguredCommand: (command, cwd, timeoutMs, env) =>
             runConfiguredCommand(
               command,
@@ -829,7 +832,7 @@ export async function runImplementation(
             settings,
             logger: executorLog,
             audit,
-            runContext: deps.getRunContextFor(task.id),
+            runContext: runContextForTotal((id) => deps.getRunContextFor(id), task.id, task.assignedAgentId),
             runInitCommand: true,
             createWorktree: deps.createWorktree,
             // FNXC:WorktreeAcquisition 2026-08-09-03:30: This injected creator is native even when project settings
@@ -2162,10 +2165,7 @@ export async function runImplementation(
         }),
         ...createIdeationTools(deps.store),
         ...createGoalRetrievalTools(deps.store, {
-          runContext: {
-            runId: engineRunContext.runId,
-            agentId: engineRunContext.agentId,
-          },
+          runContext: toRunMutationContext(engineRunContext),
           taskId: task.id,
         }),
         createWebFetchTool(),
@@ -2428,7 +2428,8 @@ export async function runImplementation(
               store: deps.store,
               taskId: task.id,
               taskTitle: detail.title,
-            }),
+              runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
           });
           session = createdSession.session;
           sessionFile = createdSession.sessionFile;

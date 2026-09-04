@@ -1,3 +1,9 @@
+import type { MergeResult, TaskStore, RunMutationContext } from "@fusion/core";
+import { hasNonTerminalSteps } from "@fusion/core";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
+import { executorLog } from "../logger.js";
+import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
+import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:30:
  * finalizeMergeConfirmedWorkflowGraphTask peeled from TaskExecutor (U4).
@@ -8,17 +14,11 @@
  * FNXC:WorkflowMerge 2026-06-29-23:12:
  * FN-7261 exposed stale no-op proof as a re-execution blocker: a reopened task with incomplete implementation steps and only no-op merge proof must fall through to merge-state cleanup/reverification, not consume execute() by repeatedly trying blocked finalization.
  */
-import type { MergeResult, TaskStore } from "@fusion/core";
-import { hasNonTerminalSteps } from "@fusion/core";
-import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
-import { executorLog } from "../logger.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
-import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 
 export type MergeConfirmedFinalizeDeps = {
   rootDir: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 

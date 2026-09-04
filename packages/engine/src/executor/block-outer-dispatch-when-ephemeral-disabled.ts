@@ -1,3 +1,8 @@
+import type { Task, TaskStore, AgentStore, RunMutationContext } from "@fusion/core";
+import { isEphemeralAgent } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { resolveReboundColumnFor } from "./lifecycle-columns.js";
+import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:50:
  * blockOuterDispatchWhenEphemeralDisabled peeled from TaskExecutor (U4).
@@ -7,17 +12,11 @@
  *
  * This guard is the executor's last line of defense, mirroring the scheduler cutover gate and the spawn refusal. It runs once at the top of the outer dispatch — before all three workflow paths — so a single check covers every workflow dispatch entry point. A task explicitly assigned to a permanent (non-ephemeral) agent is exactly how ephemeral-off mode is meant to run, so those are allowed through; everything else is re-queued for the scheduler to auto-assign a permanent agent or hold.
  */
-import type { Task, TaskStore, AgentStore } from "@fusion/core";
-import { isEphemeralAgent } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { executorLog } from "../logger.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
-import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 
 export type BlockOuterDispatchWhenEphemeralDisabledDeps = {
   store: TaskStore;
   agentStore?: AgentStore | null;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 

@@ -1,3 +1,11 @@
+import type { Settings, Task, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { mutationContextForAgent, type RunCommandResult, type WorkspaceConfig } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { generateSyntheticRunId, createRunAuditor, toRunMutationContext, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
+import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
+import { captureBaseCommitSha } from "./worktree-git-refs.js";
+import { createConfiguredCommandAbortError } from "./task-predicates.js";
+import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:10:
  * ensureGraphCustomNodeWorktree peeled from TaskExecutor (U4).
@@ -8,15 +16,6 @@
  * FNXC:EngineDiagnostics 2026-08-03-05:54:
  * Per-node worktree acquisition is expected graph plumbing once the task has a worktree.
  */
-import type { Settings, Task, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
-import { mutationContextForAgent, type RunCommandResult, type WorkspaceConfig } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import { generateSyntheticRunId, createRunAuditor, toRunMutationContext, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
-import { captureBaseCommitSha } from "./worktree-git-refs.js";
-import type { WorktreePool } from "../worktree/worktree-pool.js";
-import { createConfiguredCommandAbortError } from "./task-predicates.js";
-import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 
 export type EnsureGraphCustomNodeWorktreeDeps = {
   store: TaskStore;
@@ -24,9 +23,8 @@ export type EnsureGraphCustomNodeWorktreeDeps = {
   workspaceConfigOwner: object;
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
-  pool?: WorktreePool;
   secretsStore?: Parameters<typeof acquireTaskWorktree>[0]["secretsStore"];
   createWorktree: (
     branch: string,
@@ -73,7 +71,7 @@ function graphNodeWorktreeRunContext(
   principalAgentId?: string | null,
 ): RunMutationContext {
   const live = deps.getRunContextFor(task.id);
-  if (live) return toRunMutationContext(live);
+  if (live) return "actor" in live && live.actor ? live : toRunMutationContext(live as EngineRunContext);
   const explicit = principalAgentId?.trim();
   const assigned = task.assignedAgentId?.trim();
   return mutationContextForAgent(explicit || assigned || "executor", syntheticRunId);

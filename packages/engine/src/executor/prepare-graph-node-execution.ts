@@ -1,3 +1,8 @@
+import { existsSync } from "node:fs";
+import type { Settings, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig, RunMutationContext } from "@fusion/core";
+import type { WorkflowNodePreparationRequirement } from "../workflows/workflow-graph-executor.js";
+import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
+import { nodeConfigPrincipalAgentId } from "./ensure-graph-custom-node-worktree.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-11:45:
  * prepareGraphNodeExecution peeled from TaskExecutor (U4).
@@ -14,12 +19,6 @@
  * includes read-only Code Review because it inspects the task diff; Plan, Plan Review, and replan
  * nodes return before acquisition so planning remains rooted on dependency-installed main.
  */
-import { existsSync } from "node:fs";
-import type { Settings, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig } from "@fusion/core";
-import type { WorkflowNodePreparationRequirement } from "../workflows/workflow-graph-executor.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
-import { nodeConfigPrincipalAgentId } from "./ensure-graph-custom-node-worktree.js";
 
 export type PrepareGraphNodeExecutionDeps = {
   store: TaskStore;
@@ -27,7 +26,7 @@ export type PrepareGraphNodeExecutionDeps = {
   workspaceConfigOwner: object;
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   ensureGraphCustomNodeWorktree: (
     task: TaskDetail,

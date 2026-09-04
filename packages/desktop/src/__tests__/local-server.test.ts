@@ -145,6 +145,8 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@fusion/core", () => ({
+  /* FNXC:DesktopHostAuth 2026-08-09-03:04: api-token.ts reuses the daemon token prefix from @fusion/core; this whole-module mock must declare it or the desktop bearer token would be built from `undefined`. */
+  DAEMON_TOKEN_PREFIX: "fn_",
   TaskStore: mocks.TaskStore,
   createTaskStoreForBackend: mocks.createTaskStoreForBackend,
   /* FNXC:MigrationHoldingPage 2026-07-17-13:50: local-server.ts formats migration progress for the launch gate. */

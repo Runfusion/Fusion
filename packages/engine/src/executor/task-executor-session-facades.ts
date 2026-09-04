@@ -13,6 +13,8 @@ import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.j
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
 import { runContextForTotal } from "./run-context-for.js";
+import { toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
+import type { RunMutationContext } from "@fusion/core";
 import { ChatSessionMemoryCapture, createStashChatMemoryCaptureSink, type ChatEventEmitter, type RuntimeProjectIdentity } from "./memory-capture.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
@@ -36,7 +38,18 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected registerSubagentSession(taskId: string, session: Parameters<typeof impl.registerSubagentSessionImpl>[2]): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
-  protected getRunContextFor(taskId: string) { return this.currentRunContexts.get(taskId); }
+  protected getRunContextFor(taskId: string): RunMutationContext | undefined {
+    /*
+    FNXC:Identity 2026-09-04-06:12:
+    Store mutations require `actor`. The map still accepts a pre-U18 EngineRunContext
+    (optional actor); convert at this partial getter so peeled call sites can pass the
+    value through without dropping attribution or widening arity.
+    */
+    const live = this.currentRunContexts.get(taskId);
+    if (!live) return undefined;
+    if (typeof live === "object" && "actor" in live && live.actor) return live as RunMutationContext;
+    return toRunMutationContext(live as EngineRunContext);
+  }
   /*
   FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage C — the executor's run carrier):
   `getRunContextFor` is PARTIAL and must stay that way: ~20 call sites use `?.runId` / `?.agentId`

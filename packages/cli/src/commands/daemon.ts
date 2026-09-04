@@ -28,6 +28,7 @@ import {
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
+import { setIdentityEnabled } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
 import {
   ProjectEngineManager,
@@ -501,6 +502,39 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       ? candidate.getGlobalSettingsStore()
       : null;
   };
+
+  /*
+  FNXC:Identity 2026-08-14-05:32 (review finding — the master switch was inert):
+
+  `identityEnabled` persisted fine and `setIdentityEnabled` existed, but NOTHING copied one into the
+  other, so an operator who turned identity on got no enforcement: `authorize()` and `can()` kept
+  taking the identity-disabled allow branch and every gated mutation stayed permitted. The failure is
+  silent in the dangerous direction — the UI reads "on" while the process is off.
+
+  Synced here because the daemon is the long-lived host that owns the shared store, and re-synced on
+  `settings:updated` so toggling the switch takes effect without a restart. The flag lives on
+  `globalThis` (see identity-enabled.ts) precisely so the value crosses core's separate bundle
+  inlinings within this process.
+
+  Scope note: this wires the DAEMON. A short-lived CLI invocation in its own process still starts at
+  the `false` default; giving those their own sync is U11's CLI-credential work, not this fix.
+  */
+  const syncIdentityEnabled = () => {
+    const globalSettingsStore = getGlobalSettingsStore();
+    if (!globalSettingsStore) return;
+    void globalSettingsStore
+      .getSettings()
+      .then((globalSettings) => {
+        setIdentityEnabled((globalSettings as { identityEnabled?: boolean })?.identityEnabled === true);
+      })
+      .catch((err) => {
+        // Fail CLOSED-as-shipped: leave the flag at its current value rather than guessing `true`.
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] Failed to load identityEnabled setting: ${message}`);
+      });
+  };
+  syncIdentityEnabled();
+  store.on("settings:updated", syncIdentityEnabled);
 
   if (peerExchangeService) {
     const globalSettingsStore = getGlobalSettingsStore();

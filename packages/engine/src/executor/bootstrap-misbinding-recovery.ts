@@ -1,23 +1,22 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  BranchCrossContaminationError,
+  classifyBootstrapMisbinding,
+  reanchorBranchToBase } from "../execution/branch-conflicts.js";
+import { classifyTaskWorktree } from "../worktree/worktree-pool.js";
+import { formatError } from "../logger.js";
+import type {  RunAuditor } from "../util/run-audit.js";
+import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-20:15:
  * tryBootstrapMisbindingRecovery peeled from TaskExecutor (U4).
  * Re-anchor branches that were bootstrapped onto wrong base with zero own commits.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import {
-  BranchCrossContaminationError,
-  classifyBootstrapMisbinding,
-  reanchorBranchToBase,
-} from "../execution/branch-conflicts.js";
-import { classifyTaskWorktree } from "../worktree/worktree-pool.js";
-import { formatError } from "../logger.js";
-import type { EngineRunContext, RunAuditor } from "../util/run-audit.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 
 export type BootstrapMisbindingRecoveryDeps = {
   rootDir: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
 };

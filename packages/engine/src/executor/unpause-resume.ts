@@ -1,3 +1,6 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { isTaskWorkComplete } from "./task-predicates.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-21:55:
  * dispatchUnpauseResume peeled from TaskExecutor (U4).
@@ -11,14 +14,10 @@
  * FNXC:ExecutorResume 2026-07-21-23:06:
  * recoverCompletedTask refuses when resumingUnpaused still holds the id; transfer ownership before recovery.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { isTaskWorkComplete } from "./task-predicates.js";
 
 export type UnpauseResumeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   executing: Set<string>;
   resumingUnpaused: Set<string>;

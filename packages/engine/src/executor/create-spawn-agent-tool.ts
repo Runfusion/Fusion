@@ -1,3 +1,24 @@
+import { Type, type Static } from "@earendil-works/pi-ai";
+import type {
+  AgentCapability,
+  AgentState,
+  AgentStore,
+  Settings,
+  TaskStore, RunMutationContext } from "@fusion/core";
+import { resolveEffectiveConcurrency, resolveExecutorFallbackModel, resolveProjectColumnsForRoles } from "@fusion/core";
+import type { ToolDefinition, AgentSession } from "@earendil-works/pi-coding-agent";
+import {
+  createResolvedAgentSession,
+  extractRuntimeHint,
+  resolveExecutorSessionModel,
+  resolveExecutorFallbackThinkingLevel } from "../agents/agent-session-helpers.js";
+import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
+import { computeTopLevelConcurrencyClaimedFromStore } from "../concurrency/concurrency.js";
+import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
+import { resolveTaskWorktreePath } from "../worktree/worktree-paths.js";
+import { createRunAuditor } from "../util/run-audit.js";
+import { executorLog } from "../logger.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:35:
  * createSpawnAgentTool peeled from TaskExecutor (U4).
@@ -14,29 +35,6 @@
  * FNXC:WorkflowResolvedColumns 2026-08-01-03:05:
  * Terminal worktree holders are role-resolved, not done/archived literals.
  */
-import { Type, type Static } from "@earendil-works/pi-ai";
-import type {
-  AgentCapability,
-  AgentState,
-  AgentStore,
-  Settings,
-  TaskStore,
-} from "@fusion/core";
-import { resolveEffectiveConcurrency, resolveExecutorFallbackModel, resolveProjectColumnsForRoles } from "@fusion/core";
-import type { ToolDefinition, AgentSession } from "@earendil-works/pi-coding-agent";
-import {
-  createResolvedAgentSession,
-  extractRuntimeHint,
-  resolveExecutorSessionModel,
-  resolveExecutorFallbackThinkingLevel,
-} from "../agents/agent-session-helpers.js";
-import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
-import { computeTopLevelConcurrencyClaimedFromStore } from "../concurrency/concurrency.js";
-import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
-import { resolveTaskWorktreePath } from "../worktree/worktree-paths.js";
-import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
-import { executorLog } from "../logger.js";
-import type { PluginRunner } from "../plugins/plugin-runner.js";
 
 export const spawnAgentParams = Type.Object({
   name: Type.String({ description: "Name for the child agent" }),
@@ -83,7 +81,7 @@ export type CreateSpawnAgentToolDeps = {
     startPoint?: string,
   ) => Promise<{ path: string; branch: string }>;
   resolveInstructionsForRole: (role: string, settings: Settings) => Promise<string>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP server map shape is owned by session helpers
   resolveMcpServers: (agentId: string) => Promise<any>;

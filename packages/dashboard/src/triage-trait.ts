@@ -1,3 +1,24 @@
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+Reached from the triage route and from the task-created hook, so its actor is whichever surface invoked
+it — resolvable only once that surface carries one.
+
+
+The actor for these writes is the authenticated human on the other end of the HTTP request. That actor
+does not exist yet: U9 is the unit that resolves it from the session and threads it through the route
+layer. Until then each write says so explicitly with the unattributed marker, which the U18
+census counts and ratchets DOWN.
+
+Two things this must NOT become. It is not `BOOTSTRAP_ACTOR_CONTEXT`: that means "written while
+identity was off" and is real attribution, so using it here would make an unwired route
+indistinguishable from a genuine pre-enablement write and leave U9 with no work list. And it is not a
+place to stop at one marker per file — the marker sits at the call site because U9's work is per
+handler, and one alias would hide every new unattributed route added between now and then.
+
+U9: replace these with the request's resolved actor. Nothing else about the call sites changes.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type {
   Task,
   TaskCreateInput,
@@ -261,7 +282,7 @@ async function stampTriaged(
       triageLabels: classification.labels,
       ...extra,
     },
-  });
+  }, UNATTRIBUTED_MUTATION_CONTEXT);
 }
 
 /**
@@ -311,7 +332,7 @@ export async function runTriageOnEnter(task: Task, deps: TriageDeps): Promise<Tr
       if (classification.dependencyBump) {
         // Dependency bumps are mechanical → route straight to review.
         await stampTriaged(store, task, classification, { triagePrRoute: "review" });
-        await store.moveTask(task.id, TRIAGE_REVIEW_COLUMN);
+        await store.moveTask(task.id, TRIAGE_REVIEW_COLUMN, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         return { kind: "pr-review", taskId: task.id, routedColumn: TRIAGE_REVIEW_COLUMN };
       }
       // Feature/other inbound PR → open a follow-up review task linked to the PR
@@ -319,8 +340,9 @@ export async function runTriageOnEnter(task: Task, deps: TriageDeps): Promise<Tr
       await stampTriaged(store, task, classification, { triagePrRoute: "follow-up" });
       const followUp = await store.createTask(
         buildFollowUpTaskInput(task, classification, subject.prEntityId),
+        undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      await store.moveTask(task.id, TRIAGE_REVIEW_COLUMN);
+      await store.moveTask(task.id, TRIAGE_REVIEW_COLUMN, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       return { kind: "pr-follow-up", followUpTaskId: followUp.id, routedColumn: TRIAGE_REVIEW_COLUMN };
     } catch (err) {
       return parkInTriage(store, task, err, "pr-route");
@@ -344,7 +366,7 @@ export async function runTriageOnEnter(task: Task, deps: TriageDeps): Promise<Tr
   const routeColumn = TRIAGE_DEFAULT_ROUTE_COLUMN;
   try {
     await stampTriaged(store, task, classification, { triageClassified: true });
-    await store.moveTask(task.id, routeColumn);
+    await store.moveTask(task.id, routeColumn, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   } catch (err) {
     return parkInTriage(store, task, err, "passthrough");
   }
@@ -397,7 +419,7 @@ async function parkInTriage(
         triageErrorPhase: phase,
         triageErrorAt: new Date().toISOString(),
       },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
   } catch (writeErr) {
     diagnostics.errorFromException("Failed to record triage park marker", writeErr, {
       taskId: task.id,

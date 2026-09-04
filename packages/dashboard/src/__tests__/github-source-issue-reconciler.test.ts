@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { GitHubTrackingReconciler } from "../github-tracking-reconciler.js";
@@ -87,7 +88,7 @@ describe("GitHubTrackingReconciler.reconcileSourceIssues", () => {
     const store = createStore([{ id: "FN-9", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 9 } }]);
     const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
     expect(result.errors).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Failed to reconcile GitHub source issue", "boom");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Failed to reconcile GitHub source issue", "boom", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("counts errors and logs on setIssueState failure", async () => {
@@ -95,7 +96,7 @@ describe("GitHubTrackingReconciler.reconcileSourceIssues", () => {
     const store = createStore([{ id: "FN-10", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 10 } }]);
     const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
     expect(result.errors).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-10", "Failed to reconcile GitHub source issue", "write failed");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-10", "Failed to reconcile GitHub source issue", "write failed", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips and logs when auth resolution fails", async () => {
@@ -103,7 +104,7 @@ describe("GitHubTrackingReconciler.reconcileSourceIssues", () => {
     const store = createStore([{ id: "FN-11", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 11 } }]);
     const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
     expect(result.skipped).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-11", "Skipped GitHub source issue reconciliation", "no auth");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-11", "Skipped GitHub source issue reconciliation", "no auth", UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockSetIssueState).not.toHaveBeenCalled();
   });
 });
@@ -125,7 +126,7 @@ describe("GitHubTrackingReconciler.backfillSourceIssueClosedAt", () => {
 
     expect(result).toEqual({ scanned: 1, filled: 1, skipped: 0, errors: 0, hasMore: false });
     expect(mockGetIssue).toHaveBeenCalledWith("owner", "repo", 4);
-    expect((store.updateTask as any)).toHaveBeenCalledWith("FN-1", { sourceIssue: { ...sourceIssue, closedAt } });
+    expect((store.updateTask as any)).toHaveBeenCalledWith("FN-1", { sourceIssue: { ...sourceIssue, closedAt } }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips open issues without writing", async () => {
@@ -179,7 +180,7 @@ describe("GitHubTrackingReconciler.backfillSourceIssueClosedAt", () => {
     const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
 
     expect(result).toEqual({ scanned: 1, filled: 0, skipped: 0, errors: 1, hasMore: false });
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-8", "Failed to backfill GitHub source issue closed-at", "boom");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-8", "Failed to backfill GitHub source issue closed-at", "boom", UNATTRIBUTED_CONTEXT_MATCHER);
     expect((store.updateTask as any)).not.toHaveBeenCalled();
   });
 
@@ -190,7 +191,7 @@ describe("GitHubTrackingReconciler.backfillSourceIssueClosedAt", () => {
     const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
 
     expect(result).toEqual({ scanned: 1, filled: 0, skipped: 1, errors: 0, hasMore: false });
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Skipped GitHub source issue closed-at backfill", "no auth");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Skipped GitHub source issue closed-at backfill", "no auth", UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockGetIssue).not.toHaveBeenCalled();
   });
 
@@ -208,6 +209,6 @@ describe("GitHubTrackingReconciler.backfillSourceIssueClosedAt", () => {
     expect(result).toEqual({ scanned: 1, filled: 1, skipped: 0, errors: 0, hasMore: true });
     expect(mockGetIssue).toHaveBeenCalledTimes(1);
     expect(mockGetIssue).toHaveBeenCalledWith("owner", "repo", 11);
-    expect((store.updateTask as any)).toHaveBeenCalledWith("FN-11", { sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 11, closedAt } });
+    expect((store.updateTask as any)).toHaveBeenCalledWith("FN-11", { sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 11, closedAt } }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
