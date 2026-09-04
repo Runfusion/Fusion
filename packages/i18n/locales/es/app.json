@@ -7653,7 +7653,14 @@
     "snippetsAdd": "Añadir fragmento",
     "snippetsEmpty": "Aún no hay fragmentos guardados.",
     "snippetsEdit": "Editar /{{name}}",
-    "snippetsDelete": "Eliminar /{{name}}"
+    "snippetsDelete": "Eliminar /{{name}}",
+    "tabSkills": "Competencias",
+    "tabSnippets": "Fragmentos",
+    "tabsLabel": "Secciones de competencias y fragmentos",
+    "skillsDescription": "Explora, activa e instala las competencias disponibles para este proyecto.",
+    "snippetsEmptyHint": "Crea uno aquí y escribe /nombre en cualquier chat para insertarlo.",
+    "refreshSkillsLabel": "Actualizar competencias",
+    "refreshSnippetsLabel": "Actualizar fragmentos"
   },
   "specEditor": {
     "edit": "Editar",

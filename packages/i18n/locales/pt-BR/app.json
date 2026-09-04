@@ -7663,7 +7663,14 @@
     "snippetsAdd": "Adicionar snippet",
     "snippetsEmpty": "Nenhum snippet salvo.",
     "snippetsEdit": "Editar /{{name}}",
-    "snippetsDelete": "Excluir /{{name}}"
+    "snippetsDelete": "Excluir /{{name}}",
+    "tabSkills": "Habilidades",
+    "tabSnippets": "Snippets",
+    "tabsLabel": "Seções de habilidades e snippets",
+    "skillsDescription": "Explore, ative e instale as habilidades disponíveis para este projeto.",
+    "snippetsEmptyHint": "Crie um aqui e digite /nome em qualquer chat para inseri-lo.",
+    "refreshSkillsLabel": "Atualizar habilidades",
+    "refreshSnippetsLabel": "Atualizar snippets"
   },
   "specEditor": {
     "edit": "Editar",

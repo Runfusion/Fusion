@@ -7653,7 +7653,14 @@
     "snippetsAdd": "Ajouter un extrait",
     "snippetsEmpty": "Aucun extrait enregistré.",
     "snippetsEdit": "Modifier /{{name}}",
-    "snippetsDelete": "Supprimer /{{name}}"
+    "snippetsDelete": "Supprimer /{{name}}",
+    "tabSkills": "Compétences",
+    "tabSnippets": "Extraits",
+    "tabsLabel": "Sections des compétences et des extraits",
+    "skillsDescription": "Parcourez, activez et installez les compétences disponibles pour ce projet.",
+    "snippetsEmptyHint": "Créez-en un ici, puis saisissez /nom dans un chat pour l’insérer.",
+    "refreshSkillsLabel": "Actualiser les compétences",
+    "refreshSnippetsLabel": "Actualiser les extraits"
   },
   "specEditor": {
     "edit": "Modifier",
