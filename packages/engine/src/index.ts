@@ -568,6 +568,19 @@ export {
   type ExternalGitCheckoutInspection,
 } from "./execution/external-execution-checkout.js";
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, wrapToolsWithActionGate, type AgentOptions, type AgentResult } from "./pi.js";
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+RUFU-182: the reason-preserving compaction outcome crosses the package boundary — the guard ladder
+and dashboard tests consume the union, its classifier, and the retry-legality predicate (exported
+precisely so no caller can hand-roll an illegal second `session.compact()` attempt).
+*/
+export {
+  compactSessionContext,
+  classifyCompactionFailure,
+  isRetryAfterCompactionFailureLegal,
+  type CompactionOutcome,
+  type PiCompactionReason,
+} from "./pi.js";
 export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp/mcp-resolution.js";
 export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp/mcp-discovery-service.js";
 export { runtimeSupportsMcp, logMcpForwardingSkipped } from "./mcp/mcp-runtime-support.js";
@@ -1004,10 +1017,14 @@ effective chat threshold here; the executor TokenCapDetector above keeps its
 undefined = disabled semantics.
 */
 export {
+  buildAggressiveCompactionDirective,
   ChatContextOverflowError,
   computeCompactionThreshold,
   ensureContextWithinCompactionThreshold,
   estimateLoadedContextTokens,
+  type ChatContextOverflowReason,
+  type CompactionAuditContext,
+  type CompactionEscalationTier,
   type CompactionGateOptions,
   type CompactionGateResult,
   type CompactionGateSession,
