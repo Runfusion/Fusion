@@ -187,6 +187,7 @@ import {
   tokenUsageWithModelSnapshot as tokenUsageWithModelSnapshotImpl,
 } from "./token-usage-pure.js";
 import { captureBaseCommitSha, resolveContaminationBaseRef } from "./worktree-git-refs.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
 import type { ImplementationExitReporter } from "./implementation-exit.js";
 import type { GraphCompletionCallback } from "./run-implementation-phase.js";
@@ -948,7 +949,21 @@ export async function runImplementation(
       An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
       if (!deps.workspaceConfig && !acquisition.isResume) {
-        await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
+        /*
+        FNXC:Identity 2026-09-04-05:47:
+        Non-workspace fresh-worktree base-SHA capture used to omit the registered run
+        carrier, so captureBaseCommitSha fell back to executor/unknown. Thread the live
+        map through the total form so the assigned actor and this implementation runId
+        persist onto baseCommitSha.
+        */
+        await captureBaseCommitSha(
+          deps.store,
+          task,
+          worktreePath,
+          audit,
+          { isResume: false },
+          runContextForTotal((id) => deps.getRunContextFor(id), task.id, task.assignedAgentId),
+        );
       }
 
       if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
