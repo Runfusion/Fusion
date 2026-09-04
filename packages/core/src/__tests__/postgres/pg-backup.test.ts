@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chmodSync } from "node:fs";
@@ -180,8 +180,9 @@ exit 0
     // The orphaned project dump must have been cleaned up.
     const backupDirPath = join(fusionDir, "..", ".fusion", "backups");
     if (existsSync(backupDirPath)) {
-      const files = readdirSync(backupDirPath).filter((f) => f.endsWith(".dump"));
-      expect(files.length).toBe(0);
+      const files = readdirSync(backupDirPath);
+      expect(files.filter((filename) => filename.endsWith(".dump"))).toHaveLength(0);
+      expect(files.some((filename) => filename.endsWith(".part") || filename.endsWith(".reserved"))).toBe(false);
     }
   });
 
@@ -539,6 +540,24 @@ echo "$@" >> "${tempDir}/destructive-restore.log"
     await expect(manager.listBackups()).resolves.toEqual([]);
     expect(() => manager.resolveBackupSelection(`${project}.part`)).toThrow(/Invalid PostgreSQL backup filename/);
     await expect(manager.cleanupOldBackups()).resolves.toEqual({ deleted: [] });
+  });
+
+  it("sweeps only abandoned reservations and their partial dumps", async () => {
+    const manager = new PgBackupManager(pgUrl("secret"), fusionDir, { pgDumpPath, pgRestorePath, clientTimeoutMs: 20 });
+    const backupDir = join(fusionDir, "..", ".fusion", "backups");
+    mkdirSync(backupDir, { recursive: true });
+    const stale = "fusion-pg-20260101-000001.dump";
+    const fresh = "fusion-pg-20260101-000002.dump";
+    for (const filename of [`${stale}.reserved`, `${stale}.part`, `${fresh}.reserved`, `${fresh}.part`]) {
+      writeFileSync(join(backupDir, filename), "artifact");
+    }
+    const old = new Date(Date.now() - 61_000);
+    utimesSync(join(backupDir, `${stale}.reserved`), old, old);
+    await manager.cleanupOldBackups();
+    expect(existsSync(join(backupDir, `${stale}.reserved`))).toBe(false);
+    expect(existsSync(join(backupDir, `${stale}.part`))).toBe(false);
+    expect(existsSync(join(backupDir, `${fresh}.reserved`))).toBe(true);
+    expect(existsSync(join(backupDir, `${fresh}.part`))).toBe(true);
   });
 });
 
