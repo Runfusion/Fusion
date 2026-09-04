@@ -55,9 +55,17 @@ function columnKey(relation: string, column: string): string {
   return `${relation}.${column}`;
 }
 
+function expectedPrimaryKey(relation: string): readonly string[] | null {
+  const match = RESTORED_SCHEMA_RELATION_SENTINELS
+    .flatMap((sentinel) => [...(sentinel.primaryKeys ?? [])])
+    .find((entry) => entry.relation === relation);
+  return match ? match.columns : null;
+}
+
 function createRestoreCatalog(
   presentRelations: readonly string[] = [],
   presentColumns: ReadonlyArray<{ relation: string; column: string }> = [],
+  presentPrimaryKeys: ReadonlyArray<{ relation: string; columns: readonly string[] }> = [],
 ): RestoreMigrationCatalog & {
   insertLifecycleSeq(projectId: string): Promise<void>;
   insertConfigurationRevision(): Promise<void>;
@@ -66,6 +74,9 @@ function createRestoreCatalog(
 } {
   const relations = new Set(presentRelations);
   const columns = new Set(presentColumns.map((entry) => columnKey(entry.relation, entry.column)));
+  const primaryKeys = new Map<string, readonly string[]>(
+    presentPrimaryKeys.map((entry) => [entry.relation, entry.columns]),
+  );
   const applied = new Set(RESTORED_SCHEMA_RELATION_SENTINELS.map((sentinel) => sentinel.version));
   const catalog: RestoreMigrationCatalog & {
     insertLifecycleSeq(projectId: string): Promise<void>;
@@ -79,10 +90,16 @@ function createRestoreCatalog(
     async columnExists(qualifiedRelation, column) {
       return columns.has(columnKey(qualifiedRelation, column));
     },
+    async primaryKeyColumns(qualifiedRelation) {
+      if (primaryKeys.has(qualifiedRelation)) return [...primaryKeys.get(qualifiedRelation)!];
+      const expected = expectedPrimaryKey(qualifiedRelation);
+      return expected ? [...expected] : null;
+    },
     async applyRewindAndReplay(floor) {
       const snapshotApplied = new Set(applied);
       const snapshotRelations = new Set(relations);
       const snapshotColumns = new Set(columns);
+      const snapshotPrimaryKeys = new Map(primaryKeys);
       try {
         if (floor) {
           const parsedFloor = Number.parseInt(floor, 10);
@@ -97,6 +114,9 @@ function createRestoreCatalog(
           if (applied.has(sentinel.version)) continue;
           for (const relation of sentinel.relations ?? []) relations.add(relation);
           for (const column of sentinel.columns ?? []) columns.add(columnKey(column.relation, column.column));
+          for (const primaryKey of sentinel.primaryKeys ?? []) {
+            primaryKeys.set(primaryKey.relation, primaryKey.columns);
+          }
           applied.add(sentinel.version);
         }
       } catch (error) {
@@ -106,6 +126,10 @@ function createRestoreCatalog(
         for (const relation of snapshotRelations) relations.add(relation);
         columns.clear();
         for (const column of snapshotColumns) columns.add(column);
+        primaryKeys.clear();
+        for (const [relation, columnsForKey] of snapshotPrimaryKeys) {
+          primaryKeys.set(relation, columnsForKey);
+        }
         throw error;
       }
     },
@@ -550,6 +574,34 @@ describe("PostgreSQL paired restore orchestration", () => {
       await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
 
       expect(await catalog.columnExists("project.agent_ratings", "project_id")).toBe(true);
+      expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0054 when agent_ratings.project_id exists but the PK stayed (id)", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const allColumns = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+    const driftedPk = [{ relation: "project.agent_ratings", columns: ["id"] as const }];
+    const catalogAtDetect = createRestoreCatalog(allRelations, allColumns, driftedPk);
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(AGENT_RATING_PROJECT_ISOLATION_VERSION);
+    expect(await catalogAtDetect.columnExists("project.agent_ratings", "project_id")).toBe(true);
+    expect(await catalogAtDetect.primaryKeyColumns("project.agent_ratings")).toEqual(["id"]);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0054-ratings-pk-"));
+    try {
+      const catalog = createRestoreCatalog(allRelations, allColumns, driftedPk);
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0054-pk-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.primaryKeyColumns("project.agent_ratings")).toEqual(["project_id", "id"]);
       expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });

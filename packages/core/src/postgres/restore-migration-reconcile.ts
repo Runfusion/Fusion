@@ -22,6 +22,12 @@
  * Without that sentinel a pre-0054 dump leaves 0054/0055 stamped and rating
  * reads/deletes fail. Rewinding from 0054 also unstamps 0055's partition repair.
  *
+ * FNXC:PostgresBackup 2026-09-04-08:09:
+ * 0006 already ADD COLUMNs `project_id` (NOT NULL, RLS, trigger) and rewrites
+ * PKs that lack it. 0054/0055 are targeted repairs of the composite identity
+ * `(project_id, id)` when the column landed but the PK stayed `(id)`. Column
+ * presence is not enough; rewind must also match that primary key.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -97,6 +103,7 @@ import {
 export interface RestoreMigrationCatalog {
   relationExists(qualifiedName: string): Promise<boolean>;
   columnExists(qualifiedRelation: string, column: string): Promise<boolean>;
+  primaryKeyColumns(qualifiedRelation: string): Promise<readonly string[] | null>;
   applyRewindAndReplay(floor: string | null): Promise<void>;
 }
 
@@ -105,10 +112,16 @@ export interface RestoredSchemaColumnSentinel {
   readonly column: string;
 }
 
+export interface RestoredSchemaPrimaryKeySentinel {
+  readonly relation: string;
+  readonly columns: readonly string[];
+}
+
 export interface RestoredSchemaRelationSentinel {
   readonly version: string;
   readonly relations?: readonly string[];
   readonly columns?: readonly RestoredSchemaColumnSentinel[];
+  readonly primaryKeys?: readonly RestoredSchemaPrimaryKeySentinel[];
 }
 
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -155,6 +168,8 @@ const OWNER_PROJECT_ID_SPLIT_TABLES = [
  * Central-schema tables are excluded: project dumps do not replace `central`.
  * Column sentinels apply only when the parent relation exists, so a dump taken
  * after CREATE TABLE but before a later ALTER still rewinds that ALTER version.
+ * Primary-key sentinels apply the same parent-exists rule and compare column
+ * order exactly.
  *
  * FNXC:PostgresBackup 2026-09-04-06:22:
  * Early numbered migrations that add project objects must appear here in
@@ -255,6 +270,7 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   {
     version: AGENT_RATING_PROJECT_ISOLATION_VERSION,
     columns: [{ relation: "project.agent_ratings", column: "project_id" }],
+    primaryKeys: [{ relation: "project.agent_ratings", columns: ["project_id", "id"] }],
   },
   { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: MESSAGE_ARCHIVED_SQL_COLUMN }] },
   {
@@ -290,6 +306,15 @@ export async function detectRestoredSchemaRewindFloor(
         break;
       }
     }
+    if (!missing) {
+      for (const primaryKey of sentinel.primaryKeys ?? []) {
+        if (!(await catalog.relationExists(primaryKey.relation))) continue;
+        const actual = await catalog.primaryKeyColumns(primaryKey.relation);
+        if (sameOrderedColumns(actual, primaryKey.columns)) continue;
+        missing = true;
+        break;
+      }
+    }
     if (missing) return sentinel.version;
   }
   return null;
@@ -307,6 +332,12 @@ function splitQualifiedRelation(qualifiedName: string): { schema: string; table:
   const separator = qualifiedName.indexOf(".");
   if (separator <= 0) return { schema: "public", table: qualifiedName };
   return { schema: qualifiedName.slice(0, separator), table: qualifiedName.slice(separator + 1) };
+}
+
+function sameOrderedColumns(actual: readonly string[] | null, expected: readonly string[]): boolean {
+  return actual != null
+    && actual.length === expected.length
+    && actual.every((name, index) => name === expected[index]);
 }
 
 function ensureBookkeepingSql(): string {
@@ -347,6 +378,30 @@ export function createDrizzleRestoreMigrationCatalog(
         ) AS present
       `)) as unknown as Array<{ present: boolean }>;
       return rows[0]?.present === true;
+    },
+    async primaryKeyColumns(qualifiedRelation) {
+      /*
+       * FNXC:PostgresBackup 2026-09-04-08:09:
+       * Probe the live primary key in key order via pg_constraint/pg_attribute.
+       * Schema and table names are bound parameters, never concatenated. A
+       * missing relation or constraint returns null so rewind treats the
+       * 0054/0055 identity repair as unapplied.
+       */
+      const { schema, table } = splitQualifiedRelation(qualifiedRelation);
+      const rows = (await db.execute(sql`
+        SELECT a.attname AS attname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS key_column(attnum, ordinal) ON true
+        JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = key_column.attnum
+        WHERE nsp.nspname = ${schema}
+          AND rel.relname = ${table}
+          AND con.contype = 'p'
+        ORDER BY key_column.ordinal
+      `)) as unknown as Array<{ attname: string }>;
+      if (rows.length === 0) return null;
+      return rows.map((row) => row.attname);
     },
     async applyRewindAndReplay(floor) {
       /*
