@@ -30,6 +30,29 @@ export function normalizeAiAttributionValue(value: string | null | undefined): s
   return normalized;
 }
 
+export interface StoredAiAttribution {
+  provider?: string;
+  modelId?: string;
+}
+
+/*
+FNXC:AITransparency 2026-09-04-04:44:
+Historic generated output must keep the provider/model stamped on that row. Session selection is
+mutable, so missing or mixed metadata stays provider-agnostic instead of inheriting the current model.
+*/
+export function readStoredAiAttribution(metadata: Record<string, unknown> | null | undefined): StoredAiAttribution {
+  if (!metadata) return {};
+  const providerSource = typeof metadata.modelProvider === "string"
+    ? metadata.modelProvider
+    : typeof metadata.provider === "string"
+      ? metadata.provider
+      : undefined;
+  const provider = normalizeAiAttributionValue(providerSource);
+  if (!provider) return {};
+  const modelId = normalizeAiAttributionValue(typeof metadata.modelId === "string" ? metadata.modelId : undefined);
+  return modelId ? { provider, modelId } : { provider };
+}
+
 export function AiDisclosure({
   kind,
   provider,

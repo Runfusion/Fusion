@@ -52,6 +52,7 @@ describe("Fusion AI transparency coverage registry", () => {
       "EvalsView.tsx",
       "TaskReviewTab.tsx",
       "TaskRecommendationsTab.tsx",
+      "TaskHistoryTab.tsx",
       "command-center/IdeationPanel.tsx",
       "DocumentsView.tsx",
       "TaskDocumentsTab.tsx",

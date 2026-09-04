@@ -1617,4 +1617,103 @@ describe("InsightsView", () => {
       expect(css).toMatch(/@media[^{]*\(min-width:\s*769px\)\s*and\s*\(max-width:\s*1024px\)[^{]*\{[\s\S]*?\.insights-recommendations[^}]*\}/);
     });
   });
+
+  describe("AI transparency disclosures", () => {
+    const recommendationItems = [
+      {
+        taskId: "FN-1",
+        taskTitle: "First source",
+        recommendation: { id: "shared-id", title: "First follow-up", description: "First description", category: "improvement" },
+      },
+      {
+        taskId: "FN-2",
+        taskTitle: "Second source",
+        recommendation: { id: "shared-id", title: "Second follow-up", description: "Second description", category: "bug" },
+      },
+    ];
+
+    it("discloses AI-assisted analysis on active insight content and recommendation titles", async () => {
+      mockUseInsights.mockReturnValue({
+        sections: [
+          {
+            category: "features" as const,
+            label: "Features",
+            items: [{
+              id: "ins-1",
+              projectId: "test",
+              title: "Feature insight",
+              content: "Generated insight body",
+              category: "features" as const,
+              status: "generated" as const,
+              fingerprint: "fp-1",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            }],
+            isLoading: false,
+            error: null,
+          },
+        ],
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 1,
+        dismissedCount: 0,
+      });
+      mockUseTaskRecommendations.mockReturnValue({
+        items: recommendationItems,
+        loading: false,
+        loadingMore: false,
+        error: null,
+        hasMore: false,
+        totalRowCount: 2,
+        truncated: false,
+        refresh: vi.fn(),
+        loadMore: vi.fn(),
+        createTask: vi.fn(),
+        createStates: new Map(),
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      expect(screen.getByTestId("insights-section-features")).toBeInTheDocument();
+      expect(screen.getByRole("note")).toHaveAttribute("data-ai-disclosure", "ai-assisted-analysis");
+      expect(screen.getByText("Generated insight body")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("insights-category-recommendations"));
+      expect(screen.getByTestId("insights-section-recommendations")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-recommendations-ai-disclosure")).toHaveAttribute("data-ai-disclosure", "ai-assisted-analysis");
+      expect(screen.getByTestId("insights-recommendations-ai-disclosure")).toHaveAttribute("data-ai-attribution", "provider-agnostic");
+    });
+
+    it("discloses recommendations when that category is the only populated Insights surface", async () => {
+      mockUseTaskRecommendations.mockReturnValue({
+        items: [recommendationItems[0]],
+        loading: false,
+        loadingMore: false,
+        error: null,
+        hasMore: false,
+        totalRowCount: 1,
+        truncated: false,
+        refresh: vi.fn(),
+        loadMore: vi.fn(),
+        createTask: vi.fn(),
+        createStates: new Map(),
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      await waitFor(() => expect(screen.getByTestId("insights-section-recommendations")).toBeInTheDocument());
+      expect(screen.getByTestId("insights-recommendations-ai-disclosure")).toHaveAttribute("data-ai-disclosure", "ai-assisted-analysis");
+    });
+  });
 });

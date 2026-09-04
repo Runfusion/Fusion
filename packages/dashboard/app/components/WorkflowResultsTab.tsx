@@ -1385,6 +1385,17 @@ export function WorkflowResultsTab({
                 </div>
               </div>
               <div className="workflow-output-modal-body">
+                {/*
+                FNXC:AITransparency 2026-09-04-04:44:
+                The expanded modal is an aria-modal surface that re-renders result.output. Inline
+                disclosure on the collapsed row is not visible while the modal is open, so the same
+                generated-output note must appear here before the output body.
+                */}
+                <AiDisclosure
+                  kind="generated-output"
+                  compact
+                  testId={`workflow-output-modal-ai-disclosure-${result.workflowStepId}`}
+                />
                 <div
                   className={`workflow-result-output workflow-result-output--expanded${renderMode === "markdown" ? " workflow-result-output--markdown" : ""}`}
                   data-testid="workflow-output-modal-content"

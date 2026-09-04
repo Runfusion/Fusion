@@ -458,6 +458,21 @@ function modelSnapshotForTokenUsage(session: unknown, fallback?: { fallbackModel
   return { provider: null, modelId: fallback?.fallbackModel ?? null };
 }
 
+/*
+FNXC:AITransparency 2026-09-04-04:44:
+Each persisted assistant row must carry the provider/model that generated that turn. Session-level
+selection is mutable, so Direct Chat and Task Planner Chat cannot relabel historic output from the
+current model. Empty or unknown values stay omitted and the dashboard renders provider-agnostic notes.
+*/
+function aiProvenanceMetadata(provider: string | null | undefined, modelId: string | null | undefined): Record<string, unknown> {
+  const normalizedProvider = typeof provider === "string" ? provider.trim() : "";
+  if (!normalizedProvider) return {};
+  const normalizedModelId = typeof modelId === "string" ? modelId.trim() : "";
+  return normalizedModelId
+    ? { modelProvider: normalizedProvider, modelId: normalizedModelId }
+    : { modelProvider: normalizedProvider };
+}
+
 type ChatCustomTool = ReturnType<typeof createWorkflowAuthoringTools>[number];
 type ChatToolExecute = (...args: unknown[]) => Promise<unknown>;
 
@@ -2483,6 +2498,7 @@ export class ChatManager {
         metadata: {
           roomId: input.roomId,
           ...(roomFallbackInfo ? { fallback: roomFallbackInfo } : {}),
+          ...aiProvenanceMetadata(model.provider, model.modelId),
         },
         ...(tokenDelta ? { tokenUsage: { ...tokenDelta, modelProvider: model.provider, modelId: model.modelId } } : {}),
       };
@@ -2515,7 +2531,12 @@ export class ChatManager {
         if (isRoomSkipSentinel(response.content)) continue;
         const message = await this.chatStore.addMessage(input.sessionId, {
           role: "assistant", content: response.content, thinkingOutput: response.thinkingOutput ?? undefined,
-          metadata: { senderAgentId: responder.id, senderAgentName: responder.name, ...(response.fallback ? { fallback: response.fallback } : {}) },
+          metadata: {
+            senderAgentId: responder.id,
+            senderAgentName: responder.name,
+            ...(response.fallback ? { fallback: response.fallback } : {}),
+            ...aiProvenanceMetadata(response.modelProvider ?? response.tokenUsage?.modelProvider, response.modelId ?? response.tokenUsage?.modelId),
+          },
         });
         if (response.tokenUsage) {
           await this.chatStore.recordTokenUsage({ sourceKind: "chat", chatSessionId: input.sessionId, messageId: message.id, projectId: input.session.projectId ?? null, agentId: responder.id, createdAt: message.createdAt, ...response.tokenUsage });
@@ -2547,7 +2568,7 @@ export class ChatManager {
     latestUserMessageId: string;
     generationId: number;
     responder: Agent;
-  }): Promise<{ content: string; thinkingOutput: string | null; fallback?: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }; tokenUsage?: ChatTokenDelta & { modelProvider: string | null; modelId: string | null } }> {
+  }): Promise<{ content: string; thinkingOutput: string | null; fallback?: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }; tokenUsage?: ChatTokenDelta & { modelProvider: string | null; modelId: string | null }; modelProvider: string | null; modelId: string | null }> {
     await ensureEngineReady();
     let systemPrompt = CHAT_SYSTEM_PROMPT;
     if (buildAgentChatPromptFn) {
@@ -2609,7 +2630,14 @@ export class ChatManager {
       if (!content.trim()) throw new Error("Mentioned responder returned an empty reply");
       const { tokens } = await readChatSessionUsageSnapshot(resolved.session);
       const model = modelSnapshotForTokenUsage(resolved.session, fallback);
-      return { content: content.trim(), thinkingOutput: null, ...(fallback ? { fallback } : {}), ...(tokens ? { tokenUsage: { ...tokens, modelProvider: model.provider, modelId: model.modelId } } : {}) };
+      return {
+        content: content.trim(),
+        thinkingOutput: null,
+        modelProvider: model.provider,
+        modelId: model.modelId,
+        ...(fallback ? { fallback } : {}),
+        ...(tokens ? { tokenUsage: { ...tokens, modelProvider: model.provider, modelId: model.modelId } } : {}),
+      };
     } finally { resolved.session.dispose?.(); }
   }
 
@@ -3386,6 +3414,8 @@ export class ChatManager {
       if (usageSnapshot.contextUsage) {
         assistantMetadata.contextUsage = usageSnapshot.contextUsage;
       }
+      const model = modelSnapshotForTokenUsage(agentResult.session, fallbackInfo);
+      Object.assign(assistantMetadata, aiProvenanceMetadata(model.provider, model.modelId));
       const assistantMessage = await this.chatStore.addMessage(sessionId, {
         role: "assistant",
         content: finalResponseText,
@@ -3394,7 +3424,6 @@ export class ChatManager {
       });
 
       if (usageSnapshot.tokens) {
-        const model = modelSnapshotForTokenUsage(agentResult.session, fallbackInfo);
         /*
          * FNXC:ChatTokenAccounting 2026-07-02-00:00:
          * Successful dashboard chat turns persist provider-reported session stats as chat-token rows. Task-detail planner chat uses sourceKind `task-planner-chat` instead of task.tokenUsage so the planner's own model call is visible in Command Center without mutating execution totals for the task it discusses.
@@ -3461,6 +3490,7 @@ export class ChatManager {
                 interrupted: true,
                 ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
                 ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
+                ...aiProvenanceMetadata(failureContextProvider, failureContextModelId),
               },
             });
           } catch (persistErr) {
@@ -3523,6 +3553,7 @@ export class ChatManager {
               interrupted: true,
               ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
               ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
+              ...aiProvenanceMetadata(failureContextProvider, failureContextModelId),
             },
           });
         } catch (persistErr) {
@@ -3531,7 +3562,10 @@ export class ChatManager {
       }
 
       try {
-        await persistFailureMessage(this.chatStore, sessionId, failureInfo, fallbackInfo ? { fallback: fallbackInfo } : undefined);
+        await persistFailureMessage(this.chatStore, sessionId, failureInfo, {
+          ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
+          ...aiProvenanceMetadata(failureContextProvider, failureContextModelId),
+        });
       } catch (persistErr) {
         diagnostics.error(`Failed to persist failure message for session ${sessionId}:`, persistErr);
       }

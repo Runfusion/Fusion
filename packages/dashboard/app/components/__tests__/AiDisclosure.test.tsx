@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AiDisclosure, normalizeAiAttributionValue } from "../AiDisclosure";
+import { AiDisclosure, normalizeAiAttributionValue, readStoredAiAttribution } from "../AiDisclosure";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -51,5 +53,26 @@ describe("AiDisclosure", () => {
     expect(normalizeAiAttributionValue("gpt-5.6/codex")).toBe("gpt-5.6/codex");
     expect(normalizeAiAttributionValue("credential-id")).toBeUndefined();
     expect(normalizeAiAttributionValue("https://example.test/model")).toBeUndefined();
+  });
+
+  it("reads persisted provider/model metadata and ignores mixed or unsafe values", () => {
+    expect(readStoredAiAttribution({ modelProvider: "anthropic", modelId: "claude-opus-4-1" })).toEqual({
+      provider: "anthropic",
+      modelId: "claude-opus-4-1",
+    });
+    expect(readStoredAiAttribution({ provider: "openai" })).toEqual({ provider: "openai" });
+    expect(readStoredAiAttribution({ modelProvider: "https://provider.example", modelId: "gpt-4o" })).toEqual({});
+    expect(readStoredAiAttribution(null)).toEqual({});
+  });
+
+  it("uses dashboard spacing and type tokens instead of raw rem values", () => {
+    const css = readFileSync(resolve(__dirname, "../AiDisclosure.css"), "utf8");
+    expect(css).toMatch(/gap:\s*var\(--space-xs\)/);
+    expect(css).toMatch(/font-size:\s*var\(--font-size-xs\)/);
+    expect(css).toMatch(/line-height:\s*var\(--line-height-tight\)/);
+    expect(css).toMatch(/\.ai-disclosure--compact[\s\S]*font-size:\s*var\(--font-size-2xs\)/);
+    expect(css).toMatch(/\.ai-disclosure--compact[\s\S]*gap:\s*var\(--space-3xs\)/);
+    expect(css).not.toMatch(/font-size:\s*0\.\d+rem/);
+    expect(css).not.toMatch(/gap:\s*0\.\d+rem/);
   });
 });

@@ -108,9 +108,9 @@ export const aiTransparencySurfaces = [
   },
   {
     id: "fusion-task-summary-workflow-output",
-    sourceFiles: ["TaskSummaryTab.tsx"],
+    sourceFiles: ["TaskSummaryTab.tsx", "TaskHistoryTab.tsx"],
     decision: "included",
-    rationale: "The task summary separately renders prior workflow attempt output outside the workflow-results tab.",
+    rationale: "The task summary discloses generated agent reports, including prior-attempt output now projected through the history tab.",
     disclosure: "generated-output",
     providerStrategy: "provider-agnostic",
   },
@@ -188,9 +188,9 @@ export const aiTransparencySurfaces = [
   },
   {
     id: "fusion-task-recommendations",
-    sourceFiles: ["TaskRecommendationsTab.tsx", "MailboxTaskRecommendations.tsx"],
+    sourceFiles: ["TaskRecommendationsTab.tsx", "MailboxTaskRecommendations.tsx", "InsightsView.tsx"],
     decision: "included",
-    rationale: "Task completion recommendations are agent-produced suggestions rendered in task and mailbox views.",
+    rationale: "Task completion recommendations are agent-produced suggestions rendered in task, mailbox, and Insights recommendation views.",
     disclosure: "ai-assisted-analysis",
     providerStrategy: "provider-agnostic",
   },

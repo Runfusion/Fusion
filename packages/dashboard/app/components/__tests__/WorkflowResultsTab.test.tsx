@@ -2209,6 +2209,21 @@ describe("WorkflowResultsTab", () => {
       fireEvent.click(screen.getByTestId("workflow-result-expand-WS-002"));
       expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
     });
+
+    it("discloses generated output on both the inline result and the expanded modal", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      expect(screen.getByTestId("workflow-result-ai-disclosure-WS-001")).toHaveAttribute("data-ai-disclosure", "generated-output");
+      expect(screen.getByTestId("workflow-result-ai-disclosure-WS-002")).toHaveAttribute("data-ai-disclosure", "generated-output");
+      expect(screen.queryByTestId("workflow-result-ai-disclosure-WS-003")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      fireEvent.click(screen.getByTestId("workflow-result-expand-WS-001"));
+
+      expect(screen.getByTestId("workflow-output-modal")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-output-modal-ai-disclosure-WS-001")).toHaveAttribute("data-ai-disclosure", "generated-output");
+      expect(screen.getByTestId("workflow-result-ai-disclosure-WS-001")).toBeInTheDocument();
+    });
   });
 
   describe("verdict and notes rendering", () => {

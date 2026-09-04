@@ -17,12 +17,18 @@ const common = {
   activeModelId: "claude-opus-4-1",
 };
 
-function message(role: ChatMessageInfo["role"], content: string): ChatMessageInfo {
+function message(
+  role: ChatMessageInfo["role"],
+  content: string,
+  metadata?: ChatMessageInfo["metadata"],
+  id = `${role}-message`,
+): ChatMessageInfo {
   return {
-    id: `${role}-message`,
+    id,
     sessionId: "session-1",
     role,
     content,
+    ...(metadata ? { metadata } : {}),
     createdAt: "2026-08-26T00:00:00.000Z",
   };
 }
@@ -30,8 +36,14 @@ function message(role: ChatMessageInfo["role"], content: string): ChatMessageInf
 describe("shared chat AI transparency", () => {
   afterEach(cleanup);
 
-  it("labels a persisted assistant message with exact session attribution", () => {
-    render(<StandardChatMessageItem {...common} message={message("assistant", "Generated answer")} activeSessionId="session-1" />);
+  it("labels a persisted assistant message with stored per-message attribution", () => {
+    render(
+      <StandardChatMessageItem
+        {...common}
+        message={message("assistant", "Generated answer", { modelProvider: "anthropic", modelId: "claude-opus-4-1" })}
+        activeSessionId="session-1"
+      />,
+    );
 
     const note = screen.getByRole("note", { name: "AI-generated · anthropic/claude-opus-4-1" });
     expect(note).toHaveAttribute("data-compliance", "eu-ai-act-art-50");
@@ -64,12 +76,68 @@ describe("shared chat AI transparency", () => {
     render(
       <StandardChatMessageItem
         {...common}
-        activeModelProvider={null}
-        activeModelId={null}
         message={message("assistant", "Older answer")}
         activeSessionId="session-legacy"
       />,
     );
     expect(screen.getByRole("note")).toHaveAttribute("data-ai-attribution", "provider-agnostic");
+    expect(screen.getByRole("note")).not.toHaveAttribute("data-ai-provider");
+  });
+
+  it("keeps historic Direct Chat attribution after the active session model changes", () => {
+    const { rerender } = render(
+      <StandardChatMessageItem
+        {...common}
+        message={message("assistant", "Answer from model A", { modelProvider: "anthropic", modelId: "claude-opus-4-1" }, "historic-a")}
+        activeSessionId="session-1"
+      />,
+    );
+    expect(screen.getByTestId("chat-ai-disclosure-historic-a")).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(screen.getByTestId("chat-ai-disclosure-historic-a")).toHaveAttribute("data-ai-model", "claude-opus-4-1");
+
+    rerender(
+      <StandardChatMessageItem
+        {...common}
+        activeModelProvider="openai"
+        activeModelId="gpt-4o"
+        activeModelTag="GPT-4o"
+        message={message("assistant", "Answer from model A", { modelProvider: "anthropic", modelId: "claude-opus-4-1" }, "historic-a")}
+        activeSessionId="session-1"
+      />,
+    );
+    expect(screen.getByTestId("chat-ai-disclosure-historic-a")).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(screen.getByTestId("chat-ai-disclosure-historic-a")).toHaveAttribute("data-ai-model", "claude-opus-4-1");
+    expect(screen.getByTestId("chat-ai-disclosure-historic-a")).not.toHaveAttribute("data-ai-provider", "openai");
+  });
+
+  it("discloses each persisted assistant row with its own provenance across a model-A-to-model-B transition", () => {
+    render(
+      <>
+        <StandardChatMessageItem
+          {...common}
+          message={message("assistant", "From model A", { modelProvider: "anthropic", modelId: "claude-opus-4-1" }, "msg-a")}
+          activeSessionId="session-1"
+        />
+        <StandardChatMessageItem
+          {...common}
+          activeModelProvider="openai"
+          activeModelId="gpt-4o"
+          activeModelTag="GPT-4o"
+          message={message("assistant", "From model B", { modelProvider: "openai", modelId: "gpt-4o" }, "msg-b")}
+          activeSessionId="session-1"
+        />
+        <StandardChatMessageItem
+          {...common}
+          activeModelProvider="openai"
+          activeModelId="gpt-4o"
+          message={message("assistant", "Legacy row without provenance", undefined, "msg-legacy")}
+          activeSessionId="session-1"
+        />
+      </>,
+    );
+
+    expect(screen.getByTestId("chat-ai-disclosure-msg-a")).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(screen.getByTestId("chat-ai-disclosure-msg-b")).toHaveAttribute("data-ai-provider", "openai");
+    expect(screen.getByTestId("chat-ai-disclosure-msg-legacy")).toHaveAttribute("data-ai-attribution", "provider-agnostic");
   });
 });

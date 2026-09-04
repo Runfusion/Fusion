@@ -2909,13 +2909,15 @@ describe("ChatManager.sendMessage", () => {
 
     const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1].role === "assistant");
     expect(assistantCall?.[1]).toEqual(expect.objectContaining({
-      metadata: {
+      metadata: expect.objectContaining({
         fallback: {
           primaryModel: "openai-codex/gpt-5.3-codex",
           fallbackModel: "zai/glm-5.1",
           triggerPoint: "prompt-time",
         },
-      },
+        modelProvider: "zai",
+        modelId: "glm-5.1",
+      }),
     }));
   });
 
@@ -2968,13 +2970,15 @@ describe("ChatManager.sendMessage", () => {
     const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1].role === "assistant");
     expect(assistantCall?.[1]).toEqual(expect.objectContaining({
       content: "Fallback reply",
-      metadata: {
+      metadata: expect.objectContaining({
         fallback: {
           primaryModel: "anthropic/claude-sonnet-5",
           fallbackModel: "zai/glm-5.1",
           triggerPoint: "prompt-time",
         },
-      },
+        modelProvider: "zai",
+        modelId: "glm-5.1",
+      }),
     }));
   });
 

@@ -128,6 +128,34 @@ function getRuntimeModelForRole(entries: readonly AgentLogEntry[], role: AgentLo
   return null;
 }
 
+function uniqueRuntimeAttribution(entries: readonly AgentLogEntry[], role: AgentLogRole): TaskChatModelInfo | null {
+  const markers: TaskChatModelInfo[] = [];
+  for (const entry of entries) {
+    if (entry.agent !== role) continue;
+    const parsed = parseModelMarker(entry);
+    if (parsed) markers.push(parsed);
+  }
+  if (markers.length === 0) return null;
+  const first = markers[0]!;
+  return markers.every((marker) => marker.provider === first.provider && marker.modelId === first.modelId)
+    ? first
+    : null;
+}
+
+function shouldSplitRoleGroup(existing: readonly AgentLogEntry[], incoming: AgentLogEntry, role: AgentLogRole): boolean {
+  const incomingMarker = parseModelMarker(incoming);
+  if (!incomingMarker) return false;
+  let lastMarker: TaskChatModelInfo | null = null;
+  for (const entry of existing) {
+    const parsed = parseModelMarker(entry);
+    if (parsed) lastMarker = parsed;
+  }
+  if (!lastMarker) {
+    return existing.some((entry) => entry.type === "text" || entry.type === "thinking");
+  }
+  return lastMarker.provider !== incomingMarker.provider || lastMarker.modelId !== incomingMarker.modelId;
+}
+
 function getEffectiveModelForRole(
   effectiveModels: TaskChatTabProps["effectiveModels"] | undefined,
   role: AgentLogRole,
@@ -297,7 +325,16 @@ function buildTranscriptItems(entries: readonly AgentLogEntry[], userMessages: r
 
     const previousItem = items[items.length - 1];
     const role = item.entry.agent;
+    /*
+    FNXC:AITransparency 2026-09-04-04:44:
+    Consecutive same-role rows are one group until a runtime model marker changes. Mixing model A
+    and model B under one disclosure would relabel historic Live output after a later lane switch.
+    */
     if (previousItem?.kind === "agent" && previousItem.role === role) {
+      if (shouldSplitRoleGroup(previousItem.entries, item.entry, role)) {
+        items.push({ kind: "agent", role, label: getRoleLabel(role, t), entries: [item.entry] });
+        return items;
+      }
       previousItem.entries.push(item.entry);
       return items;
     }
@@ -1120,6 +1157,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
             const segments = segmentGroupEntries(item.entries);
             const latestEntryTimestamp = item.entries[item.entries.length - 1]?.timestamp ?? "";
             const modelInfo = getModelForRole(task, item.role, item.entries, effectiveModels);
+            const disclosureAttribution = uniqueRuntimeAttribution(item.entries, item.role);
             return (
               <section className="task-chat-group" key={`${item.role ?? "agent"}-${itemIndex}`} aria-label={t("taskChat.agentMessages", "{{label}} messages", { label: item.label })}>
                 <header className="task-chat-group-header">
@@ -1134,8 +1172,8 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
                 </header>
                 <AiDisclosure
                   kind="generated-output"
-                  provider={modelInfo?.provider}
-                  modelId={modelInfo?.modelId}
+                  provider={disclosureAttribution?.provider}
+                  modelId={disclosureAttribution?.modelId}
                   compact
                   testId={`task-chat-ai-disclosure-${itemIndex}`}
                 />
