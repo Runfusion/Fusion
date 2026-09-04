@@ -40,6 +40,21 @@ import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();
+
+/*
+FNXC:TestPerf 2026-09-04-00:43:
+This real-git suite creates a fresh repo per test, and each repo init previously spent two extra
+git subprocess spawns on `git config user.email`/`user.name`. Provide the identity through the
+inherited environment instead: the GIT_AUTHOR and GIT_COMMITTER name/email vars override any config, are inherited by
+every execSync child (including the direct commits outside the git() helper), and reproduce the
+exact same `t <t@t.t>` author/committer the config calls used — so commits stay byte-identical
+while two process spawns per test disappear. Keep this env-based identity if you add new repo
+helpers rather than reintroducing per-repo `git config`.
+*/
+process.env.GIT_AUTHOR_NAME = "t";
+process.env.GIT_AUTHOR_EMAIL = "t@t.t";
+process.env.GIT_COMMITTER_NAME = "t";
+process.env.GIT_COMMITTER_EMAIL = "t@t.t";
 afterAll(() => {
   for (const d of tracked) {
     try { rmSync(d, RM); } catch { /* best effort */ }
@@ -55,8 +70,6 @@ function initRepoWithBranch(opts: { branch: string; conflict?: boolean; gitignor
   const dir = mkdtempSync(join(tmpdir(), "fusion-ai-merge-test-"));
   tracked.add(dir);
   git(dir, "init -q -b main");
-  git(dir, "config user.email t@t.t");
-  git(dir, "config user.name t");
   writeFileSync(join(dir, "base.txt"), "base\n");
   if (opts.gitignore) writeFileSync(join(dir, ".gitignore"), opts.gitignore);
   git(dir, "add -A");
