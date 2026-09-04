@@ -107,7 +107,9 @@ describe("backup commands", () => {
         timestamp: "pre-restore-20260831-120001",
         project: { filename: "fusion-pre-restore-pg-20260831-120001.dump" },
         central: { filename: "fusion-central-pre-restore-pg-20260831-120001.dump" },
+        migrations: { filename: "fusion-migrations-pre-restore-pg-20260831-120001.dump" },
       },
+      migrationBookkeeping: "restored",
     });
     mockCleanupOldBackups.mockResolvedValue(0);
     mockResolveProject.mockResolvedValue({
@@ -160,15 +162,15 @@ describe("backup commands", () => {
     expect(output).toContain("project/archive and central schemas");
     expect(output).toContain("fusion-pre-restore-pg-20260831-120001.dump");
     expect(output).toContain("fusion-central-pre-restore-pg-20260831-120001.dump");
-    expect(output).toContain("migration bookkeeping in public is not restored");
+    expect(output).toContain("Migration bookkeeping: restored.");
   });
 
   it("warns about migration bookkeeping for central-only restores", async () => {
-    mockRestoreBackup.mockResolvedValueOnce({ restored: ["central"] });
+    mockRestoreBackup.mockResolvedValueOnce({ restored: ["central"], migrationBookkeeping: "skipped-central-only" });
     await runBackupRestore("fusion-central-pg-20260831-120000.dump", "demo-project");
     const output = logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Successfully restored the central schema");
-    expect(output).toContain("migration bookkeeping in public is not restored");
+    expect(output).toContain("Migration bookkeeping: skipped-central-only.");
   });
 
   it("runBackupCleanup uses resolved project store with --project", async () => {

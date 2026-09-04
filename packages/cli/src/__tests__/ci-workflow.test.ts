@@ -870,6 +870,13 @@ describe("Cross-platform agent-browser install workflow", () => {
     // FNXC:CI 2026-07-26-23:05: pack fixture must keep skip-install so the composite
     // takes the no-store-cache setup-node path (see setup-node-pnpm action).
     expect(findCompositeSetupStep(packFixture?.steps ?? [])?.with?.["skip-install"]).toBe("true");
+    /*
+    FNXC:AgentBrowserPackaging 2026-09-04-04:42:
+    prepack asserts dist/plugin-sdk/index.d.ts, so pack-fixture must install workspace
+    deps and build @runfusion/fusion before `pnpm pack`. Do not skip that assertion.
+    */
+    expect(content).toContain("pnpm install --frozen-lockfile");
+    expect(content).toContain("pnpm --filter @runfusion/fusion build");
     expect(installSmoke?.needs).toBe("pack-fixture");
     expect(installSmoke?.["runs-on"]).toBe("${{ matrix.os }}");
     expect(installSmoke?.strategy?.matrix?.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);

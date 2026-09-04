@@ -1,5 +1,73 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.2
+
+### Minor Changes
+
+- 4ad7628: summary: Linked Fusion instances start a Cloudflare tunnel and keep Cloud Link updated when the URL changes.
+  category: feature
+  dev: `fn serve` / `fn dashboard` provision `cloudflared tunnel --url` to the bound dashboard port and heartbeat candidates (including host rotations) every 20s. `fn cloud heartbeat` without `--url` does the same until Ctrl+C.
+- 4ad7628: summary: Add cloud-link Mode A client — pair, heartbeat, and cloudTicket remote-login.
+  category: feature
+  dev: New `fn cloud` CLI (`pair-start`, `pair-complete`, `heartbeat`, `status`, `unlink`) and `@fusion/core` cloud-link HTTP client. `pair-complete` refuses `--pending-secret` in both `--flag value` and `--flag=value` forms. `/remote-login?cloudTicket=` redeems against a configured cloud HTTP base then issues a short-lived `rt` (or daemon token). Device state in `~/.fusion/cloud-link.json`. Configure via `FUSION_CLOUD_HTTP_URL` or `--http`.
+- d18d8c7: summary: Plan tasks on main before creating worktrees and separate AI concurrency from worktree capacity.
+  category: feature
+  dev: Removes resolver fields `effectiveLimit`/`bindingKnob`, API fields `effectiveMaxConcurrent`/`concurrencyBindingKnob`, and planning-worktree acquisition; adds required `consumesWorktree` admission classification.
+- f8a22f8: summary: Make Quick Chat controls minimize and restore all open chat windows together.
+  category: feature
+  dev: Adds `PoppedOutChatEntry.minimized`, `useChatVisibilityToggle`, `onToggle`, and `onToggleQuickChat`.
+- 2a80367: summary: Move mobile New Task to the header edge and add artifact image zoom controls.
+  category: feature
+  dev: Adds shared wheel, pinch, keyboard, double-click, and drag-to-pan image viewer interactions.
+- 8803ecf: summary: Make reviewers judge-only by default, require verdicts, and bound Code Review remediation.
+  category: feature
+  dev: Defaults reviewerInlineFixes to false, adds DEFAULT_CODE_REVIEW_MAX_REVISIONS, removes the classifier option, and emits task:review-verdict-repaired.
+- 6165976: summary: Add reusable chat snippets with slash insertion across dashboard composers.
+  category: feature
+  dev: Stores validated snippets in global settings and manages them from Skills & Snippets.
+- ad135ac: summary: Restore PostgreSQL migration records with database backup data.
+  category: feature
+  dev: Backup stems now retain a migration-bookkeeping dump and restore it with rollback protection.
+
+### Patch Changes
+
+- 4be72ba: summary: Clear stale file-scope overlap waits automatically after their blocker finishes.
+  category: fix
+  dev: Reconciles self-healing, completion fan-out, and scheduler dispatch with fresh lease checks and exact-ID atomic clears.
+- 5f6363a: summary: Prevent verdict-less reviewer output from approving review gates.
+  category: fix
+  dev: Removes prose approval from workflow-step and reviewer parsers, requires trailing JSON in reviewer prompts, and adds optional WorkflowStepResult.verdictRequired.
+- b7ee7a6: summary: Show multi-repository landing progress in Task Detail's Details tab.
+  category: fix
+  dev: Moves the full workspace repository summary from the persistent header into the details tab body.
+- a5bf400: summary: Separate Skills and Chat Snippets into responsive tabs with contextual counts and refresh actions.
+  category: fix
+  dev: Keeps both accessible panels mounted while moving snippet management into a full-width responsive workspace.
+- 2adc171: summary: Remember dismissed update notices per release across dashboard sessions.
+  category: fix
+  dev: Stores the dismissed release in the `kb-update-banner-dismissed-version` localStorage key.
+- 47afb86: summary: Make the dashboard terminal work on macOS without manually compiling native code.
+  category: fix
+  dev: Switches the node-pty alias to @lydell/node-pty@1.2.0-beta.15 script-free platform packages, removes the build allowance, verifies fetched cross-target payloads against the lockfile, hard-fails missing staging unless explicitly opted out, and drops 32-bit Linux payload support.
+- b275efd: summary: Prevent misnumbered task steps from rerunning completed work.
+  category: fix
+  dev: Corrects the planner example, normalizes executor heading indices, excludes lifecycle refusals from credential freezes, and validates generated plan numbering.
+- 57f79c4: summary: Keep folder ZIP downloads working with the latest archiver library.
+  category: internal
+  dev: Migrates the download-zip route to archiver 8's ESM ZipArchive API.
+- 404f3f2: summary: Reliably preserve terminal task failures through temporary storage outages and restarts.
+  category: fix
+  dev: Fences deferred terminal-park recovery to the task lane-move identity.
+- c494971: summary: Keep interrupted step sessions in place without losing completed work.
+  category: fix
+  dev: Adds the in-place step-session abort recovery seam and its bounded audit event.
+- 001d26b: summary: Align plan step dependency annotations with their numbered headings.
+  category: fix
+  dev: `depends` values now name literal `### Step N` headings via `resolveAuthoredStepHeadingOffset`; `json-steps` uses 0-based document indices, while fully-1-based legacy prompts remain unchanged.
+- 11e4dbc: summary: Fix PostgreSQL backup pair listing and restore both control-plane dump halves safely.
+  category: fix
+  dev: Native restore validates paired dumps and retains rollback evidence; backup creation uses reservation/rename publication, skips live claims during cleanup, enforces project-only retention, and documents migration bookkeeping exclusion.
+
 ## 0.78.0-beta.1
 
 ### Minor Changes

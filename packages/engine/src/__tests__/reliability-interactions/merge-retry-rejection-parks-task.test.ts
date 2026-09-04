@@ -485,6 +485,8 @@ describe("routeGraphMergeFailureToRetry — rejected merge requester", () => {
         expect(atomicCalls.length).toBe(15);
         const reducer = atomicCalls[14][1] as (current: TaskDetail) => unknown;
         expect(reducer({ ...task, columnMovedAt: "2026-09-04T01:01:00.000Z" })).toBeNull();
+        // FNXC:MergeRetryReliability 2026-09-04-04:40: matching lane identity must still park after the bounded outage.
+        expect(reducer({ ...task })).toEqual({ error: expect.any(String), status: "failed" });
       } finally {
         vi.useRealTimers();
       }
@@ -981,3 +983,174 @@ describe("routeGraphMergeFailureToRetry — rejected merge requester", () => {
     expect(executeSpy).toHaveBeenCalledWith(task);
   });
 });
+
+/*
+FNXC:MergeRetryReliability 2026-09-04-04:40:
+CodeRabbit 17:22 required a narrow-seam cohort for deferred terminal parking across
+every known outcome of retryTerminalFailurePersistence: bounded exhaustion,
+matching-run parking, changed-run rejection, cleared-context live-surface
+rejection, and retry after an atomic-write rejection. Drive handleGraphFailure
+(the shipped sink) with a controlled TaskStore and fake timers — no polling or
+network. Generic execute failures reach that sink; merge-node failures do not.
+*/
+describe("deferred terminal parking — retryTerminalFailurePersistence outcomes", () => {
+  const capturedColumnMovedAt = "2026-09-04T04:40:00.000Z";
+
+  beforeEach(() => {
+    resetExecutorMocks();
+  });
+
+  async function setupGenericTerminalFailure() {
+    const tasksDir = await mkdtemp(join(tmpdir(), "fusion-gdpr53-deferred-"));
+    const task = makeTask(await mkdtemp(join(tmpdir(), "fusion-gdpr53-wt-")), {
+      column: "in-progress",
+      columnMovedAt: capturedColumnMovedAt,
+    });
+    await mkdir(join(tasksDir, task.id), { recursive: true });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(task);
+    store.getSettings.mockResolvedValue({ autoMerge: true });
+    (store as any).getTasksDir = vi.fn().mockReturnValue(tasksDir);
+    const executor = new TaskExecutor(store, await mkdtemp(join(tmpdir(), "fusion-gdpr53-root-")), {});
+    (executor as any).currentRunContexts.set(task.id, { runId: "captured-run-A", agentId: "executor" });
+    return { store, task, executor, tasksDir };
+  }
+
+  function invokeGenericTerminalFailure(executor: TaskExecutor, task: TaskDetail) {
+    return (executor as any).handleGraphFailure(task, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["plan", "execute"],
+      context: { "node:execute:value": "some-non-blocked-failure" },
+    });
+  }
+
+  it("exhausts bounded persistence then parks the matching run from the deferred write", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, task, executor } = await setupGenericTerminalFailure();
+      let current = { ...task, status: null, error: null, deletedAt: null, paused: false, userPaused: false };
+      let attempts = 0;
+      store.updateTaskAtomic = vi.fn(async (_id: string, reducer: (row: TaskDetail) => Partial<TaskDetail> | null) => {
+        attempts += 1;
+        if (attempts <= 7) throw new Error("store down");
+        const patch = reducer(current);
+        if (patch) current = { ...current, ...patch };
+        return current;
+      }) as any;
+
+      const pending = invokeGenericTerminalFailure(executor, task);
+      await vi.advanceTimersByTimeAsync(70_000);
+      await pending;
+
+      expect(attempts).toBe(8);
+      expect(current).toMatchObject({ status: "failed", error: expect.any(String) });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("matching-run parking applies the captured identity and refuses a later lane move", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, task, executor } = await setupGenericTerminalFailure();
+      let attempts = 0;
+      store.updateTaskAtomic = vi.fn(async (_id: string, reducer: (row: TaskDetail) => Partial<TaskDetail> | null) => {
+        attempts += 1;
+        if (attempts <= 7) throw new Error("store down");
+        return reducer({ ...task, status: null, deletedAt: null, paused: false, userPaused: false });
+      }) as any;
+
+      const pending = invokeGenericTerminalFailure(executor, task);
+      await vi.advanceTimersByTimeAsync(70_000);
+      await pending;
+
+      const reducer = (store.updateTaskAtomic as unknown as { mock: { calls: unknown[][] } }).mock.calls[7][1] as (
+        row: TaskDetail,
+      ) => unknown;
+      expect(reducer({ ...task })).toEqual({ error: expect.any(String), status: "failed" });
+      expect(reducer({ ...task, columnMovedAt: "2026-09-04T04:41:00.000Z" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("changed-run rejection skips the deferred park for a newer execution", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, task, executor } = await setupGenericTerminalFailure();
+      let attempts = 0;
+      store.updateTaskAtomic = vi.fn(async () => {
+        attempts += 1;
+        throw new Error("store down");
+      }) as any;
+      vi.spyOn(executor as any, "getRunContextFor").mockImplementation(() => {
+        const inDeferredCallback = (executor as any).deferredTerminalParksInFlight.has(task.id);
+        return inDeferredCallback
+          ? { runId: "newer-run-B", agentId: "executor" }
+          : { runId: "captured-run-A", agentId: "executor" };
+      });
+
+      const pending = invokeGenericTerminalFailure(executor, task);
+      await vi.advanceTimersByTimeAsync(70_000);
+      await pending;
+
+      expect(attempts).toBe(7);
+      expect(task.status).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cleared-context live-surface rejection skips the deferred park", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, task, executor } = await setupGenericTerminalFailure();
+      let attempts = 0;
+      store.updateTaskAtomic = vi.fn(async () => {
+        attempts += 1;
+        throw new Error("store down");
+      }) as any;
+      vi.spyOn(executor as any, "getRunContextFor").mockImplementation(() => {
+        const inDeferredCallback = (executor as any).deferredTerminalParksInFlight.has(task.id);
+        return inDeferredCallback ? undefined : { runId: "captured-run-A", agentId: "executor" };
+      });
+      (executor as any).executing.add(task.id);
+
+      const pending = invokeGenericTerminalFailure(executor, task);
+      await vi.advanceTimersByTimeAsync(70_000);
+      await pending;
+
+      expect(attempts).toBe(7);
+      expect(task.status).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries after an atomic-write rejection and parks the matching run", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, task, executor } = await setupGenericTerminalFailure();
+      let current = { ...task, status: null, error: null, deletedAt: null, paused: false, userPaused: false };
+      let attempts = 0;
+      store.updateTaskAtomic = vi.fn(async (_id: string, reducer: (row: TaskDetail) => Partial<TaskDetail> | null) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("store down");
+        const patch = reducer(current);
+        if (patch) current = { ...current, ...patch };
+        return current;
+      }) as any;
+
+      const pending = invokeGenericTerminalFailure(executor, task);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await pending;
+
+      expect(attempts).toBe(2);
+      expect(current).toMatchObject({ status: "failed", error: expect.any(String) });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+

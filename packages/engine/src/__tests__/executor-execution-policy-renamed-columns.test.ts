@@ -431,24 +431,22 @@ describe("a resolved workflow is never given a column it does not declare", () =
     lane, so `building` is the only legal resume destination; it must not invent `todo` or regress
     to the intake column.
 
+    FNXC:LifecycleContainment 2026-09-04-04:35:
+    FN-217 and FN-231 removed automatic backward rehomes from a non-WIP lane. A stray `todo` row
+    therefore remains in place after the graph records its containment refusal.
+
     What the case still owns is unchanged: the DISPATCH-LOOP gate did not claim the card (no
     "executor recovery preserved" log), and the run reached a real classifier rather than falling off
     the end.
     */
     expect(store.logEntry).toHaveBeenCalledWith(
       task.id,
-      expect.stringContaining("resuming execution in 'building'"),
+      "Workflow graph failed at node 'execute' (recoverable) — automatic recovery cannot move 'todo' backward; card remains in place",
       undefined,
       undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith(
-      task.id,
-      "building",
-      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }),
-    );
-    // Still never the literal the workflow does not declare.
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "building", expect.anything());
     expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
-    expect(task.status).not.toBe("failed");
   });
 
   it("a workflow with no wip column terminalizes visibly instead of claiming the card advanced", async () => {

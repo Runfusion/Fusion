@@ -263,8 +263,13 @@ describe("SkillsView", () => {
   });
 
   describe("chat snippets", () => {
+    function activateSnippetsTab(): void {
+      fireEvent.click(screen.getByTestId("skills-tab-snippets"));
+    }
+
     it("creates, edits, and deletes a snippet while preserving prompt text", async () => {
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      activateSnippetsTab();
       await screen.findByTestId("snippets-empty");
 
       const prompt = "  lance toujours les tests\navec chrome devtool mcp 😀  ";
@@ -291,6 +296,7 @@ describe("SkillsView", () => {
     it("rejects reserved, duplicate, and over-capacity names before writing", async () => {
       chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
       const first = render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      activateSnippetsTab();
       await screen.findByText("/existing");
 
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "STEER" } });
@@ -307,6 +313,7 @@ describe("SkillsView", () => {
       __test_resetChatSnippetsCache();
       chatSnippets = Array.from({ length: 50 }, (_, index) => ({ name: `item-${index}`, prompt: `${index}` }));
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      activateSnippetsTab();
       await screen.findByText("/item-49");
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "overflow" } });
       fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "prompt" } });
@@ -319,6 +326,7 @@ describe("SkillsView", () => {
       chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
       mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("write failed"));
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      activateSnippetsTab();
       await screen.findByText("/existing");
 
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "test" } });
@@ -335,6 +343,7 @@ describe("SkillsView", () => {
       let rejectLoad!: (error: Error) => void;
       mockFetchGlobalSettings.mockReturnValueOnce(new Promise((_, reject) => { rejectLoad = reject; }));
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      activateSnippetsTab();
 
       expect(screen.getByTestId("snippets-loading")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Add snippet" })).toBeDisabled();
@@ -344,13 +353,18 @@ describe("SkillsView", () => {
       expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
     });
 
-    it("keeps discovered skills and catalog actions available beside snippet management", async () => {
+    it("keeps skill actions and snippet management accessible by switching tabs", async () => {
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-      await screen.findByText("Chat Snippets");
-      expect(screen.getByText("Discovered Skills")).toBeTruthy();
-      expect(screen.getByText("Skills Catalog")).toBeTruthy();
-      expect(screen.getByLabelText("Disable test-skill")).toBeTruthy();
+
+      expect(await screen.findByRole("heading", { name: "Discovered Skills" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Skills Catalog" })).toBeTruthy();
+      expect(screen.getByRole("checkbox", { name: "Disable test-skill" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Install Test Skill" })).toBeTruthy();
+
+      activateSnippetsTab();
+      expect(screen.getByRole("heading", { name: "Chat Snippets" })).toBeTruthy();
+      expect(screen.getByRole("textbox", { name: "Name" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add snippet" })).toBeTruthy();
     });
   });
 

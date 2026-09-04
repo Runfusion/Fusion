@@ -7640,7 +7640,14 @@
     "snippetsAdd": "스니펫 추가",
     "snippetsEmpty": "저장된 스니펫이 없습니다.",
     "snippetsEdit": "/{{name}} 편집",
-    "snippetsDelete": "/{{name}} 삭제"
+    "snippetsDelete": "/{{name}} 삭제",
+    "tabSkills": "스킬",
+    "tabSnippets": "스니펫",
+    "tabsLabel": "스킬 및 스니펫 섹션",
+    "skillsDescription": "이 프로젝트에서 사용할 수 있는 스킬을 탐색하고 활성화하거나 설치하세요.",
+    "snippetsEmptyHint": "여기에서 만든 다음 채팅에 /이름을 입력해 삽입하세요.",
+    "refreshSkillsLabel": "스킬 새로 고침",
+    "refreshSnippetsLabel": "스니펫 새로 고침"
   },
   "specEditor": {
     "edit": "편집",
