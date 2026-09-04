@@ -55,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -176,7 +176,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -244,7 +244,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -350,7 +350,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -466,7 +466,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -612,7 +612,7 @@ jobs:
       # binaries on v0.47.0 even though every bun build leg succeeded. Sparse-checkout
       # only CHANGELOG.md to keep the job lean; no submodules or full history needed.
       - name: Checkout CHANGELOG for release notes
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false

@@ -29,7 +29,7 @@ jobs:
       # the job — and the rest of this job runs a scanner installed from the
       # network over the contents of a pull request. A token that no step
       # needs should not be sitting in the working tree while that happens.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
