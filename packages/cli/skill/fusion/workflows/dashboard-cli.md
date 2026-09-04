@@ -75,8 +75,8 @@ fn backup --cleanup        # Remove old pairs and abandoned crash artifacts
 Quiesce Fusion writers and competing backup commands: backup operations have no
 cross-process lock or pair-wide restore transaction. In-progress artifacts are
 never listed or restorable; cleanup sweeps only abandoned artifacts. Dump pairs
-restore `project`, `archive`, and `central` but not PostgreSQL migration
-bookkeeping in `public`, so an older dump requires migration-state review.
+restore `project`, `archive`, and `central`. After a project restore, Fusion
+rewinds and replays schema migrations whose restored relations are missing.
 
 **Multi-project support:**
 

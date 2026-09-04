@@ -6,7 +6,13 @@ import {
   BackupManager,
   createBackupManager,
   resolveBackendConnectionString,
+  type BackupOptions,
 } from "../backup/backup.js";
+import {
+  reconcileRestoredSchemaMigrations,
+  type RestoreMigrationCatalog,
+} from "../postgres/restore-migration-reconcile.js";
+import { TASK_LIFECYCLE_OUTBOX_VERSION } from "../postgres/schema-applier.js";
 import {
   clearActiveEmbeddedRuntimeUrl,
   EmbeddedRuntimeStoppingError,
@@ -28,7 +34,40 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function createRestoreFixture(root: string) {
+function createPre0040RestoreCatalog(): RestoreMigrationCatalog & {
+  insertLifecycleSeq(projectId: string): Promise<void>;
+} {
+  const relations = new Set<string>();
+  const applied = new Set(["0039", TASK_LIFECYCLE_OUTBOX_VERSION, "0071"]);
+  return {
+    async relationExists(qualifiedName) {
+      return relations.has(qualifiedName);
+    },
+    async unstampNumericVersionsFrom(version) {
+      const floor = Number.parseInt(version, 10);
+      for (const appliedVersion of [...applied]) {
+        if (/^[0-9]+$/.test(appliedVersion) && Number.parseInt(appliedVersion, 10) >= floor) {
+          applied.delete(appliedVersion);
+        }
+      }
+    },
+    async replayPendingMigrations() {
+      if (!applied.has(TASK_LIFECYCLE_OUTBOX_VERSION)) {
+        relations.add("project.task_lifecycle_events");
+        relations.add("project.task_lifecycle_event_seq");
+        applied.add(TASK_LIFECYCLE_OUTBOX_VERSION);
+      }
+    },
+    async insertLifecycleSeq(projectId: string) {
+      if (!relations.has("project.task_lifecycle_event_seq")) {
+        throw new Error('relation "project.task_lifecycle_event_seq" does not exist');
+      }
+      if (!projectId) throw new Error("projectId is required");
+    },
+  };
+}
+
+async function createRestoreFixture(root: string, backupOptions: BackupOptions = {}) {
   const fusionDir = join(root, "project", ".fusion");
   const backupDir = join(fusionDir, "backups");
   const actionsPath = join(root, "actions.log");
@@ -77,6 +116,8 @@ exit 0
     connectionString: embeddedUrl,
     pgDumpPath,
     pgRestorePath,
+    reconcileRestoredMigrations: async () => {},
+    ...backupOptions,
   });
   const actions = async () => {
     try {
@@ -312,6 +353,32 @@ describe("PostgreSQL paired restore orchestration", () => {
       } finally {
         await rm(root, { recursive: true, force: true });
       }
+    }
+  });
+
+  it("replays 0040 relations after restoring a dump that lacks them while the ledger claims current", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0040-rewind-"));
+    try {
+      const catalog = createPre0040RestoreCatalog();
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0040-project");
+      await writeFile(fixture.centralPath, "central-source");
+
+      await expect(catalog.insertLifecycleSeq("proj")).rejects.toThrow(
+        /task_lifecycle_event_seq/,
+      );
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, {
+        createPreRestoreBackup: false,
+      });
+
+      expect(await catalog.relationExists("project.task_lifecycle_event_seq")).toBe(true);
+      expect(await catalog.relationExists("project.task_lifecycle_events")).toBe(true);
+      await expect(catalog.insertLifecycleSeq("proj")).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

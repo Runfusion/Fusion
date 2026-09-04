@@ -116,8 +116,9 @@ Project/archive restores before central, each in its own transaction. If central
 fails, Fusion attempts project/archive rollback from the retained dump. The two
 dumps do not share one snapshot or one pair-wide transaction. In-progress backup
 artifacts are never listed or restorable, and cleanup removes only abandoned ones.
-Dump pairs exclude PostgreSQL migration bookkeeping in `public`; restoring data
-older than the running schema baseline requires reviewing migration state.
+After a project/archive restore, Fusion rewinds `public.fusion_schema_migrations`
+from the earliest missing sentinel relation and replays pending migrations so a
+pre-0040 dump cannot skip later schema upgrades.
 
 ## Multi-Project
 
