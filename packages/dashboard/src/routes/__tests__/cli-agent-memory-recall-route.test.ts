@@ -9,7 +9,10 @@ valid request whose recall produced no cue (or a service-side throw) returns
 native hook/extension channel.
 */
 import express from "express";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createAuthMiddleware } from "../../auth-middleware.js";
 import { request as performRequest } from "../../test-request.js";
 import {
@@ -280,7 +283,8 @@ recall off (then project memory off) the SAME populated backend returns a
 dedup out of the assertion.
 */
 describe("POST /api/cli-agent/memory-recall settings gate (RUFU-128 Step 7)", () => {
-  const GATE_ROOT = "/tmp/rufu128-route-gate-project";
+  const GATE_ROOT = mkdtempSync(join(tmpdir(), "rufu128-route-gate-project-"));
+  afterAll(() => rmSync(GATE_ROOT, { recursive: true, force: true }));
   const GATE_TOPIC = "čo sme diskutovali o LCM B.1 B.2";
 
   // Mutable per-call settings — the route must read them fresh on every

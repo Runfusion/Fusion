@@ -7,7 +7,10 @@
  * pattern of per-turn-recall.test.ts) — no real Stash/qmd process is spawned.
  */
 
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   MEMORY_PRE_STEERING_MARKER,
   __resetPerTurnRecallDedupForTests,
@@ -17,7 +20,8 @@ import {
 } from "@fusion/core";
 import { recallForChatTurn } from "../memory-recall-service.js";
 
-const ROOT = "/tmp/rufu128-recall-service-fake-project";
+const ROOT = mkdtempSync(join(tmpdir(), "rufu128-recall-service-fake-project-"));
+afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 const TOPIC = "what did we decide about the LCM steering marker";
 
 function makeSettings(overrides: Partial<Settings> = {}): Partial<Settings> {

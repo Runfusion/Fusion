@@ -5,11 +5,20 @@
  * PROMPT.md Step 4 tests (a)-(f).
  */
 
-import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+/*
+FNXC:CliChatRecall 2026-09-04-05:45:
+ThreatCrush CWE-377: hook-script and extension fixtures must be exclusive temp
+paths, not hardcoded OS temporary-directory strings.
+*/
+const HOOK_DIR = mkdtempSync(join(tmpdir(), "adapters-chat-recall-hooks-"));
+afterAll(() => rmSync(HOOK_DIR, { recursive: true, force: true }));
+const hookFile = (name: string) => join(HOOK_DIR, name);
 import {
   buildClaudeCodeSettings,
   claudeCodeAdapter,
@@ -81,17 +90,26 @@ describe("claude-code — hook-ref optionality (RUFU-128)", () => {
 
   it("(c) all core refs present → settings BYTE-IDENTICAL to the pre-RUFU-128 builder output", () => {
     const refs: HookScriptRefs = {
-      sessionStartScript: "/tmp/x/session-start.sh",
-      stopScript: "/tmp/x/stop.sh",
-      notificationScript: "/tmp/x/notification.sh",
-      permissionScript: "/tmp/x/permission.sh",
-      toolActivityScript: "/tmp/x/tool-activity.sh",
+      sessionStartScript: hookFile("session-start.sh"),
+      stopScript: hookFile("stop.sh"),
+      notificationScript: hookFile("notification.sh"),
+      permissionScript: hookFile("permission.sh"),
+      toolActivityScript: hookFile("tool-activity.sh"),
     };
-    // Captured by running the PRE-change builder (git 9dbd07b68) on this exact
-    // input: the unconditional core four + tool-activity trio, historical key
-    // order. A shape or ordering drift in buildClaudeCodeSettings fails here.
-    const EXPECTED_PRE_CHANGE_BYTES =
-      '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/tmp/x/session-start.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"/tmp/x/stop.sh"}]}],"Notification":[{"hooks":[{"type":"command","command":"/tmp/x/notification.sh"}]}],"PermissionRequest":[{"hooks":[{"type":"command","command":"/tmp/x/permission.sh"}]}],"PreToolUse":[{"hooks":[{"type":"command","command":"/tmp/x/tool-activity.sh"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/tmp/x/tool-activity.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/tmp/x/tool-activity.sh"}]}]}}';
+    // Historical key order from the PRE-change builder (git 9dbd07b68): the
+    // unconditional core four + tool-activity trio. A shape or ordering drift
+    // in buildClaudeCodeSettings fails here.
+    const EXPECTED_PRE_CHANGE_BYTES = JSON.stringify({
+      hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: refs.sessionStartScript }] }],
+        Stop: [{ hooks: [{ type: "command", command: refs.stopScript }] }],
+        Notification: [{ hooks: [{ type: "command", command: refs.notificationScript }] }],
+        PermissionRequest: [{ hooks: [{ type: "command", command: refs.permissionScript }] }],
+        PreToolUse: [{ hooks: [{ type: "command", command: refs.toolActivityScript }] }],
+        PostToolUse: [{ hooks: [{ type: "command", command: refs.toolActivityScript }] }],
+        UserPromptSubmit: [{ hooks: [{ type: "command", command: refs.toolActivityScript }] }],
+      },
+    });
 
     expect(JSON.stringify(buildClaudeCodeSettings(refs))).toBe(EXPECTED_PRE_CHANGE_BYTES);
 
@@ -104,12 +122,12 @@ describe("claude-code — hook-ref optionality (RUFU-128)", () => {
 
   it("(c2) all core refs + recall script → UserPromptSubmit holds BOTH entries (merge, in order)", () => {
     const refs: HookScriptRefs = {
-      sessionStartScript: "/tmp/x/session-start.sh",
-      stopScript: "/tmp/x/stop.sh",
-      notificationScript: "/tmp/x/notification.sh",
-      permissionScript: "/tmp/x/permission.sh",
-      toolActivityScript: "/tmp/x/tool-activity.sh",
-      memoryRecallScript: "/tmp/x/recall-hook.sh",
+      sessionStartScript: hookFile("session-start.sh"),
+      stopScript: hookFile("stop.sh"),
+      notificationScript: hookFile("notification.sh"),
+      permissionScript: hookFile("permission.sh"),
+      toolActivityScript: hookFile("tool-activity.sh"),
+      memoryRecallScript: hookFile("recall-hook.sh"),
     };
     const doc = buildClaudeCodeSettings(refs);
     expect(Object.keys(doc.hooks)).toEqual([
@@ -122,20 +140,20 @@ describe("claude-code — hook-ref optionality (RUFU-128)", () => {
       "UserPromptSubmit",
     ]);
     expect(doc.hooks.UserPromptSubmit.map((e) => e.hooks[0].command)).toEqual([
-      "/tmp/x/tool-activity.sh",
-      "/tmp/x/recall-hook.sh",
+      refs.toolActivityScript,
+      refs.memoryRecallScript,
     ]);
   });
 
   it("(d) resume with hook scripts → argv still carries the settings flag (resume re-wires)", () => {
     const launch = claudeCodeAdapter.buildLaunch({
-      settings: { hookScripts: { stopScript: "/tmp/x/stop.sh" } },
+      settings: { hookScripts: { stopScript: hookFile("stop.sh") } },
       posture: null,
     });
     expect(launch.args).toContain("--settings");
 
     const resume = claudeCodeAdapter.buildResume!({
-      settings: { hookScripts: { stopScript: "/tmp/x/stop.sh" } },
+      settings: { hookScripts: { stopScript: hookFile("stop.sh") } },
       posture: null,
       nativeSessionId: "sess-native-1",
     });
@@ -147,13 +165,13 @@ describe("claude-code — hook-ref optionality (RUFU-128)", () => {
     const doc = JSON.parse(resume.args[s + 1]) as {
       hooks: Record<string, { hooks: { command: string }[] }[]>;
     };
-    expect(doc.hooks.Stop[0].hooks[0].command).toBe("/tmp/x/stop.sh");
+    expect(doc.hooks.Stop[0].hooks[0].command).toBe(hookFile("stop.sh"));
   });
 });
 
 describe("pi — --extension flag (RUFU-128)", () => {
   it("(e) launch AND resume with an extension path → the flag appears exactly once in each; without → none", () => {
-    const ext = "/tmp/x/recall-extension.ts";
+    const ext = hookFile("recall-extension.ts");
 
     const launchWith = piAdapter.buildLaunch({
       settings: { extensionPath: ext },

@@ -11,10 +11,11 @@
  * display-false, token embedded.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -37,6 +38,8 @@ import {
 import type { TelemetryHub } from "../telemetry-hub.js";
 
 const ENDPOINT = "http://127.0.0.1:1/api/cli-agent/memory-recall";
+const RECORD_CWD = mkdtempSync(join(tmpdir(), "chat-recall-provisioner-cwd-"));
+afterAll(() => rmSync(RECORD_CWD, { recursive: true, force: true }));
 
 /** A token-issuing stand-in for the telemetry hub (idempotent issue, invalidate). */
 class FakeHub {
@@ -72,7 +75,7 @@ function makeRecord(overrides: Partial<CliSession> = {}): CliSession {
     adapterId: "claude-code",
     command: "claude",
     args: [],
-    cwd: "/tmp/x",
+    cwd: RECORD_CWD,
     extraEnv: {},
     hookDir: null,
     agentState: "idle",

@@ -260,7 +260,7 @@ describe("createCliAgentRuntime — chat recall wiring (RUFU-128)", () => {
   it("recallEndpointUrl without projectRoot → construction throws (fail loud, never silent no-op)", async () => {
     await expect(
       createCliAgentRuntime({
-        fusionDir: "/tmp/fusion-cli-agent-test",
+        fusionDir: mkdtempSync(join(tmpdir(), "fusion-cli-agent-test-")),
         asyncLayer: { db: {} } as AsyncDataLayer,
         projectId: "project-a",
         hookEndpointUrl: "http://127.0.0.1:4545/api/cli-agent/hooks",
