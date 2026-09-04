@@ -380,12 +380,28 @@ export async function restoreTaskFromArchive(
       FNXC:WorkspaceWorktree 2026-09-04-05:37:
       `readTaskRowInTransaction` is a `Record<string, unknown>` projection. The SET target is a
       text column, so keep only a string pin or release to null — never pass the untyped cell.
+      FNXC:WorkspaceWorktree 2026-09-04-05:44:
+      The unique claim is live-only. A successor can pin the released name while this tombstone still
+      holds surviving workspace paths. Restoring that pin while clearing `deleted_at` would 23505 and
+      abort unarchive; if another live row already owns the segment, leave it null so restore
+      succeeds and the next acquisition remints.
       */
-      const workspaceWorktreeDirSegment: string | null =
-        reconciledWorktreeState.workspaceWorktrees
-        && typeof existing.workspaceWorktreeDirSegment === "string"
-          ? existing.workspaceWorktreeDirSegment
-          : null;
+      const candidateSegment = typeof existing.workspaceWorktreeDirSegment === "string"
+        ? existing.workspaceWorktreeDirSegment
+        : null;
+      let workspaceWorktreeDirSegment: string | null = null;
+      if (reconciledWorktreeState.workspaceWorktrees && candidateSegment) {
+        const liveClaim = await tx
+          .select({ id: schema.project.tasks.id })
+          .from(schema.project.tasks)
+          .where(and(
+            eq(schema.project.tasks.projectId, projectPartition(layer.projectId)),
+            eq(schema.project.tasks.workspaceWorktreeDirSegment, candidateSegment),
+            ACTIVE_TASK_FILTER,
+          ))
+          .limit(1);
+        workspaceWorktreeDirSegment = liveClaim.length > 0 ? null : candidateSegment;
+      }
       // Row exists (was soft-deleted). Restore it: clear deleted_at, keep
       // column as "archived" so the caller (unarchiveTaskImpl) can verify the
       // task is in the archived column and then moveTask it to the target

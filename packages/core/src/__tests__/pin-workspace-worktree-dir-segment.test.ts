@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { readTaskRowInTransaction } = vi.hoisted(() => ({
   readTaskRowInTransaction: vi.fn(),
@@ -18,6 +21,8 @@ The pin writer must target the same (project_id, id) row that `readTaskRowInTran
 `taskProjectScope` is a no-op on unbound layers, so this test drives the shipped function and
 asserts the UPDATE predicate — not source text — for both unbound and bound stores.
 */
+
+let pinTaskDir = "";
 
 function collectSqlValues(node: unknown, into: unknown[] = [], seen = new Set<unknown>()): unknown[] {
   if (node == null || seen.has(node)) return into;
@@ -63,12 +68,18 @@ function createPinStore(projectId: string | undefined, options: { returning?: ()
     isWatching: false,
     taskCache: new Map(),
     emitTaskLifecycleEventSafely: vi.fn(),
-    taskDir: () => "/tmp/fn-3520",
+    taskDir: () => pinTaskDir,
   };
   return { store, whereClauses, updatedRow };
 }
 
 describe("pinWorkspaceWorktreeDirSegmentImpl project scope", () => {
+  beforeAll(() => {
+    pinTaskDir = mkdtempSync(join(tmpdir(), "fn-3520-pin-"));
+  });
+  afterAll(() => {
+    rmSync(pinTaskDir, { recursive: true, force: true });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     readTaskRowInTransaction.mockResolvedValue({
