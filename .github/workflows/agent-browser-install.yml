@@ -27,7 +27,13 @@ jobs:
   pack-fixture:
     name: Pack agent-browser install fixture
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # FNXC:AgentBrowserPackaging 2026-09-04-04:42:
+    # prepack now asserts dist/plugin-sdk/index.d.ts exists (prepare-publish-manifest).
+    # Keep skip-install so setup-node uses the no-store-cache path (ci-workflow
+    # contract; post-job cache save otherwise fails). The composite's skip-install
+    # input means the caller installs workspace deps; build the CLI before
+    # `pnpm pack` so the pack guard stays intact as a real published-boundary test.
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -39,6 +45,14 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
         with:
           skip-install: "true"
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI package for pack
+        shell: bash
+        run: pnpm --filter @runfusion/fusion build
 
       - name: Pack Fusion CLI and agent-browser
         shell: bash
