@@ -36,6 +36,11 @@ export interface StandardChatMessageItemProps {
   showAssistantModelTag: boolean;
   activeModelTag: string | null;
   activeModelProvider: string | null;
+  /**
+   * FNXC:AITransparency 2026-09-04-05:38:
+   * Callers still pass the live session model id for API symmetry with streaming. Persisted rows
+   * must not bind it — disclosure reads stored message metadata instead.
+   */
   activeModelId?: string | null;
   activeSessionId: string | null;
   /** The owning dashboard project keeps voice availability isolated in multi-project views. */
@@ -626,7 +631,6 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   showAssistantModelTag,
   activeModelTag,
   activeModelProvider,
-  activeModelId,
   activeSessionId,
   mentionAgentsByName = new Map(),
   roomContext = null,

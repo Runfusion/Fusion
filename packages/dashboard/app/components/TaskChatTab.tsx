@@ -142,7 +142,7 @@ function uniqueRuntimeAttribution(entries: readonly AgentLogEntry[], role: Agent
     : null;
 }
 
-function shouldSplitRoleGroup(existing: readonly AgentLogEntry[], incoming: AgentLogEntry, role: AgentLogRole): boolean {
+function shouldSplitRoleGroup(existing: readonly AgentLogEntry[], incoming: AgentLogEntry): boolean {
   const incomingMarker = parseModelMarker(incoming);
   if (!incomingMarker) return false;
   let lastMarker: TaskChatModelInfo | null = null;
@@ -331,7 +331,7 @@ function buildTranscriptItems(entries: readonly AgentLogEntry[], userMessages: r
     and model B under one disclosure would relabel historic Live output after a later lane switch.
     */
     if (previousItem?.kind === "agent" && previousItem.role === role) {
-      if (shouldSplitRoleGroup(previousItem.entries, item.entry, role)) {
+      if (shouldSplitRoleGroup(previousItem.entries, item.entry)) {
         items.push({ kind: "agent", role, label: getRoleLabel(role, t), entries: [item.entry] });
         return items;
       }
