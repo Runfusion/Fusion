@@ -44,6 +44,12 @@
  * source-agent index; 0062 drops `break_into_subtasks`. Skip 0061: it targets
  * central.central_activity_log and project dumps do not replace `central`.
  *
+ * FNXC:PostgresBackup 2026-09-04-09:08:
+ * 0055 is applied only when the assign trigger, isolation policy, AND forced
+ * RLS are all present. Policy-expression drift is not a restore rewind signal;
+ * DROP POLICY / CREATE POLICY on replay is how 0055 repairs expression drift,
+ * and we do not encode USING SQL in the catalog.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -131,6 +137,7 @@ export interface RestoreMigrationCatalog {
   triggerExists(qualifiedRelation: string, triggerName: string): Promise<boolean>;
   policyExists(qualifiedRelation: string, policyName: string): Promise<boolean>;
   indexExists(qualifiedRelation: string, indexName: string): Promise<boolean>;
+  rowLevelSecurityForced(qualifiedRelation: string): Promise<boolean>;
   applyRewindAndReplay(floor: string | null): Promise<void>;
 }
 
@@ -165,6 +172,7 @@ export interface RestoredSchemaRelationSentinel {
   readonly policies?: readonly RestoredSchemaNamedObjectSentinel[];
   readonly indexes?: readonly RestoredSchemaNamedObjectSentinel[];
   readonly absentColumns?: readonly RestoredSchemaColumnSentinel[];
+  readonly forcedRowLevelSecurity?: readonly string[];
 }
 
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -332,6 +340,7 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
     version: AGENT_RATINGS_PROJECT_PARTITION_VERSION,
     triggers: [{ relation: "project.agent_ratings", name: "fusion_assign_project_id" }],
     policies: [{ relation: "project.agent_ratings", name: "fusion_project_isolation" }],
+    forcedRowLevelSecurity: ["project.agent_ratings"],
   },
   { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: MESSAGE_ARCHIVED_SQL_COLUMN }] },
   {
@@ -422,6 +431,14 @@ export async function detectRestoredSchemaRewindFloor(
       for (const column of sentinel.absentColumns ?? []) {
         if (!(await catalog.relationExists(column.relation))) continue;
         if (!(await catalog.columnExists(column.relation, column.column))) continue;
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) {
+      for (const relation of sentinel.forcedRowLevelSecurity ?? []) {
+        if (!(await catalog.relationExists(relation))) continue;
+        if (await catalog.rowLevelSecurityForced(relation)) continue;
         missing = true;
         break;
       }
@@ -581,6 +598,23 @@ export function createDrizzleRestoreMigrationCatalog(
         ) AS present
       `)) as unknown as Array<{ present: boolean }>;
       return rows[0]?.present === true;
+    },
+    async rowLevelSecurityForced(qualifiedRelation) {
+      /*
+       * FNXC:PostgresBackup 2026-09-04-09:08:
+       * 0055 ENABLE + FORCE RLS so project-bound sessions cannot read other
+       * projects' ratings. Bound schema/table; missing relation is skipped by
+       * detect, not by encoding USING SQL.
+       */
+      const { schema, table } = splitQualifiedRelation(qualifiedRelation);
+      const rows = (await db.execute(sql`
+        SELECT (rel.relrowsecurity AND rel.relforcerowsecurity) AS forced
+        FROM pg_class rel
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE nsp.nspname = ${schema}
+          AND rel.relname = ${table}
+      `)) as unknown as Array<{ forced: boolean }>;
+      return rows[0]?.forced === true;
     },
     async applyRewindAndReplay(floor) {
       /*

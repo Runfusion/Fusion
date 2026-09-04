@@ -97,6 +97,7 @@ function createRestoreCatalog(
     triggers?: ReadonlyArray<{ relation: string; name: string }>;
     policies?: ReadonlyArray<{ relation: string; name: string }>;
     indexes?: ReadonlyArray<{ relation: string; name: string }>;
+    rlsForced?: readonly string[];
   } = {},
 ): RestoreMigrationCatalog & {
   insertLifecycleSeq(projectId: string): Promise<void>;
@@ -115,9 +116,11 @@ function createRestoreCatalog(
   const triggerOverride = extras.triggers !== undefined;
   const policyOverride = extras.policies !== undefined;
   const indexOverride = extras.indexes !== undefined;
+  const rlsForcedOverride = extras.rlsForced !== undefined;
   const triggers = new Set((extras.triggers ?? []).map((entry) => namedObjectKey(entry.relation, entry.name)));
   const policies = new Set((extras.policies ?? []).map((entry) => namedObjectKey(entry.relation, entry.name)));
   const indexes = new Set((extras.indexes ?? []).map((entry) => namedObjectKey(entry.relation, entry.name)));
+  const rlsForced = new Set(extras.rlsForced ?? []);
   const applied = new Set(RESTORED_SCHEMA_RELATION_SENTINELS.map((sentinel) => sentinel.version));
   const catalog: RestoreMigrationCatalog & {
     insertLifecycleSeq(projectId: string): Promise<void>;
@@ -154,6 +157,12 @@ function createRestoreCatalog(
       if (indexOverride) return indexes.has(namedObjectKey(qualifiedRelation, indexName));
       return expectedNamedObjects("indexes", qualifiedRelation).includes(indexName);
     },
+    async rowLevelSecurityForced(qualifiedRelation) {
+      if (rlsForcedOverride) return rlsForced.has(qualifiedRelation);
+      return RESTORED_SCHEMA_RELATION_SENTINELS
+        .flatMap((sentinel) => [...(sentinel.forcedRowLevelSecurity ?? [])])
+        .includes(qualifiedRelation);
+    },
     async applyRewindAndReplay(floor) {
       const snapshotApplied = new Set(applied);
       const snapshotRelations = new Set(relations);
@@ -163,6 +172,7 @@ function createRestoreCatalog(
       const snapshotTriggers = new Set(triggers);
       const snapshotPolicies = new Set(policies);
       const snapshotIndexes = new Set(indexes);
+      const snapshotRlsForced = new Set(rlsForced);
       try {
         if (floor) {
           const parsedFloor = Number.parseInt(floor, 10);
@@ -196,6 +206,9 @@ function createRestoreCatalog(
           for (const column of sentinel.absentColumns ?? []) {
             columns.delete(columnKey(column.relation, column.column));
           }
+          for (const relation of sentinel.forcedRowLevelSecurity ?? []) {
+            rlsForced.add(relation);
+          }
           applied.add(sentinel.version);
         }
       } catch (error) {
@@ -217,6 +230,8 @@ function createRestoreCatalog(
         for (const key of snapshotPolicies) policies.add(key);
         indexes.clear();
         for (const key of snapshotIndexes) indexes.add(key);
+        rlsForced.clear();
+        for (const relation of snapshotRlsForced) rlsForced.add(relation);
         throw error;
       }
     },
@@ -717,6 +732,34 @@ describe("PostgreSQL paired restore orchestration", () => {
       await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
 
       expect(await catalog.triggerExists("project.agent_ratings", "fusion_assign_project_id")).toBe(true);
+      expect(catalog.hasApplied(AGENT_RATINGS_PROJECT_PARTITION_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0055 when agent_ratings trigger and policy exist but RLS is not forced", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const allColumns = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+    const catalogAtDetect = createRestoreCatalog(allRelations, allColumns, [], [], { rlsForced: [] });
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(AGENT_RATINGS_PROJECT_PARTITION_VERSION);
+    expect(await catalogAtDetect.triggerExists("project.agent_ratings", "fusion_assign_project_id")).toBe(true);
+    expect(await catalogAtDetect.policyExists("project.agent_ratings", "fusion_project_isolation")).toBe(true);
+    expect(await catalogAtDetect.rowLevelSecurityForced("project.agent_ratings")).toBe(false);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0055-rls-"));
+    try {
+      const catalog = createRestoreCatalog(allRelations, allColumns, [], [], { rlsForced: [] });
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0055-rls-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(catalog.hasApplied(AGENT_RATINGS_PROJECT_PARTITION_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.rowLevelSecurityForced("project.agent_ratings")).toBe(true);
       expect(catalog.hasApplied(AGENT_RATINGS_PROJECT_PARTITION_VERSION)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
