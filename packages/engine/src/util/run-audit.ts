@@ -1246,12 +1246,18 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     };
   }
 
+  const mutation = toRunMutationContext(context);
+  const actorMetadata = {
+    actorId: mutation.actor.id,
+    actorKind: mutation.actor.kind,
+  };
+
   return {
     git: async (input: GitAuditInput) => {
       const eventInput: RunAuditEventInput = {
         taskId: context.taskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "git",
         mutationType: input.type,
         target: input.target,
@@ -1259,6 +1265,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
@@ -1275,8 +1282,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
 
       const eventInput: RunAuditEventInput = {
         taskId: inferredTaskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "database",
         mutationType: input.type,
         target: input.target,
@@ -1284,6 +1291,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
@@ -1301,8 +1309,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
         : context.taskId;
       return await emitBoundedRunAuditWithOutcome(store, {
         taskId: inferredTaskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "database",
         mutationType: input.type,
         target: input.target,
@@ -1310,6 +1318,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       } as RunAuditEventInput);
@@ -1318,8 +1327,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     filesystem: async (input: FilesystemAuditInput) => {
       const eventInput: RunAuditEventInput = {
         taskId: context.taskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "filesystem",
         mutationType: input.type,
         target: input.target,
@@ -1327,6 +1336,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
@@ -1336,8 +1346,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     sandbox: async (input: SandboxAuditInput) => {
       const eventInput: RunAuditEventInput = {
         taskId: context.taskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "sandbox",
         mutationType: input.type,
         target: input.target,
@@ -1345,6 +1355,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
