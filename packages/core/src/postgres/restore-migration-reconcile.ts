@@ -10,6 +10,13 @@
  * sentinel — including credential-instance fields and `messages.archived` —
  * and replay `applySchemaBaseline` so restored schemas and bookkeeping match.
  *
+ * FNXC:PostgresBackup 2026-09-04-06:22:
+ * The catalog must include 0011 `owner_project_id` and similarly numbered early
+ * project objects. 0000 already ships `chat_sessions.pinned_at`, so a dump from
+ * 0010 makes the 0012 sentinel look present; without 0011 in the catalog the
+ * floor jumps to a later miss and leaves 0011 stamped. Replay then skips the
+ * domain column and todo/chat/research queries fail.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -27,6 +34,8 @@ import {
   applySchemaBaseline,
   AI_MERGE_REVIEW_RECONCILIATION_VERSION,
   AGENT_ACTIVITY_EVENTS_VERSION,
+  ANALYTICS_ISOLATION_SCHEMA_VERSION,
+  AUTOMATION_ISOLATION_SCHEMA_VERSION,
   BULK_COMPLETION_REFUSAL_AT_VERSION,
   CHAT_SESSION_MEMORY_FOCUS_VERSION,
   CHAT_SESSION_PINS_VERSION,
@@ -46,9 +55,13 @@ import {
   MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
   MISSION_LINEAGE_STOP_VERSION,
   MISSION_TASK_PREFIX_VERSION,
+  MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION,
+  MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
   MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+  OWNER_PROJECT_ID_SPLIT_VERSION,
   PATCHNODE_ENTRIES_VERSION,
   PLANNING_ACTIVE_TIMING_VERSION,
+  PROJECT_OWNERSHIP_SCHEMA_VERSION,
   QUEUED_EPISODE_SIGNATURE_VERSION,
   RESEARCH_FEATURE_PROVENANCE_VERSION,
   REVIEW_CONVERGENCE_STAGE_VERSION,
@@ -98,12 +111,40 @@ function tasksColumn(column: string): RestoredSchemaColumnSentinel {
   return { relation: "project.tasks", column };
 }
 
+function ownerProjectIdColumn(table: string): RestoredSchemaColumnSentinel {
+  return { relation: `project.${table}`, column: "owner_project_id" };
+}
+
+/**
+ * Tables that migration 0011 splits onto a nullable domain `owner_project_id`.
+ * Checked independently so a 0010 dump that already has 0000 `pinned_at` still
+ * unstamps 0011 when any of these columns is missing.
+ */
+const OWNER_PROJECT_ID_SPLIT_TABLES = [
+  "research_runs",
+  "experiment_sessions",
+  "todo_lists",
+  "eval_runs",
+  "chat_sessions",
+  "chat_rooms",
+  "ai_sessions",
+  "chat_token_usage",
+  "project_insights",
+  "project_insight_runs",
+  "cli_sessions",
+] as const;
+
 /**
  * Table and column sentinels used to detect a restored schema that is older
  * than the recorded ledger. Checked in version order; the first miss is the rewind floor.
  * Central-schema tables are excluded: project dumps do not replace `central`.
  * Column sentinels apply only when the parent relation exists, so a dump taken
  * after CREATE TABLE but before a later ALTER still rewinds that ALTER version.
+ *
+ * FNXC:PostgresBackup 2026-09-04-06:22:
+ * Early numbered migrations that add project objects must appear here in
+ * version order. Skipping 0011 (or 0001/0002/0003/0005/0006) lets a later
+ * present sentinel become the floor and leaves the omitted version stamped.
  */
 export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelationSentinel[] = [
   {
@@ -117,12 +158,42 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
       "project.mission_contract_assertions",
       "project.workflow_work_items",
       "project.agents",
+      "project.automations",
+      "project.activity_log",
+      "project.deployments",
+      "project.__meta",
+      "project.task_document_revisions",
+      "project.todo_lists",
+      "project.research_runs",
+      "project.eval_runs",
+      "project.experiment_sessions",
+      "project.chat_rooms",
+      "project.ai_sessions",
+      "project.chat_token_usage",
+      "project.project_insights",
+      "project.project_insight_runs",
+      "project.cli_sessions",
     ],
   },
+  { version: AUTOMATION_ISOLATION_SCHEMA_VERSION, columns: [{ relation: "project.automations", column: "project_id" }] },
+  { version: ANALYTICS_ISOLATION_SCHEMA_VERSION, columns: [{ relation: "project.activity_log", column: "project_id" }] },
+  { version: MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION, columns: [{ relation: "project.deployments", column: "project_id" }] },
   { version: LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION, relations: ["project.boards"] },
+  {
+    version: MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
+    columns: [
+      { relation: "project.__meta", column: "project_id" },
+      { relation: "project.task_document_revisions", column: "legacy_sqlite_id" },
+    ],
+  },
+  { version: PROJECT_OWNERSHIP_SCHEMA_VERSION, relations: ["project.mission_feature_evidence_links"] },
   { version: SQLITE_SCHEMA_PARITY_VERSION, columns: [tasksColumn("board_id")] },
   { version: SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, columns: [tasksColumn("session_advisor_enabled")] },
   { version: IMPORT_TRANSLATION_CACHE_VERSION, relations: ["project.import_translation_cache"] },
+  {
+    version: OWNER_PROJECT_ID_SPLIT_VERSION,
+    columns: OWNER_PROJECT_ID_SPLIT_TABLES.map(ownerProjectIdColumn),
+  },
   { version: CHAT_SESSION_PINS_VERSION, columns: [{ relation: "project.chat_sessions", column: "pinned_at" }] },
   { version: EXECUTOR_TOOL_FAILURE_RETRY_VERSION, columns: [tasksColumn("consecutive_tool_failure_retry_count")] },
   { version: EXECUTOR_ESCALATION_ATTEMPT_VERSION, columns: [tasksColumn("executor_escalation_attempted")] },

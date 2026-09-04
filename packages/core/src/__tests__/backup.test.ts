@@ -16,9 +16,16 @@ import {
   type RestoreMigrationCatalog,
 } from "../postgres/restore-migration-reconcile.js";
 import {
+  ANALYTICS_ISOLATION_SCHEMA_VERSION,
+  AUTOMATION_ISOLATION_SCHEMA_VERSION,
+  CHAT_SESSION_PINS_VERSION,
   CONFIGURATION_REVISIONS_VERSION,
   CREDENTIAL_INSTANCE_SELECTION_VERSION,
   MESSAGE_ARCHIVE_SCHEMA_VERSION,
+  MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION,
+  MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
+  OWNER_PROJECT_ID_SPLIT_VERSION,
+  PROJECT_OWNERSHIP_SCHEMA_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
 } from "../postgres/schema-applier.js";
@@ -128,6 +135,18 @@ function sentinelRelationsBelow(version: string): string[] {
 function sentinelColumnsBelow(version: string): Array<{ relation: string; column: string }> {
   return RESTORED_SCHEMA_RELATION_SENTINELS
     .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(version, 10))
+    .flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+}
+
+function sentinelRelationsExcept(version: string): string[] {
+  return RESTORED_SCHEMA_RELATION_SENTINELS
+    .filter((sentinel) => sentinel.version !== version)
+    .flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+}
+
+function sentinelColumnsExcept(version: string): Array<{ relation: string; column: string }> {
+  return RESTORED_SCHEMA_RELATION_SENTINELS
+    .filter((sentinel) => sentinel.version !== version)
     .flatMap((sentinel) => [...(sentinel.columns ?? [])]);
 }
 
@@ -469,6 +488,59 @@ describe("PostgreSQL paired restore orchestration", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("unstamps 0011 owner_project_id when a later 0012 sentinel already exists", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const catalogAtDetect = createRestoreCatalog(allRelations, sentinelColumnsExcept(OWNER_PROJECT_ID_SPLIT_VERSION));
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(OWNER_PROJECT_ID_SPLIT_VERSION);
+    expect(await catalogAtDetect.columnExists("project.chat_sessions", "pinned_at")).toBe(true);
+    expect(await catalogAtDetect.columnExists("project.chat_sessions", "owner_project_id")).toBe(false);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0011-rewind-"));
+    try {
+      const catalog = createRestoreCatalog(allRelations, sentinelColumnsExcept(OWNER_PROJECT_ID_SPLIT_VERSION));
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0011-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(await catalog.columnExists("project.chat_sessions", "owner_project_id")).toBe(false);
+      expect(await catalog.columnExists("project.todo_lists", "owner_project_id")).toBe(false);
+      expect(await catalog.columnExists("project.research_runs", "owner_project_id")).toBe(false);
+      expect(catalog.hasApplied(OWNER_PROJECT_ID_SPLIT_VERSION)).toBe(true);
+      expect(catalog.hasApplied(CHAT_SESSION_PINS_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.columnExists("project.chat_sessions", "owner_project_id")).toBe(true);
+      expect(await catalog.columnExists("project.todo_lists", "owner_project_id")).toBe(true);
+      expect(await catalog.columnExists("project.research_runs", "owner_project_id")).toBe(true);
+      expect(catalog.hasApplied(OWNER_PROJECT_ID_SPLIT_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps similarly numbered early migrations when their objects are missing", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const allColumns = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+
+    for (const version of [
+      AUTOMATION_ISOLATION_SCHEMA_VERSION,
+      ANALYTICS_ISOLATION_SCHEMA_VERSION,
+      MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION,
+      MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
+    ]) {
+      const catalog = createRestoreCatalog(allRelations, sentinelColumnsExcept(version));
+      expect(await detectRestoredSchemaRewindFloor(catalog)).toBe(version);
+    }
+
+    const ownershipCatalog = createRestoreCatalog(
+      sentinelRelationsExcept(PROJECT_OWNERSHIP_SCHEMA_VERSION),
+      allColumns,
+    );
+    expect(await detectRestoredSchemaRewindFloor(ownershipCatalog)).toBe(PROJECT_OWNERSHIP_SCHEMA_VERSION);
   });
 
   it("unstamps omitted ALTER columns even when later CREATE TABLE sentinels exist", async () => {
