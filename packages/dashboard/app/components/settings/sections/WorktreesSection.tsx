@@ -3,6 +3,7 @@ import type { GitRemoteDetailed } from "../../../api";
 import type { useWorktrunkInstallStatus } from "../../../hooks/useWorktrunkInstallStatus";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps, SettingsFormState } from "./context";
@@ -169,8 +170,12 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
             { value: "branch", label: t("settings.worktrees.branchTicketEGPRD1234MySlug", "Branch / ticket (e.g., prd-1234-my-slug)") },
           ],
         }}
-        value={form.worktreeNaming || "task-id"}
-        onChange={(v) => setForm((f) => ({ ...f, worktreeNaming: v as "random" | "task-id" | "task-title" | "branch" }))}
+        value={typeof form.worktreeNaming === "string" ? form.worktreeNaming : "task-id"}
+        onChange={(v: string | null) => {
+          const worktreeNaming: "random" | "task-id" | "task-title" | "branch" =
+            v === "random" || v === "task-id" || v === "task-title" || v === "branch" ? v : "task-id";
+          setForm((f) => ({ ...f, worktreeNaming }));
+        }}
       />
 
       <div className="form-group">
