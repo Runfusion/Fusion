@@ -28,6 +28,7 @@ import {
   MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
+  SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
   SYMBOL_LOCKS_SCHEMA_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
@@ -707,6 +708,42 @@ describe("PostgreSQL paired restore orchestration", () => {
 
       expect(await catalog.columnDataType("project.tasks", "token_usage_input_tokens")).toBe("bigint");
       expect(catalog.hasApplied(BIGINT_COUNTERS_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0051 when current_plan_evidence.source_revision exists as integer", async () => {
+    const allRelations = [
+      ...RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]),
+      "project.current_plan_evidence",
+    ];
+    const allColumns = [
+      ...RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]),
+      { relation: "project.current_plan_evidence", column: "source_revision" },
+    ];
+    const integerRevision = [
+      { relation: "project.current_plan_evidence", column: "source_revision", dataType: "integer" },
+    ];
+    const catalogAtDetect = createRestoreCatalog(allRelations, allColumns, [], integerRevision);
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION);
+    expect(await catalogAtDetect.relationExists("project.spec_locks")).toBe(true);
+    expect(await catalogAtDetect.columnDataType("project.current_plan_evidence", "source_revision")).toBe("integer");
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0051-bigint-"));
+    try {
+      const catalog = createRestoreCatalog(allRelations, allColumns, [], integerRevision);
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0051-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(catalog.hasApplied(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.columnDataType("project.current_plan_evidence", "source_revision")).toBe("bigint");
+      expect(catalog.hasApplied(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

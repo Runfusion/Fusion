@@ -33,6 +33,11 @@
  * Skipping them lets a 0023 dump keep those versions stamped and skip
  * verification-request / symbol-lock isolation plus bigint counter repair.
  *
+ * FNXC:PostgresBackup 2026-09-04-08:45:
+ * 0051 widens `current_plan_evidence.source_revision` because Date.now() exceeds
+ * int4. A 0050 dump that already has `spec_locks` must still rewind 0051 or
+ * plan-evidence appends fail.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -86,6 +91,7 @@ import {
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SESSION_CONTENTION_WAIT_STATE_VERSION,
   SPEC_LOCK_DRIFT_REPORT_VERSION,
+  SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
   SYMBOL_LOCKS_SCHEMA_VERSION,
   TASK_DECLARED_SYMBOLS_VERSION,
@@ -290,6 +296,10 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: GITHUB_CHECK_STATES_VERSION, relations: ["project.github_check_states"] },
   { version: AGENT_ACTIVITY_EVENTS_VERSION, relations: ["project.agent_activity_events"] },
   { version: SPEC_LOCK_DRIFT_REPORT_VERSION, relations: ["project.spec_locks"] },
+  {
+    version: SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+    columnTypes: [{ relation: "project.current_plan_evidence", column: "source_revision", dataType: "bigint" }],
+  },
   { version: MEMORY_RECALL_RECORDS_VERSION, relations: ["project.memory_recall_records"] },
   { version: MISSION_FEATURE_SPEC_ALIGNMENT_VERSION, columns: [{ relation: "project.mission_features", column: "spec_alignment" }] },
   {
