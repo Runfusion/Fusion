@@ -14,6 +14,8 @@ import {
   isLegacyWorkspaceWorktreeLayout,
   sanitizePathSegment,
   isSafeWorkspaceWorktreeDirSegment,
+  WORKSPACE_GROUP_MARKER_FILENAME,
+  WORKSPACE_RESERVED_TASK_DIR_SEGMENTS,
   workspaceRepoSegment,
   workspaceWorktreeGroupSegment,
 } from "../tasks/worktree-layout.js";
@@ -103,6 +105,9 @@ describe("workspace worktree layout", () => {
     expect(isSafeWorkspaceWorktreeDirSegment("prd-1234-my-slug")).toBe(true);
     for (const unsafe of ["", "  ", ".", "..", "../../outside", "/abs", "a/b", "a\\b"]) {
       expect(isSafeWorkspaceWorktreeDirSegment(unsafe)).toBe(false);
+    }
+    for (const reserved of [".ai-merge", ".worktrees", ".fusion-recovery", WORKSPACE_GROUP_MARKER_FILENAME, ...WORKSPACE_RESERVED_TASK_DIR_SEGMENTS]) {
+      expect(isSafeWorkspaceWorktreeDirSegment(reserved)).toBe(false);
     }
   });
 });
