@@ -90,7 +90,14 @@ export async function ensureGraphCustomNodeWorktree(
         logger: executorLog,
         secretsStore: deps.secretsStore,
         audit,
-        runContext: deps.getRunContextFor(task.id),
+        /*
+        FNXC:Identity 2026-09-04-05:32:
+        Custom-node workspace acquisition is outside the implementation node, so the
+        partial `getRunContextFor` map is empty and would persist `executor`/`unknown`
+        onto every per-repo worktree write. Use the total carrier so the graph-node
+        actor and run id survive onto acquireWorkspaceTaskWorktrees.
+        */
+        runContext: deps.runContextFor(task.id),
         runConfiguredCommand: (command, cwd, timeoutMs, env) =>
           deps.runConfiguredCommand(
             command,
