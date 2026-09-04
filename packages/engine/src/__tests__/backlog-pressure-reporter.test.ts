@@ -1,4 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore } from "@fusion/core";
 import { BacklogPressureReporter } from "../scheduling/backlog-pressure-reporter.js";
 
@@ -233,7 +241,7 @@ describe("BacklogPressureReporter", () => {
     const result = await reporter.report();
     expect(result).toEqual({ alerted: true });
     expect(store.logEntry).toHaveBeenCalledTimes(1);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("[backlog-pressure]"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("[backlog-pressure]"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });
 

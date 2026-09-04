@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task } from "@fusion/core";
 import { SelfHealingManager, COMPLETION_HANDOFF_LIMBO_GRACE_MS, MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES } from "../../self-healing.js";
 
@@ -73,7 +81,7 @@ describe("FN-4999 reliability interactions: completion-handoff-limbo", () => {
     expect(requeueForAutoMerge).toHaveBeenCalledTimes(1);
     expect(requeueForAutoMerge).toHaveBeenCalledWith("FN-4999-T");
     expect(store.enqueueMergeQueue).toHaveBeenCalledWith("FN-4999-T");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4999-T", expect.stringMatching(/Auto-recovered \(FN-4999\)/));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4999-T", expect.stringMatching(/Auto-recovered \(FN-4999\)/), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:auto-recover-completion-handoff-limbo",
@@ -191,7 +199,7 @@ describe("FN-4999 reliability interactions: completion-handoff-limbo", () => {
     await manager.recoverCompletionHandoffLimbo();
     expect(requeueForAutoMerge).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4999-T", expect.objectContaining({ status: "failed", error: "Completion handoff limbo recovery exhausted" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4999-T", expect.objectContaining({ status: "failed", error: "Completion handoff limbo recovery exhausted" }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-recover-completion-handoff-limbo-exhausted" }));
   });
 
@@ -233,7 +241,7 @@ describe("FN-4999 reliability interactions: completion-handoff-limbo", () => {
     await manager.recoverCompletionHandoffLimbo();
 
     expect(store._get().completionHandoffLimboRecoveryCount).toBe(2);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4999-T", expect.stringMatching(/Auto-recovered \(FN-4999\)/));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4999-T", expect.stringMatching(/Auto-recovered \(FN-4999\)/), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:auto-recover-completion-handoff-limbo",
       metadata: expect.objectContaining({ attempts: 2 }),
@@ -282,7 +290,7 @@ describe("FN-4999 reliability interactions: completion-handoff-limbo", () => {
     expect(store._get().completionHandoffLimboRecoveryCount).toBe(0);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4999-T",
-      "Auto-recovered: cleared false completion-handoff exhaustion while task is already owned by merge queue",
+      "Auto-recovered: cleared false completion-handoff exhaustion while task is already owned by merge queue", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 
@@ -301,6 +309,6 @@ describe("FN-4999 reliability interactions: completion-handoff-limbo", () => {
     expect(store.updateTask).toHaveBeenLastCalledWith("FN-4999-T", expect.objectContaining({
       status: "failed",
       error: "Completion handoff limbo recovery exhausted",
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

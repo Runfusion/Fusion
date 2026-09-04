@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { MAX_AUTO_MERGE_RETRIES, SelfHealingManager } from "../../self-healing.js";
@@ -146,11 +154,11 @@ describe("FN-5536 retry-exhausted in-review policy convergence", () => {
     expect(noStrandingViolation).toBe(false);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-BLOCK",
-      "merge-deadlock-detected: requires manual intervention — verified content not on main",
+      "merge-deadlock-detected: requires manual intervention — verified content not on main", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-DEP-BLOCKED",
-      expect.stringContaining("Auto-recovered (FN-5488): cleared stale blockedBy"),
+      expect.stringContaining("Auto-recovered (FN-5488): cleared stale blockedBy"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 
@@ -211,8 +219,8 @@ describe("FN-5536 retry-exhausted in-review policy convergence", () => {
 
     await runPolicyCycle(manager);
 
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-DELETED", expect.anything());
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-DELETED", expect.anything());
-    expect(store.logEntry).not.toHaveBeenCalledWith("FN-DELETED", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-DELETED", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-DELETED", expect.anything(), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-DELETED", expect.anything(), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

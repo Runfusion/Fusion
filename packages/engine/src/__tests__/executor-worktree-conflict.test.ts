@@ -6,6 +6,8 @@ import { ActiveSessionWorktreeRemovalError } from "../worktree/worktree-backend.
 import * as worktreePoolModule from "../worktree/worktree-pool.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { createMockStore, mockedGenerateWorktreeName, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const CONFLICT_PATH = "/tmp/test/.worktrees/stale-self-owned";
 
@@ -32,7 +34,7 @@ describe("FN-4973: executor worktree conflict cleanup", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4973",
       "Cleared stale self-owned active-session entry before remove",
-      CONFLICT_PATH,
+      CONFLICT_PATH, ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -93,7 +95,7 @@ describe("FN-4973: executor worktree conflict cleanup", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-8400",
       expect.stringContaining("deferred relocation of active preserved worktree"),
-      outsidePath,
+      outsidePath, ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -136,7 +138,7 @@ describe("FN-4973: executor worktree conflict cleanup", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4973",
       expect.stringContaining("Cleaned up stale conflicting worktree"),
-      CONFLICT_PATH,
+      CONFLICT_PATH, ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -158,7 +160,7 @@ describe("FN-4973: executor worktree conflict cleanup", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4973",
       expect.stringContaining("Refused stale-path cleanup"),
-      OUTSIDE_PATH,
+      OUTSIDE_PATH, ANY_MUTATION_CONTEXT,
     );
   });
 
