@@ -425,8 +425,13 @@ export function registerFileWorkspaceRoutes(ctx: ApiRoutesContext): void {
       const { filePath, workspace } = extractFileParams(req);
       const { absolutePath, dirName } = await getWorkspaceFolderForZip(scopedStore, workspace, filePath);
 
-      const archiver = await import("archiver");
-      const archive = archiver.default("zip", { zlib: { level: 6 } });
+      const { ZipArchive } = await import("archiver");
+      /*
+       * FNXC:FileWorkspaceRoutes 2026-09-04-03:46:
+       * archiver 8 is ESM-only and removed the default-export factory. Construct the named
+       * ZipArchive class while preserving the ZIP download's level-6 compression contract.
+       */
+      const archive = new ZipArchive({ zlib: { level: 6 } });
 
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${dirName}.zip"`);

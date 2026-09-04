@@ -6,6 +6,7 @@ import { join } from "node:path";
 import express from "express";
 import type { TaskStore } from "@fusion/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../../api-error.js";
 import { registerFileWorkspaceRoutes } from "../register-file-workspace-routes.js";
 import type { ApiRoutesContext } from "../types.js";
 import { request as REQUEST } from "../../test-request.js";
@@ -44,6 +45,10 @@ function makeApp(store: Partial<TaskStore>) {
     },
   } as ApiRoutesContext);
   app.use("/api", router);
+  const errorHandler: express.ErrorRequestHandler = (error, _req, res, _next) => {
+    res.status(error instanceof ApiError ? error.statusCode : 500).json({ error: error instanceof Error ? error.message : String(error) });
+  };
+  app.use(errorHandler);
   return app;
 }
 
@@ -137,5 +142,67 @@ describe("file workspace download route", () => {
     expect(res.headers["content-type"]).toBe("image/jpeg");
     expect(res.headers["content-disposition"]).toBe("inline; filename=\"shot.JPG\"");
     expect(store.getTask).toHaveBeenCalledWith("FN-123");
+  });
+});
+
+function expectZipResponse(res: Awaited<ReturnType<typeof REQUEST>>, name: string): void {
+  expect(res.status).toBe(200);
+  expect(res.headers["content-type"]).toBe("application/zip");
+  expect(res.headers["content-disposition"]).toBe(`attachment; filename="${name}.zip"`);
+  expect(res.bodyBuffer.length).toBeGreaterThan(0);
+}
+
+function expectZipEntry(res: Awaited<ReturnType<typeof REQUEST>>, entryPath: string): void {
+  expect(res.bodyBuffer.includes(Buffer.from(entryPath))).toBe(true);
+}
+
+describe("file workspace download-zip route", () => {
+  it("returns a ZIP containing a populated directory", async () => {
+    const root = await makeRoot();
+    await writeFixture(root, "docs/readme.txt", "known-readme-bytes");
+    const app = makeApp({ getRootDir: vi.fn(() => root) });
+
+    const res = await REQUEST(app, "GET", "/api/files/docs/download-zip?workspace=project");
+
+    expectZipResponse(res, "docs");
+    expect(res.bodyBuffer.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    expectZipEntry(res, "docs/readme.txt");
+  });
+
+  it("recursively includes nested directory entries", async () => {
+    const root = await makeRoot();
+    await writeFixture(root, "bundle/root.txt");
+    await writeFixture(root, "bundle/inner/deep.txt");
+    const app = makeApp({ getRootDir: vi.fn(() => root) });
+
+    const res = await REQUEST(app, "GET", "/api/files/bundle/download-zip?workspace=project");
+
+    expectZipResponse(res, "bundle");
+    expectZipEntry(res, "bundle/root.txt");
+    expectZipEntry(res, "bundle/inner/deep.txt");
+  });
+
+  it("returns a completed empty ZIP archive", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "empty"));
+    const app = makeApp({ getRootDir: vi.fn(() => root) });
+
+    const res = await REQUEST(app, "GET", "/api/files/empty/download-zip?workspace=project");
+
+    expectZipResponse(res, "empty");
+    expect(res.bodyBuffer.subarray(0, 2)).toEqual(Buffer.from([0x50, 0x4b]));
+  });
+
+  it.each([
+    [404, "missing"],
+    [400, "docs/readme.txt"],
+  ])("preserves the %i error mapping", async (expectedStatus, filePath) => {
+    const root = await makeRoot();
+    await writeFixture(root, "docs/readme.txt");
+    const app = makeApp({ getRootDir: vi.fn(() => root) });
+
+    const res = await REQUEST(app, "GET", `/api/files/${encodeURIComponent(filePath)}/download-zip?workspace=project`);
+
+    expect(res.status).toBe(expectedStatus);
   });
 });
