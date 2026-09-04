@@ -2982,6 +2982,51 @@ describe("ChatManager.sendMessage", () => {
     }));
   });
 
+  it("stamps a successful primary retry with the primary model after fallback was selected", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      title: "Fallback then primary retry",
+      modelProvider: "openai-codex",
+      modelId: "gpt-5.3-codex",
+    });
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        model: { provider: "openai-codex", id: "gpt-5.3-codex" },
+        prompt: vi.fn().mockImplementation(async function (this: any) {
+          await options.onFallbackModelUsed?.({
+            primaryModel: "openai-codex/gpt-5.3-codex",
+            fallbackModel: "zai/glm-5.1",
+            triggerPoint: "prompt-time",
+          });
+          this.state.messages = [{ role: "assistant", content: "Primary retry reply" }];
+        }),
+        dispose: vi.fn(),
+        state: { messages: [] as Array<{ role: string; content: string }> },
+      },
+    }));
+
+    const chatManager = createChatManagerWithSettings({
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.3-codex",
+      fallbackProvider: "zai",
+      fallbackModelId: "glm-5.1",
+    });
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1].role === "assistant");
+    expect(assistantCall?.[1]).toEqual(expect.objectContaining({
+      content: "Primary retry reply",
+      metadata: expect.objectContaining({
+        fallback: expect.objectContaining({ fallbackModel: "zai/glm-5.1" }),
+        modelProvider: "openai-codex",
+        modelId: "gpt-5.3-codex",
+      }),
+    }));
+    expect(assistantCall?.[1].metadata.modelProvider).not.toBe("zai");
+  });
+
   it("stamps cancelled fallback output with the fallback model, not the failed primary", async () => {
     mockChatStore.getSession.mockReturnValue({
       id: "chat-001",

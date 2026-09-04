@@ -21,11 +21,22 @@ interface AiDisclosureProps {
 }
 
 const SAFE_METADATA_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._+/@:-]{0,119}$/u;
-const SENSITIVE_METADATA_PATTERN = /(?:^|[-_.])(secret|token|password|credential|api[-_]?key)(?:$|[-_.])/i;
+const SAFE_METADATA_DELIMITERS = "[._/@+:-]";
+const SENSITIVE_METADATA_PATTERN = new RegExp(
+  `(?:^|${SAFE_METADATA_DELIMITERS})(secret|token|password|credential|api[-_]?key)(?:$|${SAFE_METADATA_DELIMITERS})`,
+  "i",
+);
+const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export function normalizeAiAttributionValue(value: string | null | undefined): string | undefined {
   const normalized = value?.trim();
-  if (!normalized || normalized.includes("://") || !SAFE_METADATA_PATTERN.test(normalized)) return undefined;
+  /*
+  FNXC:AITransparency 2026-09-04-05:45:
+  Attribution must never render a URI or secret-shaped fragment. Reject scheme prefixes such as
+  mailto: even without ://, and treat every SAFE delimiter (including slash) as a sensitive-token
+  boundary so values like vendor/token-abc cannot appear as a provider or model.
+  */
+  if (!normalized || normalized.includes("://") || URI_SCHEME_PATTERN.test(normalized) || !SAFE_METADATA_PATTERN.test(normalized)) return undefined;
   if (SENSITIVE_METADATA_PATTERN.test(normalized)) return undefined;
   return normalized;
 }

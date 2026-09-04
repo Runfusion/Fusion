@@ -48,11 +48,23 @@ describe("AiDisclosure", () => {
     expect(note.outerHTML).not.toContain("api-key-secret");
   });
 
+  it("rejects mailto and other scheme-like metadata without requiring ://", () => {
+    render(<AiDisclosure kind="ai-interaction" provider="mailto:alice@example.com" modelId="claude-opus-4-1" />);
+
+    const note = screen.getByRole("note", { name: "Interacción con IA" });
+    expect(note).toHaveAttribute("data-ai-attribution", "provider-agnostic");
+    expect(note.outerHTML).not.toContain("alice@example.com");
+    expect(note.outerHTML).not.toContain("mailto:");
+  });
+
   it("normalizes safe values and rejects sensitive or malformed metadata", () => {
     expect(normalizeAiAttributionValue(" openai-compatible ")).toBe("openai-compatible");
     expect(normalizeAiAttributionValue("gpt-5.6/codex")).toBe("gpt-5.6/codex");
     expect(normalizeAiAttributionValue("credential-id")).toBeUndefined();
     expect(normalizeAiAttributionValue("https://example.test/model")).toBeUndefined();
+    expect(normalizeAiAttributionValue("mailto:alice@example.com")).toBeUndefined();
+    expect(normalizeAiAttributionValue("vendor/token-abc")).toBeUndefined();
+    expect(normalizeAiAttributionValue("openai/api-key-live")).toBeUndefined();
   });
 
   it("reads persisted provider/model metadata and ignores mixed or unsafe values", () => {

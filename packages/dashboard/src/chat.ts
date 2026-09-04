@@ -483,11 +483,13 @@ function parseModelRef(value: string | null | undefined): { provider: string | n
 }
 
 /*
-FNXC:AITransparency 2026-09-04-05:12:
-Prompt-time fallback can stream after the primary already failed. Persist the model that produced
-the visible prefix: the fallback when it generated the partial, the original selection when no
-fallback ran, and nothing when output mixed both or provenance is unknown. Never stamp the failed
-primary onto fallback-generated cancel/fail rows — reopen would attribute that output to the wrong model.
+FNXC:AITransparency 2026-09-04-05:45:
+Prompt-time fallback can stream after the primary failed, but FN-8098 may still succeed on a
+final primary retry after fallback itself fails. Persist the completing runtime on `session.model`
+when present. Use the fallback payload only when that snapshot is missing (cancel/fail of a
+fallback stream whose session never mirrored the model). Mixed primary+fallback output stays
+provider-agnostic. Never stamp the failed primary onto fallback-generated rows, and never stamp
+the failed fallback onto a successful primary retry.
 */
 function producedOutputProvenance(input: {
   session?: unknown;
@@ -497,10 +499,10 @@ function producedOutputProvenance(input: {
   mixed?: boolean;
 }): { provider: string | null; modelId: string | null } {
   if (input.mixed) return { provider: null, modelId: null };
+  const fromSession = modelSnapshotForTokenUsage(input.session);
+  if (fromSession.provider) return fromSession;
   const fromFallback = parseModelRef(input.fallback?.fallbackModel);
   if (fromFallback.provider) return fromFallback;
-  const fromSession = modelSnapshotForTokenUsage(input.session, input.fallback ?? undefined);
-  if (fromSession.provider) return fromSession;
   const primaryProvider = typeof input.primaryProvider === "string" ? input.primaryProvider.trim() : "";
   if (!primaryProvider) return { provider: null, modelId: null };
   const primaryModelId = typeof input.primaryModelId === "string" ? input.primaryModelId.trim() : "";
