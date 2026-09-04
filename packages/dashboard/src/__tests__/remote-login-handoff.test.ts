@@ -224,4 +224,59 @@ describe("remote-login global settings handoff", () => {
 
     expectSessionHandoff(response as never);
   });
+
+  it("rate-limits the 31st cloudTicket request before redeeming", async () => {
+    const previous = process.env.FUSION_CLOUD_HTTP_URL;
+    process.env.FUSION_CLOUD_HTTP_URL = "https://cloud.example.convex.site";
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ engineId: "eng_1", userId: "user_1", localSessionToken: "sess" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { app, dir } = await bootRemoteServer();
+      dirs.push(dir);
+      for (let i = 0; i < 30; i++) {
+        await request(app, "GET", "/remote-login?cloudTicket=jti.secret");
+      }
+      const blocked = await request(app, "GET", "/remote-login?cloudTicket=jti.secret");
+      expect(blocked.status).toBe(429);
+      expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(30);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.FUSION_CLOUD_HTTP_URL;
+      else process.env.FUSION_CLOUD_HTTP_URL = previous;
+    }
+  });
+
+  it("redeems a cloud ticket without putting credentials in Location", async () => {
+    const previous = process.env.FUSION_CLOUD_HTTP_URL;
+    process.env.FUSION_CLOUD_HTTP_URL = "https://cloud.example.convex.site";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ engineId: "eng_1", userId: "user_1", localSessionToken: "sess" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    try {
+      const { app, dir } = await bootRemoteServer();
+      dirs.push(dir);
+      const handoff = await request(app, "GET", "/remote-login?cloudTicket=jti.secret");
+      expect(handoff.status).toBe(302);
+      expect(handoff.headers.location).toBe("/");
+      expect(handoff.headers.location).not.toMatch(/token=/);
+      const cookie = handoff.headers["set-cookie"];
+      const cookieValue = Array.isArray(cookie) ? cookie.join(";") : String(cookie ?? "");
+      expect(cookieValue).toMatch(/HttpOnly/i);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.FUSION_CLOUD_HTTP_URL;
+      else process.env.FUSION_CLOUD_HTTP_URL = previous;
+    }
+  });
 });
