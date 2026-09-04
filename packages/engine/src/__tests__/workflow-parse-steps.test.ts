@@ -91,9 +91,18 @@ describe("parse-steps node handler (U12, KTD-12)", () => {
     ]);
   });
 
+  it("maps canonical heading dependencies through the production parse node", async () => {
+    const { deps, written } = makeDeps({
+      readArtifact: async () => "### Step 0: Preflight\n### Step 1: Implement\n### Step 2 (depends: 1): Test",
+    });
+    const result = await runParse(parseIr("step-headings"), deps);
+    expect(result.outcome).toBe("success");
+    expect(written[0][2]).toEqual({ name: "Test", status: "pending", dependsOn: [1] });
+  });
+
   it("json-steps parser writes structured steps", async () => {
     const { deps, written } = makeDeps({
-      readArtifact: async () => JSON.stringify([{ name: "x" }, { name: "y", depends: [1] }]),
+      readArtifact: async () => JSON.stringify([{ name: "x" }, { name: "y", depends: [0] }]),
     });
     const result = await runParse(parseIr("json-steps"), deps);
     expect(result.outcome).toBe("success");
