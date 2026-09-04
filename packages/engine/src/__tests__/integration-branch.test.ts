@@ -32,17 +32,33 @@ describe("integration-branch resolver", () => {
   });
 
   it("integrationBranch override wins over baseBranch and origin/HEAD", async () => {
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      // New existence guard: verify the candidate branch ("trunk") resolves.
+      if (command.includes("rev-parse --verify --quiet refs/heads/trunk")) {
+        cb(null, { stdout: "deadbeef\n" });
+        return {};
+      }
+      cb(new Error("unexpected command"), { stdout: "" });
+      return {};
+    });
     const resolved = await resolveIntegrationBranch("/repo", { integrationBranch: " trunk ", baseBranch: "develop" } as any);
 
     expect(resolved).toBe("trunk");
-    expect(execMock).not.toHaveBeenCalled();
   });
 
   it("baseBranch wins over origin/HEAD", async () => {
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      // New existence guard: verify the candidate branch ("develop") resolves.
+      if (command.includes("rev-parse --verify --quiet refs/heads/develop")) {
+        cb(null, { stdout: "deadbeef\n" });
+        return {};
+      }
+      cb(new Error("unexpected command"), { stdout: "" });
+      return {};
+    });
     const resolved = await resolveIntegrationBranch("/repo", { baseBranch: " develop " } as any);
 
     expect(resolved).toBe("develop");
-    expect(execMock).not.toHaveBeenCalled();
   });
 
   it("strips refs/remotes/origin and origin prefixes", async () => {
