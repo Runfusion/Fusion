@@ -2631,6 +2631,42 @@ export async function runImplementation(
                 log wording, and the detector's own threshold maths — is unchanged by the migration.
                 */
                 if (compactOutcome.reason !== "compacted") {
+                  /*
+                  FNXC:CompactionNoProgress 2026-09-04-16:35:
+                  RUFU-187 — the token-cap detector's contract is "truthy iff a compaction happened",
+                  which a `no-progress` outcome must NOT satisfy: returning `{tokensBefore}` here would
+                  make the detector's own threshold maths believe the window was reclaimed and log
+                  `Context compacted at N tokens` for a compaction that freed nothing. Refuse the
+                  credit, say so on the card with the before/after counts, and emit the same bounded
+                  audit event the loop-recovery lane emits (distinguished only by `source`).
+                  */
+                  if (compactOutcome.reason === "no-progress") {
+                    const sentence =
+                      `Context compaction reduced nothing (token cap: ${settings.tokenCap}, ` +
+                      `before=${compactOutcome.tokensBefore} after=${compactOutcome.estimatedTokensAfter} tokens) — ` +
+                      `not counted as progress`;
+                    executorLog.log(`${task.id} ${sentence}`);
+                    await deps.store.logEntry(
+                      task.id,
+                      sentence,
+                      undefined,
+                      deps.getRunContextFor(task.id),
+                    );
+                    await emitBoundedRunAudit(deps.store, {
+                      taskId: task.id,
+                      agentId: "executor",
+                      runId: deps.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("compaction-no-progress", task.id),
+                      domain: "database",
+                      mutationType: "task:compaction-no-progress",
+                      target: task.id,
+                      metadata: {
+                        source: "token-cap",
+                        tokensBefore: compactOutcome.tokensBefore,
+                        tokensAfter: compactOutcome.estimatedTokensAfter,
+                        basis: compactOutcome.basis,
+                      },
+                    });
+                  }
                   return null;
                 }
                 await deps.store.logEntry(

@@ -56,6 +56,29 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   }),
   DefaultPackageManager: vi.fn(),
   discoverAndLoadExtensions: vi.fn().mockResolvedValue({ errors: [], runtime: { pendingProviderRegistrations: [] } }),
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187: `compactSessionContext`'s `estimatedTokensAfter`-absent fallback calls pi's per-message
+  estimator, so the mock mirrors pi's chars/4 text/thinking semantics (real implementation:
+  `dist/core/compaction/compaction.js` `estimateTokens`). Without it the symbol would be undefined
+  inside the helper, every message would count as 0, and the `pure-estimate` basis would be
+  untestable (0 >= 0 collapses every session into no-progress).
+  */
+  estimateTokens: (message: unknown) => {
+    const blocks = Array.isArray((message as { content?: unknown })?.content)
+      ? ((message as { content: unknown[] }).content)
+      : [];
+    const chars = blocks
+      .map((block) => {
+        const b = block as { type?: string; text?: string; thinking?: string };
+        if (b?.type === "text") return String(b.text ?? "");
+        if (b?.type === "thinking") return String(b.thinking ?? "");
+        return "";
+      })
+      .join("")
+      .length;
+    return Math.ceil(chars / 4);
+  },
   getAgentDir: vi.fn(() => "/test/agent-dir"),
   ModelRuntime: {
     create: vi.fn(async () => ({ getAuth: vi.fn(async () => undefined) })),
@@ -250,14 +273,150 @@ describe("compactSessionContext", () => {
     });
   });
 
-  it("reports reduced=false when the after-estimate does not beat tokensBefore", async () => {
-    const compact = async () => ({ summary: "Same", tokensBefore: 50000, estimatedTokensAfter: 50000 });
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187 replaced the old `reduced=false` on the `compacted` arm for a non-shrinking after-count:
+  that kept a no-space-saved compaction inside the success shape, which is the dishonesty this card
+  removes. An after-count that does not beat `tokensBefore` is now its own kind, so the executor
+  and the chat guard cannot read it as progress. Both non-reducing relations are pinned (equal AND
+  greater) because pi's mixed basis (preparation-time `tokensBefore` vs post-compaction
+  `estimatedTokensAfter`) can legitimately produce either.
+  */
+  it.each([
+    { label: "equals", after: 50000 },
+    { label: "exceeds", after: 51000 },
+  ])(
+    "reports the no-progress arm on the pi-reported basis when estimatedTokensAfter $label tokensBefore",
+    async ({ after }) => {
+      const compact = async () => ({ summary: "Same", tokensBefore: 50000, estimatedTokensAfter: after });
+      const session = { compact } as unknown as AgentSession;
+
+      const result = await compactSessionContext(session);
+
+      expect(result).toEqual({
+        reason: "no-progress",
+        branchMutated: true,
+        tokensBefore: 50000,
+        estimatedTokensAfter: after,
+        basis: "pi-reported",
+      });
+    },
+  );
+
+  it("reports reduced=true only for a strict pi-reported reduction", async () => {
+    const compact = async () => ({ summary: "Smaller", tokensBefore: 50000, estimatedTokensAfter: 49999 });
+    const session = { compact } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result.reason).toBe("compacted");
+    if (result.reason === "compacted") expect(result.reduced).toBe(true);
+  });
+
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  Fallback basis: pi gave NO usable `estimatedTokensAfter`, so the helper must decide from its own
+  char-based estimate over the session's messages, taken before and after the call. The control (a
+  genuine shrink under the same estimator) is what makes the refusal non-vacuous: it proves the
+  `pure-estimate` arm fires because the context did not shrink, not because the estimator is stuck
+  at a constant. The reported pair is the helper's own before/after, never pi's preparation-time
+  `tokensBefore` — the two are not comparable (the RUFU-118 blind-estimator lesson).
+  */
+  function createEstimatableSession(opts: { keepMessages: boolean }) {
+    const message = (marker: string) => ({
+      role: "user" as const,
+      content: [{ type: "text" as const, text: `${marker}${"x".repeat(3999)}` }],
+    });
+    const state = { messages: [message("a"), message("b"), message("c")] };
+    const session = {
+      state,
+      compact: async () => {
+        // pi rebuilds the message list in place on success (agent-session.js reassigns
+        // agent.state.messages), so the fake mirrors that by mutating the same state object.
+        if (!opts.keepMessages) {
+          state.messages = [message("a")];
+        }
+        return { summary: "Summarised", tokensBefore: 120000 };
+      },
+    } as unknown as AgentSession;
+    return session;
+  }
+
+  it("reports the no-progress arm on the pure-estimate basis when pi reports no after-count and the messages did not shrink", async () => {
+    const session = createEstimatableSession({ keepMessages: true });
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "no-progress",
+      branchMutated: true,
+      tokensBefore: 3000,
+      estimatedTokensAfter: 3000,
+      basis: "pure-estimate",
+    });
+  });
+
+  it("keeps the compacted arm when pi reports no after-count and the message estimate strictly shrinks", async () => {
+    const session = createEstimatableSession({ keepMessages: false });
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
+      summary: "Summarised",
+      tokensBefore: 120000,
+      estimatedTokensAfter: null,
+      reduced: false,
+    });
+  });
+
+  it("does not launder an empty message list into no-progress when pi reports no after-count", async () => {
+    // The fallback compares the SAME estimator before and after, so it is only meaningful when
+    // there IS a baseline to compare against. A session whose message list is empty carries its
+    // weight in prompt/tools/recorded usage the message array cannot see, so `after >= 0` would
+    // fire on any non-empty summary and invent a non-reduction. Deferring to the compacted arm
+    // keeps the RUFU-118 "unknown is not evidence of a non-reduction" rule intact.
+    const session = {
+      state: { messages: [] },
+      compact: async () => ({ summary: "Summarised", tokensBefore: 120000 }),
+    } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
+      summary: "Summarised",
+      tokensBefore: 120000,
+      estimatedTokensAfter: null,
+      reduced: false,
+    });
+  });
+
+  it("skips the no-progress classification for an empty summary even when the after-count does not shrink", async () => {
+    // RUFU-182's empty-summary judgement belongs to the chat guard's `empty-summary` reason; a
+    // blank summary must not be relabelled, or the guard would lose its own reason code.
+    const compact = async () => ({ summary: "   ", tokensBefore: 50000, estimatedTokensAfter: 50000 });
     const session = { compact } as unknown as AgentSession;
 
     const result = await compactSessionContext(session);
 
     expect(result.reason).toBe("compacted");
     if (result.reason === "compacted") expect(result.reduced).toBe(false);
+  });
+
+  it("treats a no-progress outcome as terminal for retry legality", () => {
+    const outcome: CompactionOutcome = {
+      reason: "no-progress",
+      branchMutated: true,
+      tokensBefore: 1000,
+      estimatedTokensAfter: 1000,
+      basis: "pi-reported",
+    };
+
+    // pi already appended the CompactionEntry, so a second compact() can only be refused.
+    expect(isRetryAfterCompactionFailureLegal(outcome)).toBe(false);
   });
 
   it("returns the error arm with the engine message when session.compact throws", async () => {
