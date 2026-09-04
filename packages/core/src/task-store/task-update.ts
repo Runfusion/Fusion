@@ -39,6 +39,7 @@ import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
 import {BranchWriteProvenanceError, validateTaskBranchName} from "../branch/branch-assignment.js";
 import {withTaskBranchContextInSourceMetadata} from "./branch-context.js";
 import {writePromptFileAtomic} from "./prompt-file.js";
+import { isSafeWorkspaceWorktreeDirSegment } from "../tasks/worktree-layout.js";
 
 /*
 FNXC:TaskRecommendations 2026-08-08-07:06:
@@ -262,8 +263,9 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       FNXC:WorkspaceWorktree 2026-09-04-06:15:
       Generic updateTask is not the pin API. A plugin (or any other patch) must not clobber a live
       unique claim or rewrite it to a traversal path. Keep a first mint for stores that still
-      degrade to this patch; ignore any later replacement. Null remains a repair only when this
-      patch already left the task with no recorded worktrees.
+      degrade to this patch, but only for a single safe path component (`isSafeWorkspaceWorktreeDirSegment`);
+      ignore any later replacement and refuse `../../outside` instead of persisting it write-once.
+      Null remains a repair only when this patch already left the task with no recorded worktrees.
       */
       const existingPin = typeof task.workspaceWorktreeDirSegment === "string" && task.workspaceWorktreeDirSegment.length > 0
         ? task.workspaceWorktreeDirSegment
@@ -274,8 +276,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       );
       if (updates.workspaceWorktreeDirSegment === null) {
         if (!recordedWorktrees) task.workspaceWorktreeDirSegment = undefined;
-      } else if (updates.workspaceWorktreeDirSegment !== undefined && !existingPin) {
-        task.workspaceWorktreeDirSegment = updates.workspaceWorktreeDirSegment;
+      } else if (
+        updates.workspaceWorktreeDirSegment !== undefined
+        && !existingPin
+        && isSafeWorkspaceWorktreeDirSegment(updates.workspaceWorktreeDirSegment)
+      ) {
+        task.workspaceWorktreeDirSegment = updates.workspaceWorktreeDirSegment.trim();
       }
       // New dependencies re-seed hold-lane tasks and exhausted Plan Review cap parks.
       let movedToTriage = false;

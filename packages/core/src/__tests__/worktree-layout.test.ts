@@ -13,6 +13,7 @@ import {
   resolveWorkspaceTaskDirSegment,
   isLegacyWorkspaceWorktreeLayout,
   sanitizePathSegment,
+  isSafeWorkspaceWorktreeDirSegment,
   workspaceRepoSegment,
   workspaceWorktreeGroupSegment,
 } from "../tasks/worktree-layout.js";
@@ -95,6 +96,14 @@ describe("workspace worktree layout", () => {
   it("sanitizes and rejects escaping paths", () => {
     expect(sanitizePathSegment(".. A/ß ..")).toBe("A");
     for (const path of ["../api", "/api", "..", ""]) expect(() => assertWorkspaceRepoRelPath(path)).toThrow();
+  });
+
+  it("accepts only a single safe workspace directory segment", () => {
+    expect(isSafeWorkspaceWorktreeDirSegment("foo")).toBe(true);
+    expect(isSafeWorkspaceWorktreeDirSegment("prd-1234-my-slug")).toBe(true);
+    for (const unsafe of ["", "  ", ".", "..", "../../outside", "/abs", "a/b", "a\\b"]) {
+      expect(isSafeWorkspaceWorktreeDirSegment(unsafe)).toBe(false);
+    }
   });
 });
 
