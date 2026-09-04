@@ -1,3 +1,7 @@
+import type { TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:45:
  * routeImplementationIncompleteMergeGraphFailure peeled from TaskExecutor (U4).
@@ -6,15 +10,10 @@
  * FN-1165: clear non-user pause parks for incomplete-merge failures; keep activeWorktrees
  * on resumable path; release only on fail-closed.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { executorLog } from "../logger.js";
-import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
-import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
 
 export type RouteImplementationIncompleteMergeGraphFailureDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearPausedAborted: (taskId: string) => void;
   activeWorktrees: Map<string, Set<string>>;

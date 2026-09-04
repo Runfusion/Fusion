@@ -1,20 +1,19 @@
+import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
+import { promisify } from "node:util";
+import type { Settings, Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { resolveRepoDeclaredScope } from "../worktree/workspace-paths.js";
+import { executorLog } from "../logger.js";
+import type {  RunAuditor } from "../util/run-audit.js";
+import { parseReviewLevelFromPrompt } from "./prompt-derived-eligibility.js";
+import {
+  isAlwaysAllowedScopeLeakPath,
+  workflowPathMatchesDeclaredScope } from "./workflow-feedback-paths.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-16:35:
  * evaluateTaskDoneScopeLeak peeled from TaskExecutor (U4 Slice B).
  * fn_task_done File Scope leak guard (workspace multi-repo + singular checkout).
  */
-import { execFile } from "node:child_process";
-import { access } from "node:fs/promises";
-import { promisify } from "node:util";
-import type { Settings, Task, TaskStore } from "@fusion/core";
-import { resolveRepoDeclaredScope } from "../worktree/workspace-paths.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext, RunAuditor } from "../util/run-audit.js";
-import { parseReviewLevelFromPrompt } from "./prompt-derived-eligibility.js";
-import {
-  isAlwaysAllowedScopeLeakPath,
-  workflowPathMatchesDeclaredScope,
-} from "./workflow-feedback-paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -67,7 +66,7 @@ export type TaskDoneScopeLeakDeps = {
   store: TaskStore;
   workspaceConfig: unknown | null | undefined;
   ensureWorkspaceConfig?: () => Promise<unknown | null>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   captureUncommittedModifiedFiles: (worktreePath: string) => Promise<string[]>;
   captureModifiedFiles: (

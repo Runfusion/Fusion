@@ -1,3 +1,8 @@
+import type { TaskDetail, TaskStore, WorkflowIr, RunMutationContext } from "@fusion/core";
+import { resolveWorkflowIrForTask } from "@fusion/core";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:20:
  * reconcileStepsFromGitHistory peeled from TaskExecutor (U4).
@@ -14,18 +19,12 @@
  * FNXC:EngineDiagnostics 2026-08-03-05:54:
  * parse-steps source read-through is diagnostic only.
  */
-import type { TaskDetail, TaskStore, WorkflowIr } from "@fusion/core";
-import { resolveWorkflowIrForTask } from "@fusion/core";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 const execAsync = promisify(exec);
 
 export type ReconcileStepsFromGitHistoryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveTaskStepSource: (ir: WorkflowIr | undefined) =>
     | { artifact: string; parser: string }

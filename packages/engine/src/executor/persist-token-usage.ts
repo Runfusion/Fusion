@@ -1,3 +1,11 @@
+import type { TaskStore, TaskTokenUsage, RunMutationContext } from "@fusion/core";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { createLogger } from "../logger.js";
+import { enforceTaskTokenBudgetForPersist } from "../concurrency/token-budget-enforcer.js";
+import {
+  accumulateTokenUsage,
+  extractSessionTokenUsage,
+  tokenUsageWithModelSnapshot } from "./token-usage-pure.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:20:
  * Token-usage persist helpers peeled from TaskExecutor (U4).
@@ -13,16 +21,6 @@
  * Executor token-cache metrics mirror session-token-usage: debug-only telemetry
  * (FUSION_DEBUG=token-cache-metrics), not default TUI noise.
  */
-import type { TaskStore, TaskTokenUsage } from "@fusion/core";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { createLogger } from "../logger.js";
-import { enforceTaskTokenBudgetForPersist } from "../concurrency/token-budget-enforcer.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import {
-  accumulateTokenUsage,
-  extractSessionTokenUsage,
-  tokenUsageWithModelSnapshot,
-} from "./token-usage-pure.js";
 
 const tokenCacheMetricsLog = createLogger("token-cache-metrics");
 
@@ -36,7 +34,7 @@ export type TokenUsageBaseline = {
 
 export type PersistTokenUsageDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   tokenUsageBaselines: Map<string, TokenUsageBaseline>;
   /** Optional session from activeSessions when caller omits an explicit session. */

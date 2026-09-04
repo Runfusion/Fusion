@@ -1,3 +1,12 @@
+import type { TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
+import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
+import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
+import { graphFailureValue } from "./graph-failure-pure.js";
+import { executorLog } from "../logger.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
+import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:45:
  * routeGraphMergeFailureToRetry peeled from TaskExecutor (U4).
@@ -5,20 +14,10 @@
  * FNXC:WorkflowMerge 2026-07-12-17:38:
  * FN-1165: never route implementation-incomplete merge failures to the merge requester.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
-import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
-import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
-import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
-import { graphFailureValue } from "./graph-failure-pure.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { executorLog } from "../logger.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
-import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
-import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
 
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   mergeRequester?: ((taskId: string) => Promise<unknown>) | null;
   ensureWorkflowMergeBoundaryTask: (
@@ -41,7 +40,7 @@ async function parkTaskFailed(
   store: TaskStore,
   taskId: string,
   errorMessage: string,
-  runContext: EngineRunContext | undefined,
+  runContext: RunMutationContext | undefined,
   capturedColumnMovedAt: string | undefined,
 ): Promise<boolean> {
   /*

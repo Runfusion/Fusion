@@ -130,7 +130,8 @@ import {
   resolveTaskLifecycleColumns,
   isFusionDeletableBranch,
   classifyTaskBranchOrigin,
-  type WorkflowIr
+  type WorkflowIr,
+  toRunMutationContext,
 } from "@fusion/core";
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
@@ -1278,7 +1279,8 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         store,
         taskId,
         taskTitle: taskForSkillContext?.title,
-      }),
+        runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
     });
     // Register so engine.stop() can dispose this session — without this the
     // fix agent keeps streaming past shutdown because it's not the autostash
@@ -2563,7 +2565,8 @@ ${fileList}
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
   emitAgentSessionStart({
     store,
@@ -3003,7 +3006,8 @@ ${fileList}
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
   emitAgentSessionStart({
     store,
@@ -6047,7 +6051,8 @@ You are assisting with a paused \`git pull --rebase\`.
       label: "rebase conflict resolver",
       store,
       taskId,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
   // Register so engine.stop() can dispose this session — without this, an
   // in-progress rebase conflict resolution keeps streaming past shutdown
@@ -7252,7 +7257,7 @@ export async function aiMergeTask(
       settings,
       logger: mergerLog,
       audit,
-      runContext: engineRunContext,
+      runContext: toRunMutationContext(engineRunContext),
       runInitCommand: true,
       runConfiguredCommand: async (command, cwd, timeoutMs, env) =>
         runConfiguredMergeWorktreeCommand(command, cwd, timeoutMs, env, audit),
@@ -11081,7 +11086,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
 
   emitAgentSessionStart({

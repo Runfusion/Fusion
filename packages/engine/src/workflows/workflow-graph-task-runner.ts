@@ -5,7 +5,6 @@ import type {
   TaskStep,
   WorkflowDefinition,
   WorkflowIr,
-  WorkflowStepResult,
 } from "@fusion/core";
 import {
   getBuiltinWorkflow,

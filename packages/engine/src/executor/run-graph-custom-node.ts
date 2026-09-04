@@ -1,10 +1,3 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-14:40:
- * runGraphCustomNode peeled from TaskExecutor (U4).
- *
- * Executes a single graph custom/skill/script/CLI/await-input node with column-agent
- * adoption, worktree ensure, and unattended env wiring.
- */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -17,24 +10,19 @@ import type {
   WorkflowColumnAgent,
   WorkflowIrNode,
   WorkflowStep,
-  WorkspaceConfig,
-} from "@fusion/core";
+  WorkspaceConfig, RunMutationContext } from "@fusion/core";
 import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, requiresContentReviewProof, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
 import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import {
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
-  WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
-} from "../workflows/workflow-graph-executor.js";
+  WORKFLOW_REVIEW_KIND_CONTEXT_KEY } from "../workflows/workflow-graph-executor.js";
 import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
 import {
   FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
   parseWorkflowStepOutput,
-  type WorkflowStepOutcome,
-} from "./workflow-step-verdict.js";
+  type WorkflowStepOutcome } from "./workflow-step-verdict.js";
 import { parseAwaitInputSentinel } from "./await-input-parse.js";
-// FNXC:ReviewLaneRecommendations 2026-08-26-07:34: a readonly review node holds no writer; projection is its only durable channel.
 import { parseWorkflowStepRecommendations, resolveMaxRecommendationsPerTask } from "./workflow-step-recommendations.js";
 import { buildAgentPersona } from "./agent-binding-pure.js";
 import { isApprovalFamilyVerdict, reviewWorkspacePerRepo } from "./workspace-review-per-repo.js";
@@ -45,9 +33,16 @@ import { runDeterministicVerificationGate } from "../workflow-node-runners/verif
 import {
   ensureWorktreeDependencies,
   type DependencyCommandRunner,
-  type WorktreeDependencyReadiness,
-} from "../worktree/worktree-dependency-install.js";
+  type WorktreeDependencyReadiness } from "../worktree/worktree-dependency-install.js";
 import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-14:40:
+ * runGraphCustomNode peeled from TaskExecutor (U4).
+ *
+ * Executes a single graph custom/skill/script/CLI/await-input node with column-agent
+ * adoption, worktree ensure, and unattended env wiring.
+ */
+// FNXC:ReviewLaneRecommendations 2026-08-26-07:34: a readonly review node holds no writer; projection is its only durable channel.
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
@@ -62,7 +57,7 @@ export type RunGraphCustomNodeDeps = {
   ensureWorkspaceConfig?: () => Promise<WorkspaceConfig | null>;
   options: { pluginRunner?: unknown; agentStore?: AgentStore | null; [k: string]: unknown };
   graphUnattendedRuns: Set<string>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   adoptColumnAgentForNode: AnyFn;
   buildInjectedRuntimeEnv: AnyFn;
@@ -167,7 +162,7 @@ export interface PlanReviewDependencyGateInput {
   workspaceConfig: WorkspaceConfig | null | undefined;
   worktreePath: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runConfiguredCommand: DependencyCommandRunner;
 }
 

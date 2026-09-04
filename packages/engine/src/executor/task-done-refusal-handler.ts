@@ -1,21 +1,20 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
+import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
+import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-18:15:
  * handleImplicitTaskDoneRefusal peeled from TaskExecutor (U4).
  * Requeues or fails after an implicit fn_task_done bulk-completion refusal.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
-import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 
 /** Maximum todo requeues after exhausting in-session fn_task_done retries. */
 export const MAX_TASK_DONE_REQUEUE_RETRIES = 3;
 
 export type TaskDoneRefusalHandlerDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
   persistTokenUsage: (taskId: string) => Promise<void>;

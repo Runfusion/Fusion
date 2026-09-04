@@ -62,7 +62,7 @@ import {
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
   loadWorkspaceConfig,
-  type NearDuplicateCandidate, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+  type NearDuplicateCandidate, UNATTRIBUTED_MUTATION_CONTEXT, toRunMutationContext } from "@fusion/core";
 
 
 type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
@@ -648,7 +648,7 @@ export class TriageProcessor {
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
-        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage" }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON }, UNATTRIBUTED_MUTATION_CONTEXT);
+        await this.store.pauseTask(taskId, true, toRunMutationContext({ runId, agentId: actorId, source: "triage" }), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
@@ -2870,14 +2870,14 @@ export class TriageProcessor {
           ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
           : null;
 
-        const triageRunContext = {
+        let triageRunContext: import("@fusion/core").RunMutationContext = toRunMutationContext({
           runId: generateSyntheticRunId("triage", task.id),
           agentId: assignedAgent?.id ?? "triage",
           taskId: task.id,
           taskLineageId: task.lineageId,
           phase: "plan",
           source: "triage",
-        };
+        });
 
         /*
         FNXC:WorkflowAgentRouting 2026-08-07-06:27:
@@ -2944,7 +2944,14 @@ export class TriageProcessor {
           }
           if (routed.status === "routed") {
             assignedAgent = routed.route.agent;
-            triageRunContext.agentId = assignedAgent.id;
+            triageRunContext = toRunMutationContext({
+              runId: triageRunContext.runId,
+              agentId: assignedAgent.id,
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "plan",
+              source: "triage",
+            });
             workflowCapacityAttemptId = `${triageRunContext.runId}:${planningNode.id}`;
             workflowCapacityProjectId = this.options.agentStore.workflowProjectId ?? this.rootDir;
             /*
@@ -3059,10 +3066,7 @@ export class TriageProcessor {
           }),
           ...createIdeationTools(this.store),
           ...createGoalRetrievalTools(this.store, {
-            runContext: {
-              runId: triageRunContext.runId,
-              agentId: triageRunContext.agentId,
-            },
+            runContext: triageRunContext,
             taskId: task.id,
           }),
           ...createMemoryTools(this.rootDir, settings, assignedAgent
@@ -3303,6 +3307,7 @@ export class TriageProcessor {
           store: this.store,
           taskId: task.id,
           taskTitle: task.title,
+          runContext: UNATTRIBUTED_MUTATION_CONTEXT,
         });
         const onFallbackModelUsed = (payload: Parameters<typeof fallbackObserver>[0]): Promise<void> => {
           planningAttempt.fallbackEngaged = true;
@@ -4904,7 +4909,7 @@ export class TriageProcessor {
         const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
           removeLineageReferences: true,
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" },
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine", actor: UNATTRIBUTED_MUTATION_CONTEXT.actor },
         });
         if (!result.deleted) return;
         await this.store.recordActivity({

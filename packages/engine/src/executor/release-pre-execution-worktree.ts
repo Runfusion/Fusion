@@ -1,3 +1,11 @@
+import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import type { TaskStore, RunMutationContext } from "@fusion/core";
+import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
+import { executorLog, formatError } from "../logger.js";
+import { RemovalReason, removeWorktree } from "../worktree/worktree-pool.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
+import { preExecutionWorktreeHasWork } from "./worktree-git-refs.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:00:
  * releasePreExecutionWorktree peeled from TaskExecutor (U4).
@@ -5,21 +13,12 @@
  * Drops a pre-execution worktree that never ran and has no commits/uncommitted work,
  * so withdrawn/paused cards do not hold disk forever. Fail-soft; never blocks lifecycle moves.
  */
-import { existsSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
-import type { TaskStore } from "@fusion/core";
-import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
-import { executorLog, formatError } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { RemovalReason, removeWorktree } from "../worktree/worktree-pool.js";
-import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
-import { preExecutionWorktreeHasWork } from "./worktree-git-refs.js";
 
 export type ReleasePreExecutionWorktreeDeps = {
   store: TaskStore;
   rootDir: string;
   activeWorktrees: Map<string, Set<string>>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   hasLiveTaskSessionSurface: (taskId: string) => boolean;
 };
