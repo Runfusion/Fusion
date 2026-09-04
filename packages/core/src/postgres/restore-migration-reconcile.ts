@@ -38,6 +38,12 @@
  * int4. A 0050 dump that already has `spec_locks` must still rewind 0051 or
  * plan-evidence appends fail.
  *
+ * FNXC:PostgresBackup 2026-09-04-08:52:
+ * 0054 proves the composite key; 0055 is the partition trigger/RLS repair and
+ * must rewind independently when those objects are missing. 0059 is the
+ * source-agent index; 0062 drops `break_into_subtasks`. Skip 0061: it targets
+ * central.central_activity_log and project dumps do not replace `central`.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -56,6 +62,7 @@ import {
   AI_MERGE_REVIEW_RECONCILIATION_VERSION,
   AGENT_ACTIVITY_EVENTS_VERSION,
   AGENT_RATING_PROJECT_ISOLATION_VERSION,
+  AGENT_RATINGS_PROJECT_PARTITION_VERSION,
   ANALYTICS_ISOLATION_SCHEMA_VERSION,
   AUTOMATION_ISOLATION_SCHEMA_VERSION,
   BIGINT_COUNTERS_VERSION,
@@ -86,6 +93,7 @@ import {
   PLANNING_ACTIVE_TIMING_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   QUEUED_EPISODE_SIGNATURE_VERSION,
+  REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
   RESEARCH_FEATURE_PROVENANCE_VERSION,
   REVIEW_CONVERGENCE_STAGE_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
@@ -103,6 +111,7 @@ import {
   TASK_RECOMMENDATIONS_VERSION,
   TASK_REPOSITORY_SCOPE_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+  TASK_SOURCE_AGENT_INDEX_VERSION,
   TASK_STEP_REPORTS_VERSION,
   TASK_VERIFICATION_REQUEST_VERSION,
   TASK_WEDGE_NOTIFICATION_VERSION,
@@ -119,6 +128,9 @@ export interface RestoreMigrationCatalog {
   columnExists(qualifiedRelation: string, column: string): Promise<boolean>;
   columnDataType(qualifiedRelation: string, column: string): Promise<string | null>;
   primaryKeyColumns(qualifiedRelation: string): Promise<readonly string[] | null>;
+  triggerExists(qualifiedRelation: string, triggerName: string): Promise<boolean>;
+  policyExists(qualifiedRelation: string, policyName: string): Promise<boolean>;
+  indexExists(qualifiedRelation: string, indexName: string): Promise<boolean>;
   applyRewindAndReplay(floor: string | null): Promise<void>;
 }
 
@@ -138,12 +150,21 @@ export interface RestoredSchemaColumnTypeSentinel {
   readonly dataType: string;
 }
 
+export interface RestoredSchemaNamedObjectSentinel {
+  readonly relation: string;
+  readonly name: string;
+}
+
 export interface RestoredSchemaRelationSentinel {
   readonly version: string;
   readonly relations?: readonly string[];
   readonly columns?: readonly RestoredSchemaColumnSentinel[];
   readonly primaryKeys?: readonly RestoredSchemaPrimaryKeySentinel[];
   readonly columnTypes?: readonly RestoredSchemaColumnTypeSentinel[];
+  readonly triggers?: readonly RestoredSchemaNamedObjectSentinel[];
+  readonly policies?: readonly RestoredSchemaNamedObjectSentinel[];
+  readonly indexes?: readonly RestoredSchemaNamedObjectSentinel[];
+  readonly absentColumns?: readonly RestoredSchemaColumnSentinel[];
 }
 
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -307,10 +328,23 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
     columns: [{ relation: "project.agent_ratings", column: "project_id" }],
     primaryKeys: [{ relation: "project.agent_ratings", columns: ["project_id", "id"] }],
   },
+  {
+    version: AGENT_RATINGS_PROJECT_PARTITION_VERSION,
+    triggers: [{ relation: "project.agent_ratings", name: "fusion_assign_project_id" }],
+    policies: [{ relation: "project.agent_ratings", name: "fusion_project_isolation" }],
+  },
   { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: MESSAGE_ARCHIVED_SQL_COLUMN }] },
+  {
+    version: TASK_SOURCE_AGENT_INDEX_VERSION,
+    indexes: [{ relation: "project.tasks", name: "idxTasksProjectSourceAgentId" }],
+  },
   {
     version: WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     relations: ["project.workspace_coordination_leases"],
+  },
+  {
+    version: REMOVE_TASK_SUBTASK_SPLITTING_VERSION,
+    absentColumns: [tasksColumn("break_into_subtasks")],
   },
   { version: AI_MERGE_REVIEW_RECONCILIATION_VERSION, columns: [tasksColumn("ai_merge_review_reconciliation")] },
   { version: TASK_REPOSITORY_SCOPE_VERSION, columns: [tasksColumn("repository_scope")] },
@@ -356,6 +390,38 @@ export async function detectRestoredSchemaRewindFloor(
         if (!(await catalog.columnExists(columnType.relation, columnType.column))) continue;
         const actual = await catalog.columnDataType(columnType.relation, columnType.column);
         if (actual != null && actual.toLowerCase() === columnType.dataType.toLowerCase()) continue;
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) {
+      for (const trigger of sentinel.triggers ?? []) {
+        if (!(await catalog.relationExists(trigger.relation))) continue;
+        if (await catalog.triggerExists(trigger.relation, trigger.name)) continue;
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) {
+      for (const policy of sentinel.policies ?? []) {
+        if (!(await catalog.relationExists(policy.relation))) continue;
+        if (await catalog.policyExists(policy.relation, policy.name)) continue;
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) {
+      for (const index of sentinel.indexes ?? []) {
+        if (!(await catalog.relationExists(index.relation))) continue;
+        if (await catalog.indexExists(index.relation, index.name)) continue;
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) {
+      for (const column of sentinel.absentColumns ?? []) {
+        if (!(await catalog.relationExists(column.relation))) continue;
+        if (!(await catalog.columnExists(column.relation, column.column))) continue;
         missing = true;
         break;
       }
@@ -463,6 +529,58 @@ export function createDrizzleRestoreMigrationCatalog(
       `)) as unknown as Array<{ attname: string }>;
       if (rows.length === 0) return null;
       return rows.map((row) => row.attname);
+    },
+    async triggerExists(qualifiedRelation, triggerName) {
+      /*
+       * FNXC:PostgresBackup 2026-09-04-08:52:
+       * 0055 repairs fusion_assign_project_id on agent_ratings independently of
+       * the 0054 composite key. Bound identifiers; skip internal triggers.
+       */
+      const { schema, table } = splitQualifiedRelation(qualifiedRelation);
+      const rows = (await db.execute(sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_trigger t
+          JOIN pg_class rel ON rel.oid = t.tgrelid
+          JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+          WHERE nsp.nspname = ${schema}
+            AND rel.relname = ${table}
+            AND t.tgname = ${triggerName}
+            AND NOT t.tgisinternal
+        ) AS present
+      `)) as unknown as Array<{ present: boolean }>;
+      return rows[0]?.present === true;
+    },
+    async policyExists(qualifiedRelation, policyName) {
+      const { schema, table } = splitQualifiedRelation(qualifiedRelation);
+      const rows = (await db.execute(sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_policy p
+          JOIN pg_class rel ON rel.oid = p.polrelid
+          JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+          WHERE nsp.nspname = ${schema}
+            AND rel.relname = ${table}
+            AND p.polname = ${policyName}
+        ) AS present
+      `)) as unknown as Array<{ present: boolean }>;
+      return rows[0]?.present === true;
+    },
+    async indexExists(qualifiedRelation, indexName) {
+      const { schema, table } = splitQualifiedRelation(qualifiedRelation);
+      const rows = (await db.execute(sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_class idx
+          JOIN pg_index i ON i.indexrelid = idx.oid
+          JOIN pg_class rel ON rel.oid = i.indrelid
+          JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+          WHERE nsp.nspname = ${schema}
+            AND rel.relname = ${table}
+            AND idx.relname = ${indexName}
+        ) AS present
+      `)) as unknown as Array<{ present: boolean }>;
+      return rows[0]?.present === true;
     },
     async applyRewindAndReplay(floor) {
       /*

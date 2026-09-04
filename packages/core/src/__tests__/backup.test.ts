@@ -17,6 +17,7 @@ import {
 } from "../postgres/restore-migration-reconcile.js";
 import {
   AGENT_RATING_PROJECT_ISOLATION_VERSION,
+  AGENT_RATINGS_PROJECT_PARTITION_VERSION,
   ANALYTICS_ISOLATION_SCHEMA_VERSION,
   BIGINT_COUNTERS_VERSION,
   AUTOMATION_ISOLATION_SCHEMA_VERSION,
@@ -73,11 +74,30 @@ function expectedColumnType(relation: string, column: string): string | null {
   return match ? match.dataType : null;
 }
 
+function expectedNamedObjects(
+  kind: "triggers" | "policies" | "indexes",
+  relation: string,
+): string[] {
+  return RESTORED_SCHEMA_RELATION_SENTINELS
+    .flatMap((sentinel) => [...(sentinel[kind] ?? [])])
+    .filter((entry) => entry.relation === relation)
+    .map((entry) => entry.name);
+}
+
+function namedObjectKey(relation: string, name: string): string {
+  return `${relation}\0${name}`;
+}
+
 function createRestoreCatalog(
   presentRelations: readonly string[] = [],
   presentColumns: ReadonlyArray<{ relation: string; column: string }> = [],
   presentPrimaryKeys: ReadonlyArray<{ relation: string; columns: readonly string[] }> = [],
   presentColumnTypes: ReadonlyArray<{ relation: string; column: string; dataType: string }> = [],
+  extras: {
+    triggers?: ReadonlyArray<{ relation: string; name: string }>;
+    policies?: ReadonlyArray<{ relation: string; name: string }>;
+    indexes?: ReadonlyArray<{ relation: string; name: string }>;
+  } = {},
 ): RestoreMigrationCatalog & {
   insertLifecycleSeq(projectId: string): Promise<void>;
   insertConfigurationRevision(): Promise<void>;
@@ -92,6 +112,12 @@ function createRestoreCatalog(
   const columnTypes = new Map<string, string>(
     presentColumnTypes.map((entry) => [columnKey(entry.relation, entry.column), entry.dataType]),
   );
+  const triggerOverride = extras.triggers !== undefined;
+  const policyOverride = extras.policies !== undefined;
+  const indexOverride = extras.indexes !== undefined;
+  const triggers = new Set((extras.triggers ?? []).map((entry) => namedObjectKey(entry.relation, entry.name)));
+  const policies = new Set((extras.policies ?? []).map((entry) => namedObjectKey(entry.relation, entry.name)));
+  const indexes = new Set((extras.indexes ?? []).map((entry) => namedObjectKey(entry.relation, entry.name)));
   const applied = new Set(RESTORED_SCHEMA_RELATION_SENTINELS.map((sentinel) => sentinel.version));
   const catalog: RestoreMigrationCatalog & {
     insertLifecycleSeq(projectId: string): Promise<void>;
@@ -116,12 +142,27 @@ function createRestoreCatalog(
       const expected = expectedPrimaryKey(qualifiedRelation);
       return expected ? [...expected] : null;
     },
+    async triggerExists(qualifiedRelation, triggerName) {
+      if (triggerOverride) return triggers.has(namedObjectKey(qualifiedRelation, triggerName));
+      return expectedNamedObjects("triggers", qualifiedRelation).includes(triggerName);
+    },
+    async policyExists(qualifiedRelation, policyName) {
+      if (policyOverride) return policies.has(namedObjectKey(qualifiedRelation, policyName));
+      return expectedNamedObjects("policies", qualifiedRelation).includes(policyName);
+    },
+    async indexExists(qualifiedRelation, indexName) {
+      if (indexOverride) return indexes.has(namedObjectKey(qualifiedRelation, indexName));
+      return expectedNamedObjects("indexes", qualifiedRelation).includes(indexName);
+    },
     async applyRewindAndReplay(floor) {
       const snapshotApplied = new Set(applied);
       const snapshotRelations = new Set(relations);
       const snapshotColumns = new Set(columns);
       const snapshotPrimaryKeys = new Map(primaryKeys);
       const snapshotColumnTypes = new Map(columnTypes);
+      const snapshotTriggers = new Set(triggers);
+      const snapshotPolicies = new Set(policies);
+      const snapshotIndexes = new Set(indexes);
       try {
         if (floor) {
           const parsedFloor = Number.parseInt(floor, 10);
@@ -143,6 +184,18 @@ function createRestoreCatalog(
             columns.add(columnKey(columnType.relation, columnType.column));
             columnTypes.set(columnKey(columnType.relation, columnType.column), columnType.dataType);
           }
+          for (const trigger of sentinel.triggers ?? []) {
+            triggers.add(namedObjectKey(trigger.relation, trigger.name));
+          }
+          for (const policy of sentinel.policies ?? []) {
+            policies.add(namedObjectKey(policy.relation, policy.name));
+          }
+          for (const index of sentinel.indexes ?? []) {
+            indexes.add(namedObjectKey(index.relation, index.name));
+          }
+          for (const column of sentinel.absentColumns ?? []) {
+            columns.delete(columnKey(column.relation, column.column));
+          }
           applied.add(sentinel.version);
         }
       } catch (error) {
@@ -158,6 +211,12 @@ function createRestoreCatalog(
         }
         columnTypes.clear();
         for (const [key, dataType] of snapshotColumnTypes) columnTypes.set(key, dataType);
+        triggers.clear();
+        for (const key of snapshotTriggers) triggers.add(key);
+        policies.clear();
+        for (const key of snapshotPolicies) policies.add(key);
+        indexes.clear();
+        for (const key of snapshotIndexes) indexes.add(key);
         throw error;
       }
     },
@@ -631,6 +690,34 @@ describe("PostgreSQL paired restore orchestration", () => {
 
       expect(await catalog.primaryKeyColumns("project.agent_ratings")).toEqual(["project_id", "id"]);
       expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0055 when agent_ratings PK is healthy but the assign trigger is missing", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const allColumns = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+    const catalogAtDetect = createRestoreCatalog(allRelations, allColumns, [], [], { triggers: [] });
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(AGENT_RATINGS_PROJECT_PARTITION_VERSION);
+    expect(await catalogAtDetect.columnExists("project.agent_ratings", "project_id")).toBe(true);
+    expect(await catalogAtDetect.primaryKeyColumns("project.agent_ratings")).toEqual(["project_id", "id"]);
+    expect(await catalogAtDetect.triggerExists("project.agent_ratings", "fusion_assign_project_id")).toBe(false);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0055-trigger-"));
+    try {
+      const catalog = createRestoreCatalog(allRelations, allColumns, [], [], { triggers: [] });
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0055-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(catalog.hasApplied(AGENT_RATINGS_PROJECT_PARTITION_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.triggerExists("project.agent_ratings", "fusion_assign_project_id")).toBe(true);
+      expect(catalog.hasApplied(AGENT_RATINGS_PROJECT_PARTITION_VERSION)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
