@@ -917,6 +917,30 @@ Subcommands: `status`.
 
 ---
 
+## `fn cloud`
+
+Link a local Fusion engine to a cloud control plane. Set `FUSION_CLOUD_HTTP_URL` to the HTTPS control-plane base URL, or pass `--http <url>` to `pair-start` or `pair-complete`. Plain HTTP is accepted only for loopback development endpoints.
+
+```bash
+fn cloud pair-start --http https://cloud.example.com [--name <engine-name>]
+fn cloud pair-complete [--http https://cloud.example.com] [--code <pairing-code>]
+fn cloud heartbeat [--url <engine-origin>] [--port <port>] [--no-tunnel]
+fn cloud status [--json]
+fn cloud unlink
+```
+
+Subcommands: `pair-start`, `pair-complete`, `heartbeat`, `status`, `unlink`.
+
+- `pair-start` requests a pairing code and stores its pending pairing data in `~/.fusion/cloud-link-pending.json`.
+- `pair-complete` promotes a claimed pairing to `~/.fusion/cloud-link.json`. It refuses `--pending-secret` in both `--flag value` and `--flag=value` forms so a pairing password is never exposed in a process listing or shell history. It reads the password from the mode-`0600` pending file by default, or from `FUSION_CLOUD_PENDING_SECRET` when an override is necessary.
+- `heartbeat --url <engine-origin>` and `heartbeat --no-tunnel` each send one reachability update. A bare `heartbeat` starts a Cloudflare Quick Tunnel and publishes presence every 20 seconds until you press Ctrl+C. `fn serve` and `fn dashboard` use the same tunnel-and-publish behavior for their process lifetime when the engine is linked.
+- `status --json` prints `{ linked, engineId, name, httpBaseUrl, linkedAt }`; when unlinked it prints `{ "linked": false }`.
+- `unlink` removes both the linked credential file and the pending pairing file.
+
+The linked device credential and pending pairing files are written with mode `0600`, limiting access to the owning operating-system user. They are local credentials in the same threat class as `~/.fusion/auth.json`; they are not encrypted at rest because cloud pairing must work before Fusion's PostgreSQL-backed SecretsStore is available, and any same-user process that can read the file can also read a local wrapping key.
+
+---
+
 ## `fn mission`
 
 Mission hierarchy operations.

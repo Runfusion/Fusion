@@ -28,6 +28,11 @@ export {
   resetLocalDashboardPortForTests,
 } from "./local-dashboard-port.js";
 export {
+  CloudLinkPresence,
+  startCloudLinkPresence,
+  stopCloudLinkPresence,
+} from "./cloud-link-presence.js";
+export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
   boundExistingModelRegistryRefresh,
   refreshFusionModelRegistry,
