@@ -516,13 +516,14 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
 
     piLog.warn("promptWithFallback: context limit error — attempting auto-compaction");
     await flushMemoryBeforeSessionCompaction(session);
-    const compactResult = await compactSessionContext(session);
-    if (!compactResult) {
-      piLog.error("promptWithFallback: compaction unavailable — propagating original error");
+    const compactOutcome = await compactSessionContext(session);
+    if (compactOutcome.reason !== "compacted") {
+      const engineDetail = compactOutcome.engineMessage ? ` (${compactOutcome.engineMessage})` : "";
+      piLog.error(`promptWithFallback: compaction unavailable (${compactOutcome.reason}${engineDetail}) — propagating original error`);
       throw err;
     }
 
-    piLog.log(`promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
+    piLog.log(`promptWithFallback: compaction succeeded (${compactOutcome.tokensBefore} tokens) — retrying prompt`);
     try {
       await promptSessionAndCheck(session, prompt, options);
       piLog.log("promptWithFallback: prompt completed after auto-compaction");
@@ -968,42 +969,172 @@ async function flushMemoryBeforeSessionCompaction(session: AgentSession): Promis
   }
 }
 
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+RUFU-182 (LCM ladder tiers 1-2): `compactSessionContext` collapsed every refusal into `null`,
+erasing pi's real reason. The saneca chat-b6a74d40 "Already compacted" refusal surfaced as a false
+static-floor diagnosis ("the static context itself exceeds the window budget"), instructing the
+operator to shrink tools and memory that were not the problem. The return value is now a
+discriminated `CompactionOutcome` preserving pi's reason, pi's message, and — decisively — whether
+pi's branch moved, because the guard's escalation tier may only retry where the engine still honours
+a second call.
+
+Verified against installed @earendil-works/pi-coding-agent@0.84.4 (`dist/core/agent-session.js`,
+`dist/core/compaction/compaction.js`; `pi-compaction-contract.test.ts` is the drift tripwire):
+- `compact(customInstructions?)` throws "Already compacted" when the last branch entry is a
+  compaction entry, and `prepareCompaction` IGNORES the instructions argument on that refusal —
+  no directive can unlock a second pass, so `already-compacted` is terminal at tier 1.
+- It throws "Nothing to compact (session too small)" when the branch is below the compaction floor.
+- On success it APPENDS the compaction entry and rebuilds the message list before resolving, so a
+  throw means nothing landed (a retry is mechanically possible) while any resolution means the
+  branch moved (a second call can only be refused). `branchMutated` encodes exactly that, and
+  `isRetryAfterCompactionFailureLegal` is true only for the `error` arm.
+- pi's `CompactionResult` DOES carry `estimatedTokensAfter`; the guard must not use it for
+  send/no-send because it counts messages only (no system prompt, no tool definitions) while the
+  guard's budget is a whole-request estimate. It does gate strict-reduction acceptance (`reduced`).
+
+Tier escalation lives in `chat-context-guard.ts`, never here: this helper performs exactly one
+engine call per invocation and classifies its result. Callers must branch on `reason`, not on the
+absence of a result.
+*/
+
+/** pi's compaction verdict, preserved from 0.84.4's refusal literals. */
+export type PiCompactionReason =
+  | "compacted"
+  | "already-compacted"
+  | "nothing-to-compact"
+  | "unsupported"
+  | "error";
+
+/**
+ * Reason-preserving result of one `session.compact()` attempt.
+ *
+ * Every arm carries `branchMutated` (true exactly when pi appended a compaction entry before
+ * resolving) so no caller can infer escalation legality from the absence of a summary.
+ */
+export type CompactionOutcome =
+  | {
+      reason: "compacted";
+      branchMutated: true;
+      /** pi's LLM summary; may be empty — the guard's acceptance rule owns that judgement. */
+      summary: string;
+      tokensBefore: number;
+      /** pi's message-only post-compaction estimate; null when pi reported no usable number. */
+      estimatedTokensAfter: number | null;
+      /** Strict reduction measured from pi's own before/after fields. */
+      reduced: boolean;
+    }
+  | {
+      reason: "already-compacted";
+      branchMutated: false;
+      /** pi's refusal text for the absolute guard refusal. */
+      engineMessage: string | null;
+    }
+  | {
+      reason: "nothing-to-compact";
+      branchMutated: false;
+      /** pi's refusal text for the absolute guard refusal. */
+      engineMessage: string | null;
+    }
+  | {
+      reason: "error";
+      branchMutated: false;
+      /** pi's error text; synthetic text for an impossible falsy resolve. */
+      engineMessage: string | null;
+    }
+  | { reason: "unsupported"; branchMutated: false; engineMessage: null };
+
+/**
+ * Classify a thrown (or impossible falsy-resolve) compaction failure into the refusal arm it
+ * evidences. Keys on pi 0.84.4's refusal literals case-insensitively; `error` is the honest
+ * fallback for anything else. `pi-compaction-contract.test.ts` alarms when the dependency's
+ * literals drift from what this classifier recognizes.
+ */
+export function classifyCompactionFailure(err: unknown): CompactionOutcome {
+  const engineMessage =
+    err instanceof Error ? err.message : err === undefined || err === null ? null : String(err);
+  const lower = (engineMessage ?? "").toLowerCase();
+  if (lower.includes("already compacted")) {
+    return { reason: "already-compacted", branchMutated: false, engineMessage };
+  }
+  if (lower.includes("nothing to compact")) {
+    return { reason: "nothing-to-compact", branchMutated: false, engineMessage };
+  }
+  return { reason: "error", branchMutated: false, engineMessage };
+}
+
+/**
+ * True only for the `error` arm — the sole outcome where pi threw without appending, so a second
+ * `compact()` is mechanically honoured. Exported so no caller can invent an illegal retry: a
+ * `compacted` pass (even one the acceptance rule declined), `already-compacted`,
+ * `nothing-to-compact`, and `unsupported` are all terminal at tier 1.
+ *
+ * FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+ * Typed as a type predicate so the guard's escalation block narrows to the error arm at
+ * compile time while keeping this predicate the SINGLE legality authority. This requires
+ * `CompactionOutcome` to keep ONE LITERAL PER UNION MEMBER — a member whose `reason` is
+ * itself a literal union (e.g. merging error back into the refusal arms) is invisible to
+ * discriminant narrowing and to `Extract<..., {reason:"error"}>`, which would resolve to
+ * `never`.
+ */
+export function isRetryAfterCompactionFailureLegal(
+  outcome: CompactionOutcome,
+): outcome is Extract<CompactionOutcome, { reason: "error" }> {
+  return outcome.reason === "error";
+}
+
 /**
  * Compact an agent session's context to free up the context window.
  *
  * Uses the SDK's native `session.compact()` method when available (the
  * preferred path — it produces structured, LLM-generated summaries).
+ * Never throws: pi's refusals, a missing capability, and transient failures are
+ * returned as the matching {@link CompactionOutcome} arm with `branchMutated`
+ * telling the caller whether a retry is mechanically possible.
  *
  * @param session — The agent session to compact
  * @param customInstructions — Optional instructions for the compaction summary.
- *   When not provided, uses COMPACTION_FALLBACK_INSTRUCTIONS.
- * @returns The compaction result with summary and token metrics, or null if
- *   compaction was not available or failed.
+ *   When not provided, uses COMPACTION_FALLBACK_INSTRUCTIONS (the ladder's tier-1
+ *   "normal" call shape, unchanged since RUFU-118).
  */
 export async function compactSessionContext(
   session: AgentSession,
   customInstructions?: string,
-): Promise<{ summary: string; tokensBefore: number } | null> {
+): Promise<CompactionOutcome> {
   const instructions = customInstructions ?? COMPACTION_FALLBACK_INSTRUCTIONS;
 
-  // Check if session.compact is available (runtime capability detection)
+  // Runtime capability detection: a session without the native method can never compact.
   if (typeof (session as any).compact !== "function") {
-    return null;
+    return { reason: "unsupported", branchMutated: false, engineMessage: null };
   }
 
   try {
     const result = await (session as any).compact(instructions);
     if (result && typeof result === "object") {
+      const summary = typeof result.summary === "string" ? result.summary : "";
+      const tokensBefore =
+        typeof result.tokensBefore === "number" && Number.isFinite(result.tokensBefore)
+          ? result.tokensBefore
+          : 0;
+      const estimatedTokensAfter =
+        typeof result.estimatedTokensAfter === "number" && Number.isFinite(result.estimatedTokensAfter)
+          ? result.estimatedTokensAfter
+          : null;
       return {
-        summary: result.summary ?? "",
-        tokensBefore: result.tokensBefore ?? 0,
+        reason: "compacted",
+        branchMutated: true,
+        summary,
+        tokensBefore,
+        estimatedTokensAfter,
+        reduced: estimatedTokensAfter !== null && estimatedTokensAfter < tokensBefore,
       };
     }
-    return null;
+    // pi appends the compaction entry before compact() resolves, so a falsy resolve contradicts
+    // the 0.84.4 contract. Treat it as an error arm (nothing proven appended) rather than
+    // laundering it into a refusal reason.
+    return classifyCompactionFailure(new Error("session.compact() produced no compaction result"));
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    piLog.warn(`Context compaction failed (will fall through to kill/requeue): ${msg}`);
-    return null;
+    return classifyCompactionFailure(err);
   }
 }
 
@@ -3463,20 +3594,20 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
 
         piLog.warn("promptWithFallback: context limit error — attempting auto-compaction");
         await flushMemoryBeforeSessionCompaction(activeSession);
-        const compactResult = await compactSessionContext(activeSession);
-        if (compactResult) {
-          piLog.log(`promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
-          try {
-            await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
-            return;
-          } catch (retryErr: any) {
-            const retryErrorMessage = retryErr?.message || "";
-            piLog.error(`promptWithFallback: retry after auto-compaction failed: ${retryErrorMessage}`);
-            // Throw original error to preserve original context
-            throw err;
-          }
-        } else {
-          piLog.error("promptWithFallback: compaction unavailable — propagating original error");
+        const compactOutcome = await compactSessionContext(activeSession);
+        if (compactOutcome.reason !== "compacted") {
+          const engineDetail = compactOutcome.engineMessage ? ` (${compactOutcome.engineMessage})` : "";
+          piLog.error(`promptWithFallback: compaction unavailable (${compactOutcome.reason}${engineDetail}) — propagating original error`);
+          throw err;
+        }
+        piLog.log(`promptWithFallback: compaction succeeded (${compactOutcome.tokensBefore} tokens) — retrying prompt`);
+        try {
+          await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
+          return;
+        } catch (retryErr: any) {
+          const retryErrorMessage = retryErr?.message || "";
+          piLog.error(`promptWithFallback: retry after auto-compaction failed: ${retryErrorMessage}`);
+          // Throw original error to preserve original context
           throw err;
         }
       }

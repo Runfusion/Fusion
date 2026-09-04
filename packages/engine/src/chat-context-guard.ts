@@ -33,8 +33,14 @@
 
 import { estimateTokens, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "./logger.js";
-import { compactSessionContext } from "./pi.js";
+import {
+  classifyCompactionFailure,
+  compactSessionContext,
+  isRetryAfterCompactionFailureLegal,
+  type CompactionOutcome,
+} from "./pi.js";
 import { PermanentError } from "./errors/engine-errors.js";
+import { emitBoundedRunAudit, type RunAuditSinkHost } from "./util/emit-bounded-run-audit.js";
 
 /**
  * Non-retryable: a context that overflows its model window (or cannot be compacted into
@@ -71,6 +77,63 @@ const DEFAULT_COMPACT_FRACTION = 0.8;
  * chars/token, and English-centric tokenizers sit at ~3.5-4, so chars/3.5 is a
  * conservative (never-underestimating) divisor for the providers observed here.
  */
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+RUFU-182 LCM escalation tiers 1-2. The gate's refusal surface is now reason-coded: every
+throw names which boundary actually refused (ChatContextOverflowReason) instead of
+asserting a static floor the fresh measurement often contradicts (the saneca
+chat-b6a74d40 misdiagnosis — pi's refusal was "Already compacted", not a static floor).
+`measurement-unknown` exists only as an AUDIT OUTCOME value: pi's own post-compaction
+measurement being unusable is a measurement condition, not an overflow reason.
+*/
+
+/**
+ * Why the gate refused to send the prompt (8 honest boundaries). `static-floor` is now
+ * an ENTRY TEST (static prompt + active tool schemas vs the hard limit), never a
+ * post-hoc diagnosis attached to a compaction failure.
+ */
+export type ChatContextOverflowReason =
+  | "static-floor"
+  | "empty-summary"
+  | "non-reducing-summary"
+  | "post-compaction-over-limit"
+  | "already-compacted"
+  | "nothing-to-compact"
+  | "compaction-error"
+  | "unsupported";
+
+/** LCM escalation tier. Tier 3 (partial branch rewrite) is RUFU-183 and is not a legal value here. */
+export type CompactionEscalationTier = "normal" | "aggressive";
+
+/** Why the aggressive (tier-2) retry was not attempted, per branch-mutation legality. */
+export type CompactionRetrySkippedReason =
+  | "not-needed"
+  | "branch-already-mutated"
+  | "pi-refuses-second-compaction"
+  | "capability-missing";
+
+/**
+ * Audit outcome enum. `measurement-unknown` wins over `refused` whenever pi's own
+ * post-compaction measurement was unusable — even on a throw — so operators can
+ * distinguish "the engine refused" from "we could not observe what the engine did".
+ */
+export type CompactionAuditOutcome =
+  | "compacted"
+  | "proceeded-without-reduction"
+  | "refused"
+  | "measurement-unknown";
+
+/** Where the gate reports its per-invocation compaction audit row. */
+export interface CompactionAuditContext {
+  /**
+   * Host with `recordRunAuditEvent` (the TaskStore). Sink absence or a throwing sink
+   * never changes the gate's outcome — the bounded emitter absorbs both.
+   */
+  sink?: RunAuditSinkHost;
+  taskId?: string | null;
+  sessionId?: string | null;
+}
+
 const FRESH_ESTIMATE_CHARS_PER_TOKEN = 3.5;
 
 /**
@@ -226,6 +289,62 @@ export function freshLoadedContextEstimate(session: CompactionGateSession): numb
 }
 
 /**
+ * Estimate of the STATIC context floor: current system prompt + active tool schemas,
+ * WITHOUT message history. Measured the same way as {@link freshLoadedContextEstimate}
+ * (chars / 3.5) so the two measurements cannot drift. Returns null when the session
+ * does not expose a usable current system prompt — the gate then skips the static-floor
+ * entry test (best-effort: a null floor never throws on its own).
+ */
+function staticContextFloorEstimate(session: CompactionGateSession): number | null {
+  let prompt = "";
+  try {
+    prompt = typeof session.systemPrompt === "string" ? session.systemPrompt : "";
+  } catch {
+    return null;
+  }
+  if (!prompt.trim()) return null;
+  let chars = Buffer.byteLength(prompt, "utf8");
+  try {
+    const activeNames = typeof session.getActiveToolNames === "function" ? session.getActiveToolNames() : [];
+    const allTools = typeof session.getAllTools === "function" ? session.getAllTools() : [];
+    const activeSet = new Set(activeNames ?? []);
+    for (const tool of allTools ?? []) {
+      if (typeof tool?.name !== "string" || !tool.name) continue;
+      if (activeSet.size > 0 && !activeSet.has(tool.name)) continue;
+      chars += Buffer.byteLength(
+        JSON.stringify({
+          name: tool.name,
+          description: tool.description ?? "",
+          parameters: tool.parameters ?? {},
+        }),
+        "utf8",
+      );
+    }
+  } catch {
+    // Tool introspection is best-effort; a failing reader degrades to prompt-only, matching
+    // freshLoadedContextEstimate's refusal to break the send on a broken registry reader.
+  }
+  return Math.ceil(chars / FRESH_ESTIMATE_CHARS_PER_TOKEN);
+}
+
+/**
+ * Tier-2 escalation directive: an explicit target budget derived from the compaction
+ * threshold (75% of it), so the summarizer is told to drop content rather than
+ * re-summarize at the same granularity as the fallback directive. Must stay distinct
+ * from pi's COMPACTION_FALLBACK_INSTRUCTIONS — asserting they differ is the
+ * no-silent-no-op contract for the escalation tier.
+ */
+export function buildAggressiveCompactionDirective(threshold: number): string {
+  const targetTokens = Math.floor(threshold * 0.75);
+  return [
+    "This session's loaded context still exceeds the compaction threshold after a normal compaction pass.",
+    `Produce ONE consolidated compaction summary that reduces the loaded context to a target budget of at most ${targetTokens} tokens (the threshold is ${threshold} tokens).`,
+    "Aggressively merge and paraphrase older history. Preserve verbatim only the most recent turns, open tasks, decisions, file paths, and commands needed to continue the work.",
+    "Do NOT produce an empty or near-empty summary and do NOT restate the conversation — drop content to fit the budget.",
+  ].join("\n");
+}
+
+/**
  * Estimate the loaded context tokens of a session.
  *
  * Prefers `session.getContextUsage()` when it reports a concrete (non-null, > 0) token
@@ -265,6 +384,12 @@ export function estimateLoadedContextTokens(session: CompactionGateSession): num
 /** Options for {@link ensureContextWithinCompactionThreshold}. */
 export interface CompactionGateOptions {
   /**
+   * FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+   * RUFU-182: where to report the single bounded `chat:pre-overflow-compaction` audit
+   * row emitted per gate invocation that attempted compaction. Absent sink = no row.
+   */
+  audit?: CompactionAuditContext;
+  /**
    * Upper bound on the effective threshold (Settings.tokenCap). `undefined` means the
    * engine default of 80% of the per-model context window.
    */
@@ -299,15 +424,18 @@ export interface CompactionGateResult {
  * non-pi session shapes, unknown context window / non-positive hard limit, and unknown
  * loaded-token measurements.
  *
- * When the measured context is at or above the threshold: compacts via the existing
- * `compactSessionContext` (session.compact()), re-measures, and throws
- * {@link ChatContextOverflowError} when compaction is unavailable/returns no result,
- * throws, or leaves the context at or above the hard limit. The prompt is never sent in
- * those cases.
+ * When the measured context is at or above the threshold: runs the LCM escalation
+ * ladder — tier 1 normal compaction via `compactSessionContext`, plus exactly one
+ * aggressive-directive retry (tier 2) ONLY where retry is legal (a tier-1 error left the
+ * branch unmutated; pi's absolute "Already compacted" / "Nothing to compact" refusals
+ * and a missing compaction capability are terminal, because a larger directive cannot
+ * unlock them). Acceptance is strict: the summary must be non-empty AND pi must report a
+ * context reduction. Every throw names its {@link ChatContextOverflowReason}. The
+ * prompt is never sent on a refusal.
  */
 export async function ensureContextWithinCompactionThreshold(
   session: CompactionGateSession,
-  options: CompactionGateOptions,
+  options: CompactionGateOptions = {},
 ): Promise<CompactionGateResult> {
   if (options.enabled === false) {
     // Routine per-turn skip (operator opted out via Settings.chatPreOverflowCompactionEnabled).
@@ -340,49 +468,219 @@ export async function ensureContextWithinCompactionThreshold(
   if (contextTokens < threshold) {
     return { compacted: false, contextTokens, threshold };
   }
-
   piLog.warn(
     `chat-context-guard: loaded context ${contextTokens} tokens >= threshold ${threshold} — compacting before prompt`,
   );
 
-  let compactResult: { summary: string; tokensBefore: number } | null;
-  try {
-    compactResult = await compactSessionContext(session as unknown as AgentSession);
-  } catch (err) {
+  const contextWindow = session.model?.contextWindow ?? null;
+  const hardLimit =
+    resolveCompactionBounds(contextWindow ?? undefined, session.model?.maxTokens ?? undefined)?.hardLimit ?? null;
+
+  /*
+  FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+  The static floor is an ENTRY TEST, never a post-hoc diagnosis (RUFU-182). The old code
+  attached "the static context ... itself exceeds the window budget" to every compaction
+  failure, and saneca chat-b6a74d40 proved that claim is often false: the fresh
+  measurement was 102,862 tokens — under the 111,616 hard limit — while pi's actual
+  refusal was "Already compacted". The sentence is now emitted only when the CURRENT
+  static prompt + active tool schemas alone reach the hard limit, measured before any
+  compaction attempt; the ladder never runs and no audit row is written for it.
+  */
+  if (hardLimit !== null) {
+    const staticTokens = staticContextFloorEstimate(session);
+    if (staticTokens !== null && staticTokens >= hardLimit) {
+      throw new ChatContextOverflowError(
+        `Static context floor of ${staticTokens} tokens meets or exceeds the hard limit ${hardLimit} (measured ${contextTokens}, threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"}): the static context (system prompt + tools + memory) itself exceeds the window budget — reduce the agent's tools/memory or use a larger-window model; the prompt was not sent`,
+        {
+          reason: "static-floor",
+          tiersAttempted: [] as CompactionEscalationTier[],
+          contextTokens,
+          staticTokens,
+          threshold,
+          hardLimit,
+          contextWindow,
+          stage: "static-floor",
+        },
+      );
+    }
+  }
+
+  /*
+  FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+  LCM escalation ladder, tiers 1-2 (tier 3, deterministic partial branch rewrite, is
+  RUFU-183 and must NOT appear here). compactSessionContext is total: it returns a
+  reason-coded CompactionOutcome instead of throwing or returning null, so every branch
+  switches on outcome.reason. Tier 2 (aggressive directive) runs ONLY after an error
+  arm — a transient upstream failure or a cancelled pass left the branch unmutated. pi's
+  "Already compacted" / "Nothing to compact" refusals come from its own guard and are
+  absolute: re-asking with a larger directive is exactly the silent-no-op retry this
+  task deletes. Acceptance is strict: non-empty summary AND pi-reported reduction. Send
+  vs no-send stays decided by the guard's own estimator — no second hard-limit gate.
+  One bounded chat:pre-overflow-compaction audit row per invocation that reached the
+  ladder; sink absence or a hostile sink never changes the outcome.
+  */
+  const auditContext = options.audit;
+  const emitAudit = async (fields: {
+    tier: CompactionEscalationTier;
+    tiersAttempted: CompactionEscalationTier[];
+    reason: ChatContextOverflowReason | null;
+    outcome: CompactionAuditOutcome;
+    afterTokens: number | null;
+    retrySkippedReason: CompactionRetrySkippedReason;
+  }): Promise<void> => {
+    if (!auditContext?.sink) return;
+    await emitBoundedRunAudit(auditContext.sink, {
+      agentId: "chat-context-guard",
+      runId: "chat-pre-overflow-compaction",
+      domain: "database",
+      mutationType: "chat:pre-overflow-compaction",
+      target: auditContext.sessionId ? `chat:${auditContext.sessionId}` : "chat-context",
+      taskId: auditContext.taskId ?? undefined,
+      metadata: {
+        tier: fields.tier,
+        tiersAttempted: fields.tiersAttempted,
+        reason: fields.reason,
+        outcome: fields.outcome,
+        beforeTokens: contextTokens,
+        afterTokens: fields.afterTokens,
+        threshold,
+        retrySkippedReason: fields.retrySkippedReason,
+      },
+    });
+  };
+
+  const runTier = async (customInstructions?: string): Promise<CompactionOutcome> => {
+    try {
+      return await compactSessionContext(session as unknown as AgentSession, customInstructions);
+    } catch (err) {
+      // compactSessionContext is total (classifies instead of throwing); this defensive
+      // catch applies the same classifier so a helper bug cannot escape as an
+      // unclassified throw and bypass the ladder's tier semantics.
+      return classifyCompactionFailure(err);
+    }
+  };
+
+  const tiersAttempted: CompactionEscalationTier[] = ["normal"];
+  let tier: CompactionEscalationTier = "normal";
+  let outcome = await runTier();
+
+  if (isRetryAfterCompactionFailureLegal(outcome)) {
+    /*
+    FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+    Tier-2 legality is branch-mutation-based, not failure-class based: aborted/cancelled
+    and transient throws both appended nothing, so one directive-driven pass is legal for
+    each. Re-measure with the guard's own estimator before escalating so the log records
+    what the retry faces; the directive's target budget derives from the threshold, not
+    from this measurement.
+    */
+    const tier2Remeasured = estimateLoadedContextTokens(session) ?? contextTokens;
+    piLog.warn(
+      `chat-context-guard: tier-1 compaction failed (${outcome.engineMessage ?? "unknown engine error"}) with the branch unmutated — escalating once to the aggressive-directive tier (remeasured ${tier2Remeasured} tokens)`,
+    );
+    tier = "aggressive";
+    tiersAttempted.push("aggressive");
+    outcome = await runTier(buildAggressiveCompactionDirective(threshold));
+  }
+
+  const refusalDetails = (reason: ChatContextOverflowReason, extra: Record<string, unknown> = {}) => ({
+    reason,
+    tiersAttempted,
+    contextTokens,
+    threshold,
+    hardLimit,
+    contextWindow,
+    stage: "compaction",
+    ...extra,
+  });
+
+  if (outcome.reason === "unsupported") {
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: "unsupported",
+      outcome: "refused",
+      afterTokens: null,
+      retrySkippedReason: "capability-missing",
+    });
     throw new ChatContextOverflowError(
-      `Pre-overflow compaction failed for a ${contextTokens}-token context (threshold ${threshold}, contextWindow ${session.model?.contextWindow ?? "unknown"}); the prompt was not sent`,
-      { contextTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "compaction" },
-      err instanceof Error ? err : undefined,
+      `Pre-overflow compaction is unsupported on this session shape (reason=unsupported, tiers attempted: ${tiersAttempted.join(", ")}): the session exposes no compaction capability — measured ${contextTokens} tokens >= threshold ${threshold}; the prompt was not sent`,
+      refusalDetails("unsupported", { engineMessage: outcome.engineMessage }),
     );
   }
-  if (!compactResult) {
+
+  if (outcome.reason === "already-compacted" || outcome.reason === "nothing-to-compact") {
     /*
     FNXC:ChatContextGuard 2026-08-20-12:20:
-    Stale-usage cross-check (RUFU-135 follow-up). "No compaction result" means the
-    conversation branch was too small to compress — the context is dominated by
-    STATIC content. The recorded usage may therefore describe a LARGER static
-    context than the session carries now (it is restored from the session file and
-    predates whatever deploy changed the prompt/toolset). Re-measure the current
+    Stale-usage cross-check (RUFU-135 follow-up), carried into the reason-coded refusal
+    arms by RUFU-182: pi refusing to compact means the recorded usage may describe a
+    LARGER static context than the session carries now (it is restored from the session
+    file and predates whatever deploy changed the prompt/toolset). Re-measure the current
     prompt + active tool schemas + messages; if the fresh measurement fits under the
-    threshold, the recorded usage is stale and the send is safe. When the fresh
-    measurement also exceeds the threshold the overflow is real (the static floor
-    itself no longer fits) and the gate keeps its fail-loud behavior.
+    threshold, the recorded usage is stale and the send is safe. When it also exceeds the
+    threshold the refusal is surfaced honestly — naming pi's refusal, NOT a static-floor
+    claim — and the gate keeps its fail-loud behavior.
     */
     const freshTokens = freshLoadedContextEstimate(session);
     if (freshTokens !== null && freshTokens < threshold) {
       piLog.log(
         `chat-context-guard: recorded context ${contextTokens} tokens is stale — fresh measurement of the current prompt + tools + messages is ${freshTokens} tokens (< threshold ${threshold}); the session's static context changed since the usage was recorded. Proceeding with the current context.`,
       );
+      await emitAudit({
+        tier,
+        tiersAttempted,
+        reason: outcome.reason,
+        outcome: "proceeded-without-reduction",
+        afterTokens: freshTokens,
+        retrySkippedReason: "pi-refuses-second-compaction",
+      });
       return { compacted: false, contextTokens: freshTokens, threshold };
     }
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: outcome.reason,
+      outcome: "refused",
+      afterTokens: freshTokens,
+      retrySkippedReason: "pi-refuses-second-compaction",
+    });
     throw new ChatContextOverflowError(
-      `Pre-overflow compaction returned no result for a ${contextTokens}-token context (threshold ${threshold}, contextWindow ${session.model?.contextWindow ?? "unknown"})${
-        freshTokens !== null
-          ? `; the fresh measurement of the current prompt is ${freshTokens} tokens, so the static context (system prompt + tools + memory) itself exceeds the window budget — reduce the agent's tools/memory or use a larger-window model`
-          : ""
-      }; the prompt was not sent`,
-      { contextTokens, freshTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "compaction-unavailable" },
-      new Error("session.compact() produced no compaction result"),
+      `Pre-overflow compaction was refused by the session engine (reason=${outcome.reason}, tiers attempted: ${tiersAttempted.join(", ")}): pi: "${outcome.engineMessage ?? outcome.reason}" — this refusal is absolute, a larger compaction directive cannot unlock it; measured ${contextTokens} tokens >= threshold ${threshold}${hardLimit !== null ? `, hard limit ${hardLimit}` : ""}${freshTokens !== null ? `, fresh measurement of the current prompt + tools + messages is ${freshTokens} tokens${freshTokens >= threshold ? " — reduce the agent's tools/memory or use a larger-window model" : ""}` : "; the fresh measurement is unavailable"}; the prompt was not sent`,
+      refusalDetails(outcome.reason, { freshTokens, engineMessage: outcome.engineMessage }),
+    );
+  }
+
+  if (outcome.reason === "error") {
+    // Reaching this arm means the tier-1 error escalated and the single legal retry
+    // also errored — the retry was attempted, so it was never "skipped".
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: "compaction-error",
+      outcome: "refused",
+      afterTokens: null,
+      retrySkippedReason: "not-needed",
+    });
+    const engineMessage = outcome.engineMessage ?? "unknown engine error";
+    throw new ChatContextOverflowError(
+      `Pre-overflow compaction failed (reason=compaction-error, tiers attempted: ${tiersAttempted.join(", ")}): ${engineMessage} — measured ${contextTokens} tokens >= threshold ${threshold}${hardLimit !== null ? `, hard limit ${hardLimit}` : ""}; the prompt was not sent`,
+      refusalDetails("compaction-error", { engineMessage }),
+      new Error(engineMessage),
+    );
+  }
+
+  // outcome.reason === "compacted": the branch is mutated; the strict acceptance rule decides.
+  if (outcome.summary.trim().length === 0) {
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: "empty-summary",
+      outcome: "refused",
+      afterTokens: null,
+      retrySkippedReason: "branch-already-mutated",
+    });
+    throw new ChatContextOverflowError(
+      `Pre-overflow compaction returned an empty summary (reason=empty-summary, tiers attempted: ${tiersAttempted.join(", ")}): the branch was mutated but nothing usable was produced for a ${contextTokens}-token context (threshold ${threshold}); the prompt was not sent`,
+      refusalDetails("empty-summary", { tokensBefore: outcome.tokensBefore }),
     );
   }
 
@@ -392,21 +690,128 @@ export async function ensureContextWithinCompactionThreshold(
     // a model change mid-call cannot make this reachable, but fail loud anyway.
     throw new ChatContextOverflowError(
       `Compaction completed but the hard limit is no longer computable for a ${contextTokens}-token context; the prompt was not sent`,
-      { contextTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "post-compaction" },
+      {
+        reason: "post-compaction-over-limit",
+        tiersAttempted,
+        contextTokens,
+        threshold,
+        contextWindow,
+        stage: "post-compaction",
+      },
     );
   }
 
   const afterTokens = estimateLoadedContextTokens(session);
-  if (afterTokens !== null && afterTokens >= bounds.hardLimit) {
+  const overLimit = afterTokens !== null && afterTokens >= bounds.hardLimit;
+
+  if (!outcome.reduced && outcome.estimatedTokensAfter !== null) {
+    // pi's measurement is usable and shows NO reduction: never a hard failure when the
+    // send still fits (that would create refusals where today's sends work), but a
+    // refusal when the un-reduced context is over the hard limit — the reason names the
+    // failed reduction, not a generic over-limit claim.
+    if (overLimit) {
+      await emitAudit({
+        tier,
+        tiersAttempted,
+        reason: "non-reducing-summary",
+        outcome: "refused",
+        afterTokens,
+        retrySkippedReason: "branch-already-mutated",
+      });
+      throw new ChatContextOverflowError(
+        `Pre-overflow compaction produced a summary that did not reduce the context (reason=non-reducing-summary, tiers attempted: ${tiersAttempted.join(", ")}): ${afterTokens} tokens remain vs the ${bounds.hardLimit} hard limit (threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"}); the prompt was not sent`,
+        refusalDetails("non-reducing-summary", {
+          afterTokens,
+          tokensBefore: outcome.tokensBefore,
+          estimatedTokensAfter: outcome.estimatedTokensAfter,
+          stage: "post-compaction",
+        }),
+      );
+    }
+    piLog.warn(
+      `chat-context-guard: compaction summary did not reduce the context (pi estimated ${outcome.estimatedTokensAfter} tokens vs ${outcome.tokensBefore}); proceeding without a validated reduction`,
+    );
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: "non-reducing-summary",
+      outcome: "proceeded-without-reduction",
+      afterTokens,
+      retrySkippedReason: "branch-already-mutated",
+    });
+    return { compacted: false, contextTokens: afterTokens ?? outcome.estimatedTokensAfter, threshold };
+  }
+
+  if (outcome.estimatedTokensAfter === null) {
+    /*
+    FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+    measurement-unknown: pi's own after-measurement is unusable (estimatedTokensAfter is
+    message-only), so the strict acceptance rule cannot be satisfied. The audit outcome
+    is ALWAYS measurement-unknown on this arm — even on a throw — because the honest
+    statement is "we could not observe what compaction did". Send vs no-send defers to
+    the guard's own estimator; a fitting send proceeds UNVALIDATED (compacted:false).
+    */
+    if (overLimit) {
+      await emitAudit({
+        tier,
+        tiersAttempted,
+        reason: "post-compaction-over-limit",
+        outcome: "measurement-unknown",
+        afterTokens,
+        retrySkippedReason: "branch-already-mutated",
+      });
+      throw new ChatContextOverflowError(
+        `Context measurement after compaction is unvalidated and the guard's own estimate is ${afterTokens} tokens, at or above the ${bounds.hardLimit} hard limit (reason=post-compaction-over-limit, tiers attempted: ${tiersAttempted.join(", ")}, threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"}); the prompt was not sent`,
+        refusalDetails("post-compaction-over-limit", {
+          afterTokens,
+          hardLimit: bounds.hardLimit,
+          stage: "post-compaction",
+        }),
+      );
+    }
+    piLog.warn(
+      "chat-context-guard: post-compaction measurement unknown — proceeding without a validated reduction",
+    );
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: null,
+      outcome: "measurement-unknown",
+      afterTokens,
+      retrySkippedReason: "branch-already-mutated",
+    });
+    return { compacted: false, contextTokens: afterTokens, threshold };
+  }
+
+  if (overLimit) {
+    await emitAudit({
+      tier,
+      tiersAttempted,
+      reason: "post-compaction-over-limit",
+      outcome: "refused",
+      afterTokens,
+      retrySkippedReason: "branch-already-mutated",
+    });
     throw new ChatContextOverflowError(
-      `Context is still ${afterTokens} tokens after compaction (hard limit ${bounds.hardLimit}, contextWindow ${session.model?.contextWindow ?? "unknown"}); the prompt was not sent`,
-      { contextTokens, afterTokens, threshold, hardLimit: bounds.hardLimit, contextWindow: session.model?.contextWindow ?? null, stage: "post-compaction" },
+      `Context is still ${afterTokens} tokens after compaction (reason=post-compaction-over-limit, tiers attempted: ${tiersAttempted.join(", ")}, hard limit ${bounds.hardLimit}, contextWindow ${contextWindow ?? "unknown"}); the prompt was not sent`,
+      refusalDetails("post-compaction-over-limit", {
+        afterTokens,
+        hardLimit: bounds.hardLimit,
+        stage: "post-compaction",
+      }),
     );
   }
 
   if (afterTokens === null) {
     piLog.warn("chat-context-guard: post-compaction measurement unknown — proceeding after a successful compaction");
   }
-
+  await emitAudit({
+    tier,
+    tiersAttempted,
+    reason: null,
+    outcome: "compacted",
+    afterTokens,
+    retrySkippedReason: "not-needed",
+  });
   return { compacted: true, contextTokens, threshold };
 }

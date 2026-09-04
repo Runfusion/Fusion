@@ -2622,16 +2622,24 @@ export async function runImplementation(
               task.id,
               settings.tokenCap,
               async (s) => {
-                const compactResult = await compactSessionContext(s);
-                if (compactResult) {
-                  await deps.store.logEntry(
-                    task.id,
-                    `Context compacted at ${compactResult.tokensBefore} tokens (token cap: ${settings.tokenCap})`,
-                    undefined,
-                    deps.getRunContextFor(task.id),
-                  );
+                const compactOutcome = await compactSessionContext(s);
+                /*
+                FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+                RUFU-182: the helper no longer returns `{tokensBefore} | null`; this adapter converts the
+                union back to the token-cap detector's contract. Truthy exactly when the engine resolved a
+                compaction (what the old object-vs-null contract meant), so token-cap behaviour — trigger,
+                log wording, and the detector's own threshold maths — is unchanged by the migration.
+                */
+                if (compactOutcome.reason !== "compacted") {
+                  return null;
                 }
-                return compactResult;
+                await deps.store.logEntry(
+                  task.id,
+                  `Context compacted at ${compactOutcome.tokensBefore} tokens (token cap: ${settings.tokenCap})`,
+                  undefined,
+                  deps.getRunContextFor(task.id),
+                );
+                return { tokensBefore: compactOutcome.tokensBefore };
               },
             );
             if (capResult.triggered) {

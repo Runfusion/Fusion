@@ -19,7 +19,10 @@
  * - still at/above the hard limit after compaction → ChatContextOverflowError surfaces
  *   as a distinct, descriptive persisted+broadcast failure (not "AI processing failed");
  *   the prompt is NOT sent
- * - compaction returns no result (null) → ChatContextOverflowError; the prompt is NOT sent
+ * - compaction resolves falsy (defensive error arm, RUFU-182) → one legal aggressive
+ *   escalation, then ChatContextOverflowError (reason=compaction-error); prompt NOT sent
+ * - the refusal writes a chat:pre-overflow-compaction run-audit row to the project task
+ *   store (RUFU-182 audit wiring through the dashboard seam)
  * - tokenCap from chat settings is the operator's upper bound on the effective threshold
  * - zero-provider-usage history (dsai1 shape — usage null, chars/4 estimate only) →
  *   compact fires from the estimate (pi's own threshold check is blind there)
@@ -90,6 +93,17 @@ chars/4 estimate over loaded messages). `compact` models pi's post-compaction sh
 provider usage resets to null and the message list collapses to a compactionSummary.
 The summary message MUST carry a `summary` field — pi's estimateTokens reads
 `message.summary.length` for compactionSummary roles (not `content`).
+
+FNXC:ChatContextGuardEscalation 2026-09-04-12:56:
+RUFU-182 Step 2: the fake now MIRRORS pi 0.84.4's refusal state machine (the same rules
+the engine ladder suite's fake encodes — mirrored rather than imported across packages):
+a compaction entry appended by a successful pass becomes the last branch entry, and any
+later pass rejects with the absolute "Already compacted" literal REGARDLESS of the
+instructions argument; a thrown or falsy-resolved pass appends NOTHING, so a retry
+against the fake stays mechanically legal (the falsy arm the defensive error path uses).
+The ladder-matrix tests below are legal against this fake precisely because a falsy
+resolve leaves the branch unmutated — a fixture scripting a SECOND SUCCESS after one
+accepted pass would now hit the fake's own refusal, which is the point.
 */
 interface FakeSessionOptions {
   contextWindow: number;
@@ -105,15 +119,28 @@ interface FakeSessionOptions {
   initialMessages?: Array<{ role: string; content?: string; summary?: string }>;
 }
 
+type FakeMessage = { role: string; content?: string; summary?: string };
+
 function makeFakeSession(opts: FakeSessionOptions) {
   const usageState = { tokens: opts.usageTokens };
-  const compact = vi.fn(async () => {
+  const messages: FakeMessage[] = [...(opts.initialMessages ?? [])];
+  const compact = vi.fn(async (instructions?: string) => {
     opts.onCompact?.();
-    if (opts.compactBehavior === "null") return null;
+    // pi 0.84.4's absolute guard (dist/core/agent-session.js): once a compaction entry is
+    // the LAST branch entry, every further pass throws "Already compacted" — prepareCompaction
+    // never sees the instructions argument, so no directive unlocks a second pass.
+    if (messages[messages.length - 1]?.role === "compactionSummary") {
+      throw new Error("Already compacted");
+    }
+    if (opts.compactBehavior === "null") {
+      // Defensive falsy resolve: the real engine appends before resolving, so this arm
+      // contradicts the 0.84.4 contract — model the ONLY state consistent with it by
+      // appending nothing, keeping the guard's one legal retry mechanically honoured.
+      return null;
+    }
     usageState.tokens = null;
-    session.state.messages = [
-      { role: "compactionSummary", summary: "x".repeat((opts.compactAfterTokens ?? 0) * 4) },
-    ];
+    messages.length = 0;
+    messages.push({ role: "compactionSummary", summary: "x".repeat((opts.compactAfterTokens ?? 0) * 4) });
     return { summary: "summary", firstKeptEntryId: "1", tokensBefore: 150_000 };
   });
   const session = {
@@ -123,7 +150,7 @@ function makeFakeSession(opts: FakeSessionOptions) {
       contextWindow: opts.contextWindow,
       maxTokens: opts.maxTokens,
     },
-    state: { messages: [...(opts.initialMessages ?? [])] as Array<{ role: string; content?: string; summary?: string }> },
+    state: { messages },
     getContextUsage: () => ({
       tokens: usageState.tokens,
       contextWindow: opts.contextWindow,
@@ -143,8 +170,11 @@ Optional agentStore parameter so the room-seam tests resolve one ambient respond
 function makeManager(
   getSettings?: () => Promise<Record<string, unknown> | undefined>,
   agentStore?: unknown,
+  taskStore?: unknown,
 ) {
-  return new ChatManager(mockChatStore as never, "/tmp/test", agentStore as never, undefined, getSettings);
+  // taskStore is the 7th constructor parameter (after messageStore) — the RUFU-182
+  // audit sink seam the gate receives as audit.sink.
+  return new ChatManager(mockChatStore as never, "/tmp/test", agentStore as never, undefined, getSettings, undefined, taskStore as never);
 }
 
 function setupSession(overrides: Record<string, unknown> = {}) {
@@ -171,6 +201,43 @@ beforeEach(() => {
   mockChatStore.getMessages.mockImplementation(async () => []);
   mockChatStore.getRoomMessages.mockImplementation(async () => []);
   mockPromptWithFallback.mockImplementation(async () => undefined);
+});
+
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-12:56:
+RUFU-182 Step 2 (mirrored fidelity): the completion criterion is "a fake that itself
+asserts the refusal rule" — every compaction path in this suite must be illegal-proof
+against pi 0.84.4's absolute second-pass guard. This block pins the fake's own state
+machine (mirroring `fake engine compaction-state fidelity` in the engine ladder suite):
+a successful pass appends, and NOTHING — no directive — unlocks a further pass. The
+falsy-resolve escalation test above is legal only because that arm appends nothing.
+*/
+describe("dashboard fake compaction-state fidelity (mirrors pi 0.84.4)", () => {
+  it("accepts one pass, then refuses any further pass regardless of instructions", async () => {
+    const { session, compact } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+      compactAfterTokens: 20_000,
+    });
+    await expect(session.compact("normal-directive")).resolves.toBeTruthy();
+    await expect(session.compact("aggressive-directive")).rejects.toThrow(/Already compacted/i);
+    // Both instructions arguments reached the fake — the refusal ignores them.
+    expect(compact.mock.calls.map((call) => call[0])).toEqual(["normal-directive", "aggressive-directive"]);
+  });
+
+  it("keeps a falsy-resolved pass retry-legal: nothing was appended, so no refusal fires", async () => {
+    const { session } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+      compactBehavior: "null",
+    });
+    await expect(session.compact("first")).resolves.toBeNull();
+    // The branch never mutated, so pi's absolute guard cannot be the blocker — the
+    // guard's ONE legal retry is honoured by the fake itself.
+    await expect(session.compact("second")).resolves.toBeNull();
+  });
 });
 
 describe("ChatManager.sendMessage — pre-overflow compaction gate (dashboard seam)", () => {
@@ -249,7 +316,16 @@ describe("ChatManager.sendMessage — pre-overflow compaction gate (dashboard se
     expect(persisted?.metadata?.failureInfo?.errorClass).toBe("ChatContextOverflowError");
   });
 
-  it("surfaces a distinct overflow failure and skips the prompt when compaction returns no result", async () => {
+  it("surfaces a distinct overflow failure and skips the prompt when compaction resolves falsy", async () => {
+    /*
+    FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+    RUFU-182: a falsy `session.compact()` resolve is now the defensive error arm (the
+    branch stays unmutated), so the gate legally escalates ONCE with the aggressive
+    directive before refusing with reason=compaction-error. The old contract refused
+    after a single null. The observable dashboard contract is unchanged: no prompt,
+    distinct persisted+broadcast overflow failure — plus a new run-audit row on the
+    project task store sink proving the Step 5 audit wiring end to end.
+    */
     setupSession();
     const { session, compact } = makeFakeSession({
       contextWindow: 128_000,
@@ -258,12 +334,13 @@ describe("ChatManager.sendMessage — pre-overflow compaction gate (dashboard se
       compactBehavior: "null",
     });
     mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
-    const manager = makeManager();
+    const recordRunAuditEvent = vi.fn(async () => ({}));
+    const manager = makeManager(undefined, undefined, { recordRunAuditEvent });
     const broadcastSpy = vi.spyOn(chatStreamManager, "broadcast").mockReturnValue(0);
 
     await manager.sendMessage("chat-guard", "hello world");
 
-    expect(compact).toHaveBeenCalledTimes(1);
+    expect(compact).toHaveBeenCalledTimes(2); // tier-1 normal + one aggressive escalation
     expect(mockPromptWithFallback).not.toHaveBeenCalled();
     // The operator-visible error event is broadcast to the session's subscribers in
     // addition to the persisted failure message (spec: fail-loud, chat-visible).
@@ -279,6 +356,27 @@ describe("ChatManager.sendMessage — pre-overflow compaction gate (dashboard se
     expect(persisted?.content).toContain("prompt was not sent");
     expect(persisted?.metadata?.failureInfo?.code).toBe("CHAT_CONTEXT_OVERFLOW");
     expect(persisted?.metadata?.failureInfo?.errorClass).toBe("ChatContextOverflowError");
+    // RUFU-182 Step 5: the refusal wrote one bounded audit row to the project store.
+    expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
+    const auditRow = recordRunAuditEvent.mock.calls[0][0] as {
+      domain: string;
+      mutationType: string;
+      target: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(auditRow.domain).toBe("database");
+    expect(auditRow.mutationType).toBe("chat:pre-overflow-compaction");
+    expect(auditRow.target).toBe("chat:chat-guard");
+    expect(auditRow.metadata).toMatchObject({
+      reason: "compaction-error",
+      outcome: "refused",
+      tiersAttempted: ["normal", "aggressive"],
+      threshold: 102400,
+    });
+    // The escalation rode the tier-2 aggressive directive (target budget = 75% of the
+    // 102,400 threshold), while tier 1 used the engine's normal fallback instructions.
+    expect(String(compact.mock.calls[1]?.[0])).toContain("target budget of at most 76800 tokens");
+    expect(String(compact.mock.calls[0]?.[0])).not.toContain("target budget");
   });
 
   it("treats the settings tokenCap as the upper bound of the effective threshold", async () => {
@@ -425,15 +523,23 @@ describe("ChatManager.sendRoomMessage — pre-overflow compaction gate (room sea
       compactBehavior: "null",
     });
     mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
-    const manager = makeManager(undefined, fakeAgentStore);
+    const recordRunAuditEvent = vi.fn(async () => ({}));
+    const manager = makeManager(undefined, fakeAgentStore, { recordRunAuditEvent });
 
     await expect(manager.sendRoomMessage("room-1", "what is the status")).rejects.toBeInstanceOf(RoomReplyGenerationError);
 
-    expect(compact).toHaveBeenCalledTimes(1);
+    // Falsy resolves are the defensive error arm (RUFU-182): tier-1 + one legal
+    // aggressive escalation, then refusal — no silent single-null accept.
+    expect(compact).toHaveBeenCalledTimes(2);
     expect(mockPromptWithFallback).not.toHaveBeenCalled();
     // No assistant room reply was persisted — the failure is the room-level error.
     const assistantCall = mockChatStore.addRoomMessage.mock.calls.find((call) => call[1]?.role === "assistant");
     expect(assistantCall).toBeUndefined();
+    // The room-seam audit row is keyed to `chat:room:<roomId>` (RUFU-182 Step 5).
+    expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
+    const auditRow = recordRunAuditEvent.mock.calls[0][0] as { target: string; metadata: Record<string, unknown> };
+    expect(auditRow.target).toBe("chat:room:room-1");
+    expect(auditRow.metadata).toMatchObject({ reason: "compaction-error", outcome: "refused" });
   });
 });
 

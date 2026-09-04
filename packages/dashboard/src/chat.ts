@@ -2560,10 +2560,15 @@ export class ChatManager {
       responderFailures (and RoomReplyGenerationError → ApiError 502 when every responder
       fails) — the existing room failure pattern — so the operator sees which responder's
       context overflowed instead of receiving a doomed 1-token reply.
+      RUFU-182 (2026-09-04): the gate now reports its per-invocation compaction decision
+      (tier attempted, refusal reason, before/after tokens) to the task-store run-audit
+      sink, keyed to `room:<roomId>` so a room responder's overflow is answerable after
+      the fact. A missing/throwing sink never changes the gate's outcome.
       */
       await ensureContextWithinCompactionThreshold(resolvedSession.session, {
         tokenCap: chatModelSettings.tokenCap,
         enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
+        audit: { sink: this.taskStore, sessionId: `room:${input.roomId}` },
       });
 
       await enginePromptWithFallback(
@@ -3476,10 +3481,15 @@ export class ChatManager {
       RUFU-118 (2026-08-19-15:05): the gate is an opt-out project option (selectable
       feature, not always-on) — chatPreOverflowCompactionEnabled === false bypasses it
       entirely for the project.
+      RUFU-182 (2026-09-04): the gate reports its per-invocation compaction decision
+      (tier attempted, refusal reason, before/after tokens) to the task-store run-audit
+      sink keyed to this chat session, so a refused send is answerable after the fact
+      without reading provider logs. A missing/throwing sink never changes the outcome.
       */
       await ensureContextWithinCompactionThreshold(agentResult.session, {
         tokenCap: chatModelSettings.tokenCap,
         enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
+        audit: { sink: this.taskStore, sessionId: session.id },
       });
 
       // Send user message and get response
