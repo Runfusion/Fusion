@@ -151,4 +151,33 @@ describe("ensureGraphCustomNodeWorktree first-node identity", () => {
     expect(mockedAcquireTask.mock.calls[0]?.[0]?.runContext).toEqual(liveContext);
     expect(mockedCaptureBase.mock.calls[0]?.[5]).toEqual(liveContext);
   });
+
+  it("attributes empty-map acquire to node config agentId, not the task assignee", async () => {
+    mockedAcquireTask.mockResolvedValue({
+      worktreePath: "/workspace/.fusion/worktrees/fn-3430",
+      branch: "fusion/fn-3430",
+      source: "fresh",
+      hydrated: false,
+      isResume: false,
+    } as Awaited<ReturnType<typeof acquireTaskWorktree>>);
+    mockedCaptureBase.mockResolvedValue(undefined);
+
+    await ensureGraphCustomNodeWorktree(
+      graphNodeAcquireDeps(),
+      task({ assignedAgentId: "task-assignee" }),
+      settings,
+      "custom-first",
+      false,
+      "node-agent",
+    );
+
+    const runContext = mockedAcquireTask.mock.calls[0]?.[0]?.runContext;
+    expect(runContext?.agentId).toBe("node-agent");
+    expect(runContext?.actor?.actor?.id).toBe("node-agent");
+    expect(runContext?.runId).toMatch(/^workflow-node-worktree-FN-3430-/);
+    expect(runContext?.agentId).not.toBe("task-assignee");
+    expect(runContext?.agentId).not.toBe("executor");
+    expect(runContext?.runId).not.toBe("unknown");
+    expect(mockedCaptureBase.mock.calls[0]?.[5]?.agentId).toBe("node-agent");
+  });
 });
