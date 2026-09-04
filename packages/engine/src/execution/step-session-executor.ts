@@ -19,7 +19,9 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore, TaskStep } from "@fusion/core";
-import { isFastExecutionMode, isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel, resolveTrailingVerificationStepIndex } from "@fusion/core";
+import { isFastExecutionMode, isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel, resolveTrailingVerificationStepIndex, resolveAuthoredStepHeadingOffset } from "@fusion/core";
+
+export { resolveAuthoredStepHeadingOffset };
 
 import {
   createResolvedAgentSession,
@@ -224,16 +226,6 @@ export function parseStepFileScopes(prompt: string): Map<number, string[]> {
   }
 
   return result;
-}
-
-/*
-FNXC:WorkflowStepControl 2026-09-04-01:38:
-PROMPT.md is model-authored, but its heading numbers are execution indices. A fully 1-based run
-previously produced a phantom step at steps.length, so only that unambiguous legacy sequence rebases.
-*/
-export function resolveAuthoredStepHeadingOffset(headingNumbers: readonly number[]): 0 | 1 {
-  const sorted = [...headingNumbers].sort((a, b) => a - b);
-  return sorted.length > 0 && sorted.every((heading, index) => heading === index + 1) ? 1 : 0;
 }
 
 /*

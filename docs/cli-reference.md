@@ -1338,26 +1338,23 @@ fn backup --cleanup
 ```
 
 `--create` writes a same-stem `fusion-pg-<timestamp>.dump` containing the
-`project` and `archive` schemas and a `fusion-central-pg-<timestamp>.dump`
-containing the `central` schema. Dumps are written through private in-progress
+`project` and `archive` schemas, a `fusion-central-pg-<timestamp>.dump`
+containing the `central` schema, and a `fusion-migrations-pg-<timestamp>.dump`
+containing `public.fusion_schema_migrations`. Dumps are written through private in-progress
 artifacts and atomically published, so `--list` never offers an in-progress
 artifact; it shows complete pairs and either kind of orphan without treating
 legacy `.db` files as PostgreSQL backups. `--cleanup` also removes abandoned
 in-progress artifacts from a crashed backup, but never a live backup claim.
 
-Restoring a project/archive dump validates both source archives, retains a new
-current-state `fusion-pre-restore-pg-*` +
-`fusion-central-pre-restore-pg-*` pair, then restores project/archive followed
-by its required same-stem central sibling. Selecting a
-`fusion-central-pg-*` dump is the explicit central-only operation. Each
-`pg_restore` is independently clean and transactional; if central fails after
-the project/archive transaction commits, Fusion attempts to roll
-project/archive back from the retained pre-restore dump and reports the restore
-as failed. The two source dumps are sequential snapshots, and no transaction
-spans both restore processes. Dump pairs include only `project`, `archive`, and
-`central`: PostgreSQL migration bookkeeping in `public` is not restored. A dump
-older than the running binary's schema baseline can therefore leave restored data
-and recorded migration state inconsistent until an operator reviews it.
+Restoring a project/archive dump validates all available source archives, retains a
+new current-state `fusion-pre-restore-pg-*` + `fusion-central-pre-restore-pg-*` +
+`fusion-migrations-pre-restore-pg-*` stem, then restores project/archive, central,
+and migration bookkeeping in that order. Migration bookkeeping restoration is refused
+before mutation if a caller disables the pre-restore capture, because that capture is
+the rollback source. If bookkeeping restore fails, Fusion rolls every committed group
+back from the retained stem. Selecting a `fusion-central-pg-*` dump is the explicit
+central-only operation and leaves bookkeeping untouched. Legacy two-member stems remain
+restorable and report bookkeeping as unavailable.
 
 Native backup commands do not provide cross-process locking or cluster-wide
 quiescence. Before list, create, cleanup, or especially restore, quiesce other

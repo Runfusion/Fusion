@@ -40,9 +40,29 @@
     "@fusion-plugin-examples/whatsapp-chat": "0.1.55"
   },
   "changesets": [
+    "cloud-link-cloudflare-tunnel",
+    "cloud-link-mode-a",
+    "fn-282-planning-before-worktree",
+    "fn-283-stale-overlap-blocker",
+    "fn-285-chat-visibility-toggle",
+    "fn-286-removal",
+    "fn-287-header-plus-right-and-artifact-image-zoom",
+    "fn-288-review-gate-bounds",
+    "fn-289-workspace-repos-details-tab",
+    "fn-290-chat-snippets",
+    "fn-291-skills-snippets-tabs",
     "fn-9242-fable-5-1",
     "fn-9243-unrun-pre-merge-gate-reseed",
     "fn-9244-pi-0-84-4-muse-spark",
-    "fn-9245-claude-code-client-version"
+    "fn-9245-claude-code-client-version",
+    "fn-9246-update-banner-dismissal",
+    "fn-9247-node-pty-platform-prebuilds",
+    "fn-9248-step-heading-numbering",
+    "fn-9250-archiver-8",
+    "fn-9251-merge-retry-deferred-park",
+    "fn-9253-step-session-abort-containment",
+    "fn-9254-depends-annotation-indexing",
+    "fn-9255-migration-bookkeeping-backup",
+    "kb-044-postgres-backup-pairs"
   ]
 }
