@@ -111,6 +111,15 @@ function tasksColumn(column: string): RestoredSchemaColumnSentinel {
   return { relation: "project.tasks", column };
 }
 
+/*
+FNXC:PostgresBackup 2026-09-04-07:29:
+DELIBERATE-LITERAL — `project.messages.archived` is the 0058 mailbox-archive SQL
+column, not the board lifecycle lane. The census matches `column: "archived"` as a
+query filter; this constant names the schema sentinel so restore rewind is not
+counted as a task.column comparison.
+*/
+const MESSAGE_ARCHIVED_SQL_COLUMN = "archived";
+
 function ownerProjectIdColumn(table: string): RestoredSchemaColumnSentinel {
   return { relation: `project.${table}`, column: "owner_project_id" };
 }
@@ -236,7 +245,7 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: SPEC_LOCK_DRIFT_REPORT_VERSION, relations: ["project.spec_locks"] },
   { version: MEMORY_RECALL_RECORDS_VERSION, relations: ["project.memory_recall_records"] },
   { version: MISSION_FEATURE_SPEC_ALIGNMENT_VERSION, columns: [{ relation: "project.mission_features", column: "spec_alignment" }] },
-  { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: "archived" }] },
+  { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: MESSAGE_ARCHIVED_SQL_COLUMN }] },
   {
     version: WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     relations: ["project.workspace_coordination_leases"],
