@@ -160,6 +160,11 @@ export class BackupManager {
   }
 
   /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * Dump restoration excludes public.fusion_schema_migrations. Migration
+   * bookkeeping capture/reconciliation is intentionally deferred to the
+   * post-FN-9249 migration-bookkeeping restore follow-up.
+   *
    * Restore the selected PostgreSQL schema group, defaulting project inputs to
    * their required same-stem central sibling. Each dump is transactional; when
    * central fails after project commits, project is rolled back from the

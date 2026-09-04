@@ -69,8 +69,14 @@ When `prCompletionMode` is set to "pr-first":
 fn backup --create         # Create project/archive + central .dump pair
 fn backup --list           # List complete pairs and orphans
 fn backup --restore <file> # Project dump restores its pair; central dump is central-only
-fn backup --cleanup        # Remove old backup pairs
+fn backup --cleanup        # Remove old pairs and abandoned crash artifacts
 ```
+
+Quiesce Fusion writers and competing backup commands: backup operations have no
+cross-process lock or pair-wide restore transaction. In-progress artifacts are
+never listed or restorable; cleanup sweeps only abandoned artifacts. Dump pairs
+restore `project`, `archive`, and `central` but not PostgreSQL migration
+bookkeeping in `public`, so an older dump requires migration-state review.
 
 **Multi-project support:**
 

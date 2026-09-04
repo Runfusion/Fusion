@@ -183,7 +183,10 @@ export async function runBackupRestore(filename: string, projectName?: string): 
     const { manager } = resolved;
 
     console.log(`Restoring PostgreSQL backup: ${filename}`);
-    console.log("A retained project/archive + central pre-restore dump pair will be created first.\n");
+    console.log("A retained project/archive + central pre-restore dump pair will be created first.");
+    console.log(
+      "Warning: dump pairs cover only the project, archive, and central schemas. PostgreSQL migration bookkeeping in public is not restored; restoring data older than this binary's schema baseline can leave data and recorded migration state inconsistent until reviewed.\n",
+    );
 
     try {
       const result = await manager.restoreBackup(filename, { createPreRestoreBackup: true });

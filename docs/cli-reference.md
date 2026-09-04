@@ -1315,8 +1315,11 @@ fn backup --cleanup
 
 `--create` writes a same-stem `fusion-pg-<timestamp>.dump` containing the
 `project` and `archive` schemas and a `fusion-central-pg-<timestamp>.dump`
-containing the `central` schema. `--list` shows complete pairs and either kind
-of orphan without treating legacy `.db` files as PostgreSQL backups.
+containing the `central` schema. Dumps are written through private in-progress
+artifacts and atomically published, so `--list` never offers an in-progress
+artifact; it shows complete pairs and either kind of orphan without treating
+legacy `.db` files as PostgreSQL backups. `--cleanup` also removes abandoned
+in-progress artifacts from a crashed backup, but never a live backup claim.
 
 Restoring a project/archive dump validates both source archives, retains a new
 current-state `fusion-pre-restore-pg-*` +
@@ -1327,7 +1330,10 @@ by its required same-stem central sibling. Selecting a
 the project/archive transaction commits, Fusion attempts to roll
 project/archive back from the retained pre-restore dump and reports the restore
 as failed. The two source dumps are sequential snapshots, and no transaction
-spans both restore processes.
+spans both restore processes. Dump pairs include only `project`, `archive`, and
+`central`: PostgreSQL migration bookkeeping in `public` is not restored. A dump
+older than the running binary's schema baseline can therefore leave restored data
+and recorded migration state inconsistent until an operator reviews it.
 
 Native backup commands do not provide cross-process locking or cluster-wide
 quiescence. Before list, create, cleanup, or especially restore, quiesce other

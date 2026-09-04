@@ -160,6 +160,15 @@ describe("backup commands", () => {
     expect(output).toContain("project/archive and central schemas");
     expect(output).toContain("fusion-pre-restore-pg-20260831-120001.dump");
     expect(output).toContain("fusion-central-pre-restore-pg-20260831-120001.dump");
+    expect(output).toContain("migration bookkeeping in public is not restored");
+  });
+
+  it("warns about migration bookkeeping for central-only restores", async () => {
+    mockRestoreBackup.mockResolvedValueOnce({ restored: ["central"] });
+    await runBackupRestore("fusion-central-pg-20260831-120000.dump", "demo-project");
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Successfully restored the central schema");
+    expect(output).toContain("migration bookkeeping in public is not restored");
   });
 
   it("runBackupCleanup uses resolved project store with --project", async () => {

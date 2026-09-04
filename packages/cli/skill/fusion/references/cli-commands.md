@@ -105,7 +105,7 @@ fn backup --create                                      # Create project/archive
 fn backup --list                                        # List complete pairs and orphans with sizes
 fn backup --restore fusion-pg-<timestamp>.dump           # Restore the required same-stem pair
 fn backup --restore fusion-central-pg-<timestamp>.dump   # Restore central only
-fn backup --cleanup                                     # Remove old backup pairs
+fn backup --cleanup                                     # Remove old pairs and abandoned crash artifacts
 ```
 
 Before native backup operations, quiesce Fusion writers and competing
@@ -114,7 +114,10 @@ A restore validates every required archive and retains a current-state
 `fusion-pre-restore-pg-*` + `fusion-central-pre-restore-pg-*` pair first.
 Project/archive restores before central, each in its own transaction. If central
 fails, Fusion attempts project/archive rollback from the retained dump. The two
-dumps do not share one snapshot or one pair-wide transaction.
+dumps do not share one snapshot or one pair-wide transaction. In-progress backup
+artifacts are never listed or restorable, and cleanup removes only abandoned ones.
+Dump pairs exclude PostgreSQL migration bookkeeping in `public`; restoring data
+older than the running schema baseline requires reviewing migration state.
 
 ## Multi-Project
 
