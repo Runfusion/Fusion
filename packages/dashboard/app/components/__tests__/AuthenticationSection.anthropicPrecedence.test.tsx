@@ -98,6 +98,18 @@ describe("Anthropic credential precedence in Settings → Authentication", () =>
     expect(screen.getByTestId("auth-precedence-overridden-anthropic-api-key")).toBeTruthy();
   });
 
+  it("shows a legacy OAuth notice only for a subscription card with a shadow row", () => {
+    renderSection([apiKeyCard, { ...subscriptionCard, legacyAnthropicOAuthPresent: true }]);
+
+    expect(screen.getByTestId("auth-legacy-anthropic-oauth-notice")).toBeTruthy();
+  });
+
+  it("does not render a legacy OAuth notice shell without a shadow row", () => {
+    renderSection([apiKeyCard, subscriptionCard]);
+
+    expect(screen.queryByTestId("auth-legacy-anthropic-oauth-notice")).toBeNull();
+  });
+
   it("writes the operator's choice into the shell-owned settings form", () => {
     const observed = renderSection([apiKeyCard, subscriptionCard]);
 

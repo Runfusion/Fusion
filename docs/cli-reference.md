@@ -917,6 +917,30 @@ Subcommands: `status`.
 
 ---
 
+## `fn cloud`
+
+Link a local Fusion engine to a cloud control plane. Set `FUSION_CLOUD_HTTP_URL` to the HTTPS control-plane base URL, or pass `--http <url>` to `pair-start` or `pair-complete`. Plain HTTP is accepted only for loopback development endpoints.
+
+```bash
+fn cloud pair-start --http https://cloud.example.com [--name <engine-name>]
+fn cloud pair-complete [--http https://cloud.example.com] [--code <pairing-code>]
+fn cloud heartbeat [--url <engine-origin>] [--port <port>] [--no-tunnel]
+fn cloud status [--json]
+fn cloud unlink
+```
+
+Subcommands: `pair-start`, `pair-complete`, `heartbeat`, `status`, `unlink`.
+
+- `pair-start` requests a pairing code and stores its pending pairing data in `~/.fusion/cloud-link-pending.json`.
+- `pair-complete` promotes a claimed pairing to `~/.fusion/cloud-link.json`. It refuses `--pending-secret` in both `--flag value` and `--flag=value` forms so a pairing password is never exposed in a process listing or shell history. It reads the password from the mode-`0600` pending file by default, or from `FUSION_CLOUD_PENDING_SECRET` when an override is necessary.
+- `heartbeat --url <engine-origin>` and `heartbeat --no-tunnel` each send one reachability update. A bare `heartbeat` starts a Cloudflare Quick Tunnel and publishes presence every 20 seconds until you press Ctrl+C. `fn serve` and `fn dashboard` use the same tunnel-and-publish behavior for their process lifetime when the engine is linked.
+- `status --json` prints `{ linked, engineId, name, httpBaseUrl, linkedAt }`; when unlinked it prints `{ "linked": false }`.
+- `unlink` removes both the linked credential file and the pending pairing file.
+
+The linked device credential and pending pairing files are written with mode `0600`, limiting access to the owning operating-system user. They are local credentials in the same threat class as `~/.fusion/auth.json`; they are not encrypted at rest because cloud pairing must work before Fusion's PostgreSQL-backed SecretsStore is available, and any same-user process that can read the file can also read a local wrapping key.
+
+---
+
 ## `fn mission`
 
 Mission hierarchy operations.
@@ -1304,14 +1328,42 @@ fn git push --yes
 
 ## `fn backup`
 
-Database backup lifecycle.
+PostgreSQL backup lifecycle.
 
 ```bash
 fn backup --create
 fn backup --list
-fn backup --restore .fusion/backups/fusion-2026-04-08.db
+fn backup --restore .fusion/backups/fusion-pg-20260831-120000.dump
+fn backup --restore .fusion/backups/fusion-central-pg-20260831-120000.dump
 fn backup --cleanup
 ```
+
+`--create` writes a same-stem `fusion-pg-<timestamp>.dump` containing the
+`project` and `archive` schemas and a `fusion-central-pg-<timestamp>.dump`
+containing the `central` schema. Dumps are written through private in-progress
+artifacts and atomically published, so `--list` never offers an in-progress
+artifact; it shows complete pairs and either kind of orphan without treating
+legacy `.db` files as PostgreSQL backups. `--cleanup` also removes abandoned
+in-progress artifacts from a crashed backup, but never a live backup claim.
+
+Restoring a project/archive dump validates both source archives, retains a new
+current-state `fusion-pre-restore-pg-*` +
+`fusion-central-pre-restore-pg-*` pair, then restores project/archive followed
+by its required same-stem central sibling. Selecting a
+`fusion-central-pg-*` dump is the explicit central-only operation. Each
+`pg_restore` is independently clean and transactional; if central fails after
+the project/archive transaction commits, Fusion attempts to roll
+project/archive back from the retained pre-restore dump and reports the restore
+as failed. The two source dumps are sequential snapshots, and no transaction
+spans both restore processes. Dump pairs include only `project`, `archive`, and
+`central`: PostgreSQL migration bookkeeping in `public` is not restored. A dump
+older than the running binary's schema baseline can therefore leave restored data
+and recorded migration state inconsistent until an operator reviews it.
+
+Native backup commands do not provide cross-process locking or cluster-wide
+quiescence. Before list, create, cleanup, or especially restore, quiesce other
+Fusion writers and prevent competing native backup commands. Preserve every
+pre-restore dump after failure until recovery is reviewed.
 
 ---
 

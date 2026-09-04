@@ -7,7 +7,7 @@ import type { Settings, TaskStore, WorktrunkSettings, WorkspaceWorktreeContext }
 import { worktreePoolLog } from "../logger.js";
 /*
 */
-import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, resolveWorktreesDir } from "./worktree-paths.js";
+import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, resolveWorktreesDirScanRoots } from "./worktree-paths.js";
 import {
   resolveWorktrunkBinary,
 } from "./worktrunk-installer.js";
@@ -468,13 +468,30 @@ export async function relocateReclaimableWorktreeIntoRoot(
   return { kind: "ready", path: targetPath, relocated: true };
 }
 
+function retireEmptyLegacyWorktreesRoot(
+  rootDir: string,
+  settings?: Pick<Settings, "worktreesDir" | "workspaceMode">,
+): void {
+  if (settings?.worktreesDir) return;
+  const legacyRoot = resolveWorktreesDirScanRoots(rootDir, settings)[1];
+  if (!legacyRoot) return;
+  try {
+    // Non-recursive removal leaves any unexpected residue intact.
+    rmdirSync(legacyRoot);
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT" && code !== "ENOTEMPTY") {
+      worktreePoolLog.debug?.(`Unable to retire empty legacy worktrees root ${legacyRoot}: ${String(error)}`);
+    }
+  }
+}
+
 /**
- * Scan the `.worktrees/` directory for task worktrees no longer assigned to
- * an active task. A worktree is idle if it exists under
- * `<rootDir>/.worktrees/` but is NOT assigned (via `task.worktree`) to
- * any non-done task.
+ * Scan every managed worktree root for task worktrees no longer assigned to an
+ * active task. A worktree is idle when it is not assigned through
+ * `task.worktree` to any non-complete task.
  *
- * @param rootDir — Project root directory (parent of `.worktrees/`)
+ * @param rootDir — Project root
  * @param store — Task store for listing tasks and their worktree assignments
  * @returns Absolute paths of idle worktree directories
  */
@@ -488,23 +505,22 @@ export async function scanIdleWorktrees(
     worktreePoolLog.debug?.("Skipping directory walk for workspace worktrees; recorded paths are reclaimed addressably.");
     return [];
   }
-  const worktreesDir = resolveWorktreesDir(rootDir, settings);
+  const scanRoots = resolveWorktreesDirScanRoots(rootDir, settings);
 
-  if (!existsSync(worktreesDir)) {
-    return [];
-  }
-
-  // List all subdirectories under .worktrees/
-  let dirs: string[];
-  try {
-    const entries = readdirSync(worktreesDir, { withFileTypes: true });
-    dirs = entries
-      .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
-      .map((e) => join(worktreesDir, e.name));
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    worktreePoolLog.warn(`Failed to read .worktrees/ directory: ${errorMessage}`);
-    return [];
+  // List direct children from both the current and legacy roots. A missing root
+  // is ordinary during migration and must not hide the other root.
+  let dirs: string[] = [];
+  for (const worktreesDir of scanRoots) {
+    if (!existsSync(worktreesDir)) continue;
+    try {
+      const entries = readdirSync(worktreesDir, { withFileTypes: true });
+      dirs.push(...entries
+        .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
+        .map((e) => join(worktreesDir, e.name)));
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.warn(`Failed to read worktrees directory ${worktreesDir}: ${errorMessage}`);
+    }
   }
 
   dirs = (await Promise.all(dirs.map(async (dir) =>
@@ -580,24 +596,20 @@ export async function cleanupOrphanedWorktrees(
     worktreePoolLog.debug?.("Skipping workspace orphan sweep; recorded paths are reclaimed addressably.");
     return 0;
   }
-  const worktreesDir = resolveWorktreesDir(rootDir, settings);
-  if (!existsSync(worktreesDir)) {
-    return 0;
-  }
-
+  const scanRoots = resolveWorktreesDirScanRoots(rootDir, settings);
   const orphaned = await scanIdleWorktrees(rootDir, store, settings);
   const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
 
-  let dirs: string[] = [];
-  if (existsSync(worktreesDir)) {
+  const dirs: string[] = [];
+  for (const worktreesDir of scanRoots) {
+    if (!existsSync(worktreesDir)) continue;
     try {
-      dirs = readdirSync(worktreesDir, { withFileTypes: true })
+      dirs.push(...readdirSync(worktreesDir, { withFileTypes: true })
         .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
-        .map((e) => join(worktreesDir, e.name));
+        .map((e) => join(worktreesDir, e.name)));
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      worktreePoolLog.warn(`Failed to read .worktrees/ directory for cleanup: ${errorMessage}`);
-      dirs = [];
+      worktreePoolLog.warn(`Failed to read worktrees directory ${worktreesDir} for cleanup: ${errorMessage}`);
     }
   }
 
@@ -605,7 +617,7 @@ export async function cleanupOrphanedWorktrees(
     (await isReclaimableWorktreeCandidate(dir, { rootDir })) ? dir : null,
   ))).filter((dir): dir is string => dir !== null);
   const unregistered = ownedDirs.filter((dir) => !registeredWorktrees.has(resolve(dir)));
-  const candidates = [...orphaned, ...unregistered];
+  const candidates = [...new Map([...orphaned, ...unregistered].map((path) => [resolve(path), path])).values()];
   let cleaned = 0;
 
   for (const worktreePath of candidates) {
@@ -639,6 +651,7 @@ export async function cleanupOrphanedWorktrees(
     }
   }
 
+  retireEmptyLegacyWorktreesRoot(rootDir, settings);
   return cleaned;
 }
 
@@ -699,33 +712,35 @@ export async function reapOrphanWorktrees(
     worktreePoolLog.debug?.("Skipping workspace orphan reaping; recorded paths are reclaimed addressably.");
     return 0;
   }
-  const worktreesDir = resolveWorktreesDir(projectRoot, settings);
+  const scanRoots = resolveWorktreesDirScanRoots(projectRoot, settings);
 
-  if (!existsSync(worktreesDir)) {
-    return 0;
+  // Read every currently valid root; failure in one root must not hide legacy
+  // checkout residue in the other.
+  let entries: Array<{ name: string; fullPath: string }> = [];
+  for (const worktreesDir of scanRoots) {
+    if (!existsSync(worktreesDir)) continue;
+    try {
+      entries.push(...readdirSync(worktreesDir, { withFileTypes: true })
+        .filter((e) => {
+          // Only real directories — never symlinks or internal worktree containers.
+          if (!e.isDirectory() || isWorktreeContainerDir(e.name) || !existsSync(join(worktreesDir, e.name, ".git"))) return false;
+          try {
+            return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
+          } catch {
+            return false;
+          }
+        })
+        .map((e) => ({ name: e.name, fullPath: join(worktreesDir, e.name) })));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.warn(`reapOrphanWorktrees: failed to read ${worktreesDir} — ${msg}`);
+    }
   }
 
-  // List direct children of .worktrees/
-  let entries: { name: string; fullPath: string }[];
-  try {
-    entries = readdirSync(worktreesDir, { withFileTypes: true })
-      .filter((e) => {
-        // Only real directories — never symlinks or internal worktree containers.
-        if (!e.isDirectory() || isWorktreeContainerDir(e.name) || !existsSync(join(worktreesDir, e.name, ".git"))) return false;
-        try {
-          return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
-        } catch {
-          return false;
-        }
-      })
-      .map((e) => ({ name: e.name, fullPath: join(worktreesDir, e.name) }));
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    worktreePoolLog.warn(`reapOrphanWorktrees: failed to read .worktrees/ — ${msg}`);
+  if (entries.length === 0) {
+    retireEmptyLegacyWorktreesRoot(projectRoot, settings);
     return 0;
   }
-
-  if (entries.length === 0) return 0;
   entries = (await Promise.all(entries.map(async (entry) =>
     (await isReclaimableWorktreeCandidate(entry.fullPath, { rootDir: projectRoot })) ? entry : null,
   ))).filter((entry): entry is { name: string; fullPath: string } => entry !== null);
@@ -738,9 +753,9 @@ export async function reapOrphanWorktrees(
   for (const { name, fullPath } of entries) {
     const resolvedFull = resolve(fullPath);
 
-    // Safety: only operate on paths directly under .worktrees/
-    const rel = relative(resolve(worktreesDir), resolvedFull);
-    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+    // The directory read above establishes a direct child; containment keeps
+    // persisted legacy roots valid while refusing every other external path.
+    if (!isInsideWorktreesDir(projectRoot, resolvedFull, settings)) {
       worktreePoolLog.warn(`reapOrphanWorktrees: skipping out-of-bounds path ${fullPath}`);
       continue;
     }
@@ -792,6 +807,7 @@ export async function reapOrphanWorktrees(
     removed++;
   }
 
+  retireEmptyLegacyWorktreesRoot(projectRoot, settings);
   return removed;
 }
 

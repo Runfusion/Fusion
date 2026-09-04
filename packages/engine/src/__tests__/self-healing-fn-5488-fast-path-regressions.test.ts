@@ -36,6 +36,7 @@ function makeStore(tasksInput: Task[]) {
   const settings: Settings = {
     globalPause: false,
     enginePaused: false,
+    groupOverlappingFiles: true,
   } as Settings;
 
   const store = {

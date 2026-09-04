@@ -31,8 +31,17 @@ export function getPostMergeFinalizeBlocker(task: Pick<Task, "status" | "error">
 export function planConfirmedMergeChecklistReconciliation(
   task: Pick<Task, "steps" | "workflowStepResults">,
 ): ConfirmedMergeChecklistReconciliation {
+  /*
+  FNXC:ConfirmedMergeFinalization 2026-09-01-05:49:
+  `steps` is typed non-optional, but a row can still reach here without it — an older row, a partial
+  projection, a store path that does not populate it. This function runs on the merge-CONFIRMED
+  fast path, i.e. after the work has already landed, so a TypeError here abandons the finalize and
+  leaves a merged task un-finalized. Tolerating the absence costs nothing; asserting the type does
+  not make the row real. Measured: a task whose row carried no `steps` threw
+  "Cannot read properties of undefined (reading 'map')" and the landed merge never finalized.
+  */
   return {
-    skippedStepIndexes: task.steps
+    skippedStepIndexes: (task.steps ?? [])
       .map((step, index) => step.status === "pending" || step.status === "in-progress" ? index : -1)
       .filter((index) => index >= 0),
     reconciledWorkflowStepIds: (task.workflowStepResults ?? [])

@@ -50,6 +50,7 @@ import {
   mergeBuiltInZaiProviderModels,
   mergeSupplementalAnthropicModels,
   mergeSupplementalOpenAiCodexModels,
+  buildAnthropicClaudeCodeIdentityHeaders,
   toExecutionModelProviderId,
   registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
@@ -1138,6 +1139,11 @@ export interface AgentOptions {
    * Defaults to false so validators/read-only helpers do not inherit arbitrary external tools.
    */
   allowMcpToolsInReadonly?: boolean;
+  /**
+   * Configured MCP server names a read-only session may use. This only narrows an explicit
+   * `allowMcpToolsInReadonly` opt-in; omit it to preserve the reviewed planning-lane behavior.
+   */
+  readonlyMcpServerAllowlist?: string[];
   /** Test seam for MCP session tools; production uses the SDK client/transport factories. */
   mcpClientFactory?: McpClientFactory;
   /** Test seam for MCP retry timing. */
@@ -2006,6 +2012,7 @@ export function wrapToolsWithBoundary(
   projectRoot: string | null,
   readOnlyExtraRoots: readonly string[] = [],
   readOnlyBoundary = false,
+  writableAllowlist: readonly string[] = [],
 ): ToolDefinition[] {
   if (!worktreePath || !projectRoot) {
     return tools; // Not a worktree session, no wrapping needed
@@ -2022,6 +2029,21 @@ export function wrapToolsWithBoundary(
     join(homedir(), ".agents", "skills"),
     ...readOnlyExtraRoots,
   ]);
+  const boundaryProjectRoot = resolve(projectRoot);
+  const canonicalBoundaryProjectRoot = normalizePathThroughExistingAncestor(boundaryProjectRoot);
+  const normalizedWritableAllowlist = writableAllowlist.flatMap((root) => {
+    const lexicalRoot = resolve(root);
+    if (!isSameOrInsidePath(boundaryProjectRoot, lexicalRoot)) return [];
+    const canonicalRoot = normalizePathThroughExistingAncestor(lexicalRoot);
+    return isSameOrInsidePath(canonicalBoundaryProjectRoot, canonicalRoot) ? [canonicalRoot] : [];
+  });
+  const isAllowlistedWritePath = (requestedPath: string): boolean => {
+    const requestedResolved = isAbsolute(requestedPath)
+      ? resolve(requestedPath)
+      : resolve(worktreePath, requestedPath);
+    const requestedCanonical = normalizePathThroughExistingAncestor(requestedResolved);
+    return normalizedWritableAllowlist.some((root) => isSameOrInsidePath(root, requestedCanonical));
+  };
 
   return tools.map((tool) => {
     // Only wrap tools that access the filesystem
@@ -2042,12 +2064,29 @@ export function wrapToolsWithBoundary(
         const params = args[1] as Record<string, unknown>;
         const _signal = args[2] as AbortSignal | undefined;
 
-        if (readOnlyBoundary && new Set(["write", "edit", "bash"]).has(tool.name)) {
-          return boundaryRejection("This session has a read-only workspace boundary and cannot modify files or run shell commands.");
-        }
-
         // Check path argument for file operations
         const pathArg = params.path as string | undefined;
+        if (readOnlyBoundary && (tool.name === "bash" || tool.name === "fn_run_verification")) {
+          return boundaryRejection("This session has a read-only workspace boundary and cannot run shell or verification commands.");
+        }
+        if (
+          readOnlyBoundary
+          && (tool.name === "write" || tool.name === "edit")
+          && (!pathArg || !isAllowlistedWritePath(pathArg))
+        ) {
+          /*
+          FNXC:PlanningBoundary 2026-09-01-14:49:
+          Checkout-free planning reads the dependency-installed project root but may write only inside
+          `.fusion/`. Canonical ancestor containment closes symlink escapes for both existing and new
+          targets; durable plan and document writers remain the supported publication surfaces.
+          */
+          return boundaryRejection(
+            "This planning session may write only inside its declared .fusion allowlist. "
+            + "Use fn_task_prompt_write for PROMPT.md and fn_task_document_write for durable task documents.",
+          );
+        }
+
+
         if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg, tool.name, normalizedReadOnlyExtraRoots)) {
           const relToProject = relative(projectRoot, pathArg);
           return boundaryRejection(
@@ -2474,6 +2513,33 @@ export function attachSessionRoutingHeaders(modelRuntime: ModelRuntime, sessionI
       ...result,
       auth: { ...result.auth, headers: { ...result.auth.headers, ...routingHeaders } },
     } : undefined;
+  }) as ModelRuntime["getAuth"];
+}
+
+/*
+FNXC:ProviderAuth 2026-09-03-05:30:
+Bundled pi-ai freezes its subscription OAuth identity at claude-cli/2.1.75. Its OAuth client merges caller options headers last, so decorating ModelRuntime.getAuth is the supported override point: Fusion can supply its maintained identity without patching a dependency.
+*/
+export function attachAnthropicClaudeCodeIdentityHeaders(modelRuntime: ModelRuntime): void {
+  const runtimeWithAuth = modelRuntime as unknown as { getAuth?: ModelRuntime["getAuth"] };
+  if (typeof runtimeWithAuth.getAuth !== "function") {
+    piLog.warn("attachAnthropicClaudeCodeIdentityHeaders: modelRuntime.getAuth missing; skipping Claude Code identity header wiring");
+    return;
+  }
+  const resolveAuth = modelRuntime.getAuth.bind(modelRuntime) as ModelRuntime["getAuth"];
+  (modelRuntime as unknown as { getAuth: ModelRuntime["getAuth"] }).getAuth = (async (providerOrModel: Parameters<ModelRuntime["getAuth"]>[0], overrides?: Parameters<ModelRuntime["getAuth"]>[1]) => {
+    const result = await resolveAuth(providerOrModel as never, overrides);
+    if (!result) return undefined;
+    const providerId = typeof providerOrModel === "string" ? providerOrModel : providerOrModel?.provider;
+    const identityHeaders = buildAnthropicClaudeCodeIdentityHeaders({
+      providerId,
+      apiKey: result.auth.apiKey,
+      onWarn: (message) => piLog.warn(message),
+    });
+    return {
+      ...result,
+      auth: { ...result.auth, headers: { ...result.auth.headers, ...identityHeaders } },
+    };
   }) as ModelRuntime["getAuth"];
 }
 
@@ -2908,6 +2974,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   if (sessionRoutingId) {
     attachSessionRoutingHeaders(modelRuntime, sessionRoutingId);
   }
+  attachAnthropicClaudeCodeIdentityHeaders(modelRuntime);
 
   const createSessionWithModel = async (modelOverride?: typeof selectedModel) => {
     // pi-coding-agent 0.68+: `tools` is a string[] allowlist of tool names, not
@@ -2917,7 +2984,19 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     // names (`read`, `bash`, ...) as the built-ins they replace.
     let mcpToolset: McpSessionToolset | undefined;
     const allowReadonlyMcpTools = options.allowMcpToolsInReadonly === true;
-    if (forwardedMcpServers.length > 0 && (!isReadonly || allowReadonlyMcpTools)) {
+    const readonlyMcpServerAllowlist = options.readonlyMcpServerAllowlist === undefined
+      ? undefined
+      : new Set(options.readonlyMcpServerAllowlist.map((name) => name.trim()).filter(Boolean));
+    const mcpServersToConnect = isReadonly && allowReadonlyMcpTools && readonlyMcpServerAllowlist !== undefined
+      ? forwardedMcpServers.filter((server) => readonlyMcpServerAllowlist.has(server.name))
+      : forwardedMcpServers;
+    /*
+     * FNXC:McpConfig 2026-09-01-06:06:
+     * Read-only workflow lanes may receive MCP only from explicitly named servers. Narrow before
+     * connection so excluded servers never start, then re-check each tool by recorded origin;
+     * the dashboard's reviewed blanket opt-in remains unchanged when no allowlist is supplied.
+     */
+    if (mcpServersToConnect.length > 0 && (!isReadonly || allowReadonlyMcpTools)) {
       /*
        * FNXC:McpConfig 2026-06-27-14:06:
        * pi-coding-agent does not have a createAgentSession `mcpServers` option, so passing resolved servers is silently ignored. Connect MCP servers here and merge namespaced tools into the same customTools filtering/gating/boundary pipeline as engine tools before the session sees them.
@@ -2925,7 +3004,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
        * FNXC:McpConfig 2026-06-29-00:00:
        * Planning and mission interviews are read-only lanes that still need operator-configured documentation/context MCP tools. They must opt in explicitly; other read-only sessions continue to skip MCP connection so unknown external tools do not bypass the read-only allowlist by default.
        */
-      mcpToolset = await connectMcpSessionTools(forwardedMcpServers, {
+      mcpToolset = await connectMcpSessionTools(mcpServersToConnect, {
         cwd: options.cwd,
         clientFactory: options.mcpClientFactory,
         logger: piLog,
@@ -2942,7 +3021,10 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         piLog.warn(`MCP session continuing with unavailable servers: count=${bootstrapFailures.length}`);
       }
     } else if (forwardedMcpServers.length > 0 && isReadonly) {
-      piLog.debug(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped`);
+      const reason = !allowReadonlyMcpTools
+        ? "no-readonly-opt-in"
+        : "readonly-allowlist-no-match";
+      piLog.log(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped: reason=${reason}`);
     }
 
     const mcpReadonlyTools = new Set(mcpToolset?.tools ?? []);
@@ -2953,7 +3035,13 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     const readonlyFilteredCustomTools = isReadonly
       ? filterCustomToolsForReadonly(
           candidateCustomTools,
-          allowReadonlyMcpTools ? { allowTool: (tool) => mcpReadonlyTools.has(tool) } : {},
+          allowReadonlyMcpTools
+            ? {
+                allowTool: (tool) => readonlyMcpServerAllowlist === undefined
+                  ? mcpReadonlyTools.has(tool)
+                  : readonlyMcpServerAllowlist.has(mcpToolset?.serverByToolName?.get(tool.name) ?? ""),
+              }
+            : {},
         )
       : { allowed: candidateCustomTools, denied: [] };
     const allowlistFilteredCustomTools = {
@@ -2996,6 +3084,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       boundaryContext.worktreeProjectRoot,
       normalizedAdditionalSkillPaths,
       options.sessionBoundary?.kind === "read-only-root",
+      options.sessionBoundary?.writableAllowlist ?? [],
     );
     // FNXC:ToolOutputBudget 2026-08-03-16:00:
     // Keep this outermost so policy-gate and boundary rejection text is bounded too;
@@ -3049,6 +3138,11 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     FN-9007 advances the exact matched Pi runtime closure from 0.82.1 to 0.84.1.
     Keep constructing sessions through ModelRuntime so Fusion inherits the updated provider
     catalog and SDK behavior without duplicating upstream runtime policy.
+
+    FNXC:ModelCatalog 2026-09-02-22:06:
+    FN-9244 advances the exact matched Pi runtime closure from 0.84.1 to 0.84.4. Continue
+    constructing sessions through ModelRuntime with `noTools: "builtin"`; this upgrade's
+    optional PowerShell builtin remains disabled unless Fusion explicitly allowlists it.
     */
     const createSessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]> = {
       cwd: options.cwd,

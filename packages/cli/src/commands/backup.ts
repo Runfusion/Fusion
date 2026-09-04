@@ -182,21 +182,30 @@ export async function runBackupRestore(filename: string, projectName?: string): 
     context = resolved.context;
     const { manager } = resolved;
 
-    console.log(`Restoring backup: ${filename}`);
-    console.log("A pre-restore backup will be created first.\n");
+    console.log(`Restoring PostgreSQL backup: ${filename}`);
+    console.log("A retained project/archive + central pre-restore dump pair will be created first.");
+    console.log(
+      "Warning: dump pairs cover only the project, archive, and central schemas. PostgreSQL migration bookkeeping in public is not restored; restoring data older than this binary's schema baseline can leave data and recorded migration state inconsistent until reviewed.\n",
+    );
 
     try {
-      await manager.restoreBackup(filename, { createPreRestoreBackup: true });
-      if (filename.startsWith("fusion-central-")) {
-        console.log(`Successfully restored central database from ${filename}`);
-        console.log("Created pre-restore snapshot: fusion-central-pre-restore-<timestamp>.db");
+      const result = await manager.restoreBackup(filename, { createPreRestoreBackup: true });
+      if (result.restored.length === 2) {
+        console.log(`Successfully restored project/archive and central schemas from the selected dump pair.`);
+      } else if (result.restored[0] === "central") {
+        console.log(`Successfully restored the central schema from ${filename}`);
       } else {
-        console.log(`Successfully restored project database from ${filename}`);
-        console.log("Created pre-restore snapshots: fusion-pre-restore-<timestamp>.db and (if paired) fusion-central-pre-restore-<timestamp>.db");
+        console.log(`Successfully restored the project/archive schemas from ${filename}`);
+      }
+      if (result.preRestoreBackup?.project && result.preRestoreBackup.central) {
+        console.log(
+          `Retained pre-restore dump pair: ${result.preRestoreBackup.project.filename} + ${result.preRestoreBackup.central.filename}`,
+        );
       }
     } catch (err) {
       console.error(`Restore failed: ${(err as Error).message}`);
       await closeProjectStore(context);
+      context = undefined;
       process.exit(1);
     }
   } catch (error) {

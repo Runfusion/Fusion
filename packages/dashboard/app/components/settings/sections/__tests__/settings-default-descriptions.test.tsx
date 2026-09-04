@@ -681,14 +681,19 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   prerebaseAutoEnabled: "internal pre-rebase tuning constant, no UI field",
   prerebaseHotFiles: "internal pre-rebase tuning constant, no UI field",
   prerebaseDivergenceThreshold: "internal pre-rebase tuning constant, no UI field",
-  // FNXC:Round10 2026-07-13: FN-7907/FN-7908 added chat default model/agent/session settings.
-  // These are configured via the chat New Session defaults picker, not plain description fields.
-  chatNewSessionMode: "control removed with the New Chat dialog; persisted for settings parity only",
-  chatDefaultKind: "chat default agent kind, configured via the chat defaults picker, not a plain description field",
-  chatDefaultAgentId: "chat default agent id, configured via the chat defaults picker, not a plain description field",
-  chatDefaultModelProvider: "chat default model provider, configured via the chat defaults picker, not a plain description field",
-  chatDefaultModelId: "chat default model id, configured via the chat defaults picker, not a plain description field",
-  chatDefaultThinkingLevel: "chat default thinking level, configured via the chat defaults picker, not a plain description field",
+  /*
+   * FNXC:SettingsDefaults 2026-09-01-14:52:
+   * Chat defaults are rendered by ProjectModelsSection's Chat group, where help is
+   * attached to the shared SettingsHelpTip "?" affordance instead of a plain
+   * description field. chatNewSessionMode is retained schema-parity state with no
+   * rendered control.
+   */
+  chatNewSessionMode: "retired create-time mode flag with no rendered control, retained in DEFAULT_SETTINGS for settings parity",
+  chatDefaultKind: "configured by ProjectModelsSection's Chat group with SettingsHelpTip help, not a plain description field",
+  chatDefaultAgentId: "configured by ProjectModelsSection's Chat group with SettingsHelpTip help, not a plain description field",
+  chatDefaultModelProvider: "configured by ProjectModelsSection's Chat group with SettingsHelpTip help, not a plain description field",
+  chatDefaultModelId: "configured by ProjectModelsSection's Chat group with SettingsHelpTip help, not a plain description field",
+  chatDefaultThinkingLevel: "configured by ProjectModelsSection's Chat group with SettingsHelpTip help, not a plain description field",
   /*
    * FNXC:Rufu043MemoryBackends 2026-08-08-17:38:
    * RUFU-040 foundation commit 8c595f5cd added three project-scoped Stash/TencentDB
@@ -712,6 +717,22 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   memoryBackendUrl: "project-scoped TencentDB gateway URL row (rendered in MemorySection only for the tencentdb backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_GATEWAY_URL (http://127.0.0.1:8420), conveyed by the row's placeholder/help, not a description-field claim",
   stashApiKey: "Stash API-key secret override, not rendered as a settings field (the primary key lives in the global secrets store `stash-api-key` per MemorySection help, never in settings); canonical schema default is empty (`''`) = use the resolved global secret",
 };
+
+const CHAT_DEFAULT_ALLOWLIST_KEYS = [
+  "chatNewSessionMode",
+  "chatDefaultKind",
+  "chatDefaultAgentId",
+  "chatDefaultModelProvider",
+  "chatDefaultModelId",
+  "chatDefaultThinkingLevel",
+] as const;
+
+const RETIRED_CHAT_FLOW_PHRASES = [
+  "New Chat dialog",
+  "New Chat picker",
+  "chat defaults picker",
+  "New Session defaults picker",
+] as const;
 
 describe("FN-7505 settings default-value description guard", () => {
   it("uses the active English catalog's first-error tool retry default", () => {
@@ -781,6 +802,27 @@ describe("FN-7505 settings default-value description guard", () => {
       SETTING_DESCRIPTION_KEYS,
       "FN-8993 requires knowledgeGraphDir to stay out of SETTING_DESCRIPTION_KEYS",
     ).not.toHaveProperty("knowledgeGraphDir");
+  });
+
+  it("chat default allowlist reasons name their real host and carry no retired-flow claim", () => {
+    for (const settingKey of CHAT_DEFAULT_ALLOWLIST_KEYS) {
+      expect(DEFAULT_SETTINGS).toHaveProperty(settingKey);
+
+      const reason = NOT_SURFACED_ALLOWLIST[settingKey];
+      expect(reason).toEqual(expect.any(String));
+      expect(reason).not.toBe("");
+
+      for (const retiredPhrase of RETIRED_CHAT_FLOW_PHRASES) {
+        expect(reason).not.toMatch(new RegExp(retiredPhrase, "i"));
+      }
+
+      if (settingKey === "chatNewSessionMode") {
+        expect(reason).toMatch(/\b(retired|inert)\b/i);
+        expect(reason).toMatch(/no rendered control/i);
+      } else {
+        expect(reason).toContain("ProjectModelsSection");
+      }
+    }
   });
 
   it("does not allowlist a key that is also mapped to a description (would mask real coverage gaps)", () => {

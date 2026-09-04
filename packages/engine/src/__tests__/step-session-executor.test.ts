@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   parseStepFileScopes,
+  normalizeAuthoredStepScopes,
+  resolveAuthoredStepHeadingOffset,
   buildConflictMatrix,
   determineParallelWaves,
   buildStepPrompt,
@@ -217,6 +219,38 @@ describe("parseStepFileScopes", () => {
 
     const result = parseStepFileScopes(prompt);
     expect([...result.keys()]).toEqual([0, 1, 2]);
+  });
+
+  it("normalizes only a contiguous 1-based authored sequence", () => {
+    expect(resolveAuthoredStepHeadingOffset([1, 2, 3])).toBe(1);
+    expect(resolveAuthoredStepHeadingOffset([1, 1, 2])).toBe(0);
+    expect(resolveAuthoredStepHeadingOffset([1, 3])).toBe(0);
+
+    const normalized = normalizeAuthoredStepScopes(new Map([
+      [1, ["first.ts"]],
+      [2, ["second.ts"]],
+      [3, ["third.ts"]],
+    ]), 3);
+    expect([...normalized.entries()]).toEqual([
+      [0, ["first.ts"]],
+      [1, ["second.ts"]],
+      [2, ["third.ts"]],
+    ]);
+  });
+
+  it("clamps malformed headings, fills missing task indices, and preserves zero-step maps", () => {
+    expect([...normalizeAuthoredStepScopes(new Map([
+      [0, ["first.ts"]],
+      [2, ["third.ts"]],
+      [9, ["phantom.ts"]],
+    ]), 3).entries()]).toEqual([
+      [0, ["first.ts"]],
+      [1, []],
+      [2, ["third.ts"]],
+    ]);
+
+    const zeroStepScopes = new Map([[1, ["legacy.ts"]]]);
+    expect(normalizeAuthoredStepScopes(zeroStepScopes, 0)).toBe(zeroStepScopes);
   });
 });
 
@@ -825,6 +859,7 @@ Some freeform text without checkboxes.`;
     });
 
     const result = buildStepPrompt(task, 0);
+    expect(result).toContain("Authored first");
     expect(result).not.toContain("### Appended Step");
     expect(result).not.toContain("fallback detail");
   });
@@ -1695,6 +1730,35 @@ describe("StepSessionExecutor", () => {
       expect(onStepStart).toHaveBeenNthCalledWith(1, 0);
       expect(onStepStart).toHaveBeenNthCalledWith(2, 1);
       expect(onStepStart).toHaveBeenNthCalledWith(3, 2);
+    });
+
+    it("rebases 1-based authored headings without scheduling a phantom step", async () => {
+      const prompt = makePrompt([
+        "### Step 1: First authored work",
+        "### Step 2: Second authored work",
+        "### Step 3: Final authored work",
+      ]);
+      const task = makeTaskDetail({
+        prompt,
+        steps: makeIndependentSteps(3),
+      });
+      const onStepStart = vi.fn();
+      mockedCreateFnAgent.mockResolvedValue({ session: makeMockSession() } as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings: makeSettings({ maxParallelSteps: 1 }),
+        onStepStart,
+      });
+
+      await executor.executeAll();
+
+      expect(onStepStart.mock.calls.map(([index]) => index)).toEqual([0, 1, 2]);
+      expect(onStepStart).not.toHaveBeenCalledWith(3);
+      expect(buildStepPrompt(task, 0)).toContain("First authored work");
+      expect(buildStepPrompt(task, 2)).toContain("Final authored work");
     });
 
     it("awaits an asynchronous completion callback before the session run resolves", async () => {

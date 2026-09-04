@@ -3861,7 +3861,7 @@ describe("useTasks", () => {
   });
 
   describe("project switching", () => {
-    it("keeps previous tasks visible while new project's fetch is in flight (stale-while-revalidate)", async () => {
+    it("clears previous project rows while a cache-miss fetch is in flight", async () => {
       // Project A has tasks
       const projectATasks = [
         createMockTask({ id: "FN-A1", description: "Project A task 1" }),
@@ -3891,7 +3891,7 @@ describe("useTasks", () => {
         undefined, undefined, "project-a", undefined, false
       );
 
-      // Switch to project B — previous tasks should remain visible until new fetch lands
+      // Switch to project B without a snapshot; it must not render project A rows.
       await act(async () => {
         rerender({ projectId: "project-b" });
       });
@@ -3901,10 +3901,10 @@ describe("useTasks", () => {
         undefined, undefined, "project-b", undefined, false
       );
 
-      // Previous project's tasks remain visible (SWR) — avoids blank flash
-      expect(result.current.tasks.map((t) => t.id)).toEqual(["FN-A1", "FN-A2"]);
+      // A cache miss is intentionally empty rather than cross-project stale-while-revalidate.
+      expect(result.current.tasks).toEqual([]);
 
-      // Once project B resolves, its tasks replace the stale set
+      // Once project B resolves, its own rows populate the board
       const projectBTasks = [createMockTask({ id: "FN-B1", description: "Project B task" })];
       await act(async () => {
         resolveProjectB!(projectBTasks);

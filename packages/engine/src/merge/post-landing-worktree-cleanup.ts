@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
-import type { TaskStore } from "@fusion/core";
+import { existsSync, rmdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { isLegacyWorkspaceWorktreeLayout, isStrictDescendantPath, resolveWorkspaceTaskWorktreeDir, type Settings, type Task, type TaskStore } from "@fusion/core";
 import type { RunAuditor } from "../util/run-audit.js";
 import {
   ActiveSessionWorktreeRemovalError,
@@ -7,6 +8,8 @@ import {
   removeWorktree,
 } from "../worktree/worktree-backend.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { canonicalizePath } from "../worktree/worktree-pool.js";
 
 export type LandedWorktreeCleanupOutcome =
   | "removed"
@@ -47,7 +50,7 @@ function preservedOutcomeFor(error: unknown): Pick<CleanupLandedTaskWorktreeResu
 }
 
 async function recordPreservedOutcome(
-  input: CleanupLandedTaskWorktreeInput,
+  input: Pick<CleanupLandedTaskWorktreeInput, "store" | "taskId" | "log">,
   worktreePath: string,
   result: Pick<CleanupLandedTaskWorktreeResult, "outcome" | "preservedReason">,
 ): Promise<void> {
@@ -163,4 +166,155 @@ export async function cleanupLandedTaskWorktree(
     return { outcome: "nothing-to-remove", removed: false };
   }
   return { outcome: "removed", removed: true };
+}
+
+export interface CleanupLandedWorkspaceTaskWorktreesInput {
+  store: LandedWorktreeCleanupStore;
+  task: Pick<Task, "id" | "workspaceWorktrees">;
+  workspaceRootDir: string;
+  landedShas?: Record<string, string | undefined>;
+  source: string;
+  audit?: RunAuditor;
+  log?: (message: string) => void | Promise<void>;
+  fence?: Pick<MergeWriteFence, "assertOwned">;
+}
+
+export interface WorkspaceLandedWorktreePreservation {
+  repoRel: string;
+  worktreePath: string;
+  outcome: Extract<LandedWorktreeCleanupOutcome, "preserved-deliverable" | "preserved-unverifiable" | "preserved-active-session">;
+  reason: string;
+}
+
+export interface CleanupLandedWorkspaceTaskWorktreesResult {
+  removedRepoRels: string[];
+  preserved: WorkspaceLandedWorktreePreservation[];
+  taskDirectoryRemoved: boolean;
+  removed: boolean;
+}
+
+type WorkspacePathOutcome =
+  | { kind: "settled"; removed: boolean }
+  | { kind: "preserved"; outcome: WorkspaceLandedWorktreePreservation["outcome"]; reason: string };
+
+/*
+FNXC:WorktreeCleanup 2026-08-30-15:06:
+Workspace post-landing cleanup applies the same proof-gated removal as singular finalization.
+Recorded child paths stay durable after removal because the terminal workspace sweep still needs
+those paths to delete the matching task branches; only empty directory shells are retired here.
+*/
+export async function cleanupLandedWorkspaceTaskWorktrees(
+  input: CleanupLandedWorkspaceTaskWorktreesInput,
+): Promise<CleanupLandedWorkspaceTaskWorktreesResult> {
+  const entries = Object.entries(input.task.workspaceWorktrees ?? {})
+    .filter(([, entry]) => Boolean(entry.worktreePath));
+  const result: CleanupLandedWorkspaceTaskWorktreesResult = {
+    removedRepoRels: [],
+    preserved: [],
+    taskDirectoryRemoved: false,
+    removed: false,
+  };
+  const logInput = { ...input, taskId: input.task.id };
+  if (entries.length === 0) return result;
+
+  let settings: Settings = {} as Settings;
+  try {
+    if (typeof input.store.getSettings === "function") settings = await input.store.getSettings();
+  } catch (error) {
+    for (const [repoRel, entry] of entries) {
+      const worktreePath = entry.worktreePath;
+      const preserved = preservedOutcomeFor(new Error(`preserving ${worktreePath}: status probe failed (${error instanceof Error ? error.message : String(error)})`));
+      await recordPreservedOutcome(logInput, worktreePath, preserved);
+      result.preserved.push({ repoRel, worktreePath, outcome: preserved.outcome as WorkspaceLandedWorktreePreservation["outcome"], reason: preserved.preservedReason ?? "unverifiable" });
+    }
+    return result;
+  }
+
+  const outcomes = new Map<string, WorkspacePathOutcome>();
+  for (const [, entry] of entries) {
+    const worktreePath = entry.worktreePath;
+    const key = canonicalizePath(worktreePath);
+    if (outcomes.has(key)) continue;
+
+    if (!existsSync(worktreePath)) {
+      outcomes.set(key, { kind: "settled", removed: false });
+      continue;
+    }
+    if (activeSessionRegistry.isPathActive(worktreePath) || activeSessionRegistry.isPathActive(key)) {
+      const preservation: WorkspacePathOutcome = { kind: "preserved", outcome: "preserved-active-session", reason: "active-session" };
+      outcomes.set(key, preservation);
+      await recordPreservedOutcome(logInput, worktreePath, { outcome: preservation.outcome, preservedReason: preservation.reason });
+      continue;
+    }
+
+    try {
+      input.fence?.assertOwned("finalization");
+      const removal = await removeWorktree({
+        rootDir: join(input.workspaceRootDir, entries.find(([, candidate]) => canonicalizePath(candidate.worktreePath) === key)?.[0] ?? ""),
+        worktreePath,
+        settings,
+        taskId: input.task.id,
+        audit: input.audit,
+        reason: RemovalReason.CompletionLandedCleanup,
+        postLandingProof: {
+          landedSha: input.landedShas?.[entries.find(([, candidate]) => canonicalizePath(candidate.worktreePath) === key)?.[0] ?? ""],
+          source: input.source,
+        },
+      });
+      outcomes.set(key, { kind: "settled", removed: removal.removed });
+    } catch (error) {
+      const preserved = preservedOutcomeFor(error);
+      const preservation: WorkspacePathOutcome = {
+        kind: "preserved",
+        outcome: preserved.outcome as WorkspaceLandedWorktreePreservation["outcome"],
+        reason: preserved.preservedReason ?? "deliverable",
+      };
+      outcomes.set(key, preservation);
+      await recordPreservedOutcome(logInput, worktreePath, preserved);
+    }
+  }
+
+  let everyEntrySettled = true;
+  for (const [repoRel, entry] of entries) {
+    const pathOutcome = outcomes.get(canonicalizePath(entry.worktreePath))!;
+    if (pathOutcome.kind === "preserved") {
+      everyEntrySettled = false;
+      result.preserved.push({ repoRel, worktreePath: entry.worktreePath, outcome: pathOutcome.outcome, reason: pathOutcome.reason });
+    } else if (pathOutcome.removed) {
+      result.removedRepoRels.push(repoRel);
+    }
+  }
+  result.removed = result.removedRepoRels.length > 0;
+
+  const taskDir = resolveWorkspaceTaskWorktreeDir(input.workspaceRootDir, settings, input.task.id);
+  if (!everyEntrySettled || isLegacyWorkspaceWorktreeLayout(input.task, taskDir)) return result;
+
+  result.taskDirectoryRemoved = removeEmptyWorkspaceTaskDirectory(taskDir, entries.map(([, entry]) => entry.worktreePath));
+  result.removed = result.removed || result.taskDirectoryRemoved;
+  return result;
+}
+
+/**
+ * Removes only empty workspace task-directory shells. Any unexpected residue
+ * fails closed because neither the parents nor the task directory are removed
+ * recursively.
+ */
+export function removeEmptyWorkspaceTaskDirectory(taskDir: string, worktreePaths: string[]): boolean {
+  for (const worktreePath of worktreePaths) {
+    let parent = dirname(worktreePath);
+    while (isStrictDescendantPath(taskDir, parent)) {
+      try {
+        rmdirSync(parent);
+      } catch {
+        break;
+      }
+      parent = dirname(parent);
+    }
+  }
+  try {
+    rmdirSync(taskDir);
+    return true;
+  } catch (error: unknown) {
+    return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+  }
 }

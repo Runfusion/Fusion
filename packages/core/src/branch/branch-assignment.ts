@@ -39,7 +39,25 @@ export function classifyTaskBranchOrigin(
 ): TaskBranchOrigin {
   const candidate = (branch ?? task.branch ?? `fusion/${task.id.toLowerCase()}`).trim();
   const override = task.branchContext?.branchOverride;
-  if (override && candidate === override.branch.trim()) return "operator-supplied";
+  if (override) {
+    const marker = override.branch.trim();
+    if (candidate === marker) return "operator-supplied";
+    /*
+    FNXC:BranchNaming 2026-08-28-10:33:
+    PR #3523 review: a bare branch-name collision renames the requested branch by appending
+    a numeric sibling suffix (`-2`..`-50` in worktree-backend, `-2`..`-6` in worktree-pool).
+    When the requested branch was an operator-override branch that reuses Fusion's namespace
+    (e.g. `fusion/fn-1`), the renamed form (`fusion/fn-1-2`) is still a rename of the
+    operator's branch; an exact-marker match alone would classify it engine-canonical and
+    expose it to ownership-sensitive cleanup. Only the numeric sibling suffix keeps the
+    marker — suffixed engine derivatives (`-step-<i>`, `-stranded`) stay engine-owned.
+    When an override deliberately takes the canonical name, a sibling rename is ambiguous
+    between the operator's and the engine's branch; treating it as operator-supplied is the
+    safe direction because provenance then withholds engine deletion.
+    */
+    const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`^${escapedMarker}-\\d+$`, "i").test(candidate)) return "operator-supplied";
+  }
   const escapedId = task.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (new RegExp(`^fusion/${escapedId}(?:-.+)?$`, "i").test(candidate)) return "engine-canonical";
   if (task.branchContext?.assignmentMode === "shared" || task.branchContext?.assignmentMode === "per-task-derived") {

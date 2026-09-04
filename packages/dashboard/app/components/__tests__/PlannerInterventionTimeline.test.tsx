@@ -77,6 +77,25 @@ describe("PlannerInterventionTimeline", () => {
     expect(screen.getByTestId("planner-intervention-source-link")).toBeInTheDocument();
   });
 
+  it("renders the local precise intervention timestamp with milliseconds", async () => {
+    const timestamp = new Date(2026, 5, 17, 14, 32, 7, 482).toISOString();
+    mockFetch.mockResolvedValue({ entries: [makeEntry({ timestamp })] });
+    render(<PlannerInterventionTimeline taskId="FN-100" />);
+
+    const entry = await screen.findByTestId("planner-intervention-entry");
+    expect(entry).toHaveTextContent("2026-06-17 14:32:07.482");
+    expect(entry.querySelector(".planner-intervention-entry__timestamp")).toHaveAttribute("title", "2026-06-17 14:32:07.482");
+  });
+
+  it("falls back to the raw intervention timestamp when it is unparseable", async () => {
+    mockFetch.mockResolvedValue({ entries: [makeEntry({ timestamp: "not-a-date" })] });
+    render(<PlannerInterventionTimeline taskId="FN-100" />);
+
+    const entry = await screen.findByTestId("planner-intervention-entry");
+    expect(entry).toHaveTextContent("not-a-date");
+    expect(entry.querySelector(".planner-intervention-entry__timestamp")).not.toHaveAttribute("title");
+  });
+
   it("renders many entries newest-first as provided by the read path", async () => {
     mockFetch.mockResolvedValue({
       entries: [

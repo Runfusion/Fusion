@@ -116,6 +116,7 @@ describe("review arbitration fence", () => {
       { attempt: 3, max: 3 },
       [expect.objectContaining({ id: "finding-1" })],
       false,
+      "reopen-trailing",
     );
   });
 

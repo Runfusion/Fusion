@@ -4,6 +4,9 @@ import * as os from "node:os";
 import { join } from "node:path";
 import {
   getNativePrebuildName,
+  nodePtyPlatformPackageName,
+  describePtyLoadFailure,
+  findInstalledNodePtyNativeDir,
   findStagedNativeDir,
   ensureNodePtyNativePermissions,
 } from "../cli-runtime/pty-native.js";
@@ -31,11 +34,16 @@ afterEach(() => {
   }
 });
 
-/** Create a fixture `<root>/<prebuildName>/pty.node` (+ spawn-helper) directory. */
-function makeStagedDir(root: string, opts: { broken?: boolean } = {}): string {
-  const dir = join(root, getNativePrebuildName());
+/** Create a fixture for the platform's published staged native entry. */
+function makeStagedDir(
+  root: string,
+  opts: { broken?: boolean; platform?: string; arch?: string } = {},
+): string {
+  const platform = opts.platform ?? process.platform;
+  const arch = opts.arch ?? process.arch;
+  const dir = join(root, getNativePrebuildName(platform, arch));
   fs.mkdirSync(dir, { recursive: true });
-  const nativePath = join(dir, "pty.node");
+  const nativePath = join(dir, platform === "win32" ? "conpty.node" : "pty.node");
   const helperPath = join(dir, "spawn-helper");
   fs.writeFileSync(nativePath, "fake-native");
   fs.writeFileSync(helperPath, "fake-helper");
@@ -54,6 +62,29 @@ describe("getNativePrebuildName", () => {
   });
 });
 
+describe("node-pty platform package resolution", () => {
+  it("maps every supported platform and architecture to its package", () => {
+    for (const target of ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"]) {
+      const [platform, arch] = target.split("-");
+      expect(nodePtyPlatformPackageName(platform, arch)).toBe(`@lydell/node-pty-${target}`);
+    }
+    expect(nodePtyPlatformPackageName("unknown", "unknown")).toBeNull();
+  });
+
+  it("reports actionable package diagnostics for supported and unsupported hosts", () => {
+    expect(describePtyLoadFailure(new Error("missing"), "darwin", "arm64")).toContain("@lydell/node-pty-darwin-arm64");
+    expect(describePtyLoadFailure(new Error("missing"), "linux", "x64")).toContain("@lydell/node-pty-linux-x64");
+    const windowsDiagnostic = describePtyLoadFailure(new Error("missing"), "win32", "x64");
+    expect(windowsDiagnostic).toContain("@lydell/node-pty-win32-x64");
+    expect(windowsDiagnostic).toContain("conpty.node");
+    expect(describePtyLoadFailure(new Error("missing"), "unknown", "unknown")).toContain("Platform not supported");
+  });
+
+  it("returns null rather than throwing when resolution fails", () => {
+    expect(() => findInstalledNodePtyNativeDir()).not.toThrow();
+  });
+});
+
 describe("findStagedNativeDir (packaged-binary mode)", () => {
   it("resolves the staged dir via FUSION_RUNTIME_DIR fixture", () => {
     const staged = makeStagedDir(tmpRoot);
@@ -61,9 +92,18 @@ describe("findStagedNativeDir (packaged-binary mode)", () => {
     expect(findStagedNativeDir()).toBe(staged);
   });
 
-  it("returns null when no staged pty.node is present", () => {
-    process.env.FUSION_RUNTIME_DIR = tmpRoot; // empty, no pty.node
+  it("returns null when no staged native entry is present", () => {
+    process.env.FUSION_RUNTIME_DIR = tmpRoot; // empty, no platform native entry
     expect(findStagedNativeDir()).toBeNull();
+  });
+
+  it("selects a Windows staged umbrella directory from its ConPTY entry", () => {
+    const staged = makeStagedDir(tmpRoot, { platform: "win32", arch: "x64" });
+    process.env.FUSION_RUNTIME_DIR = tmpRoot;
+
+    // This mirrors a standalone Windows runtime: its umbrella is selected only
+    // after the staged probe accepts conpty.node rather than a nonexistent pty.node.
+    expect(findStagedNativeDir("win32", "x64")).toBe(staged);
   });
 });
 

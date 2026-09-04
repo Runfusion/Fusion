@@ -21,7 +21,7 @@ export type WorkflowRerunWatchdogDeps = {
     worktreePath: string,
     preserveResumeState: boolean,
     persistWorktreePath?: boolean,
-  ) => Promise<"bounced" | "skipped-pending" | "deferred-paused" | "deferred-capacity">;
+  ) => Promise<"bounced" | "skipped-pending" | "deferred-paused" | "deferred-capacity" | "refused-no-remediation">;
   getExecutionPauseLabel: () => Promise<string | null>;
   resolveResumeLanes: (taskId: string) => Promise<{ wip: string }>;
 };
@@ -108,6 +108,13 @@ export function scheduleWorkflowRerun(
         ).catch(() => undefined);
       } else if (outcome === "deferred-capacity") {
         executorLog.log(`${taskId}: workflow rerun watchdog retry deferred while the WIP lane is at capacity`);
+      } else if (outcome === "refused-no-remediation") {
+        executorLog.warn(`${taskId}: workflow rerun watchdog retry refused because no remediation work is pending`);
+        await deps.store.logEntry(
+          taskId,
+          "Workflow rerun watchdog stopped — no pending remediation work",
+          "The hand-off was refused rather than deferred; create remediation work before requesting another review-to-WIP move.",
+        ).catch(() => undefined);
       } else {
         executorLog.log(`${taskId}: workflow rerun watchdog retry deferred while pause is active`);
       }

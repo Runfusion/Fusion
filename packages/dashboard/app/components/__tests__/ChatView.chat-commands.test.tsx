@@ -42,6 +42,8 @@ vi.mock("../../api", () => ({
   }),
   fetchAgents: vi.fn().mockResolvedValue([]),
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
+  fetchGlobalSettings: vi.fn().mockResolvedValue({ chatSnippets: [] }),
+  updateGlobalSettings: vi.fn().mockResolvedValue({ chatSnippets: [] }),
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
   addSteeringComment: vi.fn(),

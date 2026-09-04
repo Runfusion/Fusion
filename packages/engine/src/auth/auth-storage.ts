@@ -45,6 +45,8 @@ export interface FusionAuthStorage {
   getApiKey(provider: string, instance?: ProviderInstanceRef): Promise<string | undefined>;
   getOAuthProviders(): Array<{ id: string; name: string }>;
   login(provider: string, callbacks: unknown): Promise<void>;
+  /** Holds a cross-process provider lifecycle lock when this storage has a file-backed auth path. */
+  withProviderInstanceLoginLock?<T>(providerId: string, operation: () => Promise<T>): Promise<T>;
   modify(provider: string, fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>): Promise<StoredCredential | undefined>;
   setModelRuntime(modelRuntime: ModelRuntime): void;
 }
@@ -102,6 +104,26 @@ async function withOAuthRefreshLock<T>(
   }
 }
 
+/*
+FNXC:ProviderAuth 2026-09-01-08:10:
+Instance OAuth login keeps a mutable default slot as a transport for the login product. Hold an
+independent auth-path/provider lock across its snapshot, browser login, capture, and restore so
+separate Fusion processes cannot cross-copy concurrent login products between named accounts.
+*/
+async function withOAuthInstanceLoginLock<T>(
+  authPath: string,
+  providerId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const safeProviderId = providerId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const release = await lockfile.lock(`${authPath}.${safeProviderId}.instance-login`, AUTH_LOCK_OPTIONS);
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
+}
+
 type AuthFileData = Record<string, unknown>;
 type DefaultInstanceMap = Record<string, string>;
 
@@ -123,6 +145,11 @@ class FusionFileAuthStorage implements FusionAuthStorage {
   private modelRuntime: ModelRuntime | undefined;
 
   constructor(private readonly authPath: string) { this.reload(); }
+
+  async withProviderInstanceLoginLock<T>(providerId: string, operation: () => Promise<T>): Promise<T> {
+    return withOAuthInstanceLoginLock(this.authPath, providerId, operation);
+  }
+
   private ensureFile(): void {
     const parent = dirname(this.authPath);
     if (!existsSync(parent)) mkdirSync(parent, { recursive: true, mode: 0o700 });
@@ -442,6 +469,11 @@ proper-lockfile-guarded withLockAsync rereads auth.json and AuthStorage.modify m
 { ...currentData, [provider]: next } before writing. This preserves the per-provider
 read-modify-merge contract rather than flushing a whole-file in-memory snapshot as the
 credential-store adapter handles new upstream providers.
+
+FNXC:ProviderAuth 2026-09-02-22:06:
+FN-9244 re-verified pi-coding-agent@0.84.4 dist/core/auth-storage.js. Its proper-lockfile-
+guarded mutation rereads auth.json and merges `{ ...currentData, [provider]: next }`, so
+Fusion's credential adapter still preserves concurrent credentials for other providers.
 */
 
 /*
@@ -841,10 +873,14 @@ export function createFusionAuthStorage(): FusionAuthStorage {
       primary.reload();
       const selectPersistedRefreshCredential = (): StoredCredential | undefined => {
         const storedCredential = primary.get(storageProvider) as StoredCredential | undefined;
-        if (refreshLockProvider !== ANTHROPIC_PROVIDER_ID) {
+        if (storedCredential?.type === "oauth" || refreshLockProvider !== ANTHROPIC_PROVIDER_ID) {
           return storedCredential;
         }
 
+        /*
+        FNXC:ProviderAuth 2026-09-01-06:38:
+        FN-9229 keeps the Anthropic aliases in one refresh-lock domain because they can share a rotating token, but expiry-ranked cross-alias selection must not replace a stored subscription instance. A fresher legacy row could otherwise refresh and return under `anthropic-subscription`, reintroducing the hidden-account substitution that runtime resolution excludes. Cross-alias comparison is therefore only a recovery path when the requested storage row is absent or not OAuth.
+        */
         const legacyCredential = primary.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
         const subscriptionCredential = primary.get(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) as StoredCredential | undefined;
         return choosePreferredStoredCredential(
@@ -1038,7 +1074,10 @@ export function createFusionAuthStorage(): FusionAuthStorage {
 
     /*
     FNXC:ProviderAuth 2026-07-01-14:55:
-    Anthropic runtime auth (`getApiKey("anthropic")`) resolves in precedence order: (1) raw API key, (2) legacy `anthropic` OAuth, (3) separated `anthropic-subscription` OAuth, (4) models.json / ModelRegistry fallback raw key. Raw key wins so an explicit `ANTHROPIC_API_KEY` keeps using x-api-key; subscription/OAuth tokens must resolve here so the built-in provider runs them on `/v1` with Claude Code impersonation. Do NOT gate OAuth behind the CLI or reroute it to an `/v1` `anthropic-subscription` provider — that reintroduced the #1857 regression (FN-7391/FN-7396).
+    Anthropic runtime auth (`getApiKey("anthropic")`) resolves in precedence order: (1) raw API key, (2) separated `anthropic-subscription` OAuth, (3) legacy `anthropic` OAuth only when no subscription credential is stored, (4) models.json / ModelRegistry fallback raw key. Raw key wins so an explicit `ANTHROPIC_API_KEY` keeps using x-api-key; subscription/OAuth tokens must resolve here so the built-in provider runs them on `/v1` with Claude Code impersonation. Do NOT gate OAuth behind the CLI or reroute it to an `/v1` `anthropic-subscription` provider — that reintroduced the #1857 regression (FN-7391/FN-7396).
+
+    FNXC:ProviderAuth 2026-09-01-06:38:
+    FN-9229 makes the selected subscription credential authoritative: its instance pointer is the only durable account choice. Once any `anthropic-subscription` credential is stored, the invisible legacy bare `anthropic` OAuth row must never authenticate a lane, even when the subscription credential is unusable, because silent substitution bills an unselected account without a runtime diagnostic. Presence rather than usability is the discriminator; the legacy row remains a migration fallback only for pre-split installs with no subscription credential at all.
     */
     /*
     FNXC:ProviderAuth 2026-07-24-17:05:
@@ -1064,24 +1103,25 @@ export function createFusionAuthStorage(): FusionAuthStorage {
     }
 
     const subscriptionLoggedOut = loggedOutProviders.has(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
-    const legacyAnthropicOAuthCredential = rawProviderLoggedOut
+    // Resolve this once: its presence suppresses the hidden legacy OAuth row even when it cannot yield a key.
+    const subscriptionCredential = subscriptionLoggedOut
       ? undefined
-      : selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "oauth");
-    if (!subscriptionLoggedOut && legacyAnthropicOAuthCredential) {
-      const legacyKey = await resolveRefreshableCredentialApiKey(ANTHROPIC_PROVIDER_ID, legacyAnthropicOAuthCredential);
-      if (legacyKey) return legacyKey;
-    }
-
-    if (!subscriptionLoggedOut) {
-      const subscriptionCredential = selectStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
-      if (subscriptionCredential?.type === "oauth") {
+      : selectStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+    if (subscriptionCredential?.type === "oauth") {
         /*
         FNXC:ProviderAuth 2026-06-30-11:26:
         The separated subscription login stores OAuth material under `anthropic-subscription` so the API-key card stays raw-key-only, but Anthropic model execution still requests provider `anthropic`. Resolve and refresh the subscription credential (persisting rotated tokens back to `anthropic-subscription`) so a subscription user's `anthropic/<model>` selection runs on their OAuth token.
         */
         const subscriptionKey = await resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential);
-        if (subscriptionKey) return subscriptionKey;
-      }
+      if (subscriptionKey) return subscriptionKey;
+    }
+
+    const legacyAnthropicOAuthCredential = rawProviderLoggedOut || subscriptionCredential
+      ? undefined
+      : selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "oauth");
+    if (!subscriptionLoggedOut && legacyAnthropicOAuthCredential) {
+      const legacyKey = await resolveRefreshableCredentialApiKey(ANTHROPIC_PROVIDER_ID, legacyAnthropicOAuthCredential);
+      if (legacyKey) return legacyKey;
     }
 
     // Subscription-preferred: the raw key is the fallback once no OAuth credential resolved.
@@ -1299,10 +1339,20 @@ export function createFusionAuthStorage(): FusionAuthStorage {
             if (sourceProvider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
               /*
               FNXC:ProviderAuth 2026-07-01-12:34:
-              Legacy Anthropic OAuth rows are subscription credentials, not raw API keys. Hydrate them into `anthropic-subscription` before refresh so status, usage, and banner clearing share the same provider id without overwriting a raw `anthropic` API-key credential.
+              Legacy Anthropic OAuth rows are subscription credentials, not raw API keys. Hydrate them into `anthropic-subscription` so status, usage, and banner clearing share the same provider id without overwriting a raw `anthropic` API-key credential.
+
+              FNXC:ProviderAuth 2026-09-01-06:58:
+              FN-9229 keeps legacy-only alias reads in the legacy storage slot until its refresh finishes. Hydrating before refresh creates a second stale alias row: a concurrent legacy refresh can rotate the shared token while a waiting subscription read retries the stale clone and receives `invalid_grant`. Refreshing the source first lets the shared lock observe the rotation, then copies only the latest legacy material into a still-absent subscription slot.
               */
-              await primary.set(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential as StoredCredential);
-              loggedOutProviders.delete(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+              const legacyKey = await resolveRefreshableCredentialApiKey(ANTHROPIC_PROVIDER_ID, subscriptionCredential);
+              primary.reload();
+              const storedSubscription = primary.get(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) as StoredCredential | undefined;
+              const refreshedLegacyCredential = primary.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
+              if (!storedSubscription && refreshedLegacyCredential?.type === "oauth") {
+                await primary.set(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, refreshedLegacyCredential);
+                loggedOutProviders.delete(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+              }
+              return legacyKey;
             }
             return resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential);
           }

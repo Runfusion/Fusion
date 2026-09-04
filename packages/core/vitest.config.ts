@@ -40,11 +40,7 @@ export default defineConfig({
     `missing-exclude` — the guard silently stops holding the ledger and the config in lockstep.
     Each entry needs a matching row in scripts/lib/test-quarantine.json (same commit, deletion ratchet).
     */
-    exclude: [
-      // Wall-clock lock-race assertion that fails under parallel load; rescue needs a real
-      // block-detection probe (pg_locks / lock-wait), not a longer sleep. Deadline 2026-09-06.
-      "src/__tests__/postgres/mission-store.pg.test.ts",
-    ],
+    exclude: [],
     setupFiles: [
       "./src/__test-utils__/vitest-setup.ts",
     ],

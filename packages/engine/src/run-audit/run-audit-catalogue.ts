@@ -61,6 +61,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
 
   "task:reclaim-phantom-executor-binding",
   "task:reconcile-orphaned-pending-step-results",
+  "task:reconcile-unproven-review-approval",
   "task:reconcile-stale-duplicate-decision",
   "task:reconcile-stale-agent-assignment",
   "task:reconcile-engine-downtime-active-timing",
@@ -142,6 +143,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
   "task:reconcile-orphaned-pending-step-results":
     "Self-healing rewrites orphaned 'pending' workflow-step results (no live session) to 'failed'.",
+  "task:reconcile-unproven-review-approval":
+    "Self-healing rewrites singular content-review approvals without input proof to recoverable failed results.",
   "task:reconcile-stale-duplicate-decision":
     "Self-healing clears a recurring duplicate-decision pause with no canonical target.",
   "task:reconcile-stale-agent-assignment":

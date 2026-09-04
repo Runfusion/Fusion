@@ -646,13 +646,16 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </>)}
 
       </div>
-      {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
+      {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target without changing workflow or in-chat switcher settings. */}
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
       <div className="settings-field-label-row">
         <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
-        <SettingsHelpTip settingKey="project-chat-defaults">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</SettingsHelpTip>
+        <SettingsHelpTip settingKey="project-chat-defaults">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats. New Chat always creates the conversation immediately from this default.")}</SettingsHelpTip>
       </div>
-      {/* FNXC:ChatDefaultTarget 2026-08-23-02:31: New Chat now always creates immediately from this target, so the former prompt-versus-default mode control is intentionally not exposed. */}
+      {/*
+      FNXC:ChatDefaultTarget 2026-09-01-08:39:
+      Retired create-time prompt-mode copy is removed because New Chat always creates immediately from the configured target.
+      */}
       <div className="form-group" data-testid="project-models-chat-kind">
         <label>{t("settings.projectModels.chatDefaultKind", "Chat default target")}</label>
         <div className="chat-new-dialog-mode-toggle" data-testid="project-models-chat-kind-toggle">
@@ -667,12 +670,12 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
       {chatDefaultKind === "model" ? (<div className="form-group" data-testid="project-models-chat-model">
           {/*
           FNXC:SettingsHelp 2026-07-15-21:40:
-          Model mode is a plain label + control + help row, so its help hangs off the same "?" as the New Chat behavior select directly above it instead of printing a paragraph beside it.
+          Model mode is a plain label + control + help row, so its help hangs off the shared "?" affordance instead of printing a paragraph beside it.
           FNXC:SettingsHelp 2026-07-16-12:45: The agent-mode branch's descriptive help now hangs off the same "?" too — operator requirement: no inline description paragraphs in Settings. Only its dynamic empty-state line ("No agents are available for this project yet.") stays inline, because it is live status explaining an empty picker and must stay in view.
           */}
           <div className="settings-field-label-row">
             <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
-            <SettingsHelpTip settingKey="chatDefaultModel">{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</SettingsHelpTip>
+            <SettingsHelpTip settingKey="chatDefaultModel">{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to use the project or global default model.")}</SettingsHelpTip>
           </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BLOCKED_THRASH_LIMIT,
   classifyBlockedExit,
+  classifyExternalObstacle,
   countBlockedThrashHits,
   isDurableBlockedTask,
   partitionBlockedByRefs,
@@ -12,6 +13,18 @@ FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #23
 Blocked exits classify on Fusion task dependencies ONLY. PR refs and file-claim
 reason language must never produce a durable park — open PRs are not blockers.
 */
+
+describe("classifyExternalObstacle", () => {
+  it("does not misclassify lifecycle transition rejections as credentials", () => {
+    expect(classifyExternalObstacle("Cannot move CLOU-058 to 'todo': Forbidden lifecycle path F5: 'in-progress' (wip) → 'todo' (hold); reason=self-healing-session-recovery. A WIP card may return to planning only for Plan Review REVISE")).toBeUndefined();
+    expect(classifyExternalObstacle("Step 5 start was rejected by the task lifecycle projection")).toBeUndefined();
+    expect(classifyExternalObstacle("TransitionRejectionError: Cannot move task")).toBeUndefined();
+  });
+
+  it("continues to classify genuine credential failures", () => {
+    expect(classifyExternalObstacle("Invalid API key: authentication failed")).toEqual({ origin: "credentials", code: "CREDENTIALS" });
+  });
+});
 
 describe("partitionBlockedByRefs", () => {
   it("keeps task ids and discards legacy pr refs and junk", () => {

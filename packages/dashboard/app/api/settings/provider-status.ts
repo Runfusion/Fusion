@@ -56,6 +56,8 @@ export interface AuthProvider {
   keyHint?: string;
   /** Credential instance described by the top-level status fields. */
   instanceId?: string;
+  /** A bare legacy Anthropic OAuth row exists outside this account list and is suppressed while listed subscription accounts exist. */
+  legacyAnthropicOAuthPresent?: boolean;
   instances?: ProviderCredentialInstance[];
 }
 
@@ -878,6 +880,12 @@ export function fetchAuthStatus(options?: FetchOptions & { provider?: string; in
   const params = new URLSearchParams();
   if (options?.provider) params.set("provider", options.provider);
   if (options?.instance?.trim()) params.set("instance", options.instance.trim());
+  /*
+  FNXC:ProviderAuth 2026-09-01-08:22:
+  Browser fetches do not attach an Origin header to same-origin GET requests. Include the dashboard
+  origin explicitly so auth status selects the same remote Codex device-code flow as login initiation.
+  */
+  if (typeof window !== "undefined" && window.location.origin) params.set("origin", window.location.origin);
   const query = params.toString();
   const url = query ? `/auth/status?${query}` : "/auth/status";
   const key = `${options?.provider ?? "*"}::${options?.instance?.trim() || "default"}`;

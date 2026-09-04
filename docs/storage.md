@@ -370,6 +370,7 @@ API endpoints reviewed:
 | `themeMode` | Global | `GET/PUT /api/settings/global` (+ merged via `GET /api/settings`) | Theme mode preference |
 | `colorTheme` | Global | `GET/PUT /api/settings/global` | Color/accent theme |
 | `dashboardFontScalePct` | Global | `GET/PUT /api/settings/global` | Dashboard Appearance font scale percentage (85–125, default 100) applied before hydration. |
+| `chatSnippets` | Global | `GET/PUT /api/settings/global` | Ordered reusable chat prompts (`{ name, prompt }`), normalized and validated atomically; the dashboard inserts `/name` into composers without implicit send and keeps its shared cache memory-only. |
 | `defaultProvider` | Global | `GET/PUT /api/settings/global` | Default model provider |
 | `defaultModelId` | Global | `GET/PUT /api/settings/global` | Default model id |
 | `fallbackProvider` | Global | `GET/PUT /api/settings/global` | Fallback model provider |
@@ -405,7 +406,7 @@ API endpoints reviewed:
 | `globalPause` | Project | `GET/PUT /api/settings` | Hard stop for engine activity |
 | `enginePaused` | Project | `GET/PUT /api/settings` | Soft pause for dispatch |
 | `maxConcurrent` | Project | `GET/PUT /api/settings` | Max concurrent task-lane agents. Utility AI workflows bypass this limit. |
-| `maxWorktrees` | Project | `GET/PUT /api/settings` | Worktree cap |
+| `maxWorktrees` | Project | `GET/PUT /api/settings` | Execution-checkout holder cap; does not include planning |
 | `pollIntervalMs` | Project | `GET/PUT /api/settings` | Scheduler poll interval |
 | `groupOverlappingFiles` | Project | `GET/PUT /api/settings` | Serialize overlapping file work |
 | `overlapIgnorePaths` | Project | `GET/PUT /api/settings` | Project-relative file/directory paths ignored by overlap blocking |
@@ -781,10 +782,7 @@ requires. The real defect was in **project-root resolution** for pi-extension to
 (`packages/cli/src/extension.ts`'s `resolveProjectRoot(cwd)` → `getProjectRootFromWorktree`
 in `packages/core/src/pi-extensions.ts`):
 
-1. `getProjectRootFromWorktree` matches the standard `.worktrees/<id>` and
- `.fusion/worktrees/<id>` path shapes via hardcoded regex. A project with a non-default
- `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized
- deployments) doesn't match either pattern.
+1. `getProjectRootFromWorktree` matches the standard `.fusion/worktrees/<id>` path shape and the legacy `.worktrees/<id>` shape via hardcoded regex. New worktrees use the former, while the latter remains accepted for pre-existing paths when `worktreesDir` is unset. A project with a non-default `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized deployments) doesn't match either pattern.
 2. The only remaining resolution path, `getProjectRootFromGitLinkedWorktree`, shelled out to
  `git rev-parse --git-common-dir`/`--git-dir` via `spawnSync`. A failing `git` invocation —
  missing binary in a minimal container image, Docker's "detected dubious ownership"

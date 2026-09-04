@@ -41,28 +41,16 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
     return (<>
       <h4 className="settings-section-heading">{t("settings.worktrees.worktrees", "Worktrees")}</h4>
       {/*
-      FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review — coderabbit + greptile):
-      RENAMED from "Run tasks in worktrees", which was a lie.
-
-      This setting is CAPACITY SEMANTICS ONLY: it decides whether Max Worktrees
-      gates dispatch. It does NOT change where work executes — both scheduler
-      dispatch paths still allocate a worktree per task with it off, and planning
-      still runs in the task's own worktree. Two reviewers independently read the
-      old label as "turn off worktree execution", which is exactly the wrong
-      inference and worse than having no switch: an operator would flip it,
-      still get worktrees, and conclude the product is broken.
-
-      The label now names the limit rather than the mechanism, and the help says
-      outright that tasks run in a worktree either way. The setting KEY was renamed
-      with it (`worktreesEnabled` -> `worktreeLimitEnabled`) — a key persisted in
-      every settings blob misleads every future reader of the schema, not just the
-      operator reading the UI once.
+      FNXC:CapacityModel 2026-09-01-14:49:
+      This setting controls only execution-checkout capacity. Write-capable execution still uses
+      private worktrees when the limit is off, while checkout-free planning runs read-only on main
+      and never consumes this host-resource budget.
       */}
       <SettingsToggleRow
         descriptor={{
           key: "worktreeLimitEnabled",
           label: t("settings.worktrees.worktreeLimitEnabled", "Limit concurrent worktrees"),
-          help: t("settings.worktrees.worktreeLimitEnabledHelp", "When on, Max Worktrees caps how many tasks may hold a worktree at once. When off, Max Concurrent Tasks is the only limit. Tasks always run in their own git worktree either way — this does not change where work executes. Default: on."),
+          help: t("settings.worktrees.worktreeLimitEnabledHelp", "When on, Max Worktrees caps tasks holding or entering an execution checkout. Planning does not consume this limit. When off, Max Concurrent Tasks remains the AI-load limit. Default: on."),
           scope: "project",
         }}
         value={form.worktreeLimitEnabled !== false}
@@ -73,7 +61,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         descriptor={{
           key: "maxWorktrees",
           label: t("settings.worktrees.maxWorktrees", "Max Worktrees"),
-          help: t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits total git worktrees including in-review tasks. Ignored while \u201cLimit concurrent worktrees\u201d is off. Default: 4."),
+          help: t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits live tasks holding or entering an execution checkout, including in-review tasks with retained work. Does not limit planning. Ignored while \u201cLimit concurrent worktrees\u201d is off. Default: 4."),
           scope: "project",
           min: 1,
           max: 20,
@@ -165,11 +153,11 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="worktreesDir">
             {form.worktrunk?.enabled === true
               ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
-              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Absolute paths are allowed. Workspace projects group configured roots by workspace and repository. Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
+              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Absolute paths are allowed. Workspace projects group configured roots by workspace and repository. Defaults to ")}<code>&lt;projectRoot&gt;/.fusion/worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
           </SettingsHelpTip>
         </div>
         <div className="settings-overlap-ignore-path-controls">
-          <input id="worktreesDir" type="text" placeholder={t("settings.worktrees.defaultsToWorktreesLeaveEmptyUnlessOverriding", "Defaults to .worktrees \u2014 leave empty unless overriding")} value={form.worktreesDir || ""} disabled={form.worktrunk?.enabled === true} onChange={(e) => setForm((f) => ({ ...f, worktreesDir: e.target.value }))}/>
+          <input id="worktreesDir" type="text" placeholder={t("settings.worktrees.defaultsToWorktreesLeaveEmptyUnlessOverriding", "Defaults to .fusion/worktrees \u2014 leave empty unless overriding")} value={form.worktreesDir || ""} disabled={form.worktrunk?.enabled === true} onChange={(e) => setForm((f) => ({ ...f, worktreesDir: e.target.value }))}/>
           <button type="button" className="btn btn-sm" onClick={onOpenWorktreesDirPicker} aria-label={t("settings.worktrees.browseWorktreesDirectory", "Browse worktrees directory")} disabled={form.worktrunk?.enabled === true}>{t("settings.worktrees.browse", " Browse ")}</button>
         </div>
       </div>

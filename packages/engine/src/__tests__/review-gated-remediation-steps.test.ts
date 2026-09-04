@@ -100,7 +100,7 @@ describe("deriveRemediationSteps", () => {
   });
 });
 
-describe("non-blocking review remediation releases", () => {
+describe("review remediation release and fallback policy", () => {
   function subject(overrides: Partial<Task> = {}): Task {
     return {
       id: "FN-217-release",
@@ -168,19 +168,34 @@ describe("non-blocking review remediation releases", () => {
     }));
   });
 
-  it("releases an out-of-scope finding without lifecycle mutation", async () => {
-    const task = subject();
+  it("turns an out-of-scope Code Review finding into a repairable fallback step", async () => {
+    const task = subject({ worktree: "/tmp/fn-267-outside" });
     const store = storeFor(task);
     await expect(append(task, store, [{ id: "outside", title: "outside", body: "fix outside", filePath: "other/a.ts", severity: "critical" }]))
-      .resolves.toBe("released-upstream-out-of-scope");
-    expect(store.logEntry.mock.calls.at(-1)?.[2]).toContain("review-remediation-upstream-out-of-scope");
+      .resolves.toBe("appended");
+    expect(task.steps).toContainEqual(expect.objectContaining({
+      status: "pending",
+      remediation: expect.objectContaining({
+        gate: "Code Review",
+        findingId: "missing-code-review-fix-steps",
+        detail: expect.stringContaining("without usable file-scoped Fix steps"),
+      }),
+    }));
+    expect(store.logEntry).not.toHaveBeenCalled();
   });
 
-  it("releases a finding-less review without lifecycle mutation", async () => {
-    const task = subject();
+  it("turns a finding-less Code Review REVISE into a repairable fallback step", async () => {
+    const task = subject({ worktree: "/tmp/fn-267-missing" });
     const store = storeFor(task);
-    await expect(append(task, store)).resolves.toBe("released-no-actionable-findings");
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Review remediation released as non-blocking", "review-remediation-no-actionable-findings");
+    await expect(append(task, store)).resolves.toBe("appended");
+    expect(task.steps).toContainEqual(expect.objectContaining({
+      name: "Fix: Turn Code Review feedback into actionable fixes",
+      status: "pending",
+      remediation: expect.objectContaining({
+        gate: "Code Review",
+        findingId: "missing-code-review-fix-steps",
+      }),
+    }));
   });
 
   it("releases duplicate-only remediation with no pending work", async () => {

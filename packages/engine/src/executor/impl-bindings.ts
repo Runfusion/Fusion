@@ -90,6 +90,7 @@ export {
 } from "./persist-token-usage.js";
 export { resetMergeStateIfNeeded as resetMergeStateIfNeededImpl } from "./reset-merge-state.js";
 export { recoverFailedPreMergeWorkflowStep as recoverFailedPreMergeWorkflowStepImpl } from "./recover-failed-pre-merge-step.js";
+export { recoverFailedPreMergeWorkflowStepDetailed as recoverFailedPreMergeWorkflowStepDetailedImpl } from "./recover-failed-pre-merge-step.js";
 export { reconcileStepsFromGitHistory as reconcileStepsFromGitHistoryImpl } from "./reconcile-steps-from-git-history.js";
 export { clearPhantomExecutorBinding as clearPhantomExecutorBindingImpl } from "./clear-phantom-executor-binding.js";
 export { cleanupMergeStateForReverification as cleanupMergeStateForReverificationImpl } from "./cleanup-merge-state.js";
@@ -208,7 +209,6 @@ export { acquireSessionRegistryPath as acquireSessionRegistryPathImpl } from "./
 export { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseImpl } from "./should-defer-completion-for-global-pause.js";
 export { parkApprovalSuspension as parkApprovalSuspensionImpl } from "./park-approval-suspension.js";
 export { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededImpl } from "./resume-approval-after-unwind.js";
-export { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningImpl } from "./ensure-task-worktree-for-planning.js";
 export { foreachActiveForTask as foreachActiveForTaskImpl } from "./foreach-active-for-task.js";
 export { buildBranchPersistence as buildBranchPersistenceImpl } from "./build-branch-persistence.js";
 export { sessionRegistryPath as sessionRegistryPathImpl } from "./session-registry-path.js";

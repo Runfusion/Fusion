@@ -422,6 +422,9 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toBe(fastTemplate?.prompt);
     expect(fastPrompt).toContain("This task is running in **fast mode**");
     expect(fastPrompt).toContain("### Step N: <name>");
+    expect(fastPrompt).toContain("### Step 0: Preflight");
+    expect(fastPrompt).not.toContain("### Step 1: Preflight");
+    expect(fastPrompt).toContain("through `### Step N-1:` with no gaps");
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);

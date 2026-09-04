@@ -74,7 +74,7 @@ import {
   formatAdmissionCapacityQueuedReason,
   persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
 } from "../concurrency/concurrency.js";
 
 /*
@@ -588,13 +588,10 @@ export async function admitPlanningContinuation(input: {
   let duplicateHandled = false;
   const loadClaimSnapshot = async (): Promise<{ count: number; ids: string[] }> => {
     /*
-    FNXC:WorkflowContinuationCapacity 2026-08-01-06:20:
-    A dependency-cleared task continuation can resume directly in a same-column Plan Review node.
-    That path does not cross the scheduler-owned hold→WIP boundary, so dispatching it directly let
-    the new reviewer become a tenth live task while maxWorktrees was nine. Count the exact canonical
-    live population (including pending workflow-step leases) and enter through the shared project
-    coordinator before the continuation starts. Full rows are intentional here: slim task snapshots
-    are not a contract for workflowStepResults, while a pending optional-step lease is a live agent.
+    FNXC:WorkflowContinuationCapacity 2026-09-01-14:49:
+    A direct continuation consumes provider capacity but never claims a new worktree slot: it either
+    resumes a task whose retained checkout is already counted by the holder predicate or enters a
+    checkout-free plan-lane node. Full rows preserve pending workflow-step leases for the agent gate.
     */
     const tasks = await input.store.listTasks({ slim: false, includeArchived: false });
     const ids = await persistedTopLevelAgentTaskIdsFromStore(input.store, tasks);
@@ -616,10 +613,8 @@ export async function admitPlanningContinuation(input: {
   const getAdmissionSnapshot = () => admissionSnapshot ??= loadClaimSnapshot();
   await projectAdmissionCoordinator.admitNext({
     projectId: input.projectId,
-    maxConcurrent: resolveActiveTaskCapacityLimit({
+    maxConcurrent: resolveAgentCapacityLimit({
       maxConcurrent: settings.maxConcurrent,
-      maxWorktrees: settings.maxWorktrees,
-      worktreeLimitEnabled: settings.worktreeLimitEnabled,
     }),
     claimed: async () => (await getAdmissionSnapshot()).count,
     claimedTaskIds: async () => (await getAdmissionSnapshot()).ids,
@@ -627,6 +622,7 @@ export async function admitPlanningContinuation(input: {
       taskId: input.task.id,
       projectId: input.projectId,
       lane: "execute",
+      consumesWorktree: false,
       createdAt: input.item.createdAt ?? input.task.createdAt,
       start: async () => {
         // The preflight above is only a fast path. This serialized check is the
@@ -664,10 +660,8 @@ export async function admitPlanningContinuation(input: {
     return true;
   }
   const snapshot = await getAdmissionSnapshot();
-  const limit = resolveActiveTaskCapacityLimit({
+  const limit = resolveAgentCapacityLimit({
     maxConcurrent: settings.maxConcurrent,
-    maxWorktrees: settings.maxWorktrees,
-    worktreeLimitEnabled: settings.worktreeLimitEnabled,
   });
   if (snapshot.count >= limit) {
     /*
@@ -677,9 +671,8 @@ export async function admitPlanningContinuation(input: {
     execute, triage, and merge admission; unchanged retries remain deduplicated.
     */
     const reason = formatAdmissionCapacityQueuedReason({
-      maxConcurrent: settings.maxConcurrent,
-      maxWorktrees: settings.maxWorktrees,
-      worktreeLimitEnabled: settings.worktreeLimitEnabled,
+      gate: "maxConcurrent",
+      limit,
       claimed: snapshot.count,
       holderTaskIds: snapshot.ids,
     });
@@ -1758,9 +1751,6 @@ export class InProcessRuntime
           agentStore: this.agentStore,
           messageStore: this.messageStore,
           pluginRunner: this.pluginRunner,
-          // FNXC:WorkspaceBoundary 2026-08-22-22:54: single-repo planning acquires its
-          // known scope; workspace planning receives a declared read-only root until it confirms scope.
-          acquirePlanningWorktree: (taskId) => this.executor.ensureTaskWorktreeForPlanning(taskId),
           onSpecifyStart: (t) => {
             this.recordActivity();
             /*
@@ -1895,6 +1885,8 @@ export class InProcessRuntime
         isWorktreeResumeReserved: this.cliAgentRuntime?.isWorktreeResumeReserved,
         recoverCompletedTask: (task) => this.executor.recoverCompletedTask(task),
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
+        /* FNXC:LifecycleContainment 2026-08-30-13:36: without this wiring the sweep's claim never reaches the recovery, so a refusal releases its claim and is re-narrated every five minutes. */
+        recoverFailedPreMergeStepDetailed: (task, options) => this.executor.recoverFailedPreMergeWorkflowStepDetailed(task, options),
         getExecutingTaskIds: () => this.executor?.getExecutingTaskIds() ?? new Set<string>(),
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean; externallyBlocked?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
         /*

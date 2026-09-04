@@ -36,15 +36,16 @@ function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
 
 function input(overrides: Parameters<typeof runPlanReviewDependencyGate>[0] extends infer T ? Partial<T> : never = {}) {
   const store = { logEntry: vi.fn().mockResolvedValue(undefined) } as unknown as TaskStore;
+  const worktreePath = overrides.worktreePath ?? worktree({ "index.html": "ok" });
   return {
-    task: task(),
     settings: {} as Settings,
     workspaceConfig: null,
-    worktreePath: worktree({ "index.html": "ok" }),
+    worktreePath,
     store,
     getRunContextFor: () => undefined,
     runConfiguredCommand: runner(),
     ...overrides,
+    task: overrides.task ?? task({ worktree: worktreePath }),
   };
 }
 

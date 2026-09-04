@@ -5,6 +5,7 @@ Command Center Overview must consume the same analytics endpoints as the detail 
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, within, waitFor, act } from "@testing-library/react";
 import { CommandCenter } from "../CommandCenter";
+import { selectCommandCenterSection } from "./sectionNavTestUtils";
 
 const apiMock = vi.fn();
 const { getAgentActivityMock } = vi.hoisted(() => ({ getAgentActivityMock: vi.fn() }));
@@ -489,8 +490,7 @@ describe("CommandCenter shell", () => {
         onThemeModeChange={vi.fn()}
       />,
     );
-    const overviewTab = screen.getByTestId("command-center-tab-overview");
-    expect(overviewTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-section-nav-trigger").textContent).toContain("Overview");
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(screen.getByTestId("command-center-controls")).toBeTruthy();
     expect(screen.queryByTestId("cc-controls-org-chart")).toBeNull();
@@ -506,15 +506,13 @@ describe("CommandCenter shell", () => {
     const props = { projectId: "project-a", colorTheme: "default" as const, themeMode: "dark" as const, onColorThemeChange: vi.fn(), onThemeModeChange: vi.fn() };
     const { unmount } = render(<CommandCenter {...props} />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-tokens"));
-    expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
+    selectCommandCenterSection("tokens");
     fireEvent.click(screen.getByTestId("cc-date-range-trigger"));
     fireEvent.click(screen.getByTestId("cc-date-range-preset-30d"));
 
     unmount();
     render(<CommandCenter {...props} />);
 
-    expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("cc-date-range-trigger").textContent).toContain("Last 30 days");
   });
 
@@ -522,7 +520,6 @@ describe("CommandCenter shell", () => {
     localStorage.clear();
     render(<CommandCenter projectId="fresh-project" colorTheme="default" themeMode="dark" onColorThemeChange={vi.fn()} onThemeModeChange={vi.fn()} />);
 
-    expect(screen.getByTestId("command-center-tab-overview").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("cc-date-range-trigger").textContent).toContain("Last 7 days");
   });
 
@@ -1139,25 +1136,24 @@ describe("CommandCenter shell", () => {
     ).toBe(true);
   });
 
-  it("exposes the ARIA tabs pattern (tablist + tabs + tabpanel)", () => {
+  it("exposes the ARIA listbox pattern", () => {
     render(<CommandCenter />);
-    const tablist = screen.getByRole("tablist");
-    const tabs = within(tablist).getAllByRole("tab");
-    // Overview, Tokens, Tools, Activity, Agent Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Plugins, Reliability, Mission Control.
-    expect(tabs.length).toBe(17);
-    expect(screen.queryByTestId("command-center-tab-ideation")).toBeNull();
-    expect(screen.queryByTestId("command-center-tab-nodes")).toBeNull();
-    // roving tabindex: exactly one tab is focusable.
-    const focusable = tabs.filter((tab) => tab.getAttribute("tabindex") === "0");
-    expect(focusable.length).toBe(1);
-    expect(screen.getByRole("tabpanel")).toBeTruthy();
+    const trigger = screen.getByTestId("command-center-section-nav-trigger");
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(trigger.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(trigger);
+    expect(screen.getByRole("listbox").querySelectorAll('[role="option"]')).toHaveLength(17);
+    expect(screen.queryByTestId("command-center-section-option-ideation")).toBeNull();
+    expect(screen.queryByTestId("command-center-section-option-nodes")).toBeNull();
+    expect(screen.getByRole("region", { name: "Overview" })).toBeTruthy();
   });
 
-  it("activates a tab on click and updates aria-selected", () => {
+  it("activates a section from the dropdown", () => {
     render(<CommandCenter />);
-    fireEvent.click(screen.getByTestId("command-center-tab-tokens"));
-    expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("command-center-tab-overview").getAttribute("aria-selected")).toBe("false");
+    selectCommandCenterSection("tokens");
+    expect(screen.getByTestId("command-center-section-nav-trigger").textContent).toContain("Tokens");
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
   });
 
@@ -1173,7 +1169,7 @@ describe("CommandCenter shell", () => {
     });
     render(<CommandCenter projectId="project-a" onOpenTask={onOpenTask} />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-agent-activity"));
+    selectCommandCenterSection("agent-activity");
     await screen.findByText("Command Center activity");
     fireEvent.click(screen.getByRole("button", { name: "Open task FN-2" }));
 
@@ -1191,7 +1187,7 @@ describe("CommandCenter shell", () => {
     });
     render(<CommandCenter />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-activity"));
+    selectCommandCenterSection("activity");
 
     await screen.findByTestId("cc-area-activity");
     expect(screen.getByTestId("cc-activity-agents").textContent).toContain("1");
@@ -1207,10 +1203,8 @@ describe("CommandCenter shell", () => {
   it("renders and routes the System tab exactly once", async () => {
     mockOverviewApi();
     render(<CommandCenter />);
-    expect(screen.getAllByTestId("command-center-tab-system")).toHaveLength(1);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-system"));
-    expect(screen.getByTestId("command-center-tab-system").getAttribute("aria-selected")).toBe("true");
+    selectCommandCenterSection("system");
     expect(screen.getByTestId("command-center-panel-system")).toBeTruthy();
     await screen.findByTestId("cc-area-system");
     expect(screen.getByTestId("cc-system-cpu-gauge")).toBeTruthy();
@@ -1219,10 +1213,8 @@ describe("CommandCenter shell", () => {
   it("renders and routes the Nodes tab when the nodes feature is enabled", () => {
     const addToast = vi.fn();
     render(<CommandCenter addToast={addToast} nodesEnabled={true} />);
-    expect(screen.getAllByTestId("command-center-tab-nodes")).toHaveLength(1);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-nodes"));
-    expect(screen.getByTestId("command-center-tab-nodes").getAttribute("aria-selected")).toBe("true");
+    selectCommandCenterSection("nodes");
     expect(screen.getByTestId("command-center-panel-nodes")).toBeTruthy();
     expect(screen.getByTestId("nodes-view")).toBeTruthy();
 
@@ -1232,16 +1224,13 @@ describe("CommandCenter shell", () => {
 
   it("omits the Nodes tab when the nodes feature is disabled", () => {
     render(<CommandCenter nodesEnabled={false} />);
-    expect(screen.queryByTestId("command-center-tab-nodes")).toBeNull();
   });
 
   it("renders and routes the GitHub tab exactly once", async () => {
     mockOverviewApi({ github: githubFixture(4, 2) });
     render(<CommandCenter />);
-    expect(screen.getAllByTestId("command-center-tab-github")).toHaveLength(1);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-github"));
-    expect(screen.getByTestId("command-center-tab-github").getAttribute("aria-selected")).toBe("true");
+    selectCommandCenterSection("github");
     expect(screen.getByTestId("command-center-panel-github")).toBeTruthy();
     await screen.findByTestId("cc-area-github");
     expect(screen.getByTestId("cc-github-filed").textContent).toContain("4");
@@ -1258,10 +1247,8 @@ describe("CommandCenter shell", () => {
     });
 
     render(<CommandCenter projectId="project-a" />);
-    expect(screen.getAllByTestId("command-center-tab-reliability")).toHaveLength(1);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-reliability"));
-    expect(screen.getByTestId("command-center-tab-reliability").getAttribute("aria-selected")).toBe("true");
+    selectCommandCenterSection("reliability");
     expect(screen.getByTestId("command-center-panel-reliability")).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Reliability" })).toBeTruthy();
     expect(apiMock).toHaveBeenCalledWith("/health/reliability?projectId=project-a", undefined);
@@ -1271,10 +1258,9 @@ describe("CommandCenter shell", () => {
     mockOverviewApi({ team: teamFixture() });
     render(<CommandCenter />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    selectCommandCenterSection("team");
 
     await screen.findByTestId("cc-area-team");
-    expect(screen.getByTestId("command-center-tab-team").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("cc-team-org-chart")).toBeTruthy();
     expect(screen.getByTestId("cc-team-heartbeat")).toBeTruthy();
     const alphaRow = screen.getByTestId("cc-team-row-agent-alpha");
@@ -1296,12 +1282,10 @@ describe("CommandCenter shell", () => {
   it("renders and routes the Workflows tab exactly once", async () => {
     mockOverviewApi({ workflows: workflowFixture() });
     render(<CommandCenter />);
-    expect(screen.getAllByTestId("command-center-tab-workflows")).toHaveLength(1);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-workflows"));
+    selectCommandCenterSection("workflows");
 
     await screen.findByTestId("cc-area-workflows");
-    expect(screen.getByTestId("command-center-tab-workflows").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("command-center-panel-workflows")).toBeTruthy();
     expect(screen.getByTestId("cc-workflows-table").textContent).toContain("Coding");
   });
@@ -1310,7 +1294,7 @@ describe("CommandCenter shell", () => {
     mockOverviewApi({ team: teamFixture([]) });
     render(<CommandCenter />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    selectCommandCenterSection("team");
 
     await screen.findByTestId("cc-area-team-empty");
     expect(screen.queryByTestId("cc-area-team")).toBeNull();
@@ -1322,7 +1306,7 @@ describe("CommandCenter shell", () => {
     mockOverviewApi({ team: new Promise((resolve) => { resolveTeam = resolve; }) });
     const { unmount } = render(<CommandCenter />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    selectCommandCenterSection("team");
     expect(screen.getByTestId("cc-area-team-loading")).toBeTruthy();
     await act(async () => {
       resolveTeam(teamFixture([]));
@@ -1332,7 +1316,7 @@ describe("CommandCenter shell", () => {
 
     mockOverviewApi({ team: new Error("team failed") });
     render(<CommandCenter />);
-    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    selectCommandCenterSection("team");
     await screen.findByTestId("cc-area-team-error");
     expect(screen.getByTestId("cc-area-team-error").textContent).toContain("team failed");
   });
@@ -1356,7 +1340,7 @@ describe("CommandCenter shell", () => {
     });
     render(<CommandCenter />);
 
-    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    selectCommandCenterSection("team");
 
     await screen.findByTestId("cc-area-team");
     expect(screen.getByTestId("cc-team-tokens-chart").textContent).toContain("No non-zero values");
@@ -1364,82 +1348,46 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("cc-area-team").textContent).not.toContain("NaN");
   });
 
-  it("keeps existing Command Center tab test ids after adding Team", () => {
+  it("lists every enabled section in the dropdown", () => {
     render(<CommandCenter nodesEnabled={true} />);
-    for (const id of [
-      "overview",
-      "tokens",
-      "tools",
-      "activity",
-      "productivity",
-      "workflows",
-      "ecosystem",
-      "github",
-      "signals",
-      "system",
-      "nodes",
-      "reliability",
-      "mission-control",
-      "team",
-    ]) {
-      expect(screen.getByTestId(`command-center-tab-${id}`)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("command-center-section-nav-trigger"));
+    for (const id of ["overview", "tokens", "tools", "activity", "productivity", "workflows", "ecosystem", "github", "signals", "system", "nodes", "reliability", "mission-control", "team"]) {
+      expect(screen.getByTestId(`command-center-section-option-${id}`)).toBeTruthy();
     }
   });
 
-  it("supports arrow-key navigation between tabs (roving tabindex)", () => {
+  it("supports keyboard navigation and selection in the dropdown", () => {
     render(<CommandCenter nodesEnabled={true} />);
-    const overviewTab = screen.getByTestId("command-center-tab-overview");
-    overviewTab.focus();
-    fireEvent.keyDown(overviewTab, { key: "ArrowRight" });
-    const tokensTab = screen.getByTestId("command-center-tab-tokens");
-    expect(tokensTab.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(tokensTab);
-
-    // FNXC:SystemPanel 2026-07-12-12:20: Plugins sits between System and Nodes.
-    const systemTab = screen.getByTestId("command-center-tab-system");
-    systemTab.focus();
-    fireEvent.keyDown(systemTab, { key: "ArrowRight" });
-    const pluginsTab = screen.getByTestId("command-center-tab-plugins");
-    expect(pluginsTab.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(pluginsTab);
-
-    fireEvent.keyDown(pluginsTab, { key: "ArrowRight" });
-    const nodesTab = screen.getByTestId("command-center-tab-nodes");
-    expect(nodesTab.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(nodesTab);
-
-    fireEvent.keyDown(nodesTab, { key: "ArrowRight" });
-    const reliabilityTab = screen.getByTestId("command-center-tab-reliability");
-    expect(reliabilityTab.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(reliabilityTab);
+    const trigger = screen.getByTestId("command-center-section-nav-trigger");
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    const overview = screen.getByTestId("command-center-section-option-overview");
+    expect(document.activeElement).toBe(overview);
+    fireEvent.keyDown(overview, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("command-center-section-option-tokens"));
+    fireEvent.keyDown(document.activeElement!, { key: "End" });
+    expect(document.activeElement).toBe(screen.getByTestId("command-center-section-option-mission-control"));
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+    expect(document.activeElement).toBe(trigger);
   });
 
-  it("wraps with ArrowLeft from the first tab to the last", () => {
+  it("closes the dropdown with Escape", () => {
     render(<CommandCenter />);
-    const overviewTab = screen.getByTestId("command-center-tab-overview");
-    overviewTab.focus();
-    fireEvent.keyDown(overviewTab, { key: "ArrowLeft" });
-    const last = screen.getByTestId("command-center-tab-mission-control");
-    expect(last.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(last);
+    const trigger = screen.getByTestId("command-center-section-nav-trigger");
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
-  it("activates with Enter and Space", () => {
-    render(<CommandCenter />);
-    const toolsTab = screen.getByTestId("command-center-tab-tools");
-    fireEvent.keyDown(toolsTab, { key: "Enter" });
-    expect(toolsTab.getAttribute("aria-selected")).toBe("true");
-
-    const activityTab = screen.getByTestId("command-center-tab-activity");
-    fireEvent.keyDown(activityTab, { key: " " });
-    expect(activityTab.getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("makes the active tabpanel focusable (Tab moves into the panel)", () => {
+  it("keeps the active section panel focusable", () => {
     render(<CommandCenter />);
     const panel = screen.getByTestId("command-center-panel-overview");
     expect(panel.getAttribute("tabindex")).toBe("0");
-    expect(panel.getAttribute("role")).toBe("tabpanel");
+    expect(panel.getAttribute("role")).toBe("region");
   });
 
   it("renders a date-range picker that returns focus to its trigger on dismiss", () => {

@@ -11,14 +11,23 @@
 import type { Task, TaskStore } from "@fusion/core";
 import { resolveProjectColumnsForRoles } from "@fusion/core";
 import { setImmediate as setImmediateCb } from "node:timers";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { executorLog } from "../logger.js";
 import { getResumeOrphanDelayMs } from "./resume-orphan-delay.js";
 import { isNoProgressNoTaskDoneFailure, isTaskWorkComplete } from "./task-predicates.js";
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
+// FNXC:MergeRetryReliability 2026-08-29-18:10 (CodeRabbit 17:59): an intent
+// older than this horizon is stale — the failure it describes predates an
+// operator requeue (task left the WIP lane and returned). Ignore and remove
+// it instead of parking the task with a dead run's message.
+const DEFERRED_PARK_INTENT_MAX_AGE_MS = 60 * 60 * 1000;
+
 export type ResumeOrphanedDeps = {
   store: TaskStore;
+  rootDir?: string;
   executing: Set<string>;
   recoveringCompleted: Set<string>;
   processWideGraphRouting: Set<string>;
@@ -65,6 +74,115 @@ export async function resumeOrphaned(deps: ResumeOrphanedDeps): Promise<void> {
   for (const task of inProgress) {
     if (yieldNext) await yieldEventLoop();
     yieldNext = true;
+    /*
+    FNXC:MergeRetryReliability 2026-08-29-14:35 (Greptile round-9 Issue 1): a
+    deferred terminal-park intent persisted by handleGraphFailure's deferred
+    chain means this task's failure was never durably written (store outage at
+    the time) — the engine died before the retry chain landed. PARK it now
+    with the original message instead of re-executing the failed run; only a
+    row that is no longer parkable (already terminal / deleted / paused)
+    clears the intent without a write.
+    */
+    // FNXC:MergeRetryReliability 2026-08-29-16:52 (CodeRabbit L1331): the
+    // reader must resolve the SAME task directory the writer used — including
+    // the rootDir/.fusion/tasks fallback when the store has no getTasksDir.
+    const tasksDir = typeof deps.store.getTasksDir === "function"
+      ? deps.store.getTasksDir()
+      : deps.rootDir ? join(deps.rootDir, ".fusion", "tasks") : undefined;
+    const intentPath = tasksDir ? join(tasksDir, task.id, "deferred-terminal-park.json") : undefined;
+    if (intentPath) {
+      let raw: string | undefined;
+      try {
+        raw = await readFile(intentPath, "utf-8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+          /*
+          FNXC:MergeRetryReliability 2026-09-04-01:51:
+          A failed read says nothing about the intent's contents. Retain it and
+          skip this pass so transient filesystem failures neither fabricate a
+          corruption park nor re-execute work whose terminal state is unknown.
+          */
+          executorLog.warn(`${task.id}: deferred terminal-park intent could not be read (${error instanceof Error ? error.message : String(error)}) — retaining intent and skipping orphan recovery`);
+          continue;
+        }
+        raw = undefined;
+      }
+      let deferredMessage: string | undefined;
+      let parsedColumnMovedAt: string | undefined;
+      if (raw !== undefined) {
+        try {
+          const parsed = JSON.parse(raw) as { message?: unknown; writtenAt?: unknown; columnMovedAt?: unknown };
+          parsedColumnMovedAt = typeof parsed.columnMovedAt === "string" ? parsed.columnMovedAt : undefined;
+          /*
+          FNXC:MergeRetryReliability 2026-09-04-01:51:
+          columnMovedAt identifies the execution that created an intent because
+          every move and requeue stamps it, unlike noisy updatedAt writes. A
+          matching legacy-missing value falls back to the age backstop.
+          */
+          const superseded = typeof parsed.columnMovedAt === "string"
+            && typeof task.columnMovedAt === "string"
+            && parsed.columnMovedAt !== task.columnMovedAt;
+          // FNXC:MergeRetryReliability 2026-08-29-18:10 (CodeRabbit 17:59): bound
+          // legacy intent recovery to a freshness horizon when no durable move
+          // identity is available.
+          const writtenAtMs = typeof parsed.writtenAt === "string" ? Date.parse(parsed.writtenAt) : Number.NaN;
+          const stale = !superseded && Number.isFinite(writtenAtMs) && Date.now() - writtenAtMs > DEFERRED_PARK_INTENT_MAX_AGE_MS;
+          if (superseded) {
+            await rm(intentPath, { force: true }).catch(() => undefined);
+            executorLog.log(`${task.id}: deferred terminal-park intent was superseded by a lane move — cleared, normal orphan recovery`);
+          } else if (stale) {
+            await rm(intentPath, { force: true }).catch(() => undefined);
+            executorLog.log(`${task.id}: deferred terminal-park intent is stale (> ${DEFERRED_PARK_INTENT_MAX_AGE_MS}ms old) — cleared, normal orphan recovery`);
+          } else if (typeof parsed.message === "string") {
+            deferredMessage = parsed.message;
+          } else {
+            deferredMessage = "deferred-terminal-park intent was corrupted by a crash mid-write — parked instead of re-executing";
+          }
+        } catch {
+          deferredMessage = "deferred-terminal-park intent was corrupted by a crash mid-write — parked instead of re-executing";
+        }
+      }
+      if (deferredMessage) {
+        let intentParked = false;
+        let intentSupersededAtApply = false;
+        try {
+          await deps.store.updateTaskAtomic(task.id, (current) => {
+            // FNXC:MergeRetryReliability 2026-08-29-17:45 (CodeRabbit L100): a
+            // lane-resident row may carry status undefined (never set back to
+            // null during requeue); === null would treat it as terminal and
+            // delete the intent without parking. Nullish comparison parks it.
+            // FNXC:MergeRetryReliability 2026-09-04-01:51: validate the lane
+            // identity in the atomic reducer as well as the startup snapshot;
+            // an operator can requeue after the file read but before this write.
+            if (!current || current.deletedAt || current.status != null || current.paused || current.userPaused) return null;
+            if (
+              typeof parsedColumnMovedAt === "string"
+              && typeof current.columnMovedAt === "string"
+              && current.columnMovedAt !== parsedColumnMovedAt
+            ) {
+              intentSupersededAtApply = true;
+              return null;
+            }
+            intentParked = true;
+            return { error: deferredMessage, status: "failed" };
+          });
+        } catch (error) {
+          executorLog.error(`${task.id}: deferred terminal-park intent could not be applied at restart (${error instanceof Error ? error.message : String(error)}) — keeping intent, not re-executing`);
+          continue;
+        }
+        await rm(intentPath, { force: true }).catch(() => undefined);
+        if (intentParked) {
+          executorLog.warn(`${task.id}: applied deferred terminal-park intent after restart — task parked failed with the original graph-failure message`);
+          continue;
+        }
+        if (intentSupersededAtApply) {
+          executorLog.log(`${task.id}: deferred terminal-park intent was superseded by a lane move during restart recovery — cleared, normal orphan recovery`);
+        } else {
+          executorLog.log(`${task.id}: deferred terminal-park intent cleared without write (row already terminal/deleted/paused)`);
+          continue;
+        }
+      }
+    }
     // Fast-path: if the task already completed its work (all steps done),
     // move it directly to in-review instead of re-executing from scratch.
     if (isTaskWorkComplete(task) && !task.mergeDetails) {

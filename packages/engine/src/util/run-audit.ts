@@ -181,11 +181,12 @@ export type GitMutationType =
   | "worktree:removal-refused-active-session"
   | "worktree:removal-forced-over-active-session"
   /*
-  FNXC:WorktreeCleanup 2026-08-29-00:54:
-  FN-251 records only the proof-gated discard and defensive preservation classifications so a
-  post-landing cleanup outcome is observable without making audit persistence a lifecycle gate.
+  FNXC:WorktreeCleanup 2026-09-01-06:09:
+  FN-9233 records defensive preservation and regenerable-output discard outcomes without exposing
+  porcelain paths or making audit persistence a worktree-removal lifecycle gate.
   */
   | "worktree:post-landing-ignored-content-discarded"
+  | "worktree:removal-discarded-regenerable-content"
   | "worktree:removal-preserved"
   | "worktree:active-session-reconciled"
   | "worktree:stale-lock-detected"
@@ -505,6 +506,8 @@ export type DatabaseMutationType =
   /* FNXC:ExternalBlock 2026-08-28-04:08: external-block telemetry contains ids and fixed classifications only; raw obstacle prose stays on the task. */
   | "task:external-block-parked"
   | "task:external-block-cleared"
+  /** Metadata: { taskId, column, trigger, outcome, completedStepCount } */
+  | "task:step-session-abort-contained"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
   /*
@@ -516,6 +519,8 @@ export type DatabaseMutationType =
   | "task:review-convergence-escalation"
   /** FNXC:ReviewVerdictNotes 2026-08-28-22:45: Records ids and fixed note-repair outcomes only; reviewer prose never enters run-audit. */
   | "task:review-notes-repaired"
+  /** FNXC:ReviewVerdictAuthority 2026-09-03-05:40: Records ids, the fixed repair outcome, and an authored repaired verdict only; reviewer prose never enters run-audit. */
+  | "task:review-verdict-repaired"
   /** FNXC:ReviewEmptyContent 2026-08-28-13:14: Records the ids-only terminal close for a provably empty Code Review input. */
   | "task:review-empty-content-parked"
   | "task:review-arbitration"
@@ -697,6 +702,12 @@ export type DatabaseMutationType =
   { taskId, column, orphanedCount, resultCount }.
   */
   | "task:reconcile-orphaned-pending-step-results"
+  /**
+   * Rewrites already-persisted singular content approvals that lack review-input proof to failed.
+   * Metadata is ids/counts/outcomes-only:
+   * { taskId, column, workflowStepId, repairedCount, resultCount, needsOperatorBypass }.
+   */
+  | "task:reconcile-unproven-review-approval"
   /* FNXC:StalledCardWatchdog 2026-07-26-19:40: detect-only backstop — a non-terminal card with no
      live session and no queued continuation that has not moved past the stall floor. */
   | "task:stall-watchdog-detected"

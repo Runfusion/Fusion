@@ -123,11 +123,11 @@ describe("tablet header controls", () => {
     expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
   });
 
-  it("opens overflow menu with Insights and Skills on tablet when trigger is clicked", () => {
+  it("opens overflow menu with Insights and Skills & Snippets on tablet when trigger is clicked", () => {
     renderTabletHeader({ onChangeView: noop, showSkillsTab: true, experimentalFeatures: { insights: true } });
     fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
     expect(screen.getByTestId("view-overflow-insights")).toBeDefined();
-    expect(screen.getByTestId("view-overflow-skills")).toBeDefined();
+    expect(screen.getByTestId("view-overflow-skills")).toHaveTextContent("Skills & Snippets");
   });
 
   it("calls onChangeView from overflow menu on tablet", () => {

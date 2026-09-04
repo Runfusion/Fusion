@@ -169,6 +169,12 @@ FN-6425 requires the chat expand control to stay inside the chat view as an icon
   white-space: nowrap;
 }
 
+.task-chat-precise-timestamp {
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) - (var(--space-xs) / 2));
+  white-space: nowrap;
+}
+
 /*
 FNXC:TaskDetailChat 2026-06-23-21:38:
 List View split-pane detail can be narrow while the global viewport is desktop-sized. Scope the compact/mobile agent-output group contract to that host so agent/provider headers stack above output blocks there without changing full-width modal, board main-panel, popped-out, or expanded chat desktop layouts.
@@ -431,9 +437,13 @@ FNXC:TaskChatTimestamps 2026-06-29-14:47:
 FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep block-level timestamps visually quieter than content, token-sized, and flex-contained so text bubbles, tool rows, native details summaries, and thinking summaries remain readable in both wide and narrow hosts.
 */
 .task-chat-entry-meta .task-chat-timestamp,
+.task-chat-entry-meta .task-chat-precise-timestamp,
 .task-chat-entry-label-row .task-chat-timestamp,
+.task-chat-entry-label-row .task-chat-precise-timestamp,
 .task-chat-tool-group-summary .task-chat-timestamp,
-.task-chat-thinking-summary .task-chat-timestamp {
+.task-chat-tool-group-summary .task-chat-precise-timestamp,
+.task-chat-thinking-summary .task-chat-timestamp,
+.task-chat-thinking-summary .task-chat-precise-timestamp {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -449,8 +459,11 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
 }
 
 .task-chat-entry-label-row .task-chat-timestamp,
+.task-chat-entry-label-row .task-chat-precise-timestamp,
 .task-chat-tool-group-summary .task-chat-timestamp,
-.task-chat-thinking-summary .task-chat-timestamp {
+.task-chat-tool-group-summary .task-chat-precise-timestamp,
+.task-chat-thinking-summary .task-chat-timestamp,
+.task-chat-thinking-summary .task-chat-precise-timestamp {
   max-inline-size: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -536,6 +549,7 @@ another nested disclosure or make individual tool rows look failed when only arc
 }
 
 .task-chat-composer {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
@@ -545,6 +559,17 @@ another nested disclosure or make individual tool rows look failed when only arc
   Activity Live and Planner Chat composers should share the same plain input-row treatment. Do not wrap Activity steering in a card shell or add extra composer padding around the input; the surrounding chat surface already owns the spacing.
   */
   padding: 0;
+}
+
+/*
+FNXC:ChatSnippets 2026-09-03-15:56:
+Activity Chat reuses the shared slash-menu rows and anchors the snippets list to its own composer. The menu is absent when closed or unmatched, so narrow task-detail hosts never retain an empty interactive shell.
+*/
+.task-chat-snippet-menu {
+  left: 0;
+  right: 0;
+  min-width: 0;
+  max-width: none;
 }
 
 .task-chat-composer-row {
@@ -647,8 +672,18 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
   }
 
   .task-chat-timestamp,
+  .task-chat-precise-timestamp,
   .task-chat-timing-labels {
     white-space: normal;
+  }
+
+  /*
+  FNXC:PreciseTaskLogTimestamps 2026-09-01-01:45:
+  FN-272 requires dated Live timestamps to remain fully readable at the mobile breakpoint. Let metadata rows wrap and remove the desktop 40% ellipsis constraint from precise values so the calendar date and millisecond clock can move to another line without clipping.
+  */
+  .task-chat-entry-label-row,
+  .task-chat-entry-meta {
+    flex-wrap: wrap;
   }
 
   .task-chat-entry--user {
@@ -667,7 +702,20 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
   .task-chat-tool-group-summary {
     align-items: center;
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+  }
+
+  .task-chat-entry-meta .task-chat-precise-timestamp,
+  .task-chat-entry-label-row .task-chat-precise-timestamp,
+  .task-chat-tool-group-summary .task-chat-precise-timestamp,
+  .task-chat-thinking-summary .task-chat-precise-timestamp {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: initial;
+    white-space: normal;
   }
 
   .task-chat-thinking-summary {

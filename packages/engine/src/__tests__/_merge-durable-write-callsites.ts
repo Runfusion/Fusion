@@ -300,6 +300,7 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   updateWorkflowSettingValues: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateWorkflowStep: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateWorkflowStepResultsFenced: { kind: "writer", reason: "atomically persists workflow-step results behind their durable fence" },
+  updateWorkflowStepResultsWithLogFenced: { kind: "writer", reason: "atomically persists workflow-step results and one task-log entry behind the same durable fence" },
   upsertMergeRequestRecord: { kind: "writer", reason: "persists or mutates TaskStore state" },
   upsertPrInfoByNumber: { kind: "writer", reason: "persists or mutates TaskStore state" },
   upsertTask: { kind: "writer", reason: "persists or mutates TaskStore state" },

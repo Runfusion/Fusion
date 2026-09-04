@@ -469,11 +469,10 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
  * reopen-to-todo/triage block clears `task.worktree` but deliberately leaves `task.branch`
  * intact, so an unguarded replan move produced a split-brain row: no worktree pointer, but
  * still owning `fusion/<id>`, which is still checked out in the worktree that was just
- * orphaned. The next planning entry (`ensureTaskWorktreeForPlanning` ->
- * `ensureGraphCustomNodeWorktree` -> `acquireTaskWorktree`) therefore skipped its resume
- * branch (gated on `task.worktree`), tried to create the SAME branch fresh, collided, and
- * fell into `cleanupConflictingWorktree` — force-removing the previous worktree and
- * `git branch -D`-ing `fusion/<id>` before re-cutting it off the integration branch.
+ * orphaned. Planning now preserves this metadata without acquiring or touching the checkout;
+ * the next write-capable execution node resumes through `ensureGraphCustomNodeWorktree` ->
+ * `acquireTaskWorktree`. Clearing the pointer would make that execution entry skip its resume
+ * branch, collide with the still-checked-out task branch, and destructively recreate the checkout.
  * Observed on FN-8603: two Plan Review REVISE bounces burned two full teardown +
  * `git worktree add` + init-command cycles (~10s each) and two branch delete/recreate rounds
  * for zero benefit — planning writes its spec to the task store, not the worktree, so the

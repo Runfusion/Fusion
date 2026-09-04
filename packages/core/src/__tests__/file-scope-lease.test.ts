@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { fileScopeLeaseBlocksCandidate, type FileScopeLeaseClassification } from "../index.js";
+import {
+  fileScopeLeaseBlocksCandidate,
+  normalizeOverlapScopeForTask,
+  taskHoldsUnmergedCheckout,
+  type FileScopeLeaseClassification,
+  type Task,
+} from "../index.js";
+import { classifyRepairFileScopeLease } from "../store.js";
 
 const active: FileScopeLeaseClassification = { kind: "active", waivedForTaskIds: [] };
 const none: FileScopeLeaseClassification = { kind: "none", waivedForTaskIds: [] };
@@ -49,5 +56,60 @@ describe("fileScopeLeaseBlocksCandidate", () => {
 
   it("never blocks when no lease exists", () => {
     expect(fileScopeLeaseBlocksCandidate(task("FN-001"), task("FN-002"), none)).toBe(false);
+  });
+});
+
+describe("planning checkout evidence", () => {
+  const lanes = {
+    wip: new Set(["building"]),
+    review: new Set(["reviewing"]),
+    terminal: new Set(["shipped", "filed"]),
+  };
+
+  it("classifies a checkout-free planning card as no repair lease", () => {
+    expect(classifyRepairFileScopeLease({ column: "drafting" }, lanes)).toBe("none");
+  });
+
+  it("keeps a replanned hold card with a retained checkout as a dormant repair lease", () => {
+    expect(classifyRepairFileScopeLease({ column: "drafting", worktree: "/worktrees/FN-282" }, lanes)).toBe("dormant");
+    expect(classifyRepairFileScopeLease({
+      column: "drafting",
+      workspaceWorktrees: { repo: { worktreePath: "/worktrees/FN-282/repo", branch: "fusion/fn-282" } },
+    }, lanes)).toBe("dormant");
+  });
+});
+
+describe("workspace checkout and overlap-scope helpers", () => {
+  const workspaceTask = (workspaceWorktrees: unknown, worktree?: string) => ({
+    worktree,
+    workspaceWorktrees,
+  }) as Pick<Task, "worktree" | "workspaceWorktrees">;
+
+  it("keeps the singular checkout and scope behavior unchanged without workspace entries", () => {
+    const singular = workspaceTask(undefined);
+    const scope = ["src/b.ts", "src/a.ts"];
+
+    expect(taskHoldsUnmergedCheckout(singular)).toBe(false);
+    expect(normalizeOverlapScopeForTask(singular, scope)).toEqual(scope);
+    expect(normalizeOverlapScopeForTask(workspaceTask(undefined, "/worktree"), scope)).toEqual(scope);
+  });
+
+  it("recognizes only non-empty workspace checkout paths", () => {
+    expect(taskHoldsUnmergedCheckout(workspaceTask({ "repo-a": { worktreePath: "/worktrees/repo-a" } }))).toBe(true);
+    expect(taskHoldsUnmergedCheckout(workspaceTask({ "repo-a": { worktreePath: "" } }))).toBe(false);
+  });
+
+  it("expands unprefixed workspace scope while preserving qualified and root declarations", () => {
+    const task = workspaceTask({ "./repo-b": {}, "repo-a": {} });
+    const scope = normalizeOverlapScopeForTask(task, ["repo-a/src/index.ts", "src/shared.ts", "repo-b"]);
+
+    expect(scope).toEqual([
+      "repo-a/src/index.ts",
+      "repo-a/src/shared.ts",
+      "repo-b",
+      "repo-b/src/shared.ts",
+      "src/shared.ts",
+    ]);
+    expect(normalizeOverlapScopeForTask(task, scope)).toEqual(scope);
   });
 });

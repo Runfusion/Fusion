@@ -52,10 +52,14 @@ describe("parseWorkflowStepVerdict", () => {
     expect(parsed.output).toBe(parsed.notes);
   });
 
-  it("keeps explicit approval prose in both output and notes", () => {
+  it("marks explicit approval prose malformed without a structured verdict", () => {
     const prose = "Verdict: APPROVE\n\nThe plan is ready.";
     const parsed = parseWorkflowStepOutput(prose);
-    expect(parsed).toMatchObject({ verdict: "APPROVE", notes: prose, output: prose });
+    expect(parsed).toEqual({
+      output: prose,
+      malformed: true,
+      malformedReason: "prose-approval-without-json",
+    });
   });
 
   it("derives notes from prose surrounding an empty structured verdict", () => {
@@ -203,15 +207,30 @@ describe("parseWorkflowStepVerdict", () => {
     });
   });
 
-  // "Any approved" — approval-family verdict tokens all map to an approve pass.
   it.each([
-    ['{"verdict":"APPROVED"}', "APPROVE"],
-    ['{"verdict":"approve_with_verdict"}', "APPROVE"],
+    ['{"verdict":"APPROVE"}', "APPROVE"],
     ['{"verdict":"APPROVE_WITH_NOTES","notes":"minor"}', "APPROVE_WITH_NOTES"],
-    ['{"verdict":"Approval"}', "APPROVE"],
-    ['{"verdict":"REJECT"}', "REVISE"],
-  ] as const)("classifies approval/revise family token %s", (input, expected) => {
+    ['{"verdict":"REVISE"}', "REVISE"],
+  ] as const)("accepts exact workflow verdict token %s", (input, expected) => {
     expect(parseWorkflowStepVerdict(input)?.verdict).toBe(expected);
+  });
+
+  it.each([
+    '{"verdict":"APPROVE_ANYTHING"}',
+    '{"verdict":"APPROVED"}',
+    '{"verdict":"approve"}',
+    '{"verdict":" APPROVE "}',
+    '{"verdict":"approve_with_verdict"}',
+    '{"verdict":"Approval"}',
+    '{"verdict":"REQUEST_REVISION"}',
+    '{"verdict":"REJECT"}',
+    '{"verdict":"RETHINK"}',
+  ])("rejects non-contract structured workflow verdict %s", (input) => {
+    expect(parseWorkflowStepVerdict(input)).toBeNull();
+    expect(parseWorkflowStepOutput(input)).toMatchObject({
+      malformed: true,
+      malformedReason: "unreadable-structured-verdict",
+    });
   });
 });
 
@@ -220,19 +239,13 @@ describe("inferWorkflowStepVerdictFromProse", () => {
     expect(inferWorkflowStepVerdictFromProse("REQUEST REVISION\nplease change")).toEqual({ verdict: "REVISE", notes: "please change" });
   });
 
-  it("infers approve from positive prose", () => {
-    expect(inferWorkflowStepVerdictFromProse("looks good")).toEqual({ verdict: "APPROVE", notes: "" });
+  it("does not infer approval from positive prose", () => {
+    expect(inferWorkflowStepVerdictFromProse("looks good")).toBeNull();
   });
 
-  it("infers explicit markdown verdicts from reviewer-style output", () => {
-    expect(inferWorkflowStepVerdictFromProse("## Spec Review\n\n### Verdict: APPROVE\n\nThe plan is ready.")).toEqual({
-      verdict: "APPROVE",
-      notes: "",
-    });
-    expect(inferWorkflowStepVerdictFromProse("Status: APPROVE_WITH_NOTES\n\nProceed with notes.")).toEqual({
-      verdict: "APPROVE_WITH_NOTES",
-      notes: "",
-    });
+  it("uses explicit markdown verdicts only for fail-safe revision", () => {
+    expect(inferWorkflowStepVerdictFromProse("## Spec Review\n\n### Verdict: APPROVE\n\nThe plan is ready.")).toBeNull();
+    expect(inferWorkflowStepVerdictFromProse("Status: APPROVE_WITH_NOTES\n\nProceed with notes.")).toBeNull();
     expect(inferWorkflowStepVerdictFromProse("Verdict: REVISE\n\nFix the plan.")).toEqual({
       verdict: "REVISE",
       notes: "",
@@ -244,9 +257,8 @@ describe("inferWorkflowStepVerdictFromProse", () => {
   });
 
   /*
-  FNXC:ReviewLeniency 2026-07-01-22:15:
-  A review whose text clearly approves must pass even when not perfectly structured.
-  These broadened phrasings previously fell through to malformed → blocking gate.
+  FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+  Approval phrasing remains diagnostic input, but prose alone never authorizes a pass.
   */
   it.each([
     "Approving — nice work.",
@@ -256,8 +268,8 @@ describe("inferWorkflowStepVerdictFromProse", () => {
     "This is acceptable.",
     "Good to merge.",
     "Passes review.",
-  ])("infers approve from broadened approval phrasing: %s", (text) => {
-    expect(inferWorkflowStepVerdictFromProse(text)).toEqual({ verdict: "APPROVE", notes: "" });
+  ])("does not infer approval from broadened approval phrasing: %s", (text) => {
+    expect(inferWorkflowStepVerdictFromProse(text)).toBeNull();
   });
 
   // Negation guard: a prose rejection must NOT be promoted to APPROVE.
@@ -376,20 +388,25 @@ describe("extractJsonObjectCandidates", () => {
 describe("classifyReviewVerdictToken", () => {
   it.each([
     ["APPROVE", "APPROVE"],
-    ["APPROVED", "APPROVE"],
     ["APPROVE_WITH_NOTES", "APPROVE"],
-    ["approve_with_verdict", "APPROVE"],
-    ["Approval", "APPROVE"],
     ["REVISE", "REVISE"],
-    ["REQUEST_REVISION", "REVISE"],
-    ["REJECT", "REVISE"],
     ["RETHINK", "RETHINK"],
-  ] as const)("classifies %s", (token, expected) => {
+  ] as const)("classifies exact protocol token %s", (token, expected) => {
     expect(classifyReviewVerdictToken(token)).toBe(expected);
   });
 
-  it("returns null for unknown tokens", () => {
-    expect(classifyReviewVerdictToken("PASS")).toBeNull();
-    expect(classifyReviewVerdictToken("")).toBeNull();
+  it.each([
+    "APPROVE_ANYTHING",
+    "APPROVED",
+    "approve",
+    " APPROVE ",
+    "approve_with_verdict",
+    "Approval",
+    "REQUEST_REVISION",
+    "REJECT",
+    "PASS",
+    "",
+  ])("returns null for non-contract token %s", (token) => {
+    expect(classifyReviewVerdictToken(token)).toBeNull();
   });
 });

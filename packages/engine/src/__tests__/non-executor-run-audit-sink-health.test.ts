@@ -135,6 +135,48 @@ describe("FN-9175 non-executor audit sink health", () => {
     });
 
 
+    it.each(hostileModes)("repairs an unproven review approval with a %s audit sink", async (mode) => {
+      const sink = sinkFor(mode);
+      const task = {
+        id: `FN-PROOF-${mode}`,
+        title: "proofless approval",
+        description: "",
+        column: "in-review",
+        status: null,
+        paused: false,
+        userPaused: false,
+        dependencies: [],
+        steps: [],
+        updatedAt: "2026-09-01T00:00:00.000Z",
+        workflowStepResults: [{
+          workflowStepId: "code-review",
+          workflowStepName: "Code Review",
+          phase: "pre-merge",
+          status: "passed",
+          reviewKind: "code",
+          verdict: "APPROVE",
+        }],
+      };
+      const store = {
+        ...sink.host,
+        listTasks: vi.fn(async (query: { column?: string }) => query.column === task.column ? [task] : []),
+        getTask: vi.fn(async () => task),
+        getSettings: vi.fn(async () => ({ autoMerge: true })),
+        updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
+        updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | null | undefined) => {
+          const patch = await updater(task);
+          if (patch) Object.assign(task, patch);
+          return task;
+        }),
+        logEntry: vi.fn(async () => undefined),
+      };
+      const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/fn-9175" });
+      await expect(settleBounded(sink, () => manager.reconcileUnprovenReviewApprovals())).resolves.toBe(1);
+      expect(task.workflowStepResults[0]).toMatchObject({ status: "failed" });
+      expect(task.workflowStepResults[0]).not.toHaveProperty("verdict");
+      manager.stop();
+    });
+
     it.each(hostileModes)("reclaims a wedged active merge with a %s audit sink", async (mode) => {
       const sink = sinkFor(mode);
       const task = { id: "FN-WEDGE", title: "wedged", description: "", column: "in-review", status: "reviewing", paused: false, dependencies: [], steps: [], updatedAt: "2026-01-01T00:00:00.000Z" };

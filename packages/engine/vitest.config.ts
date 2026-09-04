@@ -330,22 +330,6 @@ export default defineConfig({
           name: "engine-default",
           include: ["src/**/*.test.ts"],
           exclude: [
-            /*
-            FNXC:EngineTests 2026-08-22-21:57 (RUFU-156):
-            EVICTED the RUFU-072 quarantine of
-            src/notification/__tests__/task-wedge-notification.test.ts — quarantined
-            2026-08-11 (run-time OOM: superlinear RSS 64G->120G in ~90s, host halted
-            4+ times), deletion-ratchet deadline 2026-08-25, early eviction
-            CEO-approved 2026-08-21 on the audit findings. Rescue was infeasible on
-            this host (~3G free RAM, full swap; re-run after a watchdog trip is
-            forbidden; no deterministic code root cause). The test file is deleted
-            but remains in git history for a later root-cause rescue; the production
-            module notification/task-wedge-notification.ts is untouched. Upstream CI
-            runs the test on an empty ledger — the quarantine was local-machine
-            state only and was never carried into any PR.
-            */
-            // FNXC:WedgeNotificationFlake 2026-08-23-22:35 — quarantined (2nd sighting); see scripts/lib/test-quarantine.json for the evidence and the 2026-09-06 deletion deadline.
-            "src/__tests__/self-healing-pending-wedge-notification.test.ts",
             "src/__tests__/reliability-interactions/**/*.test.ts",
             // FNXC:PipelineSmoke 2026-08-23-14:52: FN-182's whole-pipeline fixture is opt-in, never a default or gate test.
             "src/__tests__/pipeline-smoke/**/*.test.ts",

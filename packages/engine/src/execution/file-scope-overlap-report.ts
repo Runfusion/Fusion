@@ -1,4 +1,4 @@
-import type { Settings, Task } from "@fusion/core";
+import { normalizeOverlapScopeForTask, type Settings, type Task } from "@fusion/core";
 import {
   filterPathsByIgnoreList,
   findFileScopeOverlaps,
@@ -23,6 +23,12 @@ export interface FileScopeOverlapBlockerStore {
   parseFileScopeFromPrompt(taskId: string): Promise<string[]>;
 }
 
+/*
+FNXC:WorkspaceFileOverlap 2026-08-30-19:14:
+Operator overlap reporting must normalize workspace scope exactly like scheduler admission. An unprefixed
+workspace declaration applies in each configured repository, so reporting must not describe a real blocker as
+non-overlapping merely because its peer used a repository-qualified path.
+*/
 /**
  * Explain an existing scheduler overlap blocker using the same prompt scopes and project ignore
  * policy used during scheduling. This is read-only reporting, never a blocker repair path.
@@ -63,8 +69,14 @@ export async function describeFileScopeOverlapBlocker(
     store.parseFileScopeFromPrompt(task.id),
     store.parseFileScopeFromPrompt(blocker.id),
   ]);
-  const filteredTaskScope = filterPathsByIgnoreList(taskScope, settings.overlapIgnorePaths ?? [], options);
-  const filteredBlockerScope = filterPathsByIgnoreList(blockerScope, settings.overlapIgnorePaths ?? [], options);
+  const filteredTaskScope = normalizeOverlapScopeForTask(
+    task,
+    filterPathsByIgnoreList(taskScope, settings.overlapIgnorePaths ?? [], options),
+  );
+  const filteredBlockerScope = normalizeOverlapScopeForTask(
+    blocker,
+    filterPathsByIgnoreList(blockerScope, settings.overlapIgnorePaths ?? [], options),
+  );
   const overlaps = findFileScopeOverlaps(filteredTaskScope, filteredBlockerScope);
 
   return {

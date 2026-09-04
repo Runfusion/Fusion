@@ -1,5 +1,57 @@
 import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_MAX_AUTO_MERGE_RETRIES } from "../tasks/in-review-stall.js";
-import type { CliAgentSettings, GlobalSettings, McpSecretRef, McpServerDefinition, ProjectSettings, Settings } from "../types.js";
+import type { ChatSnippet, CliAgentSettings, GlobalSettings, McpSecretRef, McpServerDefinition, ProjectSettings, Settings } from "../types.js";
+
+export const CHAT_SNIPPET_MAX_ENTRIES = 50;
+export const CHAT_SNIPPET_MAX_NAME_LENGTH = 48;
+export const CHAT_SNIPPET_MAX_PROMPT_LENGTH = 4_000;
+export const CHAT_SNIPPET_RESERVED_NAMES = Object.freeze([
+  "steer",
+  "focus",
+  "clear",
+  "new",
+  "skill",
+] as const);
+
+const CHAT_SNIPPET_NAME_PATTERN = /^[\p{L}\p{N}_-]+$/u;
+
+export function normalizeChatSnippetName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw.normalize("NFKC").trim().toLowerCase();
+  if (
+    name.length === 0
+    || name.length > CHAT_SNIPPET_MAX_NAME_LENGTH
+    || !CHAT_SNIPPET_NAME_PATTERN.test(name)
+    || (CHAT_SNIPPET_RESERVED_NAMES as readonly string[]).includes(name)
+  ) {
+    return null;
+  }
+  return name;
+}
+
+/*
+FNXC:ChatSnippets 2026-09-03-15:56:
+Normalize global snippets at one shared browser/core boundary. The first valid canonical duplicate wins, prompts remain byte-for-byte operator text, and invalid entries are removed rather than truncated or silently repaired.
+*/
+export function normalizeChatSnippets(value: unknown): ChatSnippet[] {
+  if (!Array.isArray(value)) return [];
+  const snippets: ChatSnippet[] = [];
+  const seenNames = new Set<string>();
+  for (const candidate of value) {
+    if (snippets.length >= CHAT_SNIPPET_MAX_ENTRIES) break;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const entry = candidate as Record<string, unknown>;
+    const name = normalizeChatSnippetName(entry.name);
+    if (!name || seenNames.has(name) || typeof entry.prompt !== "string") continue;
+    if (entry.prompt.trim().length === 0 || entry.prompt.length > CHAT_SNIPPET_MAX_PROMPT_LENGTH) continue;
+    seenNames.add(name);
+    snippets.push({ name, prompt: entry.prompt });
+  }
+  return snippets;
+}
+
+export function readChatSnippets(settings: { chatSnippets?: unknown }): ChatSnippet[] {
+  return normalizeChatSnippets(settings.chatSnippets);
+}
 
 export interface MergeRequestContractShadowSettingsSource {
   mergeRequestContractShadowEnabled?: boolean;
@@ -174,6 +226,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Quick Add keeps its historical Enter-to-submit behavior by default; only an operator's global preference may opt into newline-first entry.
   */
   quickAddSubmitOnEnter: true,
+  /*
+  FNXC:ChatSnippets 2026-09-03-15:56:
+  Keep the optional global key present but undefined so scope-key derivation remains complete without sharing a mutable default array. readChatSnippets supplies a fresh effective empty list.
+  */
+  chatSnippets: undefined,
   language: undefined,
   defaultProvider: undefined,
   defaultCredentialInstanceId: undefined,
@@ -498,19 +555,24 @@ export const DEFAULT_PROJECT_SETTINGS = {
   approvedCliAutonomyAdapters: undefined,
   enginePaused: false,
   engineLastActiveAt: undefined,
+  /*
+  FNXC:CapacityModel 2026-09-01-14:49:
+  Max Concurrent Tasks limits every AI-active task, including checkout-free planning. It is the
+  provider/LLM-load dimension and remains independent from execution-worktree capacity.
+  */
   maxConcurrent: 2,
   /*
   FNXC:VerificationConcurrency 2026-07-15-03:35:
   Default one verification at a time process-wide so concurrent tasks cannot each run verify:fast / full builds simultaneously and peg the host. Operators with spare cores may raise this in Scheduling settings (clamped 1–8 at runtime).
   */
   maxConcurrentVerifications: 1,
+  /* Execution-worktree holders only; planning runs read-only on the project root. */
   maxWorktrees: 4,
   /*
-  FNXC:CapacityModel 2026-07-28-11:20:
-  Worktrees ON is the default and the supported shape — everything (planning
-  included) runs in a worktree. OFF drops maxWorktrees from the dispatch gate so
-  capacity is total agents only; it is a counting statement, not permission for
-  concurrent agents to share one checkout.
+  FNXC:CapacityModel 2026-09-01-14:49:
+  Worktree limiting is ON by default and independently caps tasks that hold or are entering an
+  execution checkout. OFF removes that gate structurally; write-capable execution remains isolated
+  in task worktrees while checkout-free planning continues to count only against maxConcurrent.
   */
   worktreeLimitEnabled: true,
   pollIntervalMs: 15000,

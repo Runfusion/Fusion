@@ -35,3 +35,29 @@ describe("confirmed merge reconciliation", () => {
       .toBe(`task is marked '${status}'`);
   });
 });
+
+/*
+FNXC:ConfirmedMergeFinalization 2026-09-01-05:51:
+This planner runs on the merge-CONFIRMED fast path — the work has already landed. A row that reaches
+it without `steps` (an older row, a partial projection) used to throw "Cannot read properties of
+undefined (reading 'map')", which the merge loop's catch absorbed, so the landed task simply never
+finalized and never emitted task:merged. Asserting the type does not make the row real.
+*/
+describe("planConfirmedMergeChecklistReconciliation with an incomplete row", () => {
+  it("does not throw when the row carries no steps, so a landed merge still finalizes", () => {
+    expect(() =>
+      planConfirmedMergeChecklistReconciliation({ workflowStepResults: [] } as never),
+    ).not.toThrow();
+    expect(
+      planConfirmedMergeChecklistReconciliation({ workflowStepResults: [] } as never),
+    ).toEqual({ skippedStepIndexes: [], reconciledWorkflowStepIds: [] });
+  });
+
+  it("still reconciles pending workflow step results when steps are absent", () => {
+    expect(
+      planConfirmedMergeChecklistReconciliation({
+        workflowStepResults: [{ workflowStepId: "code-review", status: "pending" }],
+      } as never),
+    ).toEqual({ skippedStepIndexes: [], reconciledWorkflowStepIds: ["code-review"] });
+  });
+});

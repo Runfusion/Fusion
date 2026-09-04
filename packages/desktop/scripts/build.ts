@@ -13,7 +13,7 @@ const desktopClientDistDir = join(desktopDistDir, "client");
 // to the Electron main/preload bundles — they resolve from node_modules at runtime.
 // @fusion/engine was missing here, so esbuild followed local-runtime.ts's dynamic
 // `import("@fusion/engine")` and tried to bundle engine's transitive node-pty
-// (@homebridge/node-pty-prebuilt-multiarch) native binaries, failing with
+// (@lydell/node-pty) Node-API native binaries, failing with
 // "No loader is configured for .node files" and breaking every desktop release build.
 /*
  * FNXC:SqliteFinalRemoval 2026-06-24-16:10:

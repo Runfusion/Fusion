@@ -1,4 +1,4 @@
-import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from "@fusion/core";
+import type { AgentLogEntry, AgentRole, ChatSnippet, SteeringComment, Task, TaskDetail } from "@fusion/core";
 import { isCompleteColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -10,6 +10,7 @@ import { addSteeringComment, refineTask } from "../api";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { isLogGapMarker } from "../hooks/logStreamReconcile";
 import { useComposerDictation } from "../hooks/useComposerDictation";
+import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { MicButton } from "./MicButton";
 import type { ToastType } from "../hooks/useToast";
 import { getErrorMessage } from "@fusion/core";
@@ -19,6 +20,7 @@ import { PLANNER_AGENT_ROLE } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { ProviderIcon } from "./ProviderIcon";
+import { PreciseTimestamp } from "./PreciseTimestamp";
 import {
   createChatInputAutosizeController,
   type ChatInputAutosizeController,
@@ -28,6 +30,8 @@ import { ToolCallDetails } from "./ToolCallDetails";
 import { ThinkingTrace, isInteractiveDisclosureTarget } from "./ThinkingTrace";
 import { parseRuntimeModelMarker } from "./effective-model-resolution";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
+import { getSlashTriggerMatch } from "./chat-commands";
+import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import "./TaskChatTab.css";
 
 interface TaskChatTabProps {
@@ -197,6 +201,10 @@ function getLatestEntryTimestamp(entries: readonly AgentLogEntry[]): string {
 /*
 FNXC:TaskChatTimestamps 2026-06-29-14:37:
 Task Detail Chat requires per-block timestamps in addition to existing group and user headers so operators can scan when each text, tool, thinking, or steering block was produced. Reuse the shared relative-time formatter and return null for empty or invalid dates so transcript blocks never render timestamp shells without meaningful time text.
+
+FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+FN-272 retains each Live transcript's relative timestamp for scanability and places a shared precise local wall-clock reading beside it.
+The relative-label early return remains the timestamp-shell guard, so invalid or absent log times still render neither label.
 */
 function getRelativeTimestamp(timestamp: string | undefined): string {
   return timestamp ? formatRelativeTimeAgo(timestamp) : "";
@@ -206,9 +214,12 @@ function TaskChatTimestamp({ timestamp, testId = "task-chat-block-time", label =
   const relativeTime = getRelativeTimestamp(timestamp);
   if (!relativeTime) return null;
   return (
-    <span className="task-chat-timestamp" data-testid={testId} aria-label={label}>
-      {relativeTime}
-    </span>
+    <>
+      <span className="task-chat-timestamp" data-testid={testId} aria-label={label}>
+        {relativeTime}
+      </span>
+      <PreciseTimestamp timestamp={timestamp} className="task-chat-precise-timestamp" testId={`${testId}-precise`} />
+    </>
   );
 }
 
@@ -665,9 +676,16 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
       <div className="task-chat-user-header">
         <div className="task-chat-role-label">{t("taskChat.you", "You")}</div>
         {relativeTime ? (
-          <span className="task-chat-timestamp" data-testid="task-chat-user-time">
-            {relativeTime}
-          </span>
+          <>
+            <span className="task-chat-timestamp" data-testid="task-chat-user-time">
+              {relativeTime}
+            </span>
+            <PreciseTimestamp
+              timestamp={message.createdAt}
+              className="task-chat-precise-timestamp"
+              testId="task-chat-user-time-precise"
+            />
+          </>
         ) : null}
       </div>
       <article className="task-chat-entry task-chat-entry--user" data-testid="task-chat-entry-user">
@@ -687,6 +705,10 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
   const chatMessageLayout = useChatMessageLayout();
   const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
+  const chatSnippets = useChatSnippets();
+  const [showSnippetMenu, setShowSnippetMenu] = useState(false);
+  const [snippetFilter, setSnippetFilter] = useState("");
+  const [highlightedSnippetIndex, setHighlightedSnippetIndex] = useState(0);
   const [sending, setSending] = useState(false);
   const [loadingIndicatorTaskId, setLoadingIndicatorTaskId] = useState<string | null>(null);
   const sendingRef = useRef(false);
@@ -731,6 +753,14 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     ? t("taskChat.donePlaceholder", "Start a refinement task for this completed task")
     : t("taskChat.activePlaceholder", "Steer the currently executing agent");
   const canSend = draft.trim().length > 0 && !sending;
+  const filteredSnippets = useMemo(
+    () => filterChatSnippets(snippetFilter, chatSnippets),
+    [chatSnippets, snippetFilter],
+  );
+
+  useEffect(() => {
+    setHighlightedSnippetIndex(0);
+  }, [snippetFilter]);
 
   useEffect(() => {
     if (!loading || transcriptItemCount > 0) {
@@ -956,10 +986,57 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     setTranscriptFollowing(true);
   }, [setTranscriptFollowing]);
 
+  const handleSnippetSelect = useCallback((snippet: ChatSnippet) => {
+    const applied = applySnippetToDraft(
+      draft,
+      snippet,
+      textareaRef.current?.selectionStart ?? draft.length,
+    );
+    if (!applied) return;
+    setDraft(applied.value);
+    setShowSnippetMenu(false);
+    setSnippetFilter("");
+    setHighlightedSnippetIndex(0);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(applied.cursorPosition, applied.cursorPosition);
+      autosizeRef.current?.resize();
+    });
+  }, [draft]);
+
+  const handleDraftChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = event.target.value;
+    setDraft(nextValue);
+    const triggerMatch = getSlashTriggerMatch(nextValue.slice(0, event.target.selectionStart ?? nextValue.length));
+    if (triggerMatch) {
+      setShowSnippetMenu(true);
+      setSnippetFilter(triggerMatch.filter);
+    } else {
+      setShowSnippetMenu(false);
+      setSnippetFilter("");
+    }
+  }, []);
+
   const handleSubmit = useCallback(async (event?: React.FormEvent) => {
     event?.preventDefault();
     const text = draft.trim();
     if (!text || sendingRef.current) return;
+    const snippetInvocation = matchStandaloneSnippetInvocation(text, chatSnippets);
+    if (snippetInvocation) {
+      /*
+      FNXC:ChatSnippets 2026-09-03-15:56:
+      Activity Chat expands a standalone /name before the duplicate-send guard, optimistic transcript, refinement, or steering APIs. The inserted prompt stays editable and requires a second explicit submit.
+      */
+      setDraft(snippetInvocation.prompt);
+      setShowSnippetMenu(false);
+      setSnippetFilter("");
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(snippetInvocation.prompt.length, snippetInvocation.prompt.length);
+        autosizeRef.current?.resize();
+      });
+      return;
+    }
     sendingRef.current = true;
 
     const latestTimestampMs = getLatestTranscriptTimestampMs(entries, userMessages);
@@ -1013,20 +1090,43 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
       sendingRef.current = false;
       setSending(false);
     }
-  }, [addToast, draft, entries, isDoneTask, onRefinementCreated, onTaskUpdated, projectId, task.id, userMessages]);
+  }, [addToast, chatSnippets, draft, entries, isDoneTask, onRefinementCreated, onTaskUpdated, projectId, task.id, userMessages]);
 
   /**
    * FNXC:TaskDetailChat 2026-06-13-19:05:
    * Task-detail chat follows chat composer keyboard expectations: Enter sends, Shift+Enter keeps textarea newline entry, Cmd/Ctrl+Enter remains supported for existing users, and IME composition Enter is ignored so CJK candidate selection is not submitted mid-composition.
    */
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter") return;
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.shiftKey) return;
+    if (showSnippetMenu && event.key === "ArrowDown") {
+      event.preventDefault();
+      if (filteredSnippets.length > 0) {
+        setHighlightedSnippetIndex((current) => (current + 1) % filteredSnippets.length);
+      }
+      return;
+    }
+    if (showSnippetMenu && event.key === "ArrowUp") {
+      event.preventDefault();
+      if (filteredSnippets.length > 0) {
+        setHighlightedSnippetIndex((current) => current === 0 ? filteredSnippets.length - 1 : current - 1);
+      }
+      return;
+    }
+    if (showSnippetMenu && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && filteredSnippets.length > 0) {
+      event.preventDefault();
+      handleSnippetSelect(filteredSnippets[highlightedSnippetIndex] ?? filteredSnippets[0]!);
+      return;
+    }
+    if (showSnippetMenu && event.key === "Escape") {
+      event.preventDefault();
+      setShowSnippetMenu(false);
+      return;
+    }
+    if (event.key !== "Enter" || event.shiftKey) return;
 
     event.preventDefault();
     void handleSubmit();
-  }, [handleSubmit]);
+  }, [filteredSnippets, handleSnippetSelect, handleSubmit, highlightedSnippetIndex, showSnippetMenu]);
 
   /*
   FNXC:TaskDetailChat 2026-07-01-00:00:
@@ -1147,13 +1247,32 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
       </div>
 
       <form className="task-chat-composer" onSubmit={handleSubmit} aria-label={composerFormLabel}>
+        {showSnippetMenu && filteredSnippets.length > 0 ? (
+          <div className="chat-skill-menu task-chat-snippet-menu" data-testid="task-chat-snippet-menu" role="listbox" aria-label={t("chat.snippetSuggestions", "Snippet suggestions")}>
+            {filteredSnippets.map((snippet, index) => (
+              <button
+                key={snippet.name}
+                type="button"
+                role="option"
+                aria-selected={index === highlightedSnippetIndex}
+                className={`chat-skill-menu-item${index === highlightedSnippetIndex ? " chat-skill-menu-item--highlighted" : ""}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setHighlightedSnippetIndex(index)}
+                onClick={() => handleSnippetSelect(snippet)}
+              >
+                <span className="chat-skill-menu-item-name">/{snippet.name}</span>
+                <span className="chat-skill-menu-item-description">{t("chat.snippetSuggestion", "Insert saved prompt")}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="task-chat-composer-row">
           <textarea
             ref={handleComposerRef}
             className="input task-chat-input"
             value={draft}
             placeholder={composerPlaceholder}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={handleDraftChange}
             onKeyDown={handleKeyDown}
             disabled={sending}
             aria-label={t("taskChat.messageActiveAgentSession", "Message active agent session")}

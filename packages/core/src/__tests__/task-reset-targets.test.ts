@@ -24,7 +24,7 @@ function task(overrides: Partial<Task>): Task {
 
 describe("buildTaskResetWorktreePlan", () => {
   it("plans a singular task worktree using the project worktrees root", () => {
-    const worktreePath = join(rootDir, ".worktrees", "fn-203");
+    const worktreePath = join(rootDir, ".fusion", "worktrees", "fn-203");
     const plan = buildTaskResetWorktreePlan(task({ worktree: worktreePath, branch: "fusion/fn-203" }), { rootDir, settings: {} });
 
     expect(plan).toMatchObject({
@@ -38,15 +38,15 @@ describe("buildTaskResetWorktreePlan", () => {
       canonicalPath: resolve(worktreePath),
       branch: "fusion/fn-203",
       repoRootDir: rootDir,
-      containmentRoot: join(rootDir, ".worktrees"),
-      reservationWorktreesDir: join(rootDir, ".worktrees"),
+      containmentRoot: join(rootDir, ".fusion", "worktrees"),
+      reservationWorktreesDir: join(rootDir, ".fusion", "worktrees"),
       aliasRepoRels: [],
     })]);
     expect(plan.branchCleanupTargets).toEqual([{ repoRootDir: rootDir, recordedBranches: ["fusion/fn-203"] }]);
   });
 
   it("plans the canonical singular target without a recorded worktree", () => {
-    const canonicalPath = join(rootDir, ".worktrees", "fn-203");
+    const canonicalPath = join(rootDir, ".fusion", "worktrees", "fn-203");
     const plan = buildTaskResetWorktreePlan(task({}), { rootDir, settings: {} });
     expect(plan.canonicalSingularWorktreePath).toBe(canonicalPath);
     expect(plan.targets).toEqual([expect.objectContaining({
@@ -58,7 +58,7 @@ describe("buildTaskResetWorktreePlan", () => {
   });
 
   it("deduplicates a recorded canonical singular worktree", () => {
-    const canonicalPath = join(rootDir, ".worktrees", "fn-203");
+    const canonicalPath = join(rootDir, ".fusion", "worktrees", "fn-203");
     const plan = buildTaskResetWorktreePlan(task({ worktree: canonicalPath }), { rootDir, settings: {} });
     expect(plan.targets).toHaveLength(1);
     expect(plan.targets[0]?.canonicalPath).toBe(canonicalPath);
@@ -71,7 +71,7 @@ describe("buildTaskResetWorktreePlan", () => {
       branch: " fusion/fn-203 ",
     }), { rootDir, settings: {} });
     expect(plan.targets.map((target) => target.canonicalPath)).toEqual([
-      join(rootDir, ".worktrees", "fn-203"),
+      join(rootDir, ".fusion", "worktrees", "fn-203"),
       legacyPath,
     ]);
     expect(plan.branchCleanupTargets).toEqual([{ repoRootDir: rootDir, recordedBranches: ["fusion/fn-203"] }]);
@@ -104,8 +104,8 @@ describe("buildTaskResetWorktreePlan", () => {
 
     expect(plan).toMatchObject({ kind: "workspace", layout: "workspace-task-dir", workspaceTaskDir: taskDir });
     expect(plan.targets).toEqual([
-      expect.objectContaining({ repoRel: "apps/api", repoRootDir: join(rootDir, "apps/api"), containmentRoot: taskDir, reservationWorktreesDir: join(rootDir, "apps/api/.worktrees") }),
-      expect.objectContaining({ repoRel: "apps/web", repoRootDir: join(rootDir, "apps/web"), containmentRoot: taskDir, reservationWorktreesDir: join(rootDir, "apps/web/.worktrees") }),
+      expect.objectContaining({ repoRel: "apps/api", repoRootDir: join(rootDir, "apps/api"), containmentRoot: taskDir, reservationWorktreesDir: join(rootDir, "apps/api/.fusion/worktrees") }),
+      expect.objectContaining({ repoRel: "apps/web", repoRootDir: join(rootDir, "apps/web"), containmentRoot: taskDir, reservationWorktreesDir: join(rootDir, "apps/web/.fusion/worktrees") }),
     ]);
     expect(plan.branchCleanupTargets).toEqual([
       { repoRootDir: join(rootDir, "apps/api"), recordedBranches: ["fusion/fn-203"] },
@@ -122,8 +122,8 @@ describe("buildTaskResetWorktreePlan", () => {
     expect(plan).toMatchObject({ kind: "workspace", layout: "workspace-legacy" });
     expect(plan.workspaceTaskDir).toBeUndefined();
     expect(plan.targets.map(({ containmentRoot, reservationWorktreesDir }) => [containmentRoot, reservationWorktreesDir])).toEqual([
-      [join(rootDir, "api/.worktrees"), join(rootDir, "api/.worktrees")],
-      [join(rootDir, "web/.worktrees"), join(rootDir, "web/.worktrees")],
+      [join(rootDir, "api/.fusion/worktrees"), join(rootDir, "api/.fusion/worktrees")],
+      [join(rootDir, "web/.fusion/worktrees"), join(rootDir, "web/.fusion/worktrees")],
     ]);
     expect(plan.branchCleanupTargets).toEqual([
       { repoRootDir: join(rootDir, "api"), recordedBranches: ["fusion/fn-203"] },

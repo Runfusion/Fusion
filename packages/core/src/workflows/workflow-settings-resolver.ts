@@ -34,6 +34,7 @@ import {
 } from "./workflow-ir-resolver.js";
 import { resolveEffectiveSettingValues, findOrphanedSettingValues } from "./workflow-settings.js";
 import { BUILTIN_WORKFLOW_SETTINGS, MEMORY_CONSOLIDATION_ENABLED_SETTING_ID, PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID } from "./builtin-workflow-settings.js";
+import { DEFAULT_CODE_REVIEW_MAX_REVISIONS } from "./builtin-code-review-group.js";
 import type { WorkflowSettingDefinition, WorkflowIr, WorkflowOptionalGroupConfig } from "./workflow-ir-types.js";
 import { PLANNER_OVERSIGHT_LEVELS, DEFAULT_PLANNER_OVERSIGHT_LEVEL, type PlannerOversightLevel } from "../types.js";
 
@@ -63,8 +64,11 @@ export interface ResolveOptionalReviewRevisionBudgetInput {
 /**
  * Resolve the automatic remediation budget for graph-native optional review gates.
  *
- * FNXC:WorkflowRevisionBudget 2026-06-30-20:31:
- * Built-in Plan Review/spec and Code Review remediation are unbounded when their workflow value is unset. A stored non-negative integer workflow value wins first (including `0` to disable automatic remediation), then an authored node `maxRevisions` keeps custom workflow semantics, and only matching built-in review groups fall back to unbounded; Browser Verification and custom optional gates keep their caller fallback.
+ * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
+ * A stored non-negative workflow value wins first (including `0`), then an authored node
+ * `maxRevisions` preserves custom and Compound Engineering policy. Only an otherwise-unset Code
+ * Review receives the bounded built-in default; Plan Review remains unbounded behind its separate
+ * replan cap, while Browser Verification and custom optional gates keep their caller fallback.
  */
 export function resolveOptionalReviewRevisionBudget({
   optionalGroupId,
@@ -81,7 +85,8 @@ export function resolveOptionalReviewRevisionBudget({
   const nodeBudget = asRevisionBudget(nodeMaxRevisions);
   if (nodeBudget !== undefined) return nodeBudget;
 
-  if (settingId) return "unbounded";
+  if (optionalGroupId === "code-review") return DEFAULT_CODE_REVIEW_MAX_REVISIONS;
+  if (optionalGroupId === "plan-review") return "unbounded";
   return fallbackMaxRevisions;
 }
 

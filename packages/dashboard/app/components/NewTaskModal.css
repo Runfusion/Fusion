@@ -152,6 +152,16 @@ The GitHub reference picker is a compact prompt-seeding helper inside the primar
   white-space: nowrap;
 }
 
+/*
+FNXC:NewTaskDialogAffordances 2026-09-01-05:04:
+Flex growth on a wrapped phone action row made an icon-only priority button absorb its entire final line. Icon-only controls stay compact while retaining the established 36px touch target.
+*/
+.task-form-description-actions .task-form-inline-icon-btn {
+  flex: 0 0 auto;
+  min-width: 36px;
+  justify-content: center;
+}
+
 .task-form-action-icon {
   vertical-align: middle;
 }
@@ -657,7 +667,7 @@ The New Task create workflow selector is a real dropdown so workflow identity ic
 
   .task-form-description-actions .btn {
     min-height: 36px;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
   }
 
   .task-form-more-options-toggle {

@@ -1709,6 +1709,29 @@ describe("SettingsModal", () => {
       }
     });
 
+    it("skips the manual-paste confirmation for remote Codex device code", async () => {
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth", requiresManualCode: false }],
+      });
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://auth.openai.com/codex/device",
+        deviceCode: { userCode: "ABCD-1234", verificationUri: "https://auth.openai.com/codex/device" },
+      });
+
+      render(<SettingsModal onClose={noop} addToast={vi.fn()} />);
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Authentication" }));
+      const codexCard = screen.getByTestId("auth-provider-icon-openai-codex").closest(".auth-provider-card") as HTMLElement;
+      await settingsModalUser.click(within(codexCard).getByRole("button", { name: "Login" }));
+
+      expect(await within(codexCard).findByText("ABCD-1234")).toBeInTheDocument();
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("provider-login-dialog-openai-codex")).toBeNull();
+      expect(within(codexCard).queryByTestId("auth-manual-code-openai-codex")).not.toBeInTheDocument();
+      expect(openSpy).not.toHaveBeenCalled();
+    });
+
     it("uses execCommand fallback when clipboard API is unavailable", async () => {
       const addToast = vi.fn();
       Object.defineProperty(navigator, "clipboard", {

@@ -1,3 +1,8 @@
+/*
+FNXC:SpacingTokens 2026-09-01-05:06:
+The spacing vocabulary intentionally has no --space-2xs token, so compact history elements use the
+established half-step calculation instead of silently dropping their padding and margin declarations.
+*/
 .task-history {
   display: flex;
   flex-direction: column;
@@ -32,7 +37,7 @@
   align-items: center;
   justify-content: center;
   min-width: var(--space-lg);
-  padding: var(--space-2xs) var(--space-xs);
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text-muted);
@@ -73,7 +78,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
-  margin-top: var(--space-2xs);
+  margin-top: calc(var(--space-xs) / 2);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }

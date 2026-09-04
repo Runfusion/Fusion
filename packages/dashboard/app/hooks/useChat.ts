@@ -165,11 +165,11 @@ export interface UseChatReturn {
     selection: { agentId?: string; modelProvider?: string | null; modelId?: string | null },
   ) => Promise<void>;
   /**
-   * FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+   * FNXC:Chat-ThinkingLevel 2026-09-01-05:14:
    * Change an existing (already-created) session's reasoning-effort level mid-conversation via
-   * PATCH /api/chat/sessions/:id; distinct from the create-time picker in NewChatDialog
-   * (FN-7775). `level: ""` clears the override back to inherit the project/global default.
-   * Mirrors renameSession's optimistic-update-with-rollback contract.
+   * PATCH /api/chat/sessions/:id. This remains independent from the project Chat default
+   * configured in Settings. `level: ""` clears the override back to inherit the project/global
+   * default. Mirrors renameSession's optimistic-update-with-rollback contract.
    */
   setSessionThinkingLevel: (id: string, level: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;

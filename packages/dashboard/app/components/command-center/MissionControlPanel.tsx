@@ -5,6 +5,7 @@ import type { LiveSnapshot, LiveSession, ColumnCount } from "@fusion/core";
 import { api, withProjectId } from "../../api/legacy";
 import { subscribeSse } from "../../sse-bus";
 import { useProjectContextGuard } from "../../hooks/useProjectContextGuard";
+import { isForeignTaskEvent, readTaskEventProjectId } from "../../utils/taskEventProjectScope";
 import { Funnel, type FunnelStage } from "./charts/Funnel";
 import { isInProgressColumn } from "./liveSnapshotMetrics";
 import "./MissionControlPanel.css";
@@ -230,7 +231,13 @@ export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
 
     const unsubscribe = subscribeSse("/api/events", {
       events: Object.fromEntries(
-        LIVE_REFETCH_EVENTS.map((name) => [name, () => void load()]),
+        LIVE_REFETCH_EVENTS.map((name) => [name, (event: MessageEvent) => {
+          try {
+            if (!isForeignTaskEvent(readTaskEventProjectId(JSON.parse(event.data)), projectId)) void load();
+          } catch {
+            void load();
+          }
+        }]),
       ),
       // On reconnect we may have missed events while the stream was down —
       // refetch authoritative state.

@@ -1417,6 +1417,7 @@ export {
   startFnBinaryLinkLocal,
   startFnBinaryUseGlobal,
   startSystemRebuild,
+  startSystemSourceUpdate,
 } from "./system/system-panel.js";
 export type {
   ResearchFindingPromotionInput,

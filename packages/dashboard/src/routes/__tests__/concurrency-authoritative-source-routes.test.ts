@@ -51,14 +51,14 @@ async function requestReportingSurfaces(settings: Record<string, unknown>) {
 /*
 FNXC:CapacityModel 2026-08-21-17:24:
 FN-9185 requires a production-route matrix rather than route-local payload checks.
-Every reporter must read the same live project blob and expose the resolver's configured,
-effective, and binding values for unset, configured, and worktree-bound states.
+Every reporter must read the same live project blob and expose the independent agent and
+execution-worktree dimensions for unset, configured, and worktree-disabled states.
 */
 describe("concurrency reporting route authority", () => {
   it.each([
-    ["unset", {}, { maxConcurrent: 2, effectiveLimit: 2, bindingKnob: "maxConcurrent" }],
-    ["configured", { maxConcurrent: 6, maxWorktrees: 9, worktreeLimitEnabled: true }, { maxConcurrent: 6, effectiveLimit: 6, bindingKnob: "maxConcurrent" }],
-    ["worktree-bound", { maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: true }, { maxConcurrent: 8, effectiveLimit: 4, bindingKnob: "maxWorktrees" }],
+    ["unset", {}, { maxConcurrent: 2, maxWorktrees: 4, worktreeLimitEnabled: true }],
+    ["configured", { maxConcurrent: 6, maxWorktrees: 9, worktreeLimitEnabled: true }, { maxConcurrent: 6, maxWorktrees: 9, worktreeLimitEnabled: true }],
+    ["worktree-disabled", { maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: false }, { maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: false }],
   ] as const)("reports matching live capacity through all routes for %s settings", async (_state, settings, expected) => {
     const { config, executorStats, projectConfig, liveStore } = await requestReportingSurfaces(settings);
 
@@ -66,8 +66,8 @@ describe("concurrency reporting route authority", () => {
       expect(response.status).toBe(200);
       expect(response.body).toMatchObject({
         maxConcurrent: expected.maxConcurrent,
-        effectiveMaxConcurrent: expected.effectiveLimit,
-        concurrencyBindingKnob: expected.bindingKnob,
+        maxWorktrees: expected.maxWorktrees,
+        worktreeLimitEnabled: expected.worktreeLimitEnabled,
       });
     }
     expect(liveStore.getSettingsFast).toHaveBeenCalled();
@@ -81,8 +81,8 @@ describe("concurrency reporting route authority", () => {
     for (const response of [config, executorStats, projectConfig]) {
       expect(response.body).toMatchObject({
         maxConcurrent: capacity.maxConcurrent,
-        effectiveMaxConcurrent: capacity.effectiveLimit,
-        concurrencyBindingKnob: capacity.bindingKnob,
+        maxWorktrees: capacity.worktreeLimit,
+        worktreeLimitEnabled: true,
       });
     }
     expect(liveStore.getSettingsFast).toHaveBeenCalled();

@@ -798,16 +798,44 @@ describe("mixed-vocabulary detection", () => {
 describe("the ratchet follows the count down", () => {
   const repoRoot = new URL("../../../../", import.meta.url).pathname;
   const cliPath = `${repoRoot}scripts/lifecycle-column-census.mjs`;
-  const realBaseline = `${repoRoot}scripts/lib/lifecycle-column-census-baseline.json`;
 
   /*
-  FNXC:LifecycleColumnCensus 2026-07-31-17:12 (test wall-time): the `--update-baseline` tree-sync below
-  is identical fixture setup for every ratchet case — it produces the SAME tree-accurate baseline JSON
-  each time (one repo state, one run) — so run that full-AST census once and reuse the synced content.
-  The load-bearing assertion is each case's own second spawn (`args` against its mutated baseline), which
-  is untouched; only the shared setup scan is deduplicated.
+  FNXC:LifecycleColumnCensus 2026-09-02-00:06 (test wall-time — the durable fix the notes below deferred):
+  These ratchet cases exercise the CLI's baseline-drift ARITHMETIC (tighten on a drop, fail on a rise,
+  --exact, re-record a touched file), NOT repo discovery. They used to spawn a full ~1960-file AST scan of
+  the live tree per case (~2s each) AND derive their fixture file/count from the shrinking real backlog —
+  the exact coupling every note below records as a recurring cause of main going red (self-healing.ts 26→22,
+  the u12 zero-backlog rot, the negative-allowance workarounds). Both problems have ONE fix, repeatedly
+  "recorded rather than done" in those notes and now landed: point the scan at a tiny synthetic tree via the
+  FUSION_CENSUS_FILE_ROOT + FUSION_CENSUS_FILE_LIST seam — the same seam the discovery block already drives.
+  The synthetic file holds a FIXED, known guard count, so every case is deterministic and independent of
+  production state, and each spawn parses one file instead of the whole repo. The stale FNXC notes that
+  reasoned about deriving the fixture from live state are removed with the code that needed them.
   */
+  const FIXTURE_REL = "pkg/src/guarded.ts";
+  const FIXTURE_FILES: Record<string, string> = {
+    [FIXTURE_REL]:
+      'export const a = (t: { column: string }) => t.column === "in-review";\n'
+      + 'export const b = (t: { column: string }) => t.column === "done";\n'
+      + 'export const c = (t: { column: string }) => t.column === "todo";\n',
+  };
+
+  let memoFixtureRoot: string | undefined;
   let memoSyncedBaselineJson: string | undefined;
+
+  async function ensureFixtureRoot(): Promise<string> {
+    if (memoFixtureRoot !== undefined) return memoFixtureRoot;
+    const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const root = await mkdtemp(join(tmpdir(), "fusion-census-tighten-root-"));
+    for (const [rel, body] of Object.entries(FIXTURE_FILES)) {
+      await mkdir(dirname(join(root, rel)), { recursive: true });
+      await writeFile(join(root, rel), body);
+    }
+    memoFixtureRoot = root;
+    return root;
+  }
 
   async function run(mutate: (baseline: any) => string, args: string[], touchedPaths?: () => string) {
     const { mkdtemp, writeFile, readFile } = await import("node:fs/promises");
@@ -815,36 +843,15 @@ describe("the ratchet follows the count down", () => {
     const { join } = await import("node:path");
     const { execFile } = await import("node:child_process");
 
+    const fixtureRoot = await ensureFixtureRoot();
+    /* Drives the CLI's synthetic-tree seam: paths come from the injected list, reads resolve under the root. */
+    const censusEnv = {
+      FUSION_CENSUS_FILE_ROOT: fixtureRoot,
+      FUSION_CENSUS_FILE_LIST: Object.keys(FIXTURE_FILES).join(","),
+    };
+
     const dir = await mkdtemp(join(tmpdir(), "fusion-census-tighten-"));
     const path = join(dir, "baseline.json");
-
-    /*
-    FNXC:LifecycleColumnCensus 2026-07-31-20:10:
-    SYNC THE COPY TO THE TREE FIRST, so these cases do not depend on the COMMITTED baseline.
-
-    `inflate` adds 3 to a file's recorded allowance and the assertion below reads back
-    `inflatedFrom - 3`. That arithmetic only holds while the recorded number equals the tree's. It
-    stopped holding the moment a fleet PR took `self-healing.ts` from 26 to 22 without re-recording:
-    the CLI correctly tightened to 22 while the fixture expected 26, and both cases in this block
-    went red for a reason that had nothing to do with the CLI.
-
-    That is not a one-off. The census EXITS 0 on a drop by design — so one worker's merge cannot
-    redden the gate — which means the committed baseline goes stale silently and this fixture is
-    what eventually trips over it. Syncing a temp copy first makes the cases self-maintaining: they
-    assert the CLI tightens by EXACTLY the inflation, which is the property they were written for,
-    against whatever the tree currently holds.
-    */
-    if (memoSyncedBaselineJson === undefined) {
-      await writeFile(path, await readFile(realBaseline, "utf8"));
-      await runCli(["--strict", "--update-baseline"], path, "");
-      memoSyncedBaselineJson = await readFile(path, "utf8");
-    } else {
-      await writeFile(path, memoSyncedBaselineJson);
-    }
-
-    const baseline = JSON.parse(await readFile(path, "utf8"));
-    const file = mutate(baseline);
-    await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`);
 
     function runCli(cliArgs: string[], baselinePath: string, touched: string) {
       return new Promise<{ code: number; out: string }>((resolve) => {
@@ -854,6 +861,7 @@ describe("the ratchet follows the count down", () => {
             cwd: repoRoot,
             env: {
               ...process.env,
+              ...censusEnv,
               FUSION_CENSUS_BASELINE_PATH: baselinePath,
               /* Empty string = "this change touched nothing", which is the lenient path the other cases need. */
               FUSION_CENSUS_TOUCHED_PATHS: touched,
@@ -865,6 +873,22 @@ describe("the ratchet follows the count down", () => {
       });
     }
 
+    /*
+    Record the baseline from the SYNTHETIC tree once (deterministic — same one-file scan every run), so
+    each case's mutated fixture is measured against a known count instead of the live, shrinking backlog.
+    */
+    if (memoSyncedBaselineJson === undefined) {
+      await writeFile(path, JSON.stringify({ byFile: {} }));
+      await runCli(["--strict", "--update-baseline"], path, "");
+      memoSyncedBaselineJson = await readFile(path, "utf8");
+    } else {
+      await writeFile(path, memoSyncedBaselineJson);
+    }
+
+    const baseline = JSON.parse(await readFile(path, "utf8"));
+    const file = mutate(baseline);
+    await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`);
+
     const result = await runCli(args, path, touchedPaths ? touchedPaths() : "");
     const after = JSON.parse(await readFile(path, "utf8"));
     return {
@@ -875,24 +899,14 @@ describe("the ratchet follows the count down", () => {
     };
   }
 
-  /** Inflate one file's allowance, which is a DROP from the CLI's point of view. */
   /*
-  FNXC:LifecycleColumnCensus 2026-07-31-13:15 (u12 — this fixture ROTTED as the backlog shrank):
-  It required a baseline entry with `count > 1`, then inflated that entry by 3. Once the tail was
-  reclassified there was no such entry, so `find` returned undefined, `byFile[undefined] = NaN`, and
-  every ratchet case failed against a corrupt baseline — four RED tests on main whose message
-  ("expected … to contain 'TIGHTENED'") pointed at the CLI rather than at the fixture.
-
-  The ratchet does not care WHICH file it tightens, only that a baseline allowance exceeds the measured
-  count. So this now inflates any entry, and synthesises one against a real scanned file when the
-  backlog is empty — which is the state this suite must keep working in, since the backlog reached zero
-  on 2026-07-31. Same class of rot as the unbounded-slice fix in #3207: a census self-test coupled to
-  the size of a shrinking backlog.
+  Inflate the synthetic file's allowance ABOVE its measured count, which reads as a DROP the ratchet may
+  tighten. The synthetic tree always has exactly one guarded entry, so there is no missing-entry or
+  zero-backlog case to defend against — the arithmetic is fixed and does not track production state.
   */
-  const INFLATE_FALLBACK_FILE = "packages/core/src/store.ts";
   const inflate = (baseline: any): string => {
     const byFile = baseline.byFile as Record<string, number>;
-    const [file, count] = Object.entries(byFile)[0] ?? [INFLATE_FALLBACK_FILE, 0];
+    const [file, count] = Object.entries(byFile)[0] ?? [FIXTURE_REL, 0];
     byFile[file] = (count as number) + 3;
     return file;
   };
@@ -938,28 +952,15 @@ describe("the ratchet follows the count down", () => {
 
   it("still FAILS on a rise, which is the check's actual purpose", async () => {
     /*
-    FNXC:LifecycleColumnCensus 2026-07-31-13:20 (u12 — same rot as `inflate`, plus the zero-backlog case):
-    A RISE means "measured exceeds allowed", so it needs an allowance BELOW the real count. While guards
-    exist, deflating any entry gives that. Once the backlog is zero every measured count is 0, and the
-    only allowance below 0 is negative — so that is what the empty case uses. It is not a realistic
-    baseline value, and it is not pretending to be: it is the sole way to exercise the measured > allowed
-    comparison against a tree with nothing left to count, which is the tree this suite now runs on.
+    A RISE means "measured exceeds allowed", so it needs an allowance BELOW the measured count. The
+    synthetic tree has a fixed, non-zero guard count, so deflating its one entry by 1 always produces
+    that comparison — no zero-backlog or negative-allowance special case is needed any more.
     */
-    const synced = JSON.parse(await (await import("node:fs/promises")).readFile(realBaseline, "utf8"));
-    if (Object.keys(synced.byFile ?? {}).length === 0) {
-      expect(synced.byFile).toEqual({});
-      return;
-    }
-
     const deflate = (baseline: any): string => {
       const byFile = baseline.byFile as Record<string, number>;
-      const entry = Object.entries(byFile)[0];
-      if (!entry) {
-        byFile[INFLATE_FALLBACK_FILE] = -1;
-        return INFLATE_FALLBACK_FILE;
-      }
-      byFile[entry[0]] = (entry[1] as number) - 1;
-      return entry[0];
+      const [file, count] = Object.entries(byFile)[0] ?? [FIXTURE_REL, 1];
+      byFile[file] = (count as number) - 1;
+      return file;
     };
 
     const run1 = await run(deflate, ["--strict"]);

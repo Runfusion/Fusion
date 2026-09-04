@@ -21,8 +21,8 @@ actions that stream into the same System panel log viewer.
 */
 export interface SystemRebuildJobSnapshot {
   id: string;
-  kind: "rebuild" | "fn-binary";
-  scope: "app" | "full" | "plugins" | "link-local" | "use-global";
+  kind: "rebuild" | "fn-binary" | "source-update";
+  scope: "app" | "full" | "plugins" | "link-local" | "use-global" | "source-update";
   restartAfter: boolean;
   status: "running" | "succeeded" | "failed";
   startedAt: number;
@@ -51,6 +51,13 @@ export interface SystemInfoResponse {
   fnBinaryLinkLocalSupported?: boolean;
   /** Always true when the route is wired; UI may still disable while a job runs. */
   fnBinaryUseGlobalSupported?: boolean;
+  /*
+  FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+  True when the running process was launched from a GIT checkout it can pull and rebuild. The
+  container's image-baked /app is a workspace root but not a git checkout, so this is deliberately
+  narrower than rebuildSupported.
+  */
+  sourceUpdateSupported?: boolean;
   sourceWorkspaceRoot?: string;
   logsSupported: boolean;
   engineAvailable: boolean;
@@ -80,6 +87,20 @@ export function requestSystemRestart(reason?: string): Promise<{ scheduled: bool
   return api<{ scheduled: boolean }>("/system/restart", {
     method: "POST",
     body: JSON.stringify({ reason }),
+  });
+}
+
+/*
+FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+Start the pull-build-restart job for the source checkout the server runs from. Returns the same job
+snapshot shape as rebuild, so the System panel streams it through /system/jobs/:id/stream unchanged.
+A remote contributor with only dashboard access uses this to ship and run new code; the server never
+restarts unless the build succeeded.
+*/
+export function startSystemSourceUpdate(restart?: boolean): Promise<SystemRebuildJobSnapshot> {
+  return api<SystemRebuildJobSnapshot>("/system/source/update", {
+    method: "POST",
+    body: JSON.stringify({ restart }),
   });
 }
 

@@ -212,6 +212,7 @@ describe("LeftSidebarNav", () => {
     for (const testId of [
       "sidebar-nav-board",
       "sidebar-nav-list",
+      "sidebar-nav-patchnode",
       "sidebar-nav-command-center",
       "sidebar-nav-agents",
       "sidebar-nav-chat",
@@ -236,6 +237,7 @@ describe("LeftSidebarNav", () => {
       expect(screen.getByTestId(testId)).toBeDefined();
     }
 
+    expect(screen.getByTestId("sidebar-nav-skills")).toHaveTextContent("Skills & Snippets");
     expect(screen.getByTestId("sidebar-nav-documents")).toHaveTextContent("Artifacts");
     expect(screen.getByTestId("sidebar-nav-planning")).toHaveTextContent("Planning");
     expect(screen.getByTestId("sidebar-nav-import-tasks")).toHaveTextContent("Import Tasks");
@@ -275,6 +277,7 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-command-center",
       "sidebar-nav-board",
       "sidebar-nav-list",
+      "sidebar-nav-patchnode",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -296,8 +299,9 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    // FNXC:Navigation 2026-06-23-01:30: Planning + Missions now sit directly after List and before Agents; Documents (Artifacts) follows Memory.
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
+    // FNXC:Navigation 2026-09-03-16:32: History sits between List and Planning; Planning + Missions then precede Agents, and Documents (Artifacts) follows Memory.
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-documents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-memory")) + 1);

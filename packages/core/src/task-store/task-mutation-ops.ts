@@ -21,6 +21,8 @@ import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
+import { getTaskActivityLogEntryLimit } from "./comments.js";
+import type { TaskLogEntry } from "../types.js";
 import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate, TaskRecommendation, WorkspaceWorktreeEntry, TaskRepositoryScope} from "../types.js";
 import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
@@ -461,6 +463,63 @@ export async function updateWorkflowStepResultsFencedImpl(
       }
 
       const [updatedRow] = await tx.update(schema.project.tasks).set(values).where(and(
+        eq(schema.project.tasks.id, id),
+        taskProjectScope(layer),
+        isNull(schema.project.tasks.deletedAt),
+      )).returning();
+      if (!updatedRow) return { applied: false, reason: "task-missing" };
+      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)) };
+    });
+
+    if (outcome.applied) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
+}
+
+/**
+ * FNXC:LifecycleContainment 2026-08-30-13:36:
+ * FN-267: a review-remediation refusal has two durable effects that must not separate — the marker
+ * that stops the card being re-attempted, and the entry that explains it to an operator. Writing
+ * them through two calls leaves a cross-process window in which a newer review round replaces the
+ * result, so an overtaken engine persists both for a round it no longer owns.
+ *
+ * This is deliberately a SEPARATE primitive rather than a `log` field on
+ * {@link updateWorkflowStepResultsFencedImpl}: that writer is the workflow graph's durable
+ * step-result path, and widening it would put a high-blast-radius seam inside this change. Both
+ * take the same advisory transaction lock, so they serialize against each other across processes.
+ */
+export async function updateWorkflowStepResultsWithLogFencedImpl(
+  store: TaskStore,
+  id: string,
+  compute: (current: Task) => { workflowStepResults: Task["workflowStepResults"]; logEntry: TaskLogEntry } | null,
+): Promise<WorkflowStepResultsFencedUpdateResult> {
+  const layer = store.asyncLayer;
+  if (!layer) return { applied: false, reason: "unavailable" };
+
+  return store.withTaskLock(id, async () => {
+    const outcome = await layer.transactionImmediate(async (tx): Promise<WorkflowStepResultsFencedUpdateResult> => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) return { applied: false, reason: "task-missing" };
+      if (row.deletedAt) return { applied: false, reason: "task-deleted" };
+
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      const patch = compute(current);
+      if (patch === null) return { applied: false, reason: "refused" };
+
+      const log = [...(current.log ?? []), patch.logEntry];
+      const entryLimit = getTaskActivityLogEntryLimit();
+      if (log.length > entryLimit) log.splice(0, log.length - entryLimit);
+
+      const [updatedRow] = await tx.update(schema.project.tasks).set({
+        workflowStepResults: patch.workflowStepResults ?? [],
+        log,
+        updatedAt: new Date().toISOString(),
+      }).where(and(
         eq(schema.project.tasks.id, id),
         taskProjectScope(layer),
         isNull(schema.project.tasks.deletedAt),

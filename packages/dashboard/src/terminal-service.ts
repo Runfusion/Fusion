@@ -15,7 +15,7 @@ import { stat } from "node:fs/promises";
 // The node-pty native-asset loader (lazy-load, prebuild resolution, dlopen
 // fallback, and permission repair) lives in @fusion/engine so PTY owners share
 // one implementation. See packages/engine/src/pty-native.ts.
-import { loadPtyModule } from "@fusion/engine";
+import { describePtyLoadFailure, loadPtyModule } from "@fusion/engine";
 import { createLogger } from "@fusion/core";
 import { isAuthorizedProjectOrRegisteredWorktreePath, isPathWithin } from "./git-worktree-safety.js";
 
@@ -567,7 +567,8 @@ export class TerminalService extends EventEmitter {
       return {
         success: false,
         code: "pty_load_failed",
-        error: "Terminal service unavailable. The PTY module could not be loaded.",
+        // FNXC:Terminal 2026-09-04-01:43: Script-disabled Homebrew installs need an actionable missing-platform diagnostic, not a generic PTY failure.
+        error: `Terminal service unavailable. The PTY module could not be loaded. ${describePtyLoadFailure(loadErr)}`,
       };
     }
 

@@ -218,7 +218,7 @@ jobs:
           && (steps.scan.outputs.status == 'clean' || steps.scan.outputs.status == 'findings')
           && hashFiles('threatcrush.sarif') != ''
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
         with:
           sarif_file: threatcrush.sarif
           category: threatcrush
@@ -350,7 +350,7 @@ jobs:
           && github.event.pull_request.head.repo.full_name == github.repository
           && github.actor != 'dependabot[bot]'
         continue-on-error: true
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');

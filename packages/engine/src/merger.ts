@@ -129,6 +129,7 @@ import {
   resolveMergeOrchestrationColumn,
   resolveTaskLifecycleColumns,
   isFusionDeletableBranch,
+  classifyTaskBranchOrigin,
   type WorkflowIr
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
@@ -323,6 +324,7 @@ import {
 } from "./merge/merger-integration-worktree.js";
 import { acquireTaskWorktree } from "./worktree/worktree-acquisition.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
+import { isPushAfterMergeEnabled } from "./merge/push-after-merge-policy.js";
 import { evaluateBranchGroupPromotion, resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
 import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
 import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree/worktree-ref-sync.js";
@@ -7214,7 +7216,12 @@ export async function aiMergeTask(
             rootDir,
             integrationBranch: mergeTarget.branch,
           });
-          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: "engine" as const });
+          /*
+           * FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write.
+           * FNXC:BranchWriteOrigin 2026-08-28-10:12: merge-reuse can re-pin an operator-override branch, so the stamp derives from the
+           * classifier (#3523 Greptile P1) — hardcoding "engine" here made cleanup eligible to delete operator-supplied branches.
+           */
+          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: classifyTaskBranchOrigin(task, reusableMatch.branch) === "operator-supplied" ? "operator" : "engine" });
           await emitReuseHandoffAuditEvent(
             "merge:reuse-fallback-reused-existing-registration",
             {
@@ -9831,7 +9838,7 @@ export async function aiMergeTask(
   }
 
   // 8b. Push to remote if configured
-  if (settings.pushAfterMerge && settings.mergeStrategy !== "pull-request") {
+  if (isPushAfterMergeEnabled(settings, { lane: "single-repo" })) {
     try {
       throwIfAborted(options.signal, taskId);
       const pushTask = await store.getTask(taskId).catch(() => null);

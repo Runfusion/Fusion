@@ -28,6 +28,11 @@ export {
   resetLocalDashboardPortForTests,
 } from "./local-dashboard-port.js";
 export {
+  CloudLinkPresence,
+  startCloudLinkPresence,
+  stopCloudLinkPresence,
+} from "./cloud-link-presence.js";
+export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
   boundExistingModelRegistryRefresh,
   refreshFusionModelRegistry,
@@ -1092,8 +1097,18 @@ export { applyUnavailableNodePolicy, type PolicyDecision } from "./project/node-
 export { PeerExchangeService, type PeerExchangeServiceOptions, type SyncResult } from "./project/peer-exchange-service.js";
 export {
   TunnelProcessManager,
+  RemoteTunnelService,
+  getRemoteTunnelService,
+  peekRemoteTunnelService,
+  remoteTunnelScopeKey,
+  shutdownRemoteTunnelService,
+  shutdownAllRemoteTunnels,
+  preserveRemoteTunnelForSupervisedRestart,
+  preserveAllRemoteTunnelsForSupervisedRestart,
+  __resetRemoteTunnelServicesForTests,
   getTunnelProviderAdapter,
   redactTunnelText,
+  type RemoteLifecycleEvaluation,
   type TunnelProcessManagerOptions,
   type CloudflareProviderConfig,
   type ManagedTunnelProcess,
@@ -1168,6 +1183,8 @@ export {
   findStagedNativeDir,
   findInstalledNodePtyNativeDir,
   getNativePrebuildName,
+  nodePtyPlatformPackageName,
+  describePtyLoadFailure,
   resetPtyModuleCacheForTests,
 } from "./cli-runtime/pty-native.js";
 // CLI agent executor — session manager (U2), telemetry hub (U3), state machine (U3),

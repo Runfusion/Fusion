@@ -26,6 +26,7 @@ import {
   resolveColumnAgentBinding,
   resolveMaxConsecutiveToolFailureRetries,
   resolveTaskOutputLanguage,
+  resolveUnprovenReviewApproval,
   resolveWorkflowIrForTask,
   upsertWorkflowStepResult,
   applySupersededFindingIds,
@@ -83,6 +84,9 @@ export type ExecuteWorkflowGraphDeps = {
     [k: string]: unknown;
   };
   activeWorkflowGraphAbortControllers: Map<string, AbortController>;
+  /* FNXC:WorkflowLifecycle 2026-08-31-06:41: reset at run birth so an abort marker can only describe THIS run. */
+  userCanceledTaskIds: Set<string>;
+  clearPausedAborted: (taskId: string) => void;
   workflowAgentCapacity: WorkflowAgentCapacity;
   activeWorkflowAuthorities: Map<string, ActiveWorkflowAuthority>;
   activeWorkflowPrincipals: Map<string, { agentId: string; nodeInstanceId: string; agent?: import("@fusion/core").Agent }>;
@@ -431,7 +435,14 @@ export async function persistWorkflowStepResultWithOutcome(
         scopeSuperseded = true;
         return null;
       }
-      const built = buildWorkflowStepResultPatch(current, result, isPlanReviewResult);
+      const unprovenApproval = resolveUnprovenReviewApproval(result, {
+        workspace: current.workspaceWorktrees !== undefined,
+      });
+      const built = buildWorkflowStepResultPatch(
+        current,
+        unprovenApproval?.downgraded ?? result,
+        isPlanReviewResult,
+      );
       activityResult = built.resultToPersist;
       activityResults = built.results;
       return built.patch;
@@ -478,26 +489,38 @@ export async function persistWorkflowStepResultWithOutcome(
     if (fenceRefused) return { scopeCurrent: true, persisted: false };
 
     const persistedResult = activityResults?.find((entry) => entry.workflowStepId === result.workflowStepId) ?? activityResult;
-    if (isTerminalStepResult(result)) {
-      const passed = result.status === "passed"
-        || result.status === "skipped"
-        || result.verdict === "APPROVE"
-        || result.verdict === "APPROVE_WITH_NOTES"
-        || result.verdict === "CLOSE_NO_OP";
+    const approvalDowngraded = result.status === "passed"
+      && persistedResult.status === "failed"
+      && result.reviewInputFingerprint === undefined
+      && persistedResult.verdict === undefined;
+    if (approvalDowngraded) {
+      await deps.store.logEntry(
+        taskId,
+        `[pre-merge] ${result.workflowStepName} approval invalidated: ${persistedResult.notes ?? persistedResult.output ?? "review input proof missing"}`,
+        undefined,
+        deps.getRunContextFor(taskId),
+      ).catch(() => undefined);
+    }
+    if (isTerminalStepResult(persistedResult)) {
+      const passed = persistedResult.status === "passed"
+        || persistedResult.status === "skipped"
+        || persistedResult.verdict === "APPROVE"
+        || persistedResult.verdict === "APPROVE_WITH_NOTES"
+        || persistedResult.verdict === "CLOSE_NO_OP";
       try {
         await deps.store.recordAgentActivity({
           type: passed ? "workflow:gate-passed" : "workflow:gate-failed",
           attributionClaim: resolveWorkflowGateActivityClaim(
-            deps.workflowGateActivityPrincipals?.get(`${taskId}\0${result.workflowStepId}`)
+            deps.workflowGateActivityPrincipals?.get(`${taskId}\0${persistedResult.workflowStepId}`)
               ?? deps.activeWorkflowPrincipals?.get(taskId)?.agentId,
             live?.assignedAgentId,
           ),
           taskId,
-          occurredAt: result.completedAt ?? result.startedAt ?? new Date().toISOString(),
-          discriminator: `${result.workflowStepId}:${result.startedAt ?? result.completedAt ?? result.status}`,
-          metadata: buildWorkflowGateActivityMetadata(result, persistedResult),
+          occurredAt: persistedResult.completedAt ?? persistedResult.startedAt ?? new Date().toISOString(),
+          discriminator: `${persistedResult.workflowStepId}:${persistedResult.startedAt ?? persistedResult.completedAt ?? persistedResult.status}`,
+          metadata: buildWorkflowGateActivityMetadata(persistedResult, persistedResult),
         });
-        deps.workflowGateActivityPrincipals?.delete(`${taskId}\0${result.workflowStepId}`);
+        deps.workflowGateActivityPrincipals?.delete(`${taskId}\0${persistedResult.workflowStepId}`);
       } catch (error) {
         executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -756,6 +779,31 @@ export async function executeWorkflowGraph(
       remain bound to the language target selected when this graph invocation began.
       */
       const outputLanguage = resolveTaskOutputLanguage(settings, task.description ?? "");
+      /*
+      FNXC:WorkflowLifecycle 2026-08-31-06:41:
+      A run is born here, so every abort marker still standing belongs to a PREVIOUS one. They are
+      plain task-keyed in-memory collections with no run identity, and nothing else clears them on
+      this path: `userCanceledTaskIds` is dropped only by the implementation loop and the
+      move-INTO-WIP listener, and `pausedAborted`/`pausedAbortProvenance` only by the implementation
+      loop and the pause-replay seams. A card canceled in the REVIEW lane reaches none of those, so
+      the markers outlived their run and poisoned every later one.
+
+      Measured on FN-270/FN-273. The dashboard Retry runs pause -> hard-cancel -> unpause to restart
+      a review step, and `awaitAbortInFlightTaskWork` stamps `markPausedAborted` UNCONDITIONALLY --
+      even though the idle card had no live surface to abort. Two minutes later the Code Review
+      returned REVISE and the teardown read those leftovers as its own: the operator-cancellation
+      exit swallowed the verdict, and `genuinePauseAbort` re-classified it as a pause abort. No fix
+      steps, no move to WIP -- and WIP is the very transition that would have cleared the marker.
+      Each Retry re-armed it, so retrying was the one action guaranteed not to help.
+
+      Resetting at the run boundary is what makes the FN-249 contract ("terminal for ITS in-flight
+      run") structurally true instead of aspirational, and it repairs both readers at once. A
+      genuinely canceled run is unaffected: its marker is set while it runs, and its own teardown
+      still sees it. Cleanup of a run that outlives its successor stays driven by the run-scoped
+      interruption fields the runner puts on the result.
+      */
+      deps.userCanceledTaskIds.delete(task.id);
+      deps.clearPausedAborted(task.id);
       graphAbortController = new AbortController();
       const graphAbortSignal = graphAbortController.signal;
       deps.activeWorkflowGraphAbortControllers.set(task.id, graphAbortController);
@@ -851,7 +899,7 @@ export async function executeWorkflowGraph(
             || (node.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined)
               ?.nodes?.every((inner) => inner.config?.workflowAction === "deterministic-verification") === true;
           const writeCapable = !deterministicVerification
-            && (workflowNodeRequiresWorktree(node, { reviewerInlineFixes: settings.reviewerInlineFixes === false ? false : undefined }) || node.kind === "code");
+            && (workflowNodeRequiresWorktree(node) || node.kind === "code");
           const hasCurrentCodeReviewApproval = live.workflowStepResults?.some((result) =>
             result.reviewKind === "code"
             && result.status === "passed"
@@ -1151,7 +1199,29 @@ export async function executeWorkflowGraph(
           }).catch(() => undefined);
         }));
       }
+      /*
+      FNXC:WorkflowExecution 2026-09-02-10:36:
+      FN-9243 closes a dispatched continuation before a fell-back graph failure. Previously the
+      early return retained a running lease, so the dispatcher retried the same refusal indefinitely.
+      */
+      const closeContinuation = async (state: "failed" | "succeeded"): Promise<void> => {
+        if (!continuation || typeof deps.store.transitionWorkflowWorkItem !== "function") return;
+        if (directWorkflowPrincipalHeldWorkItemIds.has(continuation.id)) return;
+        try {
+          await deps.store.transitionWorkflowWorkItem(continuation.id, state, {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: state === "failed" ? "workflow-continuation-failed" : null,
+          });
+        } catch (closeErr) {
+          executorLog.debug(
+            `[workflow-graph] ${task.id}: continuation ${continuation.id} could not be closed as ${state} `
+            + `(likely already terminal): ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`,
+          );
+        }
+      };
       if (result.disposition === "fell-back") {
+        await closeContinuation("failed");
         executorLog.warn(`[workflow-graph] ${task.id} could not resolve workflow — parking task instead of legacy fallback: ${result.reason}`);
         await deps.handleGraphFailure(task, {
           ...result,
@@ -1190,26 +1260,6 @@ export async function executeWorkflowGraph(
         );
         return;
       }
-      /*
-       * FNXC:WorkflowExecution 2026-08-08-03:20:
-       * Closing the continuation is bookkeeping and must never skip handleGraphFailure.
-       */
-      const closeContinuation = async (state: "failed" | "succeeded"): Promise<void> => {
-        if (!continuation || typeof deps.store.transitionWorkflowWorkItem !== "function") return;
-        if (directWorkflowPrincipalHeldWorkItemIds.has(continuation.id)) return;
-        try {
-          await deps.store.transitionWorkflowWorkItem(continuation.id, state, {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: state === "failed" ? "workflow-continuation-failed" : null,
-          });
-        } catch (closeErr) {
-          executorLog.debug(
-            `[workflow-graph] ${task.id}: continuation ${continuation.id} could not be closed as ${state} `
-            + `(likely already terminal): ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`,
-          );
-        }
-      };
       if (result.disposition === "failed") {
         await closeContinuation("failed");
         await deps.handleGraphFailure(task, result);

@@ -122,9 +122,7 @@ export const registerConfigMcpPiSettingsRoutes: ApiRouteRegistrar = (ctx) => {
       res.json({
         maxConcurrent: capacity.maxConcurrent,
         maxWorktrees: capacity.worktreeLimit ?? settings.maxWorktrees,
-        effectiveMaxConcurrent: capacity.effectiveLimit,
         worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
-        concurrencyBindingKnob: capacity.bindingKnob,
         rootDir: scopedStore.getRootDir(),
       });
     } catch {
@@ -132,7 +130,7 @@ export const registerConfigMcpPiSettingsRoutes: ApiRouteRegistrar = (ctx) => {
       // FNXC:CapacityModel 2026-08-21-15:25: a failed live read reports shipped resolver defaults,
       // never a private route literal or a stale boot option.
       const capacity = resolveEffectiveConcurrency(undefined);
-      res.json({ maxConcurrent: capacity.maxConcurrent, maxWorktrees: capacity.worktreeLimit, effectiveMaxConcurrent: capacity.effectiveLimit, worktreeLimitEnabled: true, concurrencyBindingKnob: capacity.bindingKnob, rootDir: scopedStore.getRootDir() });
+      res.json({ maxConcurrent: capacity.maxConcurrent, maxWorktrees: capacity.worktreeLimit, worktreeLimitEnabled: true, rootDir: scopedStore.getRootDir() });
     }
   });
 

@@ -330,8 +330,14 @@ measured thread top accounts for host chrome above Chat instead of assuming only
      ancestor stays `transform: none` and the keyboard stays up. */
 }
 
+/*
+FNXC:ChatComposer 2026-09-01-05:36:
+When the keyboard covers the bottom gesture region, the composer must not reserve that
+safe-area inset again. Keep the accessory clearance because Safari does not subtract the
+input-assistant bar from visualViewport.height.
+*/
 .chat-thread--keyboard-active .chat-input-area {
-  padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--chat-keyboard-accessory-clearance, 0px));
+  padding-bottom: calc(var(--space-md) + var(--chat-keyboard-accessory-clearance, 0px));
 }
 
 .chat-thread-header {

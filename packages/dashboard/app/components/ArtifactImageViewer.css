@@ -1,9 +1,109 @@
-/* FNXC:ArtifactImageSecurity 2026-08-19-18:08: The dedicated image viewer fills its shared FloatingWindow while preserving the existing mobile sheet behavior. */
-.artifact-image-viewer { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
-.artifact-image-viewer__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); padding: var(--space-md); border-bottom: var(--border-width) solid var(--border); }
-.artifact-image-viewer__title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-image-viewer__content { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; padding: var(--space-md); overflow: auto; }
-.artifact-image-viewer__image { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
-.artifact-image-viewer__failure { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); }
-.artifact-image-viewer__error { margin: 0; color: var(--color-error); }
-@media (max-width: 768px) { .artifact-image-viewer__content { padding: var(--space-sm); } }
+/*
+FNXC:ArtifactImageSecurity 2026-08-19-18:08:
+The dedicated image viewer fills its shared FloatingWindow while preserving the existing mobile sheet behavior.
+
+FNXC:ArtifactImageZoom 2026-09-03-04:56:
+The shared viewport owns image clipping, touch gestures, and zoom feedback. Toolbar spacing and paint use dashboard tokens so the controls remain consistent across desktop and mobile hosts.
+*/
+.artifact-image-viewer {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.artifact-image-viewer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.artifact-image-viewer__title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-image-viewer__content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+  overflow: hidden;
+}
+
+.artifact-image-viewer__viewport {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: zoom-in;
+}
+
+.artifact-image-viewer__viewport[data-zoomed="true"] {
+  cursor: grab;
+}
+
+.artifact-image-viewer__viewport[data-panning="true"] {
+  cursor: grabbing;
+}
+
+.artifact-image-viewer__image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.artifact-image-viewer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-top: var(--btn-border-width) solid var(--border);
+}
+
+.artifact-image-viewer__zoom-level {
+  min-width: calc(var(--space-xl) * 2);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.artifact-image-viewer__failure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.artifact-image-viewer__error {
+  margin: 0;
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .artifact-image-viewer__content {
+    padding: var(--space-sm);
+  }
+
+  .artifact-image-viewer__toolbar {
+    padding: var(--space-xs) var(--space-sm);
+  }
+}

@@ -63,16 +63,26 @@ export function deriveWorkspaceReviewRemediation(
   unchanged alphabetically first repository could hide changed findings in a later repository.
   The deterministic digest matches reviewInputSignature and excludes volatile model finding IDs.
   */
+  /*
+  FNXC:ReviewRemediation 2026-08-31-08:24:
+  Separators must not be NUL: `inputSignature` is PERSISTED on the task as
+  `reviewRemediation.inputSignature`, and PostgreSQL rejects NUL in text/jsonb (SQLSTATE 22P05).
+  Its singular twin in `reviewInputSignature` shipped exactly that break -- every remediation claim
+  write threw against a real database while passing every mock-store test -- so this workspace path
+  is corrected in lockstep rather than left as the same defect waiting for a workspace card.
+  U+001F/U+001E keep the "cannot occur in the content" property and are storable.
+  */
+  const sep = "\u001F";
   const blockingSignatures = blocking.map((outcome) => {
     const findings = (outcome.findings ?? [])
       .map((finding) => `${normalize(finding.filePath)}:${finding.line ?? ""}:${normalize(finding.body)}`)
       .sort()
       .join("|");
-    return `${outcome.repository}\u0000${outcome.fingerprint ?? ""}\u0000${outcome.verdict}\u0000${findings}`;
+    return `${outcome.repository}${sep}${outcome.fingerprint ?? ""}${sep}${outcome.verdict}${sep}${findings}`;
   });
   return {
     scopeRevision: result.repositoryScopeRevision,
     repository: blocking[0].repository,
-    inputSignature: `${result.workflowStepId}\u0000${result.repositoryScopeRevision}\u0000${blockingSignatures.join("\u0001")}`,
+    inputSignature: `${result.workflowStepId}${sep}${result.repositoryScopeRevision}${sep}${blockingSignatures.join("\u001E")}`,
   };
 }

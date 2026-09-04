@@ -7,6 +7,9 @@ vi.mock("../worktree/review-diff-fingerprint.js", async () => {
   return {
     ...actual,
     computeCodeReviewInputFingerprint: vi.fn(async () => fingerprintState.value),
+    resolveContentReviewInputProof: vi.fn(async () => fingerprintState.value
+      ? { kind: "fingerprint", fingerprint: fingerprintState.value }
+      : { kind: "unprovable", reason: "git-diff-failed" }),
   };
 });
 

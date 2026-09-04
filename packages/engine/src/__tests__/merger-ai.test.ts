@@ -35,10 +35,26 @@ import {
   AiMergeBlockedError,
 } from "../merge/merger-ai.js";
 import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
+import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree/worktree-paths.js";
 import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();
+
+/*
+FNXC:TestPerf 2026-09-04-00:43:
+This real-git suite creates a fresh repo per test, and each repo init previously spent two extra
+git subprocess spawns on `git config user.email`/`user.name`. Provide the identity through the
+inherited environment instead: the GIT_AUTHOR and GIT_COMMITTER name/email vars override any config, are inherited by
+every execSync child (including the direct commits outside the git() helper), and reproduce the
+exact same `t <t@t.t>` author/committer the config calls used — so commits stay byte-identical
+while two process spawns per test disappear. Keep this env-based identity if you add new repo
+helpers rather than reintroducing per-repo `git config`.
+*/
+process.env.GIT_AUTHOR_NAME = "t";
+process.env.GIT_AUTHOR_EMAIL = "t@t.t";
+process.env.GIT_COMMITTER_NAME = "t";
+process.env.GIT_COMMITTER_EMAIL = "t@t.t";
 afterAll(() => {
   for (const d of tracked) {
     try { rmSync(d, RM); } catch { /* best effort */ }
@@ -54,8 +70,6 @@ function initRepoWithBranch(opts: { branch: string; conflict?: boolean; gitignor
   const dir = mkdtempSync(join(tmpdir(), "fusion-ai-merge-test-"));
   tracked.add(dir);
   git(dir, "init -q -b main");
-  git(dir, "config user.email t@t.t");
-  git(dir, "config user.name t");
   writeFileSync(join(dir, "base.txt"), "base\n");
   if (opts.gitignore) writeFileSync(join(dir, ".gitignore"), opts.gitignore);
   git(dir, "add -A");
@@ -608,9 +622,11 @@ describe("runAiMerge", () => {
   });
 
   it.each([
-    ["modern repo-local root", "FN-1", (dir: string) => join(dir, ".worktrees", ".ai-merge")],
-    ["legacy .fusion root", "FN-2", (dir: string) => join(dir, ".fusion", "ai-merge")],
-    ["direct tmpdir root", "FN-3", (_dir: string) => tmpdir()],
+    ["current repo-local root", "FN-1", (dir: string) => resolveAiMergeRootPath(dir, undefined)],
+    ["legacy .fusion root", "FN-2", (dir: string) => resolveLegacyAiMergeRootPath(dir)],
+    // This literal is deliberate: it is the historic layout the production resolver must retain.
+    ["legacy .worktrees root", "FN-3", (dir: string) => join(dir, ".worktrees", ".ai-merge")],
+    ["direct tmpdir root", "FN-4", (_dir: string) => tmpdir()],
   ])("recovers an approved pre-existing clean-room commit from the %s before pruning and re-merging", async (_label, taskId, resolveRoot) => {
     const branch = `fusion/${taskId.toLowerCase()}`;
     const { dir } = initRepoWithBranch({ branch });
@@ -654,6 +670,7 @@ describe("runAiMerge", () => {
     expect(result.merged).toBe(true);
     expect(result.commitSha).toBe(strandedSha);
     expect(git(dir, "rev-parse main")).toBe(strandedSha);
+    expect(git(dir, "status --porcelain")).toBe("");
     expect(mergeAgent).not.toHaveBeenCalled();
     expect(logs.some((line) => line.includes("recovered approved pre-existing clean-room commit"))).toBe(true);
   });

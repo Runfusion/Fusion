@@ -54,7 +54,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
     ...actual,
     canonicalizeWorktreePath: vi.fn(async (path: string) => path),
     acquireWorktreePathReservation: vi.fn(async () => ({
-      canonicalPath: "/repo/.worktrees/fn-7996",
+      canonicalPath: "/repo/.fusion/worktrees/fn-7996",
       token: "test-reservation",
       previousState: "free",
       state: "held",
@@ -93,7 +93,7 @@ import { rename } from "node:fs/promises";
 import { classifyTaskWorktree, getRegisteredWorktreeBranches, removeWorktree } from "../worktree/worktree-pool.js";
 
 const ROOT = "/repo";
-const PINNED = join(ROOT, ".worktrees", "fn-7996");
+const PINNED = join(ROOT, ".fusion", "worktrees", "fn-7996");
 
 function makeStore() {
   return {
@@ -146,8 +146,8 @@ describe("acquireTaskWorktree — task-pinned mode", () => {
       createWorktree,
     } as any);
 
-    expect(result.worktreePath).toBe(join(ROOT, ".worktrees", "fn-8069"));
-    expect(createWorktree).toHaveBeenCalledWith("fusion/fn-8069", join(ROOT, ".worktrees", "fn-8069"), "FN-8069", "main", false);
+    expect(result.worktreePath).toBe(join(ROOT, ".fusion", "worktrees", "fn-8069"));
+    expect(createWorktree).toHaveBeenCalledWith("fusion/fn-8069", join(ROOT, ".fusion", "worktrees", "fn-8069"), "FN-8069", "main", false);
   });
 
   it("ignores persisted legacy naming and recycle settings while retaining the task-id path", async () => {

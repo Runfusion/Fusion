@@ -1057,9 +1057,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       res.json({
         maxConcurrent: capacity.maxConcurrent,
         maxWorktrees: capacity.worktreeLimit ?? settings.maxWorktrees,
-        effectiveMaxConcurrent: capacity.effectiveLimit,
         worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
-        concurrencyBindingKnob: capacity.bindingKnob,
         rootDir: project.path,
       });
     } catch (err: unknown) {
