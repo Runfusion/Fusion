@@ -32,7 +32,7 @@ function collectSqlValues(node: unknown, into: unknown[] = [], seen = new Set<un
   return into;
 }
 
-function createPinStore(projectId: string | undefined) {
+function createPinStore(projectId: string | undefined, options: { returning?: () => Promise<unknown[]> } = {}) {
   const whereClauses: unknown[] = [];
   const updatedRow = {
     id: "FN-3520",
@@ -46,7 +46,7 @@ function createPinStore(projectId: string | undefined) {
       set: vi.fn(() => ({
         where: vi.fn((clause: unknown) => {
           whereClauses.push(clause);
-          return { returning: vi.fn(async () => [updatedRow]) };
+          return { returning: vi.fn(options.returning ?? (async () => [updatedRow])) };
         }),
       })),
     })),
@@ -99,5 +99,13 @@ describe("pinWorkspaceWorktreeDirSegmentImpl project scope", () => {
       "proj-alpha",
     ]));
     expect(collectSqlValues(whereClauses[0])).not.toContain("__legacy_unscoped__");
+  });
+
+  it("reports a drizzle-wrapped unique collision as an unclaimed pin", async () => {
+    const postgresError = Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+    const wrapped = new Error("Failed query: update workspace_worktree_dir_segment", { cause: postgresError });
+    const { store } = createPinStore("proj-alpha", { returning: async () => { throw wrapped; } });
+    const result = await pinWorkspaceWorktreeDirSegmentImpl(store as never, "FN-3520", "foo");
+    expect(result).toMatchObject({ minted: false, claimed: false, segment: "foo" });
   });
 });

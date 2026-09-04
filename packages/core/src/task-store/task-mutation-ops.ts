@@ -28,6 +28,7 @@ import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
 import {toJson} from "../db/db.js";
+import { isPostgresUniqueError } from "../db/postgres-errors.js";
 import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -919,24 +920,9 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
   if (!candidate) throw new Error(`Cannot pin an empty workspace worktree directory segment for ${id}`);
   return store.withTaskLock(id, async () => {
     const layer = store.asyncLayer!;
-    const outcome = await layer.transactionImmediate(async (tx) => {
-      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
-      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
-      if (!row) throw new TaskNotFoundError(id);
-      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
-      const current = store.rowToTask(store.pgRowToTaskRow(row));
-      const existing = current.workspaceWorktreeDirSegment;
-      /*
-      FNXC:WorkspaceWorktree 2026-08-25-07:53:
-      Write-once with no rewrite path. A rewrite — even a guarded one — can always move a root that a
-      concurrent acquisition for the same task is already building under, because that writer records
-      its `workspaceWorktrees` entry only after the checkout exists. One task split across two roots
-      is silent and unrecoverable, so the pin never changes once set and collisions are settled
-      before minting instead.
-      */
-      if (typeof existing === "string" && existing.length > 0) {
-        return { task: current, segment: existing, minted: false, claimed: true };
-      }
+    let snapshot: Task | undefined;
+    let outcome: { task: Task; segment: string; minted: boolean; claimed: boolean };
+    try {
       /*
       FNXC:WorkspaceWorktree 2026-08-25-08:12:
       The segment is a project-wide CLAIM, enforced by `uqTasksWorkspaceWorktreeDirSegment`, not a
@@ -945,8 +931,33 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
       so the loser's later path reservation would fail with no way to retry. The unique index makes
       the second write raise instead, and the caller re-mints with its task-id fallback before any
       checkout exists. A conflict is reported, never thrown: it is an ordinary outcome here.
+      FNXC:WorkspaceWorktree 2026-09-04-05:15:
+      The unique predicate is live-only (`deleted_at IS NULL`). Archive tombstones keep their
+      segment for forensics but must not occupy the name a later task is about to pin.
+      FNXC:WorkspaceWorktree 2026-09-04-05:20:
+      Drizzle wraps postgres.js unique_violation as `Failed query` with `cause.code === "23505"`.
+      Catching inside the transaction cannot COMMIT after PostgreSQL aborted the xact, so the
+      unique fence is an ordinary pin outcome only when the writer lets that transaction roll back.
       */
-      try {
+      outcome = await layer.transactionImmediate(async (tx) => {
+        await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+        if (!row) throw new TaskNotFoundError(id);
+        if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+        const current = store.rowToTask(store.pgRowToTaskRow(row));
+        snapshot = current;
+        const existing = current.workspaceWorktreeDirSegment;
+        /*
+        FNXC:WorkspaceWorktree 2026-08-25-07:53:
+        Write-once with no rewrite path. A rewrite — even a guarded one — can always move a root that a
+        concurrent acquisition for the same task is already building under, because that writer records
+        its `workspaceWorktrees` entry only after the checkout exists. One task split across two roots
+        is silent and unrecoverable, so the pin never changes once set and collisions are settled
+        before minting instead.
+        */
+        if (typeof existing === "string" && existing.length > 0) {
+          return { task: current, segment: existing, minted: false, claimed: true };
+        }
         /*
         FNXC:WorkspaceWorktree 2026-09-04-04:59:
         The pin UPDATE must use the same ownership partition as `readTaskRowInTransaction`.
@@ -963,12 +974,11 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
         )).returning();
         if (!updatedRow) throw new TaskNotFoundError(id);
         return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), segment: candidate, minted: true, claimed: true };
-      } catch (error: unknown) {
-        const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
-        if (code !== "23505") throw error;
-        return { task: current, segment: candidate, minted: false, claimed: false };
-      }
-    });
+      });
+    } catch (error: unknown) {
+      if (!isPostgresUniqueError(error) || !snapshot) throw error;
+      outcome = { task: snapshot, segment: candidate, minted: false, claimed: false };
+    }
     if (outcome.minted) {
       await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
       if (store.isWatching) store.taskCache.set(id, { ...outcome.task });

@@ -1571,8 +1571,27 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
-    /* FNXC:WorkspaceWorktree 2026-08-25-08:12: register 0073 explicitly; without the unique claim two tasks can persist the same write-once segment and contend for one directory permanently. */
-    if (!workspaceWorktreeDirSegmentUniqueAlreadyApplied) {
+    /*
+    FNXC:WorkspaceWorktree 2026-08-25-08:12: register 0073 explicitly; without the unique claim two tasks can persist the same write-once segment and contend for one directory permanently.
+    FNXC:WorkspaceWorktree 2026-09-04-05:15:
+    The claim is live-only (`deleted_at IS NULL`). A tombstone from archive still holds a non-null
+    segment, and `CREATE UNIQUE INDEX IF NOT EXISTS` would leave a pre-live-only 0073 index in
+    place, so replay when the index is missing or its definition does not mention deleted_at.
+    */
+    const workspaceWorktreeDirSegmentUniqueIndexState = (await tx.execute(sql`
+      SELECT
+        c.oid IS NOT NULL AS index_exists,
+        COALESCE(pg_get_indexdef(c.oid), '') AS index_def
+      FROM pg_namespace n
+      LEFT JOIN pg_class c
+        ON c.relnamespace = n.oid
+        AND c.relname = 'uqTasksWorkspaceWorktreeDirSegment'
+      WHERE n.nspname = 'project'
+    `)) as unknown as Array<{ index_exists: boolean; index_def: string }>;
+    const workspaceWorktreeDirSegmentUniqueIndex = workspaceWorktreeDirSegmentUniqueIndexState[0];
+    const workspaceWorktreeDirSegmentUniqueIndexStale = !workspaceWorktreeDirSegmentUniqueIndex?.index_exists
+      || !/deleted_at/i.test(workspaceWorktreeDirSegmentUniqueIndex.index_def ?? "");
+    if (!workspaceWorktreeDirSegmentUniqueAlreadyApplied || workspaceWorktreeDirSegmentUniqueIndexStale) {
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(recordAppliedMigrationVersion(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION));
